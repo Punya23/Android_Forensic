@@ -80,7 +80,8 @@ def create_app(cases_root: Path = CASES_ROOT):
         cfg = PipelineConfig(
             case_id=case_id, examiner=examiner,
             legal_authority=body.get("authority", ""),
-            scope_note=body.get("scope", ""), cases_root=cases_root)
+            scope_note=body.get("scope", ""), cases_root=cases_root,
+            tier1_contacts=bool(body.get("tier1_contacts", False)))
 
         def emit(stage: str, pct: float, detail: str) -> None:
             if socketio:

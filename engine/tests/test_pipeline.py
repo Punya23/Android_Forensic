@@ -78,3 +78,19 @@ def test_manifest_hashes_present(corpus, tmp_path):
     for art in manifest:
         assert len(art["sha256"]) == 64      # every artifact hashed
         assert art["tier"] == "tier0"
+
+
+def test_tier1_contacts_requested_on_mock_is_logged_as_skipped(corpus, tmp_path):
+    source = MockDeviceSource(corpus)
+    cfg = PipelineConfig(
+        case_id="TEST-004",
+        examiner="Tester",
+        cases_root=tmp_path / "cases",
+        tier1_contacts=True,
+    )
+    summary = run_acquisition(source, cfg)
+    import json
+    audit = [json.loads(line) for line in (Path(summary["case_dir"]) / "audit.jsonl").read_text().splitlines()]
+    tier1_events = [e for e in audit if e["action"] == "tier1.helper.contacts"]
+    assert tier1_events
+    assert tier1_events[-1]["result"] == "skipped"

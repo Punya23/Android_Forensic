@@ -53,6 +53,7 @@ export const api = {
     examiner: string;
     authority?: string;
     scope?: string;
+    tier1_contacts?: boolean;
   }): Promise<{ case_id: string; started: boolean }> => {
     const res = await fetch(`${BASE}/api/acquire`, {
       method: "POST",

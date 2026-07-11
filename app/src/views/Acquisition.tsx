@@ -3,7 +3,7 @@ import { api, getSocket } from "../lib/api";
 import type { DeviceListing, Progress } from "../lib/types";
 
 const STAGES = [
-  "init", "device", "enumerate", "screenshot", "pull", "location", "recover", "flag",
+  "init", "device", "tier1", "enumerate", "screenshot", "pull", "location", "recover", "flag",
   "timeline", "analysis", "persist", "report", "done",
 ];
 
@@ -24,6 +24,7 @@ export function AcquisitionView({
   const [progress, setProgress] = useState<Progress | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tier1Contacts, setTier1Contacts] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<number | null>(null);
 
@@ -75,6 +76,7 @@ export function AcquisitionView({
         examiner,
         authority,
         scope,
+        tier1_contacts: target.kind === "real" ? tier1Contacts : false,
       });
     } catch (e) {
       stopTimer();
@@ -138,6 +140,25 @@ export function AcquisitionView({
         <div>
           <label className="label">Case ID</label>
           <input className="input" placeholder="auto (CASE-0001)" value={caseId} onChange={(e) => setCaseId(e.target.value)} />
+        </div>
+
+        <div className="card p-4 mb-4">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={!target || target.kind !== "real"}
+              checked={target?.kind === "real" ? tier1Contacts : false}
+              onChange={(e) => setTier1Contacts(e.target.checked)}
+            />
+            <div>
+              <div className="text-sm font-medium">Run Tier-1 helper contacts capture (real device)</div>
+              <div className="text-xs text-muted mt-1">
+                Installs Collector APK, grants READ_CONTACTS, exports contacts.json, then uninstalls.
+                This is state-changing and will be logged in the audit trail.
+              </div>
+            </div>
+          </label>
         </div>
         <div>
           <label className="label">Examiner *</label>

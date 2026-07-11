@@ -120,6 +120,9 @@ The same acquisition also runs from the dashboard's device picker.
 
 **Tier 1 (contacts / calls)** uses the sideloaded helper in [`apk/`](apk/README.md); the
 engine ingests its `contacts.json` / `calllog.json` output automatically.
+From the Acquisition view, enable **Run Tier-1 helper contacts capture** on real devices
+to execute the helper flow (install → grant READ_CONTACTS → dump contacts → uninstall)
+with every step logged in the audit trail.
 
 ---
 
