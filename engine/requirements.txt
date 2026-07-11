@@ -1,0 +1,21 @@
+# Core service
+flask>=3.0
+flask-cors>=4.0
+flask-socketio>=5.3
+simple-websocket>=1.0
+
+# ADB orchestration
+adbutils>=2.5.0
+
+# Artifact parsing
+Pillow>=10.0            # image + EXIF
+piexif>=1.1.3          # robust GPS EXIF decode
+
+# Report generation
+Jinja2>=3.1
+
+# Deleted-record recovery (optional but preferred; engine has a built-in fallback carver)
+# sqlite-dissect>=1.0.0
+
+# Dev / test
+pytest>=8.0

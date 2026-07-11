@@ -1,0 +1,80 @@
+"""End-to-end pipeline test against a generated mock corpus."""
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tools.make_corpus import build  # noqa: E402
+from triage.acquire import MockDeviceSource  # noqa: E402
+from triage.pipeline import PipelineConfig, run_acquisition  # noqa: E402
+
+
+@pytest.fixture()
+def corpus(tmp_path):
+    dest = tmp_path / "device"
+    dest.mkdir()
+    build(dest)
+    return dest
+
+
+def test_full_acquisition(corpus, tmp_path):
+    source = MockDeviceSource(corpus)
+    cfg = PipelineConfig(case_id="TEST-001", examiner="Tester",
+                         legal_authority="warrant#1", cases_root=tmp_path / "cases")
+    summary = run_acquisition(source, cfg)
+
+    counts = summary["counts"]
+    # Core artifacts must all be present.
+    assert counts["messages"] > 0
+    assert counts["contacts"] == 4
+    assert counts["calls"] == 3
+    assert counts["media"] == 5           # 3 DCIM + 1 WA + 1 TG
+    assert counts["locations"] >= 4       # EXIF GPS + dumpsys fixes
+    assert counts["recovered"] > 0        # deleted rows carved
+    assert counts["flags"] > 0            # keyword hits
+    assert counts["browser"] > 0          # browser history parsed
+    assert counts["screenshots"] == 1     # manual screen capture
+
+    # New analysis blocks must be populated.
+    assert summary["risk"]["level"] in ("red", "amber", "green")
+    assert summary["throughput"]["mb_per_min"] >= 0
+    assert summary["graph_stats"]["participants"] > 0
+
+    case_dir = Path(summary["case_dir"])
+    assert (case_dir / "report.html").exists()
+    assert (case_dir / "manifest.json").exists()
+    assert (case_dir / "audit.jsonl").exists()
+
+    # Chain of custody: at least the device-intake and enumerate actions logged.
+    audit_lines = (case_dir / "audit.jsonl").read_text().splitlines()
+    actions = {__import__("json").loads(l)["action"] for l in audit_lines}
+    assert "device.intake" in actions
+    assert "artifact.ingest" in actions
+    assert "report.generate" in actions
+
+
+def test_narrative_deleted_messages_recovered(corpus, tmp_path):
+    source = MockDeviceSource(corpus)
+    cfg = PipelineConfig(case_id="TEST-002", examiner="Tester",
+                         cases_root=tmp_path / "cases")
+    summary = run_acquisition(source, cfg)
+    import json
+    rec = json.loads((Path(summary["case_dir"]) / "derived" / "recovered.json").read_text())
+    all_text = " ".join(str(v) for r in rec for v in r["values"] if isinstance(v, str))
+    # The deleted WhatsApp evidence must be recoverable from msgstore.db.
+    assert "4471" in all_text
+    assert "weapon" in all_text.lower()
+
+
+def test_manifest_hashes_present(corpus, tmp_path):
+    source = MockDeviceSource(corpus)
+    cfg = PipelineConfig(case_id="TEST-003", examiner="Tester",
+                         cases_root=tmp_path / "cases")
+    summary = run_acquisition(source, cfg)
+    import json
+    manifest = json.loads((Path(summary["case_dir"]) / "manifest.json").read_text())
+    assert len(manifest) > 0
+    for art in manifest:
+        assert len(art["sha256"]) == 64      # every artifact hashed
+        assert art["tier"] == "tier0"

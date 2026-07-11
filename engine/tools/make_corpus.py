@@ -1,0 +1,353 @@
+"""Synthetic corpus generator — builds a realistic mock Android device tree.
+
+Run::
+
+    python tools/make_corpus.py _corpus/device_A
+
+Produces a fixtures directory the MockDeviceSource can drive, containing:
+  * a WhatsApp 'Export Chat' .txt with a plausible conversation
+  * SQLite databases with deliberately DELETED rows (for recovery testing) — both an
+    in-page-freeblock case and a freelist case
+  * GPS-EXIF-tagged JPEG photos + a '.trashed-*' (recycle-bin) photo
+  * Tier-1 helper output: contacts.json and calllog.json
+  * canned `dumpsys location` output
+  * a _device.json intake/pre-state block
+
+Everything is synthetic and self-contained — no real personal data. This is what lets the
+team build and demo the full pipeline with no phone, and it doubles as the ground-truth
+corpus for measuring recovery/false-positive rates.
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+import struct
+import sys
+import zlib
+from pathlib import Path
+
+# --- a tiny valid JPEG with a GPS EXIF block (built by hand, no deps) --------
+# We construct a minimal baseline JPEG and inject an EXIF APP1 segment with GPS.
+
+
+def _exif_app1(lat: float, lon: float, dt: str = "2026:07:06 21:45:12") -> bytes:
+    """Build a minimal EXIF APP1 segment containing GPSLatitude/Longitude + DateTime."""
+    def rational(num: int, den: int) -> bytes:
+        return struct.pack(">II", num, den)
+
+    def dms(value: float) -> bytes:
+        value = abs(value)
+        d = int(value)
+        m = int((value - d) * 60)
+        s = int(round((value - d - m / 60) * 3600 * 100))
+        return rational(d, 1) + rational(m, 1) + rational(s, 100)
+
+    lat_ref = b"N" if lat >= 0 else b"S"
+    lon_ref = b"E" if lon >= 0 else b"W"
+
+    # TIFF header (big-endian)
+    tiff = b"MM\x00\x2a" + struct.pack(">I", 8)
+
+    # We build two IFDs: IFD0 (with a GPS IFD pointer + DateTime) and the GPS IFD.
+    # Offsets are relative to the start of the TIFF header.
+    dt_bytes = dt.encode() + b"\x00"
+
+    # Layout plan:
+    #   IFD0 at offset 8
+    #   IFD0 entries: DateTime(0x0132 ASCII), GPSIFDPointer(0x8825 LONG)
+    #   then GPS IFD, then data area (DateTime string, GPS rationals)
+    # To keep it simple and valid, place data after both IFDs.
+
+    # Compute sizes
+    ifd0_count = 2
+    ifd0_size = 2 + ifd0_count * 12 + 4  # count + entries + next-offset
+    ifd0_offset = 8
+    gps_ifd_offset = ifd0_offset + ifd0_size
+
+    gps_count = 6
+    gps_ifd_size = 2 + gps_count * 12 + 4
+    data_offset = gps_ifd_offset + gps_ifd_size
+
+    # Data area contents
+    data = bytearray()
+    dt_off = data_offset + len(data)
+    data += dt_bytes
+    latref_off = data_offset + len(data)
+    data += lat_ref + b"\x00"
+    lat_off = data_offset + len(data)
+    data += dms(lat)
+    lonref_off = data_offset + len(data)
+    data += lon_ref + b"\x00"
+    lon_off = data_offset + len(data)
+    data += dms(lon)
+
+    def entry(tag: int, typ: int, count: int, value_or_offset: int) -> bytes:
+        return struct.pack(">HHI", tag, typ, count) + struct.pack(">I", value_or_offset)
+
+    def entry_inline(tag: int, typ: int, count: int, raw: bytes) -> bytes:
+        raw = (raw + b"\x00\x00\x00\x00")[:4]
+        return struct.pack(">HHI", tag, typ, count) + raw
+
+    # IFD0
+    ifd0 = struct.pack(">H", ifd0_count)
+    ifd0 += entry(0x0132, 2, len(dt_bytes), dt_off)          # DateTime ASCII
+    ifd0 += entry(0x8825, 4, 1, gps_ifd_offset)              # GPS IFD pointer
+    ifd0 += struct.pack(">I", 0)                             # next IFD = 0
+
+    # GPS IFD
+    gps = struct.pack(">H", gps_count)
+    gps += entry_inline(0x0001, 2, 2, lat_ref)               # GPSLatitudeRef
+    gps += entry(0x0002, 5, 3, lat_off)                      # GPSLatitude (3 rationals)
+    gps += entry_inline(0x0003, 2, 2, lon_ref)               # GPSLongitudeRef
+    gps += entry(0x0004, 5, 3, lon_off)                      # GPSLongitude
+    gps += entry_inline(0x0005, 1, 1, b"\x00")               # GPSAltitudeRef
+    gps += entry(0x0007, 5, 3, lat_off)                      # GPSTimeStamp (reuse; filler)
+    gps += struct.pack(">I", 0)
+
+    payload = tiff + ifd0 + gps + bytes(data)
+    exif = b"Exif\x00\x00" + payload
+    app1 = b"\xff\xe1" + struct.pack(">H", len(exif) + 2) + exif
+    return app1
+
+
+def _minimal_jpeg_with_gps(lat: float, lon: float) -> bytes:
+    """A minimal but structurally valid JPEG: SOI + APP1(EXIF/GPS) + a tiny scan.
+
+    Pillow reads the EXIF from APP1 without needing a decodable image body for _getexif,
+    but we include minimal SOF/SOS/EOI so the file is a well-formed JPEG."""
+    soi = b"\xff\xd8"
+    app1 = _exif_app1(lat, lon)
+    # Minimal grayscale 1x1: DQT, SOF0, DHT, SOS with a couple of entropy bytes, EOI.
+    dqt = b"\xff\xdb\x00\x43\x00" + bytes([16] * 64)
+    sof = b"\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00"
+    dht = b"\xff\xc4\x00\x14\x00" + bytes([1] + [0] * 15) + b"\x00"
+    sos = b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00" + b"\xd2\xcf\x20"
+    eoi = b"\xff\xd9"
+    return soi + app1 + dqt + sof + dht + sos + eoi
+
+
+# --- WhatsApp export ---------------------------------------------------------
+_WA_CHAT = """\
+[06/07/2026, 20:59:11] Messages and calls are end-to-end encrypted.
+[06/07/2026, 21:00:04] Rahul Verma: Are we still on for tonight?
+[06/07/2026, 21:00:39] Imran K: Yes. Bring the package to the docks at midnight.
+[06/07/2026, 21:01:12] Rahul Verma: The cash transfer to account 4471 is done.
+[06/07/2026, 21:02:50] Imran K: Good. Delete this chat after you read it.
+[06/07/2026, 21:03:31] Rahul Verma: Understood. Meeting location changed to warehouse 9.
+[06/07/2026, 21:04:07] Imran K: I have the weapon ready if needed.
+[06/07/2026, 21:05:20] Rahul Verma: No violence. Just the delivery.
+"""
+
+
+def _build_messages_db(path: Path, deleted_ids: list[int], bulk: bool = False) -> None:
+    """Create a msgstore-like SQLite DB and delete some rows (leaving them recoverable)."""
+    if path.exists():
+        path.unlink()
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE messages (_id INTEGER PRIMARY KEY, chat TEXT, "
+                "sender TEXT, body TEXT, timestamp INTEGER)")
+    rows = [
+        ("docks-crew", "Rahul", "Are we still on for tonight?", 1751826004000),
+        ("docks-crew", "Imran", "Bring the package to the docks at midnight", 1751826039000),
+        ("docks-crew", "Rahul", "The cash transfer to account 4471 is done", 1751826072000),
+        ("docks-crew", "Imran", "Delete this chat after you read it", 1751826170000),
+        ("docks-crew", "Rahul", "Meeting location changed to warehouse 9", 1751826211000),
+        ("docks-crew", "Imran", "I have the weapon ready if needed", 1751826247000),
+        ("docks-crew", "Rahul", "No violence just the delivery", 1751826320000),
+    ]
+    if bulk:
+        for i in range(400):
+            rows.append((f"grp{i%5}", f"user{i%9}",
+                         f"routine message {i} regarding shipment {i%17}",
+                         1751800000000 + i * 1000))
+    for r in rows:
+        con.execute("INSERT INTO messages(chat,sender,body,timestamp) VALUES (?,?,?,?)", r)
+    con.commit()
+    if deleted_ids:
+        con.execute(f"DELETE FROM messages WHERE _id IN "
+                    f"({','.join('?' * len(deleted_ids))})", deleted_ids)
+        con.commit()
+    con.close()
+
+
+def _contacts_json() -> list[dict]:
+    return [
+        {"name": "Imran K", "number": "+91 98200 44711", "email": ""},
+        {"name": "Rahul Verma", "number": "+91 99300 55822", "email": "rv@example.in"},
+        {"name": "Warehouse 9", "number": "+91 90000 09090", "email": ""},
+        {"name": "Auntie", "number": "+91 90011 22334", "email": ""},
+    ]
+
+
+def _calllog_json() -> list[dict]:
+    base = 1751826000000
+    return [
+        {"number": "+91 98200 44711", "name": "Imran K", "type": 2, "date": base + 100000, "duration": 154},
+        {"number": "+91 99300 55822", "name": "Rahul Verma", "type": 1, "date": base + 500000, "duration": 42},
+        {"number": "+91 90000 09090", "name": "", "type": 3, "date": base + 900000, "duration": 0},
+    ]
+
+
+def _build_telegram_db(path: Path) -> None:
+    """A Telegram-style plaintext chat store (messages table) with deleted rows.
+
+    Real Telegram cache4.db stores message text inside TL-serialized BLOBs and needs root;
+    this synthetic store uses a readable schema so the heuristic app-DB parser can surface
+    live messages and the SQLite carver can recover the deleted ones — demonstrating the
+    multi-app capability honestly (see parsers/appdb.py notes)."""
+    if path.exists():
+        path.unlink()
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE messages (mid INTEGER PRIMARY KEY, dialog TEXT, "
+                "sender TEXT, body TEXT, date INTEGER)")
+    rows = [
+        ("secret-9", "Imran", "Switch to Telegram, WhatsApp is compromised", 1751826400),
+        ("secret-9", "Rahul", "Ok. New drop point is pier 4 warehouse", 1751826460),
+        ("secret-9", "Imran", "Payment of 5 lakh moved via hawala today", 1751826520),
+        ("secret-9", "Rahul", "Delete everything before the raid", 1751826580),
+        ("secret-9", "Imran", "Passport and fake id ready for pickup", 1751826640),
+    ]
+    for r in rows:
+        con.execute("INSERT INTO messages(dialog,sender,body,date) VALUES (?,?,?,?)", r)
+    con.commit()
+    con.execute("DELETE FROM messages WHERE mid IN (3, 4, 5)")  # deleted secret chats
+    con.commit()
+    con.close()
+
+
+def _sms_json() -> list[dict]:
+    base = 1751826000000
+    return [
+        {"address": "+91 98200 44711", "body": "Bank OTP is 448192 do not share", "type": 1, "date": base + 10000},
+        {"address": "VM-HDFCBK", "body": "Rs 500000 debited from a/c XX4471 via NEFT", "type": 1, "date": base + 60000},
+        {"address": "+91 99300 55822", "body": "reached the docks waiting", "type": 1, "date": base + 120000},
+        {"address": "+91 99300 55822", "body": "coming in 5", "type": 2, "date": base + 130000},
+    ]
+
+
+def _build_browser_history(path: Path) -> None:
+    """A minimal Chrome-style History DB (urls table) with WebKit-epoch timestamps."""
+    if path.exists():
+        path.unlink()
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, "
+                "visit_count INTEGER, last_visit_time INTEGER)")
+    # WebKit epoch: microseconds since 1601-01-01. 13800000000000000 ~ 2038; use realistic 2026.
+    base = 13_360_000_000_000_000
+    urls = [
+        ("https://www.google.com/search?q=how+to+wipe+android+phone", "how to wipe android - Google", 4, base + 1_000_000_000),
+        ("https://coinmarketcap.com/currencies/monero/", "Monero price", 7, base + 2_000_000_000),
+        ("https://protonmail.com/login", "Proton Mail login", 12, base + 3_000_000_000),
+        ("https://www.google.com/search?q=untraceable+sim+card", "untraceable sim - Google", 3, base + 4_000_000_000),
+        ("https://en.wikipedia.org/wiki/Hawala", "Hawala - Wikipedia", 2, base + 5_000_000_000),
+    ]
+    for u in urls:
+        con.execute("INSERT INTO urls(url,title,visit_count,last_visit_time) VALUES (?,?,?,?)", u)
+    con.commit()
+    con.execute("DELETE FROM urls WHERE id IN (1, 4)")  # cleared search history
+    con.commit()
+    con.close()
+
+
+def _screenshot_png() -> bytes:
+    """A small synthetic 'lock screen' style PNG for the manual-capture demo."""
+    # A tiny solid-colour PNG built by hand (64x64, dark). Valid minimal PNG.
+    import struct as _s
+    import zlib as _z
+    w = h = 64
+    raw = bytearray()
+    for y in range(h):
+        raw.append(0)  # filter type 0
+        for x in range(w):
+            raw += bytes((22, 26, 31))  # RGB matching the app panel colour
+    def chunk(typ: bytes, data: bytes) -> bytes:
+        return _s.pack(">I", len(data)) + typ + data + _s.pack(">I", _z.crc32(typ + data) & 0xffffffff)
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr = _s.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    idat = _z.compress(bytes(raw))
+    return sig + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
+
+
+def _dumpsys_location() -> str:
+    return (
+        "LocationManagerService:\n"
+        "  last location for provider fused:\n"
+        "    Location[fused 19.075983,72.877655 hAcc=12 et=+1d2h34m ...]\n"
+        "  last location for provider gps:\n"
+        "    Location[gps 19.076100,72.878001 hAcc=8 et=+1d2h30m ...]\n"
+    )
+
+
+def build(dest: Path) -> None:
+    sdcard = dest / "sdcard"
+    dcim = sdcard / "DCIM" / "Camera"
+    pictures = sdcard / "Pictures"
+    wa_media = sdcard / "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images"
+    wa_db_dir = sdcard / "Android/media/com.whatsapp/WhatsApp/Databases"
+    tg_media = sdcard / "Android/media/org.telegram.messenger/Telegram/Telegram Images"
+    downloads = sdcard / "Download"
+    shell = dest / "_shell"
+    for d in (dcim, pictures, wa_media, wa_db_dir, tg_media, downloads, shell):
+        d.mkdir(parents=True, exist_ok=True)
+
+    # GPS-tagged photos (Mumbai dockside coordinates for the narrative)
+    (dcim / "IMG_20260706_2145.jpg").write_bytes(_minimal_jpeg_with_gps(19.0759, 72.8776))
+    (dcim / "IMG_20260706_2150.jpg").write_bytes(_minimal_jpeg_with_gps(19.0654, 72.8412))
+    # A recently-deleted photo in the MediaStore trash (.trashed-<epoch>-name)
+    (dcim / ".trashed-1751900000-IMG_evidence.jpg").write_bytes(
+        _minimal_jpeg_with_gps(18.9220, 72.8347))
+    # WhatsApp media (already-decrypted, non-root reachable)
+    (wa_media / "IMG-20260706-WA0007.jpg").write_bytes(_minimal_jpeg_with_gps(19.0760, 72.8779))
+    # Telegram cached media (only present because 'Save to Gallery' was on)
+    (tg_media / "photo_2026-07-06_21-10-33.jpg").write_bytes(_minimal_jpeg_with_gps(19.07, 72.88))
+
+    # WhatsApp export text
+    (downloads / "WhatsApp Chat with docks-crew.txt").write_text(_WA_CHAT, encoding="utf-8")
+
+    # SQLite DBs with deleted rows
+    _build_messages_db(wa_db_dir / "msgstore.db", deleted_ids=[3, 4, 6])   # in-page freeblock
+    _build_messages_db(sdcard / "Download" / "chatcache.db",
+                       deleted_ids=list(range(20, 260)), bulk=True)          # freelist case
+
+    # Telegram-style store (multi-app deleted recovery) — placed in shared storage for demo
+    tg_db_dir = sdcard / "Android/media/org.telegram.messenger/Telegram"
+    _build_telegram_db(tg_db_dir / "cache4.db")
+
+    # Chrome-style browser history with cleared (deleted) searches
+    _build_browser_history(downloads / "History")
+
+    # Tier-1 helper outputs (simulate a sideloaded Collector run)
+    (downloads / "contacts.json").write_text(json.dumps(_contacts_json(), indent=2))
+    (downloads / "calllog.json").write_text(json.dumps(_calllog_json(), indent=2))
+    (downloads / "sms.json").write_text(json.dumps(_sms_json(), indent=2))
+
+    # Canned shell output + manual-capture screenshot for the mock source
+    (shell / "dumpsys_location.txt").write_text(_dumpsys_location())
+    (shell / "screenshot.png").write_bytes(_screenshot_png())
+
+    # Device intake + pre-state
+    (dest / "_device.json").write_text(json.dumps({
+        "device": {
+            "manufacturer": "Samsung", "brand": "samsung", "model": "SM-G991B (Galaxy S21)",
+            "product": "o1sxxx", "android_version": "14", "sdk": "34",
+            "build_id": "UP1A.231005.007", "serial": "R58N90ABCDE",
+            "imei": "35-901234-567890-1", "carrier": "Airtel", "rooted": False,
+        },
+        "pre_state": {
+            "screen_locked": False, "battery_level": 76,
+            "device_time": "2026-07-06T22:03:44+0530",
+            "time_skew_seconds": 3, "root_available": False,
+            "note": "MOCK DEVICE — synthetic fixtures for development/demo, not a real seizure",
+        },
+    }, indent=2))
+
+    print(f"Corpus written to {dest}")
+    print("  - WhatsApp export + 4 SQLite DBs with deleted rows (msgstore, chatcache,")
+    print("    Telegram cache4, Chrome History), 5 photos (1 trashed), a screenshot,")
+    print("    contacts.json, calllog.json, sms.json, dumpsys location, device intake")
+
+
+if __name__ == "__main__":
+    dest = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("_corpus/device_A")
+    dest.mkdir(parents=True, exist_ok=True)
+    build(dest)
