@@ -57,10 +57,17 @@ def cmd_acquire(args) -> int:
         known = json.loads(Path(args.known_hashes).read_text())
 
     cfg = PipelineConfig(
-        case_id=args.case, examiner=args.examiner,
-        legal_authority=args.authority, scope_note=args.scope,
-        cases_root=Path(args.out), known_hashes=known,
-    )
+    case_id=args.case,
+    examiner=args.examiner,
+    legal_authority=args.authority,
+    scope_note=args.scope,
+    cases_root=Path(args.out),
+    known_hashes=known,
+
+    tier1_contacts=args.tier1_contacts,
+    tier1_calllog=args.tier1_calllog,
+    tier1_sms=args.tier1_sms,
+)
     summary = run_acquisition(source, cfg, progress=_progress)
     print(json.dumps(summary["counts"], indent=2))
     print(f"\nCase folder: {summary['case_dir']}")
@@ -83,6 +90,13 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--scope", default="", help="scope / minimisation note")
     a.add_argument("--out", default="cases", help="cases root directory")
     a.add_argument("--known-hashes", help="JSON file: {sha256: label} known-hash set")
+    a.add_argument("--tier1-contacts", action="store_true",
+               help="Run Tier-1 helper to collect contacts")
+    a.add_argument("--tier1-calllog", action="store_true",
+               help="Run Tier-1 helper to collect call log")
+    a.add_argument("--tier1-sms", action="store_true",
+               help="Run Tier-1 helper to collect SMS")
+    
 
     args = p.parse_args(argv)
     if args.cmd == "devices":

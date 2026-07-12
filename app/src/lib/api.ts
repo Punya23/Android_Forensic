@@ -54,6 +54,8 @@ export const api = {
     authority?: string;
     scope?: string;
     tier1_contacts?: boolean;
+    tier1_calllog?: boolean;
+  tier1_sms?: boolean;
   }): Promise<{ case_id: string; started: boolean }> => {
     const res = await fetch(`${BASE}/api/acquire`, {
       method: "POST",
