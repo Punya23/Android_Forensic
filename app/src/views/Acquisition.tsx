@@ -25,6 +25,8 @@ export function AcquisitionView({
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tier1Contacts, setTier1Contacts] = useState(false);
+  const [tier1Calllog, setTier1Calllog] = useState(false);
+  const [tier1Sms, setTier1Sms] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<number | null>(null);
 
@@ -77,6 +79,8 @@ export function AcquisitionView({
         authority,
         scope,
         tier1_contacts: target.kind === "real" ? tier1Contacts : false,
+        tier1_calllog: target.kind === "real" ? tier1Calllog : false,
+        tier1_sms: target.kind === "real" ? tier1Sms : false,
       });
     } catch (e) {
       stopTimer();
@@ -141,25 +145,6 @@ export function AcquisitionView({
           <label className="label">Case ID</label>
           <input className="input" placeholder="auto (CASE-0001)" value={caseId} onChange={(e) => setCaseId(e.target.value)} />
         </div>
-
-        <div className="card p-4 mb-4">
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              className="mt-1"
-              disabled={!target || target.kind !== "real"}
-              checked={target?.kind === "real" ? tier1Contacts : false}
-              onChange={(e) => setTier1Contacts(e.target.checked)}
-            />
-            <div>
-              <div className="text-sm font-medium">Run Tier-1 helper contacts capture (real device)</div>
-              <div className="text-xs text-muted mt-1">
-                Installs Collector APK, grants READ_CONTACTS, exports contacts.json, then uninstalls.
-                This is state-changing and will be logged in the audit trail.
-              </div>
-            </div>
-          </label>
-        </div>
         <div>
           <label className="label">Examiner *</label>
           <input className="input" placeholder="Insp. R. Sharma" value={examiner} onChange={(e) => setExaminer(e.target.value)} />
@@ -171,6 +156,63 @@ export function AcquisitionView({
         <div>
           <label className="label">Scope / minimisation</label>
           <input className="input" placeholder="e.g. comms + media + location only" value={scope} onChange={(e) => setScope(e.target.value)} />
+        </div>
+      </div>
+
+      {/* Tier-1 options */}
+      <div className="card p-4 mb-4">
+        <div className="label mb-3">Tier-1 Helper (optional, real device only)</div>
+        <div className="space-y-3">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={!target || target.kind !== "real"}
+              checked={target?.kind === "real" ? tier1Contacts : false}
+              onChange={(e) => setTier1Contacts(e.target.checked)}
+            />
+            <div>
+              <div className="text-sm font-medium">Tier-1 Contacts</div>
+              <div className="text-xs text-muted mt-1">
+                Installs Collector APK, grants READ_CONTACTS, exports contacts.json, then uninstalls.
+                This is state-changing and will be logged in the audit trail.
+              </div>
+            </div>
+          </label>
+
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={!target || target.kind !== "real"}
+              checked={target?.kind === "real" ? tier1Calllog : false}
+              onChange={(e) => setTier1Calllog(e.target.checked)}
+            />
+            <div>
+              <div className="text-sm font-medium">Tier-1 Call Log</div>
+              <div className="text-xs text-muted mt-1">
+                Installs Collector APK, grants READ_CALL_LOG, exports calllog.json, then uninstalls.
+                This is state-changing and will be logged in the audit trail.
+              </div>
+            </div>
+          </label>
+
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={!target || target.kind !== "real"}
+              checked={target?.kind === "real" ? tier1Sms : false}
+              onChange={(e) => setTier1Sms(e.target.checked)}
+            />
+            <div>
+              <div className="text-sm font-medium">Tier-1 SMS</div>
+              <div className="text-xs text-muted mt-1">
+                Installs Collector APK, grants READ_SMS, exports sms.json, then uninstalls.
+                This is state-changing and will be logged in the audit trail.
+              </div>
+            </div>
+          </label>
         </div>
       </div>
 
