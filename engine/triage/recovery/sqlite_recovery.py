@@ -222,6 +222,27 @@ def _try_carve_cell(buf: bytes, off: int, expected_cols: Optional[int]) -> \
         return None
 
 
+# Known field-name prefixes that may survive in the raw byte stream before a
+# message-text value.  When we find one of these, we anchor the recovered text
+# to start *after* the '=' so we emit only the payload, not the column name.
+_TEXT_FIELD_PREFIXES: tuple[bytes, ...] = (
+    b"data=", b"body=", b"msg=", b"text=", b"content=", b"message=",
+)
+
+
+def _strip_field_prefix(raw: str) -> str:
+    """If a text run starts with a known SQLite column-name prefix (e.g. 'data=VALUE'),
+    return only the value portion.  Only fires when the prefix appears at the very
+    beginning of the run (case-insensitive), so legitimate body text that happens to
+    contain the word 'message' or 'text' is never truncated."""
+    lower = raw.lower()
+    for prefix in _TEXT_FIELD_PREFIXES:
+        p = prefix.decode()
+        if lower.startswith(p):
+            return raw[len(p):]
+    return raw
+
+
 def _carve_text_runs(page: bytes, page_abs_base: int, region_off: int, region_len: int,
                      source_file: str, page_num: int, kind: str,
                      min_len: int = 4) -> list[CarvedRow]:
@@ -233,6 +254,13 @@ def _carve_text_runs(page: bytes, page_abs_base: int, region_off: int, region_le
     reliable, and exactly the evidentiary content a triage officer cares about. Always
     CARVED_PARTIAL: the surrounding record structure is gone, so field boundaries and any
     adjacent record are unverified.
+
+    Prefix anchoring
+    ~~~~~~~~~~~~~~~~
+    If a run contains a known column-name prefix (``data=``, ``body=``, ``msg=``, etc.),
+    only the value after the ``=`` is captured as the recovered message text.  This
+    significantly reduces noise (column-name bleed-through is a common artefact when the
+    record header and payload bytes span a freed region).
     """
     rows: list[CarvedRow] = []
     end = min(region_off + region_len, len(page))
@@ -249,15 +277,23 @@ def _carve_text_runs(page: bytes, page_abs_base: int, region_off: int, region_le
             text = run.decode("utf-8", "ignore")
         # Require the run to be mostly real printable characters, not control soup.
         printable = sum(1 for ch in text if ch.isprintable())
-        if len(text) >= min_len and printable >= len(text) * 0.8 and text.strip():
-            rows.append(CarvedRow(
-                values=[text.strip()], confidence=Confidence.CARVED_PARTIAL,
-                source_file=source_file, page=page_num,
-                offset=page_abs_base + rstart,
-                provenance=f"{kind} page {page_num}@{rstart} (text carve)",
-                warnings=["free-text carve: field boundaries and record structure lost; "
-                          "text may be a fragment or span multiple deleted records"],
-            ))
+        if not (len(text) >= min_len and printable >= len(text) * 0.8 and text.strip()):
+            return
+        # Prefix-anchor: strip leading field names so only the value is captured.
+        anchored = _strip_field_prefix(text).strip()
+        if len(anchored) < min_len:
+            return
+        rows.append(CarvedRow(
+            values=[anchored], confidence=Confidence.CARVED_PARTIAL,
+            source_file=source_file, page=page_num,
+            offset=page_abs_base + rstart,
+            provenance=f"{kind} page {page_num}@{rstart} (text carve)",
+            warnings=[
+                "Recovered text fragment from unallocated space; record structure may be "
+                "incomplete or span multiple records. Do not treat as a standalone message "
+                "without corroboration."
+            ],
+        ))
 
     while i < end:
         b = page[i]
@@ -435,10 +471,83 @@ def read_live_rows(db_path: str | Path, table: str,
     return rows
 
 
-def recover_deleted_rows(db_path: str | Path,
-                         table: Optional[str] = None) -> list[CarvedRow]:
+# ---------------------------------------------------------------------------
+# Column-mapping helper for WhatsApp msgstore.db
+# ---------------------------------------------------------------------------
+
+# Canonical column order for the WhatsApp ``message`` table (typical Android build).
+# This is used to map positional CarvedRow values to named fields.
+_WA_MESSAGE_COLUMNS: list[str] = [
+    "_id", "key_remote_jid", "key_from_me", "key_id",
+    "status", "needs_push", "data", "timestamp",
+    "media_url", "media_mime_type", "media_wa_type", "media_size",
+    "media_name", "media_caption", "media_hash", "media_duration",
+    "origin", "latitude", "longitude", "thumb_image",
+    "remote_resource", "received_timestamp", "send_timestamp", "receipt_server_timestamp",
+    "receipt_device_timestamp", "read_device_timestamp", "played_device_timestamp",
+    "raw_data", "starred", "quoted_row_id", "mentioned_jids", "multicast_id",
+    "edit_version", "media_enc_hash", "payment_transaction_id", "forwarded",
+    "sender_jid",
+]
+
+
+def map_columns_to_whatsapp(
+    row: "CarvedRow",
+    columns: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Map the positional values in a ``CarvedRow`` to named WhatsApp ``message`` fields.
+
+    Parameters
+    ----------
+    row:
+        A carved (or live) row whose ``values`` list is positionally ordered.
+    columns:
+        The ordered column names for this row (from ``rows_meta_colnames`` or a
+        ``schema_hint``).  Defaults to ``_WA_MESSAGE_COLUMNS`` if None.
+
+    Returns
+    -------
+    dict mapping column name → value for every column that is present.
+    The dict always includes ``data`` (message body text) and ``timestamp``
+    (epoch ms), even if they map to ``None``.
+    """
+    cols = columns or _WA_MESSAGE_COLUMNS
+    out: dict[str, Any] = {"data": None, "timestamp": None}
+    for i, col in enumerate(cols):
+        if i < len(row.values):
+            out[col] = row.values[i]
+        else:
+            out[col] = None
+    return out
+
+
+def recover_deleted_rows(
+    db_path: str | Path,
+    table: Optional[str] = None,
+    schema_hint: Optional[dict[str, Any]] = None,
+) -> list[CarvedRow]:
     """Carve deleted/old rows from freelist pages, freeblocks, unallocated space, and
-    the -wal file. If `table` is given, its column count is used to validate carves."""
+    the -wal file.
+
+    Parameters
+    ----------
+    db_path:
+        Path to the SQLite database file.
+    table:
+        If given, the table whose column count is used to validate carves.
+        Also populates ``rows_meta_colnames`` so callers can map columns by name.
+    schema_hint:
+        Optional dict with database-specific hints.  For WhatsApp, pass::
+
+            {
+                "col_count": 16,            # exact column count of the target table
+                "columns": ["_id", ...],   # ordered column names
+            }
+
+        When provided, ``col_count`` overrides the schema-introspection result for
+        ``expected_cols``, and ``columns`` is stored in ``rows_meta_colnames`` so
+        the pipeline can use ``map_columns_to_whatsapp`` to build rich Message objects.
+    """
     db_path = Path(db_path)
     data = db_path.read_bytes()
     if len(data) < 100 or data[:16] != _HEADER_MAGIC:
@@ -450,11 +559,19 @@ def recover_deleted_rows(db_path: str | Path,
         pass  # tolerate trailing bytes
 
     schema = _schema_tables(db_path)
-    expected_cols = schema.get(table, {}).get("col_count") if table else None
-    # If no specific table, use the most common column count as a soft hint.
-    if expected_cols is None and schema:
-        counts = [t["col_count"] for t in schema.values()]
-        expected_cols = max(set(counts), key=counts.count) if counts else None
+
+    # schema_hint takes priority over live introspection for expected_cols.
+    if schema_hint and "col_count" in schema_hint:
+        expected_cols: Optional[int] = int(schema_hint["col_count"])
+        # Register the hinted column names so the pipeline can map by name.
+        if table and "columns" in schema_hint:
+            rows_meta_colnames[(db_path.name, table)] = list(schema_hint["columns"])
+    else:
+        expected_cols = schema.get(table, {}).get("col_count") if table else None
+        # If no specific table, use the most common column count as a soft hint.
+        if expected_cols is None and schema:
+            counts = [t["col_count"] for t in schema.values()]
+            expected_cols = max(set(counts), key=counts.count) if counts else None
 
     n_pages = len(data) // page_size
     seen_rowids: set[int] = set()

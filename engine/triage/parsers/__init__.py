@@ -1,6 +1,7 @@
 """Artifact parsers — turn pulled files into typed rows for the dashboard."""
 from .exif import extract_gps, is_image
-from .whatsapp_txt import parse_whatsapp_export
+from .whatsapp_txt import parse_whatsapp_export, stream_whatsapp_export
+from .whatsapp_db import parse_whatsapp_db
 from .contacts import parse_contacts_json
 from .calllog import parse_calllog_json
 from .appdb import parse_app_db
@@ -13,6 +14,8 @@ __all__ = [
     "extract_gps",
     "is_image",
     "parse_whatsapp_export",
+    "stream_whatsapp_export",
+    "parse_whatsapp_db",
     "parse_contacts_json",
     "parse_calllog_json",
     "parse_app_db",

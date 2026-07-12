@@ -44,11 +44,12 @@ from .parsers import (
     parse_contacts_json,
     parse_sms_json,
     parse_telegram_db,
+    parse_whatsapp_db,
     parse_whatsapp_export,
 )
 from .parsers.exif import extract_datetime
 from .aleapp import run_aleapp, promote_aleapp_results
-from .recovery import recover_deleted_rows, detect_rowid_gaps, sqbrite_cross_check
+from .recovery import recover_deleted_rows, detect_rowid_gaps, sqbrite_cross_check, map_columns_to_whatsapp, rows_meta_colnames
 from .report import generate_report
 from .timeline import build_timeline
 
@@ -204,10 +205,24 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
                  or name.lower() == "history")
         if is_db:
             db_artifacts.append((stored, rec))
-            # Live-parse only recognised messaging-app stores (Telegram/Signal). WhatsApp
-            # text comes from its export; generic caches are carve-only so bulk filler rows
-            # don't pollute the message list or the communication graph.
-            if app in ("telegram", "signal") or "cache4" in name.lower():
+
+            # ---- WhatsApp msgstore.db — dedicated schema-aware parser --------
+            if name.lower() in ("msgstore.db", "msgstore.db.crypt15") or (
+                app == "whatsapp" and name.lower().startswith("msgstore")
+            ):
+                wa_msgs = parse_whatsapp_db(stored)
+                if wa_msgs:
+                    app_messages.extend(wa_msgs)
+                    case.log(
+                        "parse.whatsapp_db",
+                        f"{len(wa_msgs)} live WhatsApp messages from {name} (msgstore.db parser)",
+                        tier=Tier.TIER0.value,
+                        artifact_id=rec.artifact_id,
+                    )
+                # Skip generic parse_app_db for this file — the dedicated parser is authoritative.
+
+            # ---- Other recognised messaging-app stores -----------------------
+            elif app in ("telegram", "signal") or "cache4" in name.lower():
                 if app == "telegram" or "cache4" in name.lower():
                     chat = parse_telegram_db(stored)
                 else:
@@ -274,10 +289,23 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     recovered_rows = []
     for stored, rec in db_artifacts:
         try:
-            rows = recover_deleted_rows(stored)
+            stored_name = stored.name.lower()
+            is_wa_msgstore = (
+                stored_name in ("msgstore.db",)
+                or (rec.app == "whatsapp" and stored_name.startswith("msgstore"))
+            )
+            if is_wa_msgstore:
+                # Build a schema hint from the live DB so the carver knows WhatsApp's layout.
+                wa_schema_hint = _build_wa_schema_hint(stored)
+                rows = recover_deleted_rows(
+                    stored, table="message", schema_hint=wa_schema_hint
+                )
+            else:
+                rows = recover_deleted_rows(stored)
             for r in rows:
                 d = r.to_dict()
                 d["database_artifact"] = rec.artifact_id
+                d["_source_app"] = "whatsapp" if is_wa_msgstore else rec.app
                 recovered_rows.append(d)
             if rows:
                 case.log("recover.sqlite",
@@ -468,22 +496,99 @@ def _parse_dumpsys_location(text: str) -> list[LocationPoint]:
     return pts
 
 
+def _build_wa_schema_hint(db_path: "Path") -> dict:
+    """Introspect the live ``message`` table in a msgstore.db and return a schema_hint
+    dict suitable for ``recover_deleted_rows``.
+
+    If the table doesn't exist (e.g. encrypted or wrong file), returns an empty dict
+    so the carver falls back to heuristic column detection.
+    """
+    import sqlite3
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        # Try both common table names.
+        for tbl in ("message", "messages"):
+            try:
+                rows = con.execute(f"PRAGMA table_info('{tbl}')").fetchall()
+                if rows:
+                    cols = [r[1] for r in rows]
+                    con.close()
+                    return {"col_count": len(cols), "columns": cols}
+            except sqlite3.Error:
+                continue
+        con.close()
+    except sqlite3.Error:
+        pass
+    return {}
+
+
 def _recovered_as_messages(recovered_rows: list[dict]) -> list:
     """Turn recovered DB rows that look like chat messages into Message objects so the
-    Messages view can show deleted content with its confidence badge."""
+    Messages view can show deleted content with its confidence badge.
+
+    For rows that originated from WhatsApp's ``msgstore.db``, we use
+    ``map_columns_to_whatsapp`` to extract structured fields (body text, timestamp,
+    sender JID) rather than a naïve string-join, producing richer Message objects.
+    """
     from .config import Confidence
     from .models import Message
+    from datetime import datetime, timezone
     out = []
     for d in recovered_rows:
         vals = d.get("values", [])
-        text = " ".join(v for v in vals if isinstance(v, str) and len(v) >= 2)
-        if not text:
-            continue
-        out.append(Message(
-            app="recovered", sender="<recovered>", body=text,
-            confidence=Confidence(d.get("confidence", "carved")),
-            source_file=d.get("source_file", ""), provenance=d.get("provenance", ""),
-            flags=["deleted"]))
+        source_file = d.get("source_file", "")
+        source_app = d.get("_source_app", "")
+        conf_val = d.get("confidence", "carved")
+        provenance = d.get("provenance", "")
+
+        if source_app == "whatsapp" or "msgstore" in source_file.lower():
+            # Attempt rich WhatsApp column mapping.
+            from .recovery import map_columns_to_whatsapp, rows_meta_colnames, CarvedRow
+            # Reconstruct a lightweight CarvedRow-like object for the helper.
+            class _FakeRow:
+                values = vals
+            cols = rows_meta_colnames.get((source_file, "message"))
+            mapped = map_columns_to_whatsapp(_FakeRow(), columns=cols)  # type: ignore[arg-type]
+            body = mapped.get("data") or ""
+            if not body:
+                # Fall back: first non-trivial string value.
+                body = " ".join(v for v in vals if isinstance(v, str) and len(v) >= 2)
+            if not body:
+                continue
+            # Timestamp: epoch ms → ISO-8601.
+            ts = None
+            ts_raw = mapped.get("timestamp")
+            if ts_raw:
+                try:
+                    ts = datetime.fromtimestamp(
+                        int(ts_raw) / 1000.0, tz=timezone.utc
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                except Exception:
+                    ts = None
+            sender_raw = mapped.get("sender_jid") or mapped.get("key_remote_jid") or "<recovered>"
+            # Strip JID suffix for readability.
+            if "@" in str(sender_raw):
+                sender_raw = str(sender_raw).split("@")[0]
+            out.append(Message(
+                app="whatsapp",
+                sender=str(sender_raw),
+                body=body,
+                timestamp=ts,
+                confidence=Confidence(conf_val),
+                source_file=source_file,
+                provenance=provenance,
+                flags=["deleted"],
+            ))
+        else:
+            # Generic fallback: join all string values.
+            text = " ".join(v for v in vals if isinstance(v, str) and len(v) >= 2)
+            if not text:
+                continue
+            out.append(Message(
+                app="recovered", sender="<recovered>", body=text,
+                confidence=Confidence(conf_val),
+                source_file=source_file, provenance=provenance,
+                flags=["deleted"]))
     return out
 
 
