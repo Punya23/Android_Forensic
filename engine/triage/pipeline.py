@@ -43,10 +43,12 @@ from .parsers import (
     parse_calllog_json,
     parse_contacts_json,
     parse_sms_json,
+    parse_telegram_db,
     parse_whatsapp_export,
 )
 from .parsers.exif import extract_datetime
-from .recovery import recover_deleted_rows, detect_rowid_gaps
+from .aleapp import run_aleapp, promote_aleapp_results
+from .recovery import recover_deleted_rows, detect_rowid_gaps, sqbrite_cross_check
 from .report import generate_report
 from .timeline import build_timeline
 
@@ -69,6 +71,7 @@ class PipelineConfig:
     max_files: int = 5000  # safety cap for a field triage run
     capture_screenshot: bool = True  # manual-capture the current screen (read-only)
     tier1_contacts: bool = False  # run helper APK flow to collect contacts.json
+    run_aleapp: bool = True   # run ALEAPP subprocess if available (graceful no-op if not)
 
 
 def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
@@ -205,7 +208,10 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
             # text comes from its export; generic caches are carve-only so bulk filler rows
             # don't pollute the message list or the communication graph.
             if app in ("telegram", "signal") or "cache4" in name.lower():
-                chat = parse_app_db(stored)
+                if app == "telegram" or "cache4" in name.lower():
+                    chat = parse_telegram_db(stored)
+                else:
+                    chat = parse_app_db(stored)
                 if chat:
                     app_messages.extend(chat)
                     case.log("parse.appdb", f"{len(chat)} live messages from {name}",
@@ -237,6 +243,32 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
         case.log("shell.dumpsys", "dumpsys location captured",
                  command="dumpsys location", tier=Tier.TIER0.value)
 
+    # -- ALEAPP broad artifact parsing -------------------------------------
+    aleapp_result: dict = {"available": False, "artifacts": {}, "report_dir": "", "error": None}
+    if cfg.run_aleapp:
+        progress("aleapp", 0.59, "Running ALEAPP artifact parser")
+        aleapp_out = case.root / "aleapp_output"
+        def _aleapp_log(msg: str) -> None:
+            case.log("aleapp", msg, tier=Tier.TIER0.value)
+        aleapp_result = run_aleapp(
+            input_dir=staging,
+            output_dir=aleapp_out,
+            log_fn=_aleapp_log,
+        )
+        # Fold ALEAPP-recovered contacts/calls/SMS/browser into pipeline lists.
+        promote_aleapp_results(
+            aleapp_result,
+            messages_list=app_messages,
+            contacts_list=contacts,
+            calls_list=calls,
+            browser_list=browser_history,
+        )
+        if aleapp_result.get("available"):
+            n = sum(len(v) for v in aleapp_result["artifacts"].values())
+            case.log("aleapp.done",
+                     f"ALEAPP parsed {len(aleapp_result['artifacts'])} modules / {n} rows",
+                     tier=Tier.TIER0.value)
+
     # -- SQLite deleted-record recovery -------------------------------------
     progress("recover", 0.62, "Recovering deleted records")
     recovered_rows = []
@@ -253,6 +285,25 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
                          tier=Tier.TIER0.value, artifact_id=rec.artifact_id)
         except Exception as exc:  # never let one DB kill the run
             case.log("recover.sqlite", f"error on {rec.source_path}: {exc}",
+                     result="error", tier=Tier.TIER0.value)
+
+    # -- sqbrite secondary recovery cross-check ----------------------------
+    # Runs a raw-byte scan to catch rows missed by the B-tree freelist walk.
+    for stored, rec in db_artifacts:
+        try:
+            primary = [r for r in recovered_rows
+                       if r.get("source_file") == stored.name]
+            extra = sqbrite_cross_check(stored, primary_rows=[])
+            for e in extra:
+                d = e.to_dict()
+                d["database_artifact"] = rec.artifact_id
+                recovered_rows.append(d)
+            if extra:
+                case.log("recover.sqbrite",
+                         f"{len(extra)} additional rows (sqbrite) from {rec.source_path}",
+                         tier=Tier.TIER0.value, artifact_id=rec.artifact_id)
+        except Exception as exc:
+            case.log("recover.sqbrite", f"sqbrite error on {rec.source_path}: {exc}",
                      result="error", tier=Tier.TIER0.value)
 
     # Recovered WhatsApp/Telegram-style messages become message rows too, so the
@@ -318,6 +369,7 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     case.write_derived("risk", risk)
     case.write_derived("throughput", throughput)
     case.write_derived("rowid_gaps", _collect_gaps(db_artifacts))
+    case.write_derived("aleapp", aleapp_result)
 
     progress("report", 0.96, "Generating triage report")
     report_path = generate_report(case.root)
@@ -333,6 +385,7 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
             "locations": len(locations), "recovered": len(recovered_rows),
             "flags": len(flags), "timeline": len(timeline),
             "browser": len(browser_history), "screenshots": len(screenshots),
+            "aleapp_modules": len(aleapp_result.get("artifacts", {})),
         },
         "risk": risk,
         "throughput": throughput,

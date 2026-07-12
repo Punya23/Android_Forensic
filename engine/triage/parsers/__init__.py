@@ -6,6 +6,8 @@ from .calllog import parse_calllog_json
 from .appdb import parse_app_db
 from .sms import parse_sms_json
 from .browser import parse_browser_history
+from .telegram import parse_telegram_db
+from .signal import parse_signal_backup, parse_signal_plaintext_db
 
 __all__ = [
     "extract_gps",
@@ -16,4 +18,7 @@ __all__ = [
     "parse_app_db",
     "parse_sms_json",
     "parse_browser_history",
+    "parse_telegram_db",
+    "parse_signal_backup",
+    "parse_signal_plaintext_db",
 ]

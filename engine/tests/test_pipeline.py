@@ -60,7 +60,7 @@ def test_narrative_deleted_messages_recovered(corpus, tmp_path):
                          cases_root=tmp_path / "cases")
     summary = run_acquisition(source, cfg)
     import json
-    rec = json.loads((Path(summary["case_dir"]) / "derived" / "recovered.json").read_text())
+    rec = json.loads((Path(summary["case_dir"]) / "derived" / "recovered.json").read_text(encoding="utf-8"))
     all_text = " ".join(str(v) for r in rec for v in r["values"] if isinstance(v, str))
     # The deleted WhatsApp evidence must be recoverable from msgstore.db.
     assert "4471" in all_text

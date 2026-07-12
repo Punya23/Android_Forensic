@@ -6,6 +6,7 @@ from .sqlite_recovery import (
     detect_rowid_gaps,
     recover_all,
 )
+from .sqbrite import SqbriteRow, sqbrite_scan, sqbrite_cross_check
 
 __all__ = [
     "CarvedRow",
@@ -13,4 +14,7 @@ __all__ = [
     "recover_deleted_rows",
     "detect_rowid_gaps",
     "recover_all",
+    "SqbriteRow",
+    "sqbrite_scan",
+    "sqbrite_cross_check",
 ]

@@ -247,14 +247,14 @@ class Case:
         path = self.derived_dir / f"{name}.json"
         payload = [d.to_dict() if hasattr(d, "to_dict") else d for d in data] \
             if isinstance(data, list) else data
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         return path
 
     def read_derived(self, name: str) -> Any:
         path = self.derived_dir / f"{name}.json"
         if not path.exists():
             return [] if name != "summary" else {}
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
 
     # -- summary for the dashboard/report ------------------------------------
     def custody_summary(self) -> dict[str, Any]:
