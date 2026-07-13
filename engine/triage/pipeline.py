@@ -44,6 +44,12 @@ from .parsers import (
     parse_contacts_json,
     parse_sms_json,
     parse_telegram_db,
+    recover_telegram_messages,
+    export_recovered_messages_json,
+    recover_users_and_chats,
+    extract_media_paths_from_blob,
+    build_conversations,
+    TelegramPaths,
     parse_whatsapp_db,
     parse_whatsapp_export,
 )
@@ -79,6 +85,8 @@ class PipelineConfig:
     tier1_calllog: bool = False   # run helper APK call-log role-swap (intrusive, logged)
     tier1_sms: bool = False       # run helper APK SMS role-swap (intrusive, logged)
     run_aleapp: bool = False      # run ALEAPP subprocess for broad OS artifact parsing
+    tier2_telegram: bool = False  # root-required: pull cache4.db and run full forensic recovery
+    tier2_telegram_max_media: int = 200  # max media files to pull per case (0 = skip media pull)
 
 
 def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
@@ -327,9 +335,26 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
                      f"ALEAPP parsed {len(aleapp_result['artifacts'])} modules / {n} rows",
                      tier=Tier.TIER0.value)
 
+
+    # -- Tier 2: Telegram root pull (optional, clearly gated) ---------------
+    # recovered_rows pre-declared here so Tier-2 Telegram can append to it
+    # before the generic SQLite recovery loop adds its own rows.
+    recovered_rows: list = []
+    if cfg.tier2_telegram:
+        progress("tier2", 0.60, "Running Tier-2 Telegram recovery (root)")
+        if isinstance(source, RealDeviceSource):
+            _run_tier2_telegram(source, case, staging, app_messages, recovered_rows,
+                                _cfg_max_media=cfg.tier2_telegram_max_media)
+        else:
+            case.log(
+                "tier2.telegram",
+                "Tier-2 Telegram requested on non-real (mock) source; skipped",
+                result="skipped",
+                tier=Tier.TIER2.value,
+            )
+
     # -- SQLite deleted-record recovery -------------------------------------
     progress("recover", 0.62, "Recovering deleted records")
-    recovered_rows = []
     for stored, rec in db_artifacts:
         try:
             stored_name = stored.name.lower()
@@ -398,9 +423,28 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
 
     # -- timeline -----------------------------------------------------------
     progress("timeline", 0.82, "Reconstructing timeline")
+    # Load telegram derived data if it exists (written by _run_tier2_telegram).
+    import json as _json
+    _tg_msgs_path = case.derived_dir / "telegram_recovery.json"
+    _tg_media_path = case.derived_dir / "telegram_media.json"
+    _tg_msgs: list[dict] = []
+    _tg_media: list[dict] = []
+    try:
+        if _tg_msgs_path.exists():
+            _tg_msgs = _json.loads(_tg_msgs_path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    try:
+        if _tg_media_path.exists():
+            _tg_media = _json.loads(_tg_media_path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+
     all_messages = list(app_messages) + recovered_messages
     timeline = build_timeline(messages=all_messages, calls=calls,
-                              media=media_items, locations=locations)
+                              media=media_items, locations=locations,
+                              telegram_messages=_tg_msgs,
+                              telegram_media=_tg_media)
 
     # -- analysis: social graph + risk verdict ------------------------------
     progress("analysis", 0.88, "Building communication graph & risk verdict")
@@ -744,6 +788,359 @@ def _collect_gaps(db_artifacts: list[tuple[Path, Any]]) -> dict[str, Any]:
         except Exception:
             continue
     return out
+def _run_tier2_telegram(
+    source: "RealDeviceSource",
+    case: "Case",
+    staging: "Path",
+    app_messages: list,
+    recovered_rows: list,
+    _cfg_max_media: int = 200,
+) -> None:
+    """Pull Telegram cache4.db via root shell and run full forensic recovery.
+
+    This is a **Tier-2 action** — it requires root access on the device and is
+    only attempted when ``PipelineConfig.tier2_telegram`` is ``True`` and the
+    source is a ``RealDeviceSource``.
+
+    ADB privilege escalation
+    ~~~~~~~~~~~~~~~~~~~~~~~~
+    Uses ``adb shell su -c "cp ..."`` (Magisk / standard su).  The copy command
+    itself does not modify the original database — it is logged as a read-only
+    action (``alters_device=False``) since no app data is changed.
+
+    Output
+    ~~~~~~
+    - Recovered ``Message`` objects are appended to ``app_messages`` with
+      ``app='telegram'`` and appropriate confidence badges.
+    - Raw recovery dicts (with full provenance) are appended to
+      ``recovered_rows`` so the report and dashboard surfaces them.
+    - A JSON export file is written to the case folder.
+    """
+    REMOTE_DB = "/data/data/org.telegram.messenger/files/cache4.db"
+    REMOTE_STAGING = "/sdcard/Download/tg_cache4_triage.db"
+
+    # 1. Copy to accessible location via su.
+    cp_result = source.adb.shell(
+        f'su -c "cp {REMOTE_DB} {REMOTE_STAGING}"'
+    )
+    case.log(
+        "tier2.telegram.cp",
+        f"su cp: {REMOTE_DB} → {REMOTE_STAGING}",
+        command=f"adb shell su -c 'cp {REMOTE_DB} {REMOTE_STAGING}'",
+        result="ok" if cp_result.ok else "error",
+        alters_device=False,
+        tier=Tier.TIER2.value,
+    )
+    if not cp_result.ok:
+        case.log(
+            "tier2.telegram",
+            f"su cp failed (device may not be rooted or Telegram not installed): "
+            f"{cp_result.stderr[:200]}",
+            result="error",
+            tier=Tier.TIER2.value,
+        )
+        return
+
+    # 2. Pull to local staging.
+    local_db = staging / "tg_cache4.db"
+    pull = source.adb.pull(REMOTE_STAGING, local_db)
+    case.log(
+        "tier2.telegram.pull",
+        "pull tg_cache4.db from device staging area",
+        command=f"adb pull {REMOTE_STAGING}",
+        result="ok" if pull.ok else "error",
+        alters_device=False,
+        tier=Tier.TIER2.value,
+    )
+    if not pull.ok or not local_db.exists():
+        case.log(
+            "tier2.telegram",
+            "adb pull of cache4.db failed",
+            result="error",
+            tier=Tier.TIER2.value,
+        )
+        return
+
+    # 3. Ingest into case manifest (Tier 2).
+    rec = case.ingest_file(
+        local_db,
+        source_path=REMOTE_DB,
+        tier=Tier.TIER2,
+        method="root-su-cp",
+        category="database",
+        app="telegram",
+        flags=["tier2-root"],
+        move=True,
+    )
+    stored = case.root / rec.stored_path
+
+    # 4. Run full forensic recovery.
+    case.log(
+        "tier2.telegram.recover",
+        "Running Telegram cache4.db forensic recovery",
+        tier=Tier.TIER2.value,
+    )
+    result = recover_telegram_messages(stored)
+
+    if not result.get("available"):
+        case.log(
+            "tier2.telegram",
+            result.get("error", "recovery unavailable"),
+            result="error",
+            tier=Tier.TIER2.value,
+        )
+        return
+
+    counts = result.get("counts", {})
+    case.log(
+        "tier2.telegram.done",
+        (
+            f"Telegram recovery: live={counts.get('live', 0)} "
+            f"recovered={counts.get('recovered_verified', 0)} "
+            f"carved={counts.get('carved_partial', 0)} "
+            f"gaps={counts.get('deletion_detected', 0)}"
+        ),
+        tier=Tier.TIER2.value,
+        artifact_id=rec.artifact_id,
+    )
+
+    # 5. Fold messages into the pipeline.
+    from .config import Confidence as _Conf
+    from .models import Message as _Msg
+    from datetime import datetime as _dt, timezone as _tz
+
+    for msg_dict in result.get("messages", []):
+        body = msg_dict.get("body", "").strip()
+        if not body:
+            continue
+        conf_val = msg_dict.get("confidence", _Conf.LIVE.value)
+        try:
+            conf = _Conf(conf_val)
+        except ValueError:
+            conf = _Conf.CARVED_PARTIAL
+
+        # Live and recovered messages go into app_messages for the dashboard.
+        if conf in (_Conf.LIVE, _Conf.RECOVERED_VERIFIED, _Conf.CARVED_PARTIAL):
+            app_messages.append(_Msg(
+                app="telegram",
+                sender=msg_dict.get("sender", "<unknown>"),
+                body=body,
+                timestamp=msg_dict.get("timestamp"),
+                confidence=conf,
+                source_file=msg_dict.get("source_file", stored.name),
+                provenance=msg_dict.get("provenance", ""),
+                flags=(["deleted"] if conf != _Conf.LIVE else []),
+            ))
+
+        # All rows (including DELETION_DETECTED) go into recovered_rows for the report.
+        d = dict(msg_dict)
+        d["database_artifact"] = rec.artifact_id
+        d["_source_app"] = "telegram"
+        recovered_rows.append(d)
+
+    # 6. Write JSON export to case folder.
+    json_out = case.root / "derived" / "telegram_recovery.json"
+    try:
+        export_recovered_messages_json(result, json_out)
+        case.log(
+            "tier2.telegram.export",
+            f"Full provenance JSON written to {json_out.name}",
+            tier=Tier.TIER2.value,
+        )
+    except Exception as exc:
+        case.log(
+            "tier2.telegram.export",
+            f"JSON export failed: {exc}",
+            result="error",
+            tier=Tier.TIER2.value,
+        )
+
+    # -----------------------------------------------------------------------
+    # Phase 4: User & Chat recovery
+    # -----------------------------------------------------------------------
+    case.log("tier2.telegram.users_chats", "Recovering users and chats tables",
+             tier=Tier.TIER2.value)
+    uc_result = recover_users_and_chats(stored)
+    if uc_result.get("available"):
+        uc_counts = uc_result.get("counts", {})
+        case.log(
+            "tier2.telegram.users_chats.done",
+            (f"users: live={uc_counts.get('users_live', 0)} "
+             f"recovered={uc_counts.get('users_recovered', 0)} "
+             f"carved={uc_counts.get('users_carved', 0)} | "
+             f"chats: live={uc_counts.get('chats_live', 0)} "
+             f"recovered={uc_counts.get('chats_recovered', 0)} "
+             f"carved={uc_counts.get('chats_carved', 0)}"),
+            tier=Tier.TIER2.value,
+        )
+    # Write derived JSON.
+    _write_case_derived(case, "telegram_users", uc_result.get("users", []))
+    _write_case_derived(case, "telegram_chats", uc_result.get("chats", []))
+
+    # -----------------------------------------------------------------------
+    # Phase 5: Media file extraction
+    # -----------------------------------------------------------------------
+    media_pulled: list[dict] = []
+    max_media = _cfg_max_media  # passed from the caller
+    if max_media > 0:
+        case.log("tier2.telegram.media",
+                 f"Scanning for Telegram media blobs (cap={max_media})",
+                 tier=Tier.TIER2.value)
+        media_pulled = _pull_telegram_media(
+            source=source,
+            case=case,
+            staging=staging,
+            messages=result.get("messages", []),
+            max_media=max_media,
+        )
+        case.log("tier2.telegram.media.done",
+                 f"{len(media_pulled)} media files pulled",
+                 tier=Tier.TIER2.value)
+
+    # Write updated recovery JSON (now includes media_artifact_id per message).
+    _write_case_derived(case, "telegram_recovery", result.get("messages", []))
+
+    # Write media index.
+    _write_case_derived(case, "telegram_media", media_pulled)
+
+    # -----------------------------------------------------------------------
+    # Phase 6: Conversation threading
+    # -----------------------------------------------------------------------
+    case.log("tier2.telegram.conversations", "Building conversation threads",
+             tier=Tier.TIER2.value)
+    conversations = build_conversations(
+        messages=result.get("messages", []),
+        users=uc_result.get("users", []),
+        chats=uc_result.get("chats", []),
+    )
+    _write_case_derived(case, "telegram_conversations", conversations)
+    case.log(
+        "tier2.telegram.conversations.done",
+        f"{len(conversations)} conversation threads built",
+        tier=Tier.TIER2.value,
+    )
+
+
+def _write_case_derived(case: "Case", name: str, data: object) -> None:
+    """Write a derived JSON dataset to the case folder."""
+    out = case.derived_dir / f"{name}.json"
+    try:
+        out.write_text(
+            __import__("json").dumps(data, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        log.warning("_write_case_derived(%s): %s", name, exc)
+
+
+def _pull_telegram_media(
+    source: "RealDeviceSource",
+    case: "Case",
+    staging: "Path",
+    messages: list[dict],
+    max_media: int,
+) -> list[dict]:
+    """Pull media files referenced in Telegram message BLOBs.
+
+    For each message that has a non-empty ``data`` BLOB, we call
+    :func:`extract_media_paths_from_blob` to get candidate local file paths,
+    then copy each file from the device via ``su -c cp`` and ``adb pull``.
+    The pulled file is ingested as a Tier-2 artifact and its ``artifact_id``
+    is written back into the parent message dict under ``media_artifact_id``.
+
+    Parameters
+    ----------
+    max_media:
+        Hard cap on the total number of files pulled.  Set to 0 to skip
+        media extraction entirely.
+    """
+    pulled: list[dict] = []
+    counter = 0
+
+    for msg_dict in messages:
+        if counter >= max_media:
+            break
+
+        # Look for a blob value in any key that ends with "_blob" or is "data".
+        blob: Optional[bytes] = None
+        for k, v in msg_dict.items():
+            if isinstance(v, (bytes, bytearray)):
+                blob = bytes(v)
+                break
+            if isinstance(v, dict) and v.get("__blob__"):
+                # Already serialised — we can't recover the raw bytes at this point.
+                pass
+
+        if not blob:
+            continue
+
+        paths = extract_media_paths_from_blob(blob)
+        if not paths:
+            continue
+
+        for rel_path in paths:
+            if counter >= max_media:
+                break
+
+            remote_file = TelegramPaths.media_path(rel_path)
+            safe_name = rel_path.replace("/", "_").replace("\\", "_")
+            staging_remote = f"/sdcard/Download/tg_media_{counter}_{safe_name}"
+            local_file = staging / f"tg_media_{counter}_{safe_name}"
+
+            # su cp from app-private to sdcard.
+            cp = source.adb.shell(f'su -c "cp {remote_file} {staging_remote}"')
+            case.log(
+                "tier2.telegram.media.cp",
+                f"su cp {rel_path}",
+                command=f"adb shell su -c 'cp {remote_file} {staging_remote}'",
+                result="ok" if cp.ok else "error",
+                alters_device=False,
+                tier=Tier.TIER2.value,
+            )
+            if not cp.ok:
+                continue
+
+            # adb pull to local staging.
+            pull = source.adb.pull(staging_remote, local_file)
+            case.log(
+                "tier2.telegram.media.pull",
+                f"pull {rel_path}",
+                command=f"adb pull {staging_remote}",
+                result="ok" if pull.ok else "error",
+                alters_device=False,
+                tier=Tier.TIER2.value,
+            )
+            if not pull.ok or not local_file.exists():
+                continue
+
+            # Ingest into case manifest.
+            media_rec = case.ingest_file(
+                local_file,
+                source_path=remote_file,
+                tier=Tier.TIER2,
+                method="root-su-cp",
+                category="telegram_media",
+                app="telegram",
+                flags=["tier2-root", "media_blob_heuristic"],
+                move=True,
+            )
+
+            # Link back to the parent message.
+            msg_dict["media_artifact_id"] = media_rec.artifact_id
+
+            pulled.append({
+                "artifact_id": media_rec.artifact_id,
+                "source_path": remote_file,
+                "rel_path":    rel_path,
+                "size_bytes":  media_rec.size_bytes,
+                "sha256":      media_rec.sha256,
+                "parent_message_ts": msg_dict.get("timestamp"),
+                "confidence":  msg_dict.get("confidence", "live"),
+            })
+            counter += 1
+
+    return pulled
+
 def _run_tier1_calllog_helper(source: RealDeviceSource, case: Case, staging: Path) -> tuple[list, set[str]]:
     """Run helper-APK call-log workflow and ingest calllog.json as Tier-1 evidence."""
     package = "io.erakshak.collector"

@@ -326,3 +326,525 @@ def test_whatsapp_db_timestamp_iso_format(tmp_path):
     for msg in msgs:
         if msg.timestamp:
             assert "T" in msg.timestamp, f"Not ISO-8601: {msg.timestamp}"
+
+
+# ===========================================================================
+# New tests — Task 4: Telegram cache4.db recovery
+# ===========================================================================
+
+from triage.parsers import (
+    parse_telegram_db,
+    recover_telegram_messages,
+    export_recovered_messages_json,
+    detect_telegram_schema,
+)
+from triage.config import Confidence
+
+
+def _make_telegram_mock_db(path: Path, rows=None, delete_ids=None) -> None:
+    """Synthetic cache4.db using the project's mock schema (body/sender/date)."""
+    con = sqlite3.connect(path)
+    con.execute(
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, body TEXT, date INTEGER)"
+    )
+    if rows:
+        for r in rows:
+            con.execute("INSERT INTO messages(sender, body, date) VALUES (?,?,?)", r)
+    con.commit()
+    if delete_ids:
+        con.execute(
+            f"DELETE FROM messages WHERE id IN ({','.join('?' * len(delete_ids))})",
+            delete_ids,
+        )
+        con.commit()
+    con.close()
+
+
+def _make_telegram_real_db(path: Path, rows=None, delete_ids=None) -> None:
+    """Synthetic cache4.db using real Telegram v2 schema (mid/from_id/peer_id/date/message)."""
+    con = sqlite3.connect(path)
+    con.execute(
+        "CREATE TABLE messages ("
+        "mid INTEGER PRIMARY KEY, from_id INTEGER, peer_id INTEGER, "
+        "date INTEGER, message TEXT, out INTEGER)"
+    )
+    if rows:
+        for r in rows:
+            con.execute(
+                "INSERT INTO messages(mid, from_id, peer_id, date, message, out) "
+                "VALUES (?,?,?,?,?,?)",
+                r,
+            )
+    con.commit()
+    if delete_ids:
+        con.execute(
+            f"DELETE FROM messages WHERE mid IN ({','.join('?' * len(delete_ids))})",
+            delete_ids,
+        )
+        con.commit()
+    con.close()
+
+
+# --- Task 4a: schema detection -----------------------------------------------
+
+def test_telegram_schema_detection_mock_schema(tmp_path):
+    """detect_telegram_schema correctly identifies the mock (body/sender) layout."""
+    db = tmp_path / "cache4.db"
+    _make_telegram_mock_db(db, rows=[("Alice", "hello world", 1000)])
+    schema = detect_telegram_schema(db)
+    assert schema.usable, "Schema should be usable"
+    assert schema.mapping.get("body") == "body"
+    assert schema.mapping.get("date") == "date"
+    assert "synthetic" in schema.version_label or "mock" in schema.version_label \
+        or "dynamic" in schema.version_label
+
+
+def test_telegram_schema_detection_real_v2_schema(tmp_path):
+    """detect_telegram_schema correctly identifies real Telegram v2 (from_id/message) layout."""
+    db = tmp_path / "cache4.db"
+    _make_telegram_real_db(db, rows=[(1, 12345, 67890, 1_700_000_000, "test message", 0)])
+    schema = detect_telegram_schema(db)
+    assert schema.usable, "Schema should be usable"
+    assert schema.mapping.get("body") == "message"
+    assert schema.mapping.get("from_id") == "from_id"
+    assert "v2" in schema.version_label or "from_id" in schema.version_label \
+        or "dynamic" in schema.version_label
+
+
+def test_telegram_schema_detection_missing_file(tmp_path):
+    """detect_telegram_schema on a missing path returns an unusable schema without raising."""
+    schema = detect_telegram_schema(tmp_path / "nonexistent.db")
+    assert not schema.usable
+    assert schema.col_count == 0
+
+
+# --- Task 4b: live parse ------------------------------------------------------
+
+def test_telegram_live_parse_synthetic_schema(tmp_path):
+    """parse_telegram_db correctly parses live rows with the mock schema."""
+    db = tmp_path / "cache4.db"
+    _make_telegram_mock_db(db, rows=[
+        ("Alice", "meet at the docks", 1_700_000_000),
+        ("Bob",   "bring the package", 1_700_000_060),
+    ])
+    msgs = parse_telegram_db(db)
+    assert len(msgs) == 2
+    bodies = {m.body for m in msgs}
+    assert "meet at the docks" in bodies
+    assert "bring the package" in bodies
+    for msg in msgs:
+        assert msg.app == "telegram"
+        assert msg.confidence == Confidence.LIVE
+        assert msg.timestamp is not None and "T" in msg.timestamp
+
+
+def test_telegram_live_parse_real_schema(tmp_path):
+    """parse_telegram_db correctly parses live rows with the real Telegram v2 schema."""
+    db = tmp_path / "cache4.db"
+    _make_telegram_real_db(db, rows=[
+        (1, 11111, 22222, 1_700_000_000, "secret payload real schema", 0),
+        (2, 33333, 22222, 1_700_000_060, "another real message", 1),
+    ])
+    msgs = parse_telegram_db(db)
+    assert len(msgs) >= 2
+    bodies_joined = " ".join(m.body for m in msgs)
+    assert "secret payload real schema" in bodies_joined
+    assert "another real message" in bodies_joined
+
+
+# --- Task 4c: deleted-row recovery -------------------------------------------
+
+def test_telegram_recovery_deleted_rows(tmp_path):
+    """recover_telegram_messages recovers deleted Telegram messages (mock schema)."""
+    db = tmp_path / "cache4.db"
+    _make_telegram_mock_db(db, rows=[
+        ("Rahul", "transfer done account 4471 secretly", 1_700_000_100),
+        ("Priya", "warehouse nine tonight", 1_700_000_200),
+        ("Ali",   "this one stays live", 1_700_000_300),
+        ("Rani",  "also stays live", 1_700_000_400),
+    ], delete_ids=[1, 2])
+
+    result = recover_telegram_messages(db)
+
+    assert result["available"] is True
+    assert result["error"] is None
+    all_text = " ".join(m["body"] for m in result["messages"])
+    # The two deleted messages should appear somewhere in recovery output.
+    assert "4471" in all_text or "warehouse" in all_text.lower()
+
+
+def test_telegram_recovery_contains_live_rows(tmp_path):
+    """recover_telegram_messages includes live rows with LIVE confidence."""
+    db = tmp_path / "cache4.db"
+    _make_telegram_mock_db(db, rows=[
+        ("Alice", "live message alpha", 1_700_000_000),
+        ("Bob",   "live message beta",  1_700_000_060),
+    ])
+    result = recover_telegram_messages(db)
+    live_msgs = [m for m in result["messages"] if m["confidence"] == Confidence.LIVE.value]
+    assert len(live_msgs) == 2
+    bodies = {m["body"] for m in live_msgs}
+    assert "live message alpha" in bodies
+
+
+# --- Task 4d: no-root fallback -----------------------------------------------
+
+def test_telegram_no_root_fallback(tmp_path):
+    """recover_telegram_messages on a missing file returns the standard error dict."""
+    result = recover_telegram_messages(tmp_path / "nonexistent_cache4.db")
+    assert result["available"] is False
+    assert result["error"] is not None
+    assert "root" in result["error"].lower()
+    assert result["messages"] == []
+    assert result["counts"]["total"] == 0
+
+
+# --- Task 4e: JSON export ----------------------------------------------------
+
+def test_telegram_export_json(tmp_path):
+    """export_recovered_messages_json writes valid JSON with required provenance keys."""
+    db = tmp_path / "cache4.db"
+    _make_telegram_mock_db(db, rows=[
+        ("Alice", "exportable message one", 1_700_000_000),
+        ("Bob",   "exportable message two", 1_700_000_060),
+    ])
+    result = recover_telegram_messages(db)
+    out_path = tmp_path / "tg_export.json"
+    returned = export_recovered_messages_json(result, out_path)
+
+    # File exists and path matches.
+    assert returned == out_path
+    assert out_path.exists()
+
+    # Valid JSON.
+    data = json.loads(out_path.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+
+    # Top-level provenance keys must be present.
+    assert "tool" in data
+    assert "schema_version" in data
+    assert "counts" in data
+    assert "messages" in data
+    assert isinstance(data["messages"], list)
+
+    # Each message must carry the required provenance fields.
+    required_keys = {"body", "sender", "confidence", "source_file",
+                     "carve_method", "provenance"}
+    for msg in data["messages"]:
+        missing = required_keys - msg.keys()
+        assert not missing, f"Message missing keys {missing}: {msg}"
+
+
+# --- Task 4f: confidence badges ----------------------------------------------
+
+def test_telegram_confidence_badges(tmp_path):
+    """Recovered rows carry correct confidence values; no carve has LIVE confidence."""
+    db = tmp_path / "cache4.db"
+    # Use a large enough dataset to force freelist pages.
+    rows = [(f"user{i}", f"message payload number {i} keyword{i}", 1_700_000_000 + i)
+            for i in range(200)]
+    _make_telegram_mock_db(db, rows=rows, delete_ids=list(range(10, 160)))
+
+    result = recover_telegram_messages(db)
+    msgs = result["messages"]
+    assert len(msgs) > 0
+
+    valid_confidences = {c.value for c in Confidence}
+    for msg in msgs:
+        assert msg["confidence"] in valid_confidences, \
+            f"Invalid confidence: {msg['confidence']}"
+
+    # Carved rows must NOT have LIVE confidence.
+    carved = [m for m in msgs if "freeblock" in m.get("carve_method", "")
+              or "unallocated" in m.get("carve_method", "")
+              or m["confidence"] == Confidence.CARVED_PARTIAL.value]
+    for m in carved:
+        assert m["confidence"] != Confidence.LIVE.value, \
+            f"Carved row incorrectly labelled LIVE: {m}"
+
+
+# --- Task 4g: rowid gap detection -------------------------------------------
+
+def test_telegram_rowid_gap_detection(tmp_path):
+    """DELETION_DETECTED entries are emitted for rowid gaps in the messages table."""
+    db = tmp_path / "cache4.db"
+    _make_telegram_mock_db(db, rows=[
+        ("a", "first",  1),
+        ("b", "second", 2),
+        ("c", "third",  3),
+        ("d", "fourth", 4),
+        ("e", "fifth",  5),
+    ], delete_ids=[2, 3, 4])  # creates a gap: rowids 1 → 5
+
+    result = recover_telegram_messages(db)
+    gaps = [m for m in result["messages"]
+            if m["confidence"] == Confidence.DELETION_DETECTED.value]
+    assert len(gaps) >= 1, "Expected at least one DELETION_DETECTED entry for the rowid gap"
+    # The gap entry must carry an honest provenance string.
+    for gap in gaps:
+        assert "rowid" in gap["provenance"].lower() or "gap" in gap["provenance"].lower()
+
+
+# --- Task 4h: recover_telegram_messages counts dict --------------------------
+
+def test_telegram_counts_dict_structure(tmp_path):
+    """recover_telegram_messages returns a counts dict with all expected keys."""
+    db = tmp_path / "cache4.db"
+    _make_telegram_mock_db(db, rows=[
+        ("Alice", "message one stays", 1_700_000_000),
+        ("Bob",   "message two stays", 1_700_000_060),
+    ])
+    result = recover_telegram_messages(db)
+    counts = result["counts"]
+    for key in ("live", "recovered_verified", "carved_partial", "deletion_detected", "total"):
+        assert key in counts, f"counts dict missing key: {key}"
+    assert counts["live"] == 2
+    assert counts["total"] == counts["live"] + counts["recovered_verified"] + \
+                               counts["carved_partial"] + counts["deletion_detected"]
+
+
+# ===========================================================================
+# Task 5 — Telegram deep recovery (schema, users/chats, media, conversations,
+#           timeline)
+# ===========================================================================
+
+from triage.parsers import (
+    detect_table_schema,
+    recover_users_and_chats,
+    extract_media_paths_from_blob,
+    build_conversations,
+)
+from triage.timeline import build_timeline
+
+
+def _make_users_db(path: Path, columns: list[str], rows: list[tuple]) -> None:
+    """Create a minimal SQLite DB with a 'users' table for schema tests."""
+    con = sqlite3.connect(path)
+    col_defs = ", ".join(f'"{c}" TEXT' for c in columns)
+    con.execute(f"CREATE TABLE users ({col_defs})")
+    placeholders = ", ".join("?" * len(columns))
+    con.executemany(f"INSERT INTO users VALUES ({placeholders})", rows)
+    con.commit()
+    con.close()
+
+
+def _make_chats_db(path: Path) -> None:
+    """Create a minimal DB with both users and chats tables."""
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE users (uid TEXT, first_name TEXT, last_name TEXT)")
+    con.execute("CREATE TABLE chats (cid TEXT, title TEXT, peer_type TEXT)")
+    con.execute("INSERT INTO users VALUES ('1','Alice','Smith')")
+    con.execute("INSERT INTO users VALUES ('2','Bob','Jones')")
+    con.execute("INSERT INTO chats VALUES ('100','My Group','group')")
+    con.execute("INSERT INTO chats VALUES ('200','Private','user')")
+    con.commit()
+    con.close()
+
+
+# --- 5a: generic schema detection, standard column order ---
+
+def test_detect_table_schema_users_default_order(tmp_path):
+    """detect_table_schema correctly classifies users table with typical columns."""
+    db = tmp_path / "u.db"
+    _make_users_db(db, ["uid", "first_name", "last_name", "phone"], [
+        ("1", "Alice", "Smith", "+91999"),
+    ])
+    schema = detect_table_schema(db, "users")
+    assert schema.usable, "Schema should be usable"
+    assert schema.col_count == 4
+    # 'first_name' or 'last_name' should match name_col.
+    assert schema.mapping.get("name_col") in ("first_name", "last_name"), \
+        f"name_col not found: {schema.mapping}"
+    # 'phone' should match phone_col.
+    assert schema.mapping.get("phone_col") == "phone"
+
+
+# --- 5b: shuffled column order, same heuristics apply ---
+
+def test_detect_table_schema_users_shuffled_order(tmp_path):
+    """detect_table_schema works regardless of column declaration order."""
+    db = tmp_path / "u2.db"
+    # Intentionally weird order.
+    _make_users_db(db, ["phone", "last_name", "uid", "first_name"], [
+        ("+91999", "Smith", "1", "Alice"),
+    ])
+    schema = detect_table_schema(db, "users")
+    assert schema.usable
+    # The id role should pick up 'uid'.
+    assert schema.mapping.get("id_col") == "uid"
+    assert schema.mapping.get("phone_col") == "phone"
+
+
+# --- 5c: chats table dynamic detection ---
+
+def test_detect_table_schema_chats_dynamic(tmp_path):
+    """detect_table_schema correctly classifies a chats table."""
+    db = tmp_path / "c.db"
+    _make_chats_db(db)
+    schema = detect_table_schema(db, "chats")
+    assert schema.usable
+    # 'title' should be name_col or text_col.
+    got = schema.mapping.get("name_col") or schema.mapping.get("text_col")
+    assert got == "title", f"Expected title as name/text col, got: {schema.mapping}"
+
+
+# --- 5d: unknown table returns unusable schema ---
+
+def test_detect_table_schema_unknown_table(tmp_path):
+    """detect_table_schema returns usable=False for a table that doesn't exist."""
+    db = tmp_path / "x.db"
+    _make_chats_db(db)
+    schema = detect_table_schema(db, "nonexistent_table_xyz")
+    assert not schema.usable, "Unknown table should be unusable"
+    assert schema.col_count == 0
+
+
+# --- 5e: recover_users_and_chats live rows ---
+
+def test_recover_users_and_chats_live(tmp_path):
+    """recover_users_and_chats returns live rows from both tables."""
+    db = tmp_path / "tg.db"
+    _make_chats_db(db)
+    result = recover_users_and_chats(db)
+    assert result["available"]
+    assert len(result["users"]) >= 2, f"Expected >=2 users, got {result['users']}"
+    assert len(result["chats"]) >= 2, f"Expected >=2 chats, got {result['chats']}"
+    # All live rows should have live confidence.
+    for u in result["users"]:
+        assert u["confidence"] == Confidence.LIVE.value
+
+
+# --- 5f: recover_users_and_chats no-file fallback ---
+
+def test_recover_users_and_chats_deleted(tmp_path):
+    """recover_users_and_chats returns error dict when file is missing (no-root path)."""
+    result = recover_users_and_chats(tmp_path / "missing.db")
+    assert not result["available"]
+    assert "root" in result["error"].lower()
+    assert result["users"] == []
+    assert result["chats"] == []
+
+
+# --- 5g: media blob parsing — path extraction ---
+
+def _make_tl_blob(path: str) -> bytes:
+    """Encode a single TL-style length-prefixed string (no padding for simplicity)."""
+    encoded = path.encode("utf-8")
+    length = len(encoded)
+    # Simple: length byte + string bytes (no 4-byte alignment for test purposes).
+    return bytes([length]) + encoded
+
+
+def test_extract_media_paths_from_blob_real_pattern(tmp_path):
+    """extract_media_paths_from_blob finds a relative path in a TL blob."""
+    blob = _make_tl_blob("4/1.jpg")
+    paths = extract_media_paths_from_blob(blob)
+    assert "4/1.jpg" in paths, f"Expected '4/1.jpg' in {paths}"
+
+
+def test_extract_media_paths_from_blob_multiple(tmp_path):
+    """extract_media_paths_from_blob finds multiple paths."""
+    # Build a blob with two paths concatenated.
+    blob = _make_tl_blob("cache/thumb_12345.jpg") + b"\x00\x00" + _make_tl_blob("3/2.mp4")
+    paths = extract_media_paths_from_blob(blob)
+    # At least one of the two paths should be found.
+    assert any("jpg" in p or "mp4" in p for p in paths), \
+        f"Expected at least one media path, got: {paths}"
+
+
+def test_extract_media_paths_from_blob_empty():
+    """extract_media_paths_from_blob returns empty list for empty or None blob."""
+    assert extract_media_paths_from_blob(b"") == []
+    assert extract_media_paths_from_blob(None) == []  # type: ignore[arg-type]
+
+
+# --- 5h: conversation threading ---
+
+def test_build_conversations_groups_by_chat():
+    """build_conversations groups messages by chat_id into separate conversations."""
+    messages = [
+        {"body": "hi",  "sender": "1", "chat_id": "100", "timestamp": "2024-01-01T00:00:00Z",
+         "confidence": "live", "carve_method": "", "provenance": "", "media_artifact_id": None},
+        {"body": "bye", "sender": "2", "chat_id": "200", "timestamp": "2024-01-01T00:01:00Z",
+         "confidence": "live", "carve_method": "", "provenance": "", "media_artifact_id": None},
+        {"body": "ok",  "sender": "1", "chat_id": "100", "timestamp": "2024-01-01T00:02:00Z",
+         "confidence": "live", "carve_method": "", "provenance": "", "media_artifact_id": None},
+    ]
+    convs = build_conversations(messages, users=[], chats=[])
+    assert "100" in convs
+    assert "200" in convs
+    assert convs["100"]["message_count"] == 2
+    assert convs["200"]["message_count"] == 1
+
+
+def test_build_conversations_resolves_sender_name():
+    """build_conversations resolves sender IDs to display names from the users list."""
+    messages = [
+        {"body": "hello", "sender": "42", "chat_id": "99", "timestamp": None,
+         "confidence": "live", "carve_method": "", "provenance": "", "media_artifact_id": None},
+    ]
+    users = [{"_id": "42", "_name": "Alice Smith", "confidence": "live"}]
+    convs = build_conversations(messages, users=users, chats=[])
+    msg = convs["99"]["messages"][0]
+    assert msg["sender_name"] == "Alice Smith", \
+        f"Expected 'Alice Smith', got '{msg['sender_name']}'"
+
+
+def test_build_conversations_title_from_chat():
+    """build_conversations uses the chats list to set the conversation title."""
+    messages = [
+        {"body": "test", "sender": "1", "chat_id": "77", "timestamp": None,
+         "confidence": "live", "carve_method": "", "provenance": "", "media_artifact_id": None},
+    ]
+    chats = [{"_id": "77", "_name": "Forensic Team", "confidence": "live"}]
+    convs = build_conversations(messages, users=[], chats=chats)
+    assert convs["77"]["title"] == "Forensic Team", \
+        f"Expected 'Forensic Team', got '{convs['77']['title']}'"
+
+
+# --- 5i: timeline includes telegram events ---
+
+def test_timeline_includes_telegram_events():
+    """build_timeline emits telegram_message events when telegram_messages are passed."""
+    tg_msgs = [
+        {
+            "body":       "deleted secret message",
+            "sender":     "123",
+            "timestamp":  "2024-06-01T10:00:00Z",
+            "confidence": Confidence.CARVED_PARTIAL.value,
+            "source_file": "cache4.db",
+        },
+        {
+            "body":       "live message",
+            "sender":     "456",
+            "timestamp":  "2024-06-01T11:00:00Z",
+            "confidence": Confidence.LIVE.value,
+            "source_file": "cache4.db",
+        },
+    ]
+    tg_media = [
+        {
+            "rel_path":          "4/1.jpg",
+            "artifact_id":       "ART-001",
+            "parent_message_ts": "2024-06-01T10:30:00Z",
+            "confidence":        Confidence.CARVED_PARTIAL.value,
+        },
+    ]
+    timeline = build_timeline(telegram_messages=tg_msgs, telegram_media=tg_media)
+
+    kinds = {ev["kind"] for ev in timeline}
+    assert "telegram_message" in kinds, \
+        f"Expected 'telegram_message' in timeline kinds: {kinds}"
+    assert "telegram_media" in kinds, \
+        f"Expected 'telegram_media' in timeline kinds: {kinds}"
+
+    # Timeline must be sorted by timestamp.
+    ts_list = [ev["timestamp"] for ev in timeline if ev["timestamp"]]
+    assert ts_list == sorted(ts_list), "Timeline is not sorted"
+
+    # Confidence must be preserved.
+    carved_ev = next(
+        ev for ev in timeline
+        if ev["kind"] == "telegram_message" and "deleted" in ev["summary"]
+    )
+    assert carved_ev["confidence"] == Confidence.CARVED_PARTIAL.value

@@ -140,12 +140,34 @@ def create_app(cases_root: Path = CASES_ROOT):
     def case_dataset(case_id: str, dataset: str):
         list_sets = {"messages", "contacts", "calls", "media", "locations",
                      "recovered", "flags", "timeline", "rowid_gaps", "browser",
-                     "screenshots"}
+                     "screenshots",
+                     # Telegram deep-recovery datasets
+                     "telegram_recovery", "telegram_users", "telegram_chats",
+                     "telegram_media", "telegram_conversations"}
         obj_sets = {"graph", "risk", "throughput"}
         if dataset not in list_sets | obj_sets:
             abort(404)
         case = _open(cases_root, case_id)
         return jsonify(case.read_derived(dataset))
+
+    # -- Telegram conversation endpoints ------------------------------------
+    @app.get("/api/case/<case_id>/telegram/conversations")
+    def telegram_conversations(case_id: str):
+        """Serve the full telegram_conversations.json (dict keyed by chat_id)."""
+        case = _open(cases_root, case_id)
+        data = case.read_derived("telegram_conversations") or {}
+        return jsonify(data)
+
+    @app.get("/api/case/<case_id>/telegram/conversations/<chat_id>")
+    def telegram_conversation_detail(case_id: str, chat_id: str):
+        """Serve a single conversation thread by chat_id."""
+        case = _open(cases_root, case_id)
+        all_convs = case.read_derived("telegram_conversations") or {}
+        conv = all_convs.get(chat_id)
+        if conv is None:
+            abort(404)
+        return jsonify(conv)
+
 
     # -- tags / bookmarks ----------------------------------------------------
     @app.get("/api/case/<case_id>/tags")

@@ -18,6 +18,7 @@ import { GraphView } from "./views/Graph";
 import { TaggedView } from "./views/Tagged";
 import { CustodyView } from "./views/Custody";
 import { ReportView } from "./views/Report";
+import { TelegramView } from "./views/Telegram";
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
@@ -62,6 +63,7 @@ export default function App() {
           {caseId && view === "tagged" && <TaggedView caseId={caseId} setView={setView} />}
           {caseId && view === "custody" && <CustodyView caseId={caseId} />}
           {caseId && view === "report" && <ReportView caseId={caseId} />}
+          {caseId && view === "telegram" && <TelegramView caseId={caseId} />}
         </div>
       </main>
     </div>

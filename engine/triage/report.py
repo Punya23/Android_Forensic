@@ -65,6 +65,13 @@ def generate_report(case_dir: str | Path) -> Path:
     graph = graph if isinstance(graph, dict) else {}
     audit = case.read_audit()
     manifest = [r.to_dict() for r in case.manifest]
+    # --- Telegram-specific derived datasets (may be absent if tier2 not run) ---
+    tg_messages   = case.read_derived("telegram_recovery") or []
+    tg_users      = case.read_derived("telegram_users") or []
+    tg_chats      = case.read_derived("telegram_chats") or []
+    tg_media      = case.read_derived("telegram_media") or []
+    tg_convs      = case.read_derived("telegram_conversations") or {}
+    tg_present    = bool(tg_messages or tg_users or tg_chats)
 
     parts: list[str] = []
     parts.append(_HEAD)
@@ -180,6 +187,10 @@ def generate_report(case_dir: str | Path) -> Path:
                 f'<td class="mono">{_esc(r.get("provenance"))}</td></tr>')
         parts.append('</table>')
 
+    # --- Telegram Recovered Data ---
+    if tg_present:
+        parts.append(_telegram_section(tg_messages, tg_users, tg_chats, tg_media))
+
     # Messages preview
     if messages:
         parts.append('<h2>Messages (preview)</h2>')
@@ -230,7 +241,7 @@ def generate_report(case_dir: str | Path) -> Path:
     parts.append('</table>')
 
     # Section 65B certificate
-    parts.append(_section_65b(meta, device, summary))
+    parts.append(_section_65b(meta, device, summary, tg_present=tg_present))
 
     # Standards footer
     parts.append('<h2>Standards references</h2><ul class="refs">')
@@ -250,13 +261,115 @@ def _fmt_val(v: Any) -> str:
     return str(v)
 
 
+def _telegram_section(
+    messages: list[dict],
+    users: list[dict],
+    chats: list[dict],
+    media: list[dict],
+) -> str:
+    """Render the 'Telegram Recovered Data' HTML section."""
+    parts: list[str] = []
+    parts.append('<h2>Telegram Recovered Data (Tier&nbsp;2 — Root Acquisition)</h2>')
+    parts.append(
+        '<p class="note">The following data was recovered from <code>cache4.db</code> '
+        'pulled via root shell. Live rows, freelist-recovered rows, raw-carved rows, '
+        'and rowid-gap events are labelled separately. '
+        '<b>No Telegram encryption was bypassed.</b></p>'
+    )
+
+    # --- Summary table ---
+    def _count(lst: list[dict], conf: str) -> int:
+        return sum(1 for r in lst if r.get("confidence") == conf)
+
+    parts.append('<h3>Recovery summary</h3>')
+    parts.append(
+        '<table><tr><th>Dataset</th>'
+        '<th style="color:#1c7d3f">Live</th>'
+        '<th style="color:#2258a8">Recovered</th>'
+        '<th style="color:#a6741a">Carved</th>'
+        '<th style="color:#a5322f">Gap only</th>'
+        '<th>Total</th></tr>'
+    )
+    for label, lst in [("Messages", messages), ("Users", users), ("Chats", chats)]:
+        parts.append(
+            f'<tr><td><b>{_esc(label)}</b></td>'
+            f'<td style="color:#1c7d3f">{_count(lst,"live")}</td>'
+            f'<td style="color:#2258a8">{_count(lst,"recovered")}</td>'
+            f'<td style="color:#a6741a">{_count(lst,"carved")}</td>'
+            f'<td style="color:#a5322f">{_count(lst,"deletion")}</td>'
+            f'<td><b>{len(lst)}</b></td></tr>'
+        )
+    parts.append('</table>')
+
+    # --- Messages table ---
+    displayable = [m for m in messages if m.get("body")]
+    if displayable:
+        parts.append('<h3>Recovered messages (first 200)</h3>')
+        parts.append(
+            '<table><tr>'
+            '<th>Confidence</th><th>Time</th><th>Sender</th><th>Body</th>'
+            '<th>Media</th><th>Provenance</th>'
+            '</tr>'
+        )
+        for m in displayable[:200]:
+            conf = m.get("confidence", "carved")
+            col = _CONF_COLORS.get(conf, _CONF_COLORS["carved"])
+            mid = m.get("media_artifact_id") or ""
+            parts.append(
+                f'<tr>'
+                f'<td>{_badge(conf.upper(), col)}</td>'
+                f'<td class="mono">{_esc(m.get("timestamp") or "")}</td>'
+                f'<td>{_esc(m.get("sender") or "")}</td>'
+                f'<td>{_esc((m.get("body") or "")[:300])}</td>'
+                f'<td class="mono">{_esc(mid[:20])}</td>'
+                f'<td class="mono">{_esc((m.get("provenance") or "")[:80])}</td>'
+                f'</tr>'
+            )
+        parts.append('</table>')
+
+    # --- Media list ---
+    if media:
+        parts.append('<h3>Pulled media files</h3>')
+        parts.append(
+            '<table><tr>'
+            '<th>Artifact ID</th><th>Device path</th>'
+            '<th>Size</th><th>Linked message time</th>'
+            '</tr>'
+        )
+        for item in media[:200]:
+            parts.append(
+                f'<tr>'
+                f'<td class="mono">{_esc(item.get("artifact_id",""))}</td>'
+                f'<td class="mono">{_esc(item.get("source_path",""))}</td>'
+                f'<td>{_esc(item.get("size_bytes",""))}</td>'
+                f'<td class="mono">{_esc(item.get("parent_message_ts",""))}</td>'
+                f'</tr>'
+            )
+        parts.append('</table>')
+
+    return "\n".join(parts)
+
+
 def _kv_card(title: str, kv: dict[str, Any]) -> str:
     rows = "".join(f'<div class="kv"><span>{_esc(k)}</span><b>{_esc(v)}</b></div>'
                    for k, v in kv.items())
     return f'<div class="card"><h3>{_esc(title)}</h3>{rows}</div>'
 
 
-def _section_65b(meta: dict, device: dict, summary: dict) -> str:
+def _section_65b(meta: dict, device: dict, summary: dict,
+                 tg_present: bool = False) -> str:
+    tg_clause = (
+        "<li>Where Telegram message data was recovered (Tier-2 root acquisition): "
+        "the Telegram <code>cache4.db</code> database was copied from the device's "
+        "app-private storage (<code>/data/data/org.telegram.messenger/files/</code>) "
+        "using a root shell command logged in the audit trail above. "
+        "<b>This tool does not bypass, circumvent, or decrypt any Telegram encryption.</b> "
+        "The <code>cache4.db</code> SQLite file is stored in plaintext on the device "
+        "(Telegram's encryption operates at the transport layer, not at the local database layer). "
+        "Recovered deleted rows were extracted using standard SQLite forensic techniques "
+        "(freelist, WAL, and raw freeblock scanning) and are clearly labelled with their "
+        "confidence tier in all reports.</li>"
+    ) if tg_present else ""
     return f"""
     <h2>Section 65B (Indian Evidence Act) — Certificate</h2>
     <div class="cert">
@@ -278,6 +391,7 @@ def _section_65b(meta: dict, device: dict, summary: dict) -> str:
             ({_esc(summary['device_altering_actions'])} of
             {_esc(summary['audit_event_count'])} logged events altered device state) is
             recorded in the append-only audit trail reproduced above.</li>
+        {tg_clause}
         <li>This is a field-triage preview and is NOT a substitute for a full forensic
             laboratory examination.</li>
       </ol>

@@ -7,7 +7,17 @@ from .calllog import parse_calllog_json
 from .appdb import parse_app_db
 from .sms import parse_sms_json
 from .browser import parse_browser_history
-from .telegram import parse_telegram_db
+from .telegram import (
+    parse_telegram_db,
+    recover_telegram_messages,
+    export_recovered_messages_json,
+    detect_telegram_schema,
+    detect_table_schema,
+    recover_users_and_chats,
+    extract_media_paths_from_blob,
+    build_conversations,
+    TelegramPaths,
+)
 from .signal import parse_signal_backup, parse_signal_plaintext_db
 from .media import (  # NEW — WhatsApp Media folder parser
     parse_whatsapp_media_folder,
@@ -33,6 +43,14 @@ __all__ = [
     "parse_sms_json",
     "parse_browser_history",
     "parse_telegram_db",
+    "recover_telegram_messages",
+    "export_recovered_messages_json",
+    "detect_telegram_schema",
+    "detect_table_schema",
+    "recover_users_and_chats",
+    "extract_media_paths_from_blob",
+    "build_conversations",
+    "TelegramPaths",
     "parse_signal_backup",
     "parse_signal_plaintext_db",
     # WhatsApp Media

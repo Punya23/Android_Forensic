@@ -7,6 +7,7 @@ export type ViewKey =
   | "contacts"
   | "calls"
   | "media"
+  | "telegram"
   | "locations"
   | "browser"
   | "timeline"
@@ -22,6 +23,7 @@ const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
   { key: "contacts", label: "Contacts", icon: "👤" },
   { key: "calls", label: "Calls", icon: "📞" },
   { key: "media", label: "Media", icon: "🖼" },
+  { key: "telegram", label: "Telegram", icon: "✈", group: undefined },
   { key: "locations", label: "Locations", icon: "📍" },
   { key: "browser", label: "Browser History", icon: "🌐" },
   { key: "timeline", label: "Timeline", icon: "⏱", group: "Analysis" },

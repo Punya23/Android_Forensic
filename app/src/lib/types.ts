@@ -239,3 +239,44 @@ export interface Progress {
   detail: string;
   case_id: string;
 }
+
+// --- Telegram deep-recovery types ------------------------------------------
+
+export interface TelegramMessage {
+  body: string;
+  sender_name: string;
+  sender_id: string;
+  timestamp: string | null;
+  confidence: Confidence;
+  media_artifact_id: string | null;
+  carve_method: string;
+  provenance: string;
+}
+
+export interface TelegramParticipant {
+  id: string;
+  name: string;
+  confidence: string;
+}
+
+export interface TelegramConversation {
+  chat_id: string;
+  title: string;
+  participants: TelegramParticipant[];
+  last_message_ts: string | null;
+  message_count: number;
+  messages: TelegramMessage[];
+}
+
+/** The full telegram_conversations.json shape: a dict keyed by chat_id. */
+export type TelegramConversationsMap = Record<string, TelegramConversation>;
+
+export interface TelegramMediaItem {
+  artifact_id: string;
+  source_path: string;
+  rel_path: string;
+  size_bytes: number;
+  sha256: string;
+  parent_message_ts: string | null;
+  confidence: Confidence;
+}
