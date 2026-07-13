@@ -52,6 +52,10 @@ from .aleapp import run_aleapp, promote_aleapp_results
 from .recovery import recover_deleted_rows, detect_rowid_gaps, sqbrite_cross_check, map_columns_to_whatsapp, rows_meta_colnames
 from .report import generate_report
 from .timeline import build_timeline
+# NEW: E2E recovery and advanced analysis
+from .parsers.whatsapp_e2e import recover_e2e_messages, simulate_e2e_decryption_workflow
+from .parsers.media import parse_whatsapp_media_folder, get_whatsapp_media_summary
+from .advanced import AdvancedForensicFeatures, run_advanced_analysis
 
 ProgressFn = Callable[[str, float, str], None]
 
@@ -244,6 +248,20 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
                         tier=Tier.TIER0.value,
                         artifact_id=rec.artifact_id,
                     )
+                # NEW: attempt E2E recovery after live parse
+                try:
+                    e2e_msgs = recover_e2e_messages(stored)
+                    if e2e_msgs:
+                        app_messages.extend(e2e_msgs)
+                        case.log(
+                            "parse.whatsapp_e2e",
+                            f"{len(e2e_msgs)} E2E-recovered messages from {name}",
+                            tier=Tier.TIER0.value,
+                            artifact_id=rec.artifact_id,
+                        )
+                except Exception as exc:
+                    case.log("parse.whatsapp_e2e", f"E2E recovery error on {name}: {exc}",
+                             result="error", tier=Tier.TIER0.value)
                 # Skip generic parse_app_db for this file — the dedicated parser is authoritative.
 
             # ---- Other recognised messaging-app stores -----------------------
@@ -408,6 +426,40 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
 
     # -- persist derived + report -------------------------------------------
     progress("persist", 0.92, "Writing derived datasets")
+
+    # NEW: WhatsApp Media folder cataloguing
+    wa_media_items: list[dict] = []
+    try:
+        for app_name, media_root_str in APP_MEDIA_ROOTS.items():
+            media_root_path = Path(staging) / media_root_str.lstrip("/")
+            if not media_root_path.exists():
+                # Also probe the case root for already-pulled media.
+                media_root_path = case.root / "artifacts" / app_name / "Media"
+            wa_media_items.extend(
+                _process_whatsapp_media(media_root_path, case)
+            )
+    except Exception as exc:
+        case.log("parse.whatsapp_media", f"media cataloguing error: {exc}",
+                 result="error", tier=Tier.TIER0.value)
+
+    # NEW: advanced analysis (social graph, patterns, anomalies, recovery metrics)
+    advanced_result: dict = {}
+    try:
+        advanced_result = run_advanced_analysis(
+            case_dir=case.root,
+            messages=all_messages,
+            contacts=contacts,
+        )
+        case.log(
+            "analysis.advanced",
+            f"Advanced analysis: {advanced_result.get('meta', {}).get('total_messages', 0)} msgs, "
+            f"{len(advanced_result.get('social_graph', {}).get('edges', []))} graph edges",
+            tier=Tier.TIER0.value,
+        )
+    except Exception as exc:
+        case.log("analysis.advanced", f"Advanced analysis error: {exc}",
+                 result="error", tier=Tier.TIER0.value)
+
     case.write_derived("messages", all_messages)
     case.write_derived("contacts", contacts)
     case.write_derived("calls", calls)
@@ -423,6 +475,8 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     case.write_derived("throughput", throughput)
     case.write_derived("rowid_gaps", _collect_gaps(db_artifacts))
     case.write_derived("aleapp", aleapp_result)
+    case.write_derived("whatsapp_media", wa_media_items)       # NEW
+    case.write_derived("advanced", advanced_result)            # NEW
 
     progress("report", 0.96, "Generating triage report")
     report_path = generate_report(case.root)
@@ -439,6 +493,7 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
             "flags": len(flags), "timeline": len(timeline),
             "browser": len(browser_history), "screenshots": len(screenshots),
             "aleapp_modules": len(aleapp_result.get("artifacts", {})),
+            "whatsapp_media": len(wa_media_items),         # NEW
         },
         "risk": risk,
         "throughput": throughput,
@@ -450,6 +505,50 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
 
 
 # --- helpers ----------------------------------------------------------------
+
+def _process_whatsapp_media(media_root: Path, case: Any) -> list[dict]:
+    """Process WhatsApp media files from *media_root* and return catalogued items.
+
+    Called once per app-media root discovered during the pipeline run.
+    Errors are swallowed so a missing or inaccessible media folder never
+    aborts the acquisition.
+
+    Parameters
+    ----------
+    media_root:
+        Path to the ``Media`` directory (e.g. ``…/WhatsApp/Media``).
+    case:
+        The active :class:`~triage.custody.Case` instance, used for audit
+        logging only.
+
+    Returns
+    -------
+    list[dict]
+        One metadata dict per file; empty list if the folder doesn't exist or
+        an error occurs.
+    """
+    if not media_root.exists():
+        return []
+    try:
+        items = parse_whatsapp_media_folder(media_root)
+        summary = get_whatsapp_media_summary(media_root)
+        case.log(
+            "parse.whatsapp_media",
+            (
+                f"WhatsApp Media: {summary['total']} files "
+                f"({summary['images']} img, {summary['videos']} vid, "
+                f"{summary['voice_notes']} voice, {summary['documents']} doc) "
+                f"— {summary['total_size_bytes'] // 1024:,} KB"
+            ),
+            tier=Tier.TIER0.value,
+        )
+        return items
+    except Exception as exc:
+        case.log("parse.whatsapp_media", f"error processing {media_root}: {exc}",
+                 result="error", tier=Tier.TIER0.value)
+        return []
+
+
 def _categorise(device_path: str) -> tuple[str, Optional[str]]:
     lower = device_path.lower()
     name = device_path.rsplit("/", 1)[-1].lower()

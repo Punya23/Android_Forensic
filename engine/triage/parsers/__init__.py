@@ -9,6 +9,17 @@ from .sms import parse_sms_json
 from .browser import parse_browser_history
 from .telegram import parse_telegram_db
 from .signal import parse_signal_backup, parse_signal_plaintext_db
+from .media import (  # NEW — WhatsApp Media folder parser
+    parse_whatsapp_media_folder,
+    get_whatsapp_media_summary,
+    filter_media_by_date,
+    get_media_by_type,
+)
+from .whatsapp_e2e import (  # NEW — E2E recovery
+    recover_e2e_messages,
+    analyze_e2e_encryption,
+    simulate_e2e_decryption_workflow,
+)
 
 __all__ = [
     "extract_gps",
@@ -24,4 +35,13 @@ __all__ = [
     "parse_telegram_db",
     "parse_signal_backup",
     "parse_signal_plaintext_db",
+    # WhatsApp Media
+    "parse_whatsapp_media_folder",
+    "get_whatsapp_media_summary",
+    "filter_media_by_date",
+    "get_media_by_type",
+    # WhatsApp E2E recovery
+    "recover_e2e_messages",
+    "analyze_e2e_encryption",
+    "simulate_e2e_decryption_workflow",
 ]

@@ -152,3 +152,142 @@ corrupt-DB safety), the parsers, and the full end-to-end pipeline.
 See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) for the full feasibility
 matrix (what is and isn't achievable non-root for WhatsApp/Signal/Telegram) and the 30-day
 plan this build follows.
+
+---
+
+## WhatsApp Recovery Module
+
+The engine includes a multi-layer WhatsApp forensic recovery pipeline covering live data,
+deleted records, encrypted backups, and media cataloguing.
+
+### Features
+
+#### Data Extraction
+| Feature | Parser | Details |
+|---|---|---|
+| WhatsApp export (`.txt`, `.zip`) | `whatsapp_txt.py` | Bracket & dash formats; multi-locale timestamps |
+| WhatsApp live DB | `whatsapp_db.py` | Schema-aware; version-tolerant JOIN query |
+| WhatsApp encrypted backups | `whatsapp_batch.py` | crypt15 (AES-GCM) / crypt14/12 (AES-CBC) |
+| Batch + parallel processing | `whatsapp_batch.py` | `ThreadPoolExecutor`; sequential fallback |
+| WhatsApp Media folder | `media.py` | Images, Video, Audio, Documents, GIFs, Stickers |
+
+#### Data Recovery
+| Technique | Module | Confidence |
+|---|---|---|
+| SQLite freelist / freeblock carving | `recovery/` | `CARVED_PARTIAL` |
+| WAL frame reconstruction | `whatsapp_e2e.py` | `RECOVERED_VERIFIED` |
+| Freeblock chain walking | `whatsapp_e2e.py` | `CARVED_PARTIAL` |
+| Rowid gap detection (deletion proof) | `recovery/` | `DELETION_DETECTED` |
+| Encrypted backup decryption (key required) | `whatsapp_e2e.py` | `RECOVERED_VERIFIED` |
+| Metadata extraction (no key needed) | `whatsapp_e2e.py` | `DELETION_DETECTED` |
+
+#### Confidence Badging
+Every recovered row is labelled with one of four confidence levels — never shown with the
+same visual weight as live data:
+
+| Badge | Value | Meaning |
+|---|---|---|
+| 🟢 Live | `Confidence.LIVE` | Normal query result from an intact table |
+| 🟡 Recovered | `Confidence.RECOVERED_VERIFIED` | Intact WAL frame or un-checkpointed page |
+| 🟠 Carved | `Confidence.CARVED_PARTIAL` | Signature-matched over freeblock/unallocated space |
+| 🔴 Deletion | `Confidence.DELETION_DETECTED` | Rowid gap proves deletion; no content recovered |
+
+#### Advanced Analysis
+- **Social graph** — link analysis across all message channels
+- **Burst detection** — identifies rapid-fire message clusters
+- **Response time analysis** — fast / slow response pattern detection
+- **Anomaly detection** — z-score volume spikes, quiet-hours activity, channel switching
+- **Timeline reconstruction** — chronological activity heatmap
+
+---
+
+### Usage Examples
+
+#### Command Line
+
+```bash
+# Full triage with E2E recovery and advanced analysis enabled
+python -m triage.cli acquire --mock _corpus/device_A --case CASE-001 \
+    --examiner "Insp. R. Sharma" --authority "Search Warrant #MH-2026-4471"
+
+# View WhatsApp media summary only
+python -c "
+from pathlib import Path
+from triage.parsers.media import get_whatsapp_media_summary
+s = get_whatsapp_media_summary(Path('_corpus/device_A/WhatsApp/Media'))
+print(s)
+"
+```
+
+#### Python API
+
+```python
+from pathlib import Path
+from triage.parsers import (
+    parse_whatsapp_export, parse_whatsapp_db,
+    parse_whatsapp_media_folder, get_whatsapp_media_summary,
+    filter_media_by_date, get_media_by_type,
+    recover_e2e_messages, simulate_e2e_decryption_workflow,
+)
+from triage.parsers.whatsapp_batch import (
+    parse_whatsapp_batch, parse_whatsapp_directory, get_batch_stats,
+)
+from triage.advanced import AdvancedForensicFeatures, run_advanced_analysis
+
+# -- Live messages --
+msgs = parse_whatsapp_db(Path("msgstore.db"))
+
+# -- Encrypted backup (key required) --
+with open("/data/data/com.whatsapp/files/key", "rb") as f:
+    key = f.read()
+e2e_msgs = recover_e2e_messages(Path("msgstore.db.crypt15"), key_material=key)
+
+# -- WAL + freeblock recovery (no key) --
+report = simulate_e2e_decryption_workflow(Path("msgstore.db.crypt15"))
+print(report["summary"])
+
+# -- Batch directory parse --
+all_msgs = parse_whatsapp_directory(Path("evidence/"), recursive=True)
+stats = get_batch_stats(all_msgs)
+
+# -- Media cataloguing --
+media_items = parse_whatsapp_media_folder(Path("WhatsApp/Media"))
+summary = get_whatsapp_media_summary(Path("WhatsApp/Media"))
+images = get_media_by_type(media_items, "image")
+recent = filter_media_by_date(media_items, "2024-01-01", "2024-12-31")
+
+# -- Advanced analysis --
+aff = AdvancedForensicFeatures()
+graph  = aff.analyze_social_graph(msgs)
+patterns = aff.detect_communication_patterns(msgs)
+anomalies = aff.detect_anomalies(msgs)
+report = run_advanced_analysis(Path("cases/CASE-001"), msgs)
+```
+
+---
+
+### Supported Formats
+
+#### Timestamp Formats (WhatsApp export)
+| Format | Example |
+|---|---|
+| Bracket + 24h | `[06/07/2026, 21:00:04] Sender: body` |
+| Dash + 24h | `06/07/2026, 21:00 - Sender: body` |
+| Bracket + 12h AM/PM | `[06/07/2026, 9:00:04 PM] Sender: body` |
+| European (dot separator) | `06.07.2026, 21:00:04 - Sender: body` |
+| US locale | `07/06/2026, 9:00 PM - Sender: body` |
+
+#### Media Types
+| Folder | Type token | Extensions |
+|---|---|---|
+| `WhatsApp Images/` | `image` | `.jpg`, `.jpeg`, `.png`, `.heic`, `.webp` |
+| `WhatsApp Video/` | `video` | `.mp4`, `.3gp`, `.mkv`, `.mov` |
+| `WhatsApp Voice Notes/` | `voice_note` | `.opus`, `.m4a`, `.ogg` |
+| `WhatsApp Audio/` | `audio` | `.mp3`, `.aac`, `.wav` |
+| `WhatsApp Documents/` | `document` | `.pdf`, `.docx`, `.xlsx`, `.apk` |
+| `WhatsApp Animated Gifs/` | `gif` | `.mp4`, `.gif` |
+| `WhatsApp Stickers/` | `sticker` | `.webp` |
+
+> **Note**: Folder discovery is dynamic — future WhatsApp folder names are picked up
+> automatically via token matching rather than a hard-coded list.
+
