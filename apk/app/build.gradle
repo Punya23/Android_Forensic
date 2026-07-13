@@ -1,0 +1,46 @@
+// eRakshak Collector — Tier-1 helper APK module build file.
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'io.erakshak.collector'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'io.erakshak.collector'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '0.1.0'
+    }
+
+    buildTypes {
+        debug {
+            // Debug build is fine for sideloading in a lab/field context.
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+
+    sourceSets {
+        main {
+            manifest.srcFile 'src/main/AndroidManifest.xml'
+            java.srcDirs = ['src/main/java']
+            res.srcDirs = ['src/main/res']
+        }
+    }
+}
+
+dependencies {
+    // json.org is bundled in the Android platform; no extra deps needed.
+}

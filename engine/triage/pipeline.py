@@ -72,6 +72,9 @@ class PipelineConfig:
     max_files: int = 5000  # safety cap for a field triage run
     capture_screenshot: bool = True  # manual-capture the current screen (read-only)
     tier1_contacts: bool = False  # run helper APK flow to collect contacts.json
+    tier1_calllog: bool = False   # run helper APK call-log role-swap (intrusive, logged)
+    tier1_sms: bool = False       # run helper APK SMS role-swap (intrusive, logged)
+    run_aleapp: bool = False      # run ALEAPP subprocess for broad OS artifact parsing
 
 
 def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,

@@ -1,43 +1,6 @@
-// Minimal Gradle build for the eRakshak Collector helper APK.
-// Open `apk/` in Android Studio, or run `./gradlew assembleDebug` with the Android SDK set.
+// Top-level project build file — plugin declarations only.
+// Module-level config lives in app/build.gradle.
 plugins {
-    id 'com.android.application' version '8.2.0'
-    id 'org.jetbrains.kotlin.android' version '1.9.22'
-}
-
-android {
-    namespace 'io.erakshak.collector'
-    compileSdk 34
-
-    defaultConfig {
-        applicationId 'io.erakshak.collector'
-        minSdk 26
-        targetSdk 34
-        versionCode 1
-        versionName '0.1.0'
-    }
-
-    buildTypes {
-        debug {
-            // Debug build is fine for sideloading in a lab/field context.
-        }
-    }
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
-    }
-    kotlinOptions { jvmTarget = '17' }
-
-    sourceSets {
-        main {
-            manifest.srcFile 'src/main/AndroidManifest.xml'
-            java.srcDirs = ['src/main/java']
-            res.srcDirs = ['src/main/res']
-        }
-    }
-}
-
-dependencies {
-    // json.org is bundled in the Android platform; no extra deps needed.
+    id 'com.android.application' version '8.2.0' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
 }

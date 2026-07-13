@@ -23,3 +23,4 @@ _corpus/
 
 # Bundled binaries (large; fetched at package time)
 engine/vendor/platform-tools/
+apk/.gradle/

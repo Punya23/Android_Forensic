@@ -1,0 +1,18 @@
+pluginManagement {
+    repositories {
+        google()                    // Android Gradle Plugin lives here
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "eRakshakCollector"
+include ':app'
