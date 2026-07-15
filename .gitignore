@@ -23,6 +23,17 @@ _corpus/
 
 # Bundled binaries (large; fetched at package time)
 engine/vendor/platform-tools/
+
+# Android build output
 apk/.gradle/
+apk/app/build/
+apk/.idea/
 .idea/
 local.properties
+
+# Loose pulled device data (sensitive — never commit real evidence)
+engine/contacts.json
+engine/calllog.json
+engine/sms.json
+engine/contacts_pulled.json
+engine/*.error.json
