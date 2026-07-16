@@ -27,6 +27,10 @@ export function AcquisitionView({
   const [tier1Contacts, setTier1Contacts] = useState(false);
   const [tier1Calllog, setTier1Calllog] = useState(false);
   const [tier1Sms, setTier1Sms] = useState(false);
+  const [tier1CollectAll, setTier1CollectAll] = useState(false);
+  const [tier2Telegram, setTier2Telegram] = useState(false);
+  const [tier2Instagram, setTier2Instagram] = useState(false);
+  const [tier2Snapchat, setTier2Snapchat] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<number | null>(null);
 
@@ -81,6 +85,10 @@ export function AcquisitionView({
         tier1_contacts: target.kind === "real" ? tier1Contacts : false,
         tier1_calllog: target.kind === "real" ? tier1Calllog : false,
         tier1_sms: target.kind === "real" ? tier1Sms : false,
+        tier1_collect_all: target.kind === "real" ? tier1CollectAll : false,
+        tier2_telegram: target.kind === "real" ? tier2Telegram : false,
+        tier2_instagram: target.kind === "real" ? tier2Instagram : false,
+        tier2_snapchat: target.kind === "real" ? tier2Snapchat : false,
       });
     } catch (e) {
       stopTimer();
@@ -168,6 +176,25 @@ export function AcquisitionView({
               type="checkbox"
               className="mt-1"
               disabled={!target || target.kind !== "real"}
+              checked={target?.kind === "real" ? tier1CollectAll : false}
+              onChange={(e) => setTier1CollectAll(e.target.checked)}
+            />
+            <div>
+              <div className="text-sm font-medium">Full collection (dump_all)</div>
+              <div className="text-xs text-muted mt-1">
+                Installs the Collector, grants the non-restricted permissions, and captures the
+                MediaStore inventory (incl. trashed/favorite/owner-app), installed-app inventory
+                (flags vault/messaging apps), accounts, calendar, and app-usage — then uninstalls.
+                All steps logged in the audit trail.
+              </div>
+            </div>
+          </label>
+
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={!target || target.kind !== "real"}
               checked={target?.kind === "real" ? tier1Contacts : false}
               onChange={(e) => setTier1Contacts(e.target.checked)}
             />
@@ -213,6 +240,40 @@ export function AcquisitionView({
               </div>
             </div>
           </label>
+        </div>
+      </div>
+
+      {/* Tier-2 options (root) */}
+      <div className="card p-4 mb-4">
+        <div className="label mb-1">Tier-2 App Recovery (root required, real device only)</div>
+        <p className="text-xs text-muted mb-3">
+          These apps keep their chats in app-private storage, unreachable without root. On a
+          rooted device the engine copies the databases via <code className="text-accent">su</code>,
+          recovers live + deleted messages with confidence badges, and logs every step. On a
+          non-rooted device the step is logged as skipped.
+        </p>
+        <div className="space-y-3">
+          {[
+            { label: "Tier-2 Telegram", db: "cache4.db", checked: tier2Telegram, set: setTier2Telegram },
+            { label: "Tier-2 Instagram", db: "direct.db", checked: tier2Instagram, set: setTier2Instagram },
+            { label: "Tier-2 Snapchat", db: "arroyo.db / main.db", checked: tier2Snapchat, set: setTier2Snapchat },
+          ].map((t) => (
+            <label key={t.label} className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-1"
+                disabled={!target || target.kind !== "real"}
+                checked={target?.kind === "real" ? t.checked : false}
+                onChange={(e) => t.set(e.target.checked)}
+              />
+              <div>
+                <div className="text-sm font-medium">{t.label}</div>
+                <div className="text-xs text-muted mt-1">
+                  Root-pull <span className="font-mono">{t.db}</span> and run deep recovery.
+                </div>
+              </div>
+            </label>
+          ))}
         </div>
       </div>
 

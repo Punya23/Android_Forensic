@@ -30,6 +30,30 @@ from .whatsapp_e2e import (  # NEW — E2E recovery
     analyze_e2e_encryption,
     simulate_e2e_decryption_workflow,
 )
+from .collector import (  # NEW — expanded Collector-APK outputs (Tier 1)
+    parse_media_inventory,
+    parse_apps,
+    parse_accounts,
+    parse_calendar,
+    parse_usage,
+    media_inventory_summary,
+    app_from_package,
+)
+from .instagram import (  # NEW — Instagram Tier-2 recovery + DYI export
+    recover_instagram_messages,
+    recover_instagram_users,
+    parse_instagram_export,
+    InstagramPaths,
+)
+from .snapchat import (  # NEW — Snapchat Tier-2 recovery (arroyo.db protobuf)
+    recover_snapchat_messages,
+    recover_snapchat_friends,
+    parse_snapchat_export,
+    decode_protobuf_strings,
+    SnapchatPaths,
+)
+from .appfinder import scan_sqlite_for_chats  # NEW — generic SQLite chat discovery
+from .appchat import thread_conversations, count_by_confidence
 
 __all__ = [
     "extract_gps",
@@ -62,4 +86,27 @@ __all__ = [
     "recover_e2e_messages",
     "analyze_e2e_encryption",
     "simulate_e2e_decryption_workflow",
+    # Expanded Collector-APK outputs (Tier 1)
+    "parse_media_inventory",
+    "parse_apps",
+    "parse_accounts",
+    "parse_calendar",
+    "parse_usage",
+    "media_inventory_summary",
+    "app_from_package",
+    # Instagram (Tier 2)
+    "recover_instagram_messages",
+    "recover_instagram_users",
+    "parse_instagram_export",
+    "InstagramPaths",
+    # Snapchat (Tier 2)
+    "recover_snapchat_messages",
+    "recover_snapchat_friends",
+    "parse_snapchat_export",
+    "decode_protobuf_strings",
+    "SnapchatPaths",
+    # Generic SQLite chat discovery + shared threading
+    "scan_sqlite_for_chats",
+    "thread_conversations",
+    "count_by_confidence",
 ]

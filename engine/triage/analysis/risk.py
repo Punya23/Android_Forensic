@@ -13,9 +13,31 @@ from typing import Any
 
 
 def assess_risk(*, flags: list[dict], recovered: list[dict],
-                counts: dict[str, int]) -> dict[str, Any]:
+                counts: dict[str, int],
+                notable_apps: list[dict] | None = None,
+                trashed_media: int = 0) -> dict[str, Any]:
     reasons: list[dict[str, Any]] = []
     score = 0
+
+    # Anti-forensic / vault apps present on the device are a strong prioritisation signal.
+    notable_apps = notable_apps or []
+    anti_forensic = [a for a in notable_apps if a.get("category") == "anti_forensic"]
+    if anti_forensic:
+        pts = min(25, 12 * len(anti_forensic))
+        score += pts
+        names = sorted({a.get("friendly_name") or a.get("label") or a.get("package", "")
+                        for a in anti_forensic})
+        reasons.append({"points": pts, "label": "vault / anti-forensic app installed",
+                        "detail": f"{len(anti_forensic)} content-hiding app(s): {', '.join(n for n in names if n)[:120]}",
+                        "severity": "warn"})
+
+    # A large amount of recently-trashed media suggests deletion activity worth reviewing.
+    if trashed_media >= 3:
+        pts = min(15, trashed_media)
+        score += pts
+        reasons.append({"points": pts, "label": "trashed media present",
+                        "detail": f"{trashed_media} item(s) in the MediaStore trash (recently deleted)",
+                        "severity": "warn"})
 
     crit = [f for f in flags if f.get("severity") == "critical"]
     warn = [f for f in flags if f.get("severity") == "warn"]
@@ -61,7 +83,7 @@ def assess_risk(*, flags: list[dict], recovered: list[dict],
     score = min(score, 100)
     if score >= 60 or known_hash or len(crit) >= 2:
         level = "red"
-    elif score >= 20 or crit or deleted:
+    elif score >= 20 or crit or deleted or anti_forensic:
         level = "amber"
     else:
         level = "green"

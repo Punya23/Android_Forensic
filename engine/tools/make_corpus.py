@@ -215,6 +215,179 @@ def _build_telegram_db(path: Path) -> None:
     con.close()
 
 
+def _build_instagram_db(path: Path) -> None:
+    """A synthetic Instagram direct.db (threads + messages, µs timestamps) with deleted rows.
+
+    Mirrors the real schema shape (messages.thread_id_published ↔ threads.thread_id, text +
+    epoch-microsecond timestamps) closely enough that the Tier-2 Instagram parser surfaces live
+    messages and the SQLite carver recovers the deleted ones — demonstrating the capability
+    honestly on a rooted-device / image stand-in.
+    """
+    if path.exists():
+        path.unlink()
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE threads (thread_id TEXT, thread_title TEXT)")
+    con.execute("CREATE TABLE messages (_id INTEGER PRIMARY KEY, thread_id_published TEXT, "
+                "user_id TEXT, text TEXT, timestamp INTEGER)")
+    con.execute("INSERT INTO threads VALUES ('t_9931', 'imran_k')")
+    base = 1751826000000000  # epoch microseconds
+    rows = [
+        ("t_9931", "778812", "moving the goods through the new route", base),
+        ("t_9931", "119020", "understood, keep it off whatsapp", base + 60_000_000),
+        ("t_9931", "778812", "cash is in account 4471, delete this", base + 120_000_000),
+        ("t_9931", "119020", "the passport and fake id are ready", base + 180_000_000),
+    ]
+    for r in rows:
+        con.execute("INSERT INTO messages(thread_id_published,user_id,text,timestamp) "
+                    "VALUES (?,?,?,?)", r)
+    con.commit()
+    con.execute("DELETE FROM messages WHERE _id IN (3, 4)")  # deleted incriminating DMs
+    con.commit()
+    con.close()
+
+
+def _pb_text(s: str) -> bytes:
+    """Encode a string as protobuf field 2, wire type 2 (length-delimited) — like Snapchat."""
+    b = s.encode("utf-8")
+    return bytes([0x12, len(b)]) + b
+
+
+def _build_snapchat_dbs(arroyo_path: Path, main_path: Path) -> None:
+    """Synthetic Snapchat arroyo.db (conversation_message protobuf blobs) + main.db (Friend)."""
+    if arroyo_path.exists():
+        arroyo_path.unlink()
+    con = sqlite3.connect(arroyo_path)
+    con.execute("CREATE TABLE conversation_message (_id INTEGER PRIMARY KEY, "
+                "client_conversation_id TEXT, server_message_id INTEGER, message_content BLOB, "
+                "creation_timestamp INTEGER, content_type INTEGER, sender_id TEXT)")
+    base = 1751826000000  # epoch ms
+    msgs = [
+        ("conv_a", 1, _pb_text("the drop is at pier 4 tonight"), base, 1, "u_100"),
+        ("conv_a", 2, _pb_text("payment moved via hawala, no trace"), base + 60000, 1, "u_200"),
+        ("conv_a", 3, _pb_text("burn the sim and delete everything"), base + 120000, 1, "u_100"),
+    ]
+    for m in msgs:
+        con.execute("INSERT INTO conversation_message(client_conversation_id,server_message_id,"
+                    "message_content,creation_timestamp,content_type,sender_id) "
+                    "VALUES (?,?,?,?,?,?)", m)
+    con.commit()
+    con.execute("DELETE FROM conversation_message WHERE _id = 3")  # ephemeral, deleted
+    con.commit()
+    con.close()
+
+    if main_path.exists():
+        main_path.unlink()
+    con = sqlite3.connect(main_path)
+    con.execute("CREATE TABLE Friend (userId TEXT, username TEXT, displayName TEXT)")
+    con.execute("INSERT INTO Friend VALUES ('u_100', 'imran_k99', 'Imran')")
+    con.execute("INSERT INTO Friend VALUES ('u_200', 'rahul_v', 'Rahul Verma')")
+    con.commit()
+    con.close()
+
+
+def _media_inventory_json() -> list[dict]:
+    """A synthetic MediaStore catalogue: mix of camera, WhatsApp, a trashed and a geotagged item."""
+    base_s = 1751800000  # epoch seconds
+    base_ms = base_s * 1000
+    return [
+        {"kind": "image", "id": 1001, "display_name": "IMG_20260706_2145.jpg",
+         "mime_type": "image/jpeg", "size": 2_845_112, "date_added": base_s,
+         "date_modified": base_s, "date_taken": base_ms, "width": 4032, "height": 3024,
+         "duration": 0, "bucket": "Camera", "owner_package": "com.android.camera",
+         "relative_path": "DCIM/Camera/", "data_path": "/storage/emulated/0/DCIM/Camera/IMG_20260706_2145.jpg",
+         "is_trashed": False, "is_favorite": True, "is_pending": False,
+         "gps_lat": 19.0759, "gps_lon": 72.8776},
+        {"kind": "image", "id": 1002, "display_name": "IMG-20260706-WA0007.jpg",
+         "mime_type": "image/jpeg", "size": 128_442, "date_added": base_s + 3600,
+         "date_modified": base_s + 3600, "date_taken": base_ms + 3600000, "width": 1600,
+         "height": 1200, "duration": 0, "bucket": "WhatsApp Images",
+         "owner_package": "com.whatsapp", "relative_path": "Pictures/WhatsApp/",
+         "data_path": "/storage/emulated/0/Pictures/WhatsApp/IMG-20260706-WA0007.jpg",
+         "is_trashed": False, "is_favorite": False, "is_pending": False},
+        {"kind": "image", "id": 1003, "display_name": "evidence_photo.jpg",
+         "mime_type": "image/jpeg", "size": 3_112_004, "date_added": base_s + 7200,
+         "date_modified": base_s + 7200, "date_taken": base_ms + 7200000, "width": 4032,
+         "height": 3024, "duration": 0, "bucket": "Camera", "owner_package": "com.android.camera",
+         "relative_path": "DCIM/Camera/", "data_path": "/storage/emulated/0/DCIM/Camera/evidence_photo.jpg",
+         "is_trashed": True, "is_favorite": False, "is_pending": False,
+         "gps_lat": 18.9220, "gps_lon": 72.8347},
+        {"kind": "video", "id": 2001, "display_name": "VID_20260706_2200.mp4",
+         "mime_type": "video/mp4", "size": 41_882_100, "date_added": base_s + 9000,
+         "date_modified": base_s + 9000, "date_taken": base_ms + 9000000, "width": 1920,
+         "height": 1080, "duration": 34000, "bucket": "Camera",
+         "owner_package": "com.android.camera", "relative_path": "DCIM/Camera/",
+         "data_path": "/storage/emulated/0/DCIM/Camera/VID_20260706_2200.mp4",
+         "is_trashed": False, "is_favorite": False, "is_pending": False},
+        {"kind": "audio", "id": 3001, "display_name": "PTT-20260706-WA0002.opus",
+         "mime_type": "audio/ogg", "size": 88_210, "date_added": base_s + 12000,
+         "date_modified": base_s + 12000, "date_taken": 0, "width": 0, "height": 0,
+         "duration": 12000, "bucket": "WhatsApp Voice Notes", "owner_package": "com.whatsapp",
+         "relative_path": "Pictures/WhatsApp/Media/WhatsApp Voice Notes/",
+         "data_path": "/storage/emulated/0/.../PTT-20260706-WA0002.opus",
+         "is_trashed": False, "is_favorite": False, "is_pending": False},
+    ]
+
+
+def _apps_json() -> list[dict]:
+    """Synthetic installed-app inventory: messaging apps, a crypto wallet, and a vault app."""
+    base = 1740000000000  # ms
+    def app(pkg, label, cat, notable, ver="1.0", danger=None, system=False):
+        return {"package": pkg, "label": label, "version_name": ver, "version_code": 100,
+                "first_install": base, "last_update": base + 5_000_000,
+                "installer": "com.android.vending", "is_system": system, "category": cat,
+                "friendly_name": label if notable else None, "notable": notable,
+                "requested_permissions": (danger or []),
+                "granted_permissions": (danger or [])}
+    return [
+        app("com.whatsapp", "WhatsApp", "messaging", True, "2.24.1",
+            ["android.permission.READ_CONTACTS", "android.permission.CAMERA", "android.permission.RECORD_AUDIO"]),
+        app("org.telegram.messenger", "Telegram", "messaging", True, "10.9.0",
+            ["android.permission.READ_CONTACTS", "android.permission.ACCESS_FINE_LOCATION"]),
+        app("com.instagram.android", "Instagram", "messaging", True, "312.0",
+            ["android.permission.CAMERA", "android.permission.READ_MEDIA_IMAGES"]),
+        app("com.snapchat.android", "Snapchat", "messaging", True, "12.60",
+            ["android.permission.CAMERA", "android.permission.ACCESS_FINE_LOCATION"]),
+        app("com.calculator.vault.hider", "Calculator Vault", "anti_forensic", True, "3.2",
+            ["android.permission.READ_EXTERNAL_STORAGE", "android.permission.CAMERA"]),
+        app("io.metamask", "MetaMask", "crypto", True, "7.10", []),
+        app("com.android.chrome", "Chrome", "browser", True, "126.0", []),
+        app("com.android.settings", "Settings", "other", False, "14", [], system=True),
+        app("com.google.android.gms", "Google Play services", "other", False, "24.0", [], system=True),
+    ]
+
+
+def _accounts_json() -> list[dict]:
+    return [
+        {"name": "subject.device@gmail.com", "type": "com.google", "app": "Google"},
+        {"name": "WhatsApp", "type": "com.whatsapp", "app": "WhatsApp"},
+        {"name": "Telegram", "type": "org.telegram.messenger", "app": "Telegram"},
+        {"name": "imran_k99", "type": "com.snapchat.android", "app": "Snapchat"},
+    ]
+
+
+def _calendar_json() -> list[dict]:
+    base = 1751900000000  # ms
+    return [
+        {"title": "Meet at warehouse 9", "dtstart": base, "dtend": base + 3600000,
+         "location": "Warehouse 9, Dockyard Rd", "description": "bring the package",
+         "organizer": "imran", "calendar": "Personal", "all_day": False},
+        {"title": "Pickup — pier 4", "dtstart": base + 86400000, "dtend": base + 86400000 + 1800000,
+         "location": "Pier 4", "description": "", "organizer": "", "calendar": "Personal",
+         "all_day": False},
+    ]
+
+
+def _usage_json() -> list[dict]:
+    now = 1751999000000  # ms
+    return [
+        {"package": "com.whatsapp", "total_foreground_ms": 5_400_000, "last_used": now},
+        {"package": "org.telegram.messenger", "total_foreground_ms": 3_600_000, "last_used": now - 100000},
+        {"package": "com.snapchat.android", "total_foreground_ms": 1_200_000, "last_used": now - 500000},
+        {"package": "com.calculator.vault.hider", "total_foreground_ms": 900_000, "last_used": now - 200000},
+        {"package": "io.metamask", "total_foreground_ms": 600_000, "last_used": now - 900000},
+    ]
+
+
 def _sms_json() -> list[dict]:
     base = 1751826000000
     return [
@@ -320,6 +493,19 @@ def build(dest: Path) -> None:
     (downloads / "contacts.json").write_text(json.dumps(_contacts_json(), indent=2))
     (downloads / "calllog.json").write_text(json.dumps(_calllog_json(), indent=2))
     (downloads / "sms.json").write_text(json.dumps(_sms_json(), indent=2))
+
+    # Expanded Tier-1 Collector outputs (media inventory, apps, accounts, calendar, usage)
+    (downloads / "media_inventory.json").write_text(json.dumps(_media_inventory_json(), indent=2))
+    (downloads / "apps.json").write_text(json.dumps(_apps_json(), indent=2))
+    (downloads / "accounts.json").write_text(json.dumps(_accounts_json(), indent=2))
+    (downloads / "calendar.json").write_text(json.dumps(_calendar_json(), indent=2))
+    (downloads / "usage.json").write_text(json.dumps(_usage_json(), indent=2))
+
+    # Tier-2 app-chat stand-ins (represent DBs obtained from a rooted device / image). The
+    # engine's app-chat recovery keys on these filenames: direct.db → Instagram, arroyo.db →
+    # Snapchat (with its sibling main.db for identity).
+    _build_instagram_db(downloads / "direct.db")
+    _build_snapchat_dbs(downloads / "arroyo.db", downloads / "main.db")
 
     # Canned shell output + manual-capture screenshot for the mock source
     (shell / "dumpsys_location.txt").write_text(_dumpsys_location())

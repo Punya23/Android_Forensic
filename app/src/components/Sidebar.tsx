@@ -7,11 +7,18 @@ export type ViewKey =
   | "contacts"
   | "calls"
   | "media"
+  | "mediainv"
   | "telegram"
+  | "instagram"
+  | "snapchat"
+  | "apps"
+  | "accounts"
+  | "calendar"
   | "locations"
   | "browser"
   | "timeline"
   | "recovered"
+  | "discovered"
   | "graph"
   | "tagged"
   | "custody"
@@ -19,11 +26,18 @@ export type ViewKey =
 
 const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
   { key: "overview", label: "Overview", icon: "▤" },
-  { key: "messages", label: "Messages", icon: "💬", group: "Artifacts" },
+  { key: "messages", label: "Messages", icon: "💬", group: "Communications" },
+  { key: "telegram", label: "Telegram", icon: "✈" },
+  { key: "instagram", label: "Instagram", icon: "📷" },
+  { key: "snapchat", label: "Snapchat", icon: "👻" },
+  { key: "discovered", label: "Discovered Chats", icon: "🔎" },
   { key: "contacts", label: "Contacts", icon: "👤" },
   { key: "calls", label: "Calls", icon: "📞" },
-  { key: "media", label: "Media", icon: "🖼" },
-  { key: "telegram", label: "Telegram", icon: "✈", group: undefined },
+  { key: "media", label: "Media", icon: "🖼", group: "Device" },
+  { key: "mediainv", label: "Media Inventory", icon: "🗂" },
+  { key: "apps", label: "Installed Apps", icon: "📦" },
+  { key: "accounts", label: "Accounts", icon: "🔑" },
+  { key: "calendar", label: "Calendar", icon: "📅" },
   { key: "locations", label: "Locations", icon: "📍" },
   { key: "browser", label: "Browser History", icon: "🌐" },
   { key: "timeline", label: "Timeline", icon: "⏱", group: "Analysis" },

@@ -67,6 +67,10 @@ def cmd_acquire(args) -> int:
     tier1_contacts=args.tier1_contacts,
     tier1_calllog=args.tier1_calllog,
     tier1_sms=args.tier1_sms,
+    tier1_collect_all=args.tier1_collect_all,
+    tier2_telegram=args.tier2_telegram,
+    tier2_instagram=args.tier2_instagram,
+    tier2_snapchat=args.tier2_snapchat,
 )
     summary = run_acquisition(source, cfg, progress=_progress)
     print(json.dumps(summary["counts"], indent=2))
@@ -96,7 +100,15 @@ def main(argv: list[str] | None = None) -> int:
                help="Run Tier-1 helper to collect call log")
     a.add_argument("--tier1-sms", action="store_true",
                help="Run Tier-1 helper to collect SMS")
-    
+    a.add_argument("--tier1-collect-all", action="store_true",
+               help="Run Tier-1 helper dump_all: media inventory, apps, accounts, calendar, usage")
+    a.add_argument("--tier2-telegram", action="store_true",
+               help="Root-required: pull cache4.db and run Telegram deep recovery")
+    a.add_argument("--tier2-instagram", action="store_true",
+               help="Root-required: pull direct.db and run Instagram recovery")
+    a.add_argument("--tier2-snapchat", action="store_true",
+               help="Root-required: pull arroyo.db/main.db and run Snapchat recovery")
+
 
     args = p.parse_args(argv)
     if args.cmd == "devices":

@@ -78,6 +78,9 @@ export interface CaseSummary {
   risk: Risk;
   throughput: Throughput;
   graph_stats: GraphStats;
+  media_inventory_summary?: MediaInventorySummary;
+  notable_apps?: InstalledApp[];
+  discovered_chat_count?: number;
   tag_count: number;
 }
 
@@ -279,4 +282,124 @@ export interface TelegramMediaItem {
   sha256: string;
   parent_message_ts: string | null;
   confidence: Confidence;
+}
+
+// --- Expanded Tier-1 Collector datasets ------------------------------------
+
+export interface InstalledApp {
+  package: string;
+  label: string;
+  version_name: string;
+  version_code: number;
+  first_install: string | null;
+  last_update: string | null;
+  installer: string;
+  is_system: boolean;
+  category: string;
+  friendly_name: string | null;
+  notable: boolean;
+  dangerous_granted: string[];
+  permission_count: number;
+  source_file: string;
+}
+
+export interface Account {
+  name: string;
+  type: string;
+  app: string | null;
+  source_file: string;
+}
+
+export interface CalendarEvent {
+  title: string;
+  dtstart: string | null;
+  dtend: string | null;
+  location: string;
+  description: string;
+  organizer: string;
+  calendar: string;
+  all_day: boolean;
+  source_file: string;
+}
+
+export interface AppUsage {
+  package: string;
+  total_foreground_ms: number;
+  total_foreground_min: number;
+  last_used: string | null;
+  friendly_name: string | null;
+  category: string;
+  source_file: string;
+}
+
+export interface MediaInventoryItem {
+  media_id: number;
+  kind: string;
+  display_name: string;
+  mime_type: string;
+  size_bytes: number;
+  date_taken: string | null;
+  date_added: string | null;
+  date_modified: string | null;
+  width: number;
+  height: number;
+  duration_ms: number;
+  bucket: string;
+  owner_package: string;
+  owner_app: string | null;
+  relative_path: string;
+  data_path: string;
+  is_trashed: boolean;
+  is_favorite: boolean;
+  is_pending: boolean;
+  gps: { lat: number; lon: number } | null;
+  source_file: string;
+}
+
+export interface MediaInventorySummary {
+  total: number;
+  by_kind: Record<string, number>;
+  by_app: Record<string, number>;
+  trashed: number;
+  favorite: number;
+  with_gps: number;
+  total_bytes: number;
+}
+
+// --- App-chat recovery (Instagram / Snapchat / generic Dynamic App Finder) ---
+
+export interface ChatMessage {
+  body: string;
+  sender_name: string;
+  sender_id: string;
+  timestamp: string | null;
+  confidence: Confidence;
+  media_artifact_id: string | null;
+  carve_method: string;
+  provenance: string;
+}
+
+export interface ChatConversation {
+  chat_id: string;
+  title: string;
+  participants: { id: string; name: string }[];
+  last_message_ts: string | null;
+  message_count: number;
+  messages: ChatMessage[];
+}
+
+export type ChatConversationsMap = Record<string, ChatConversation>;
+
+export interface DiscoveredChatTable {
+  db: string;
+  table: string;
+  live: number;
+  recovered: number;
+  roles: { text: string | null; timestamp: string | null; sender: string | null; thread: string | null };
+}
+
+export interface DiscoveredChats {
+  tables: DiscoveredChatTable[];
+  messages: (ChatMessage & { app?: string; source_file?: string })[];
+  counts?: Record<string, number>;
 }

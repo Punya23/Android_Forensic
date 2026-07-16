@@ -40,6 +40,28 @@ prejudice the later full laboratory examination.
 | **Sealed evidence-package export** (ZIP + SHA-256 verification manifest) | ✅ | evidence export |
 | Runs **with no phone** via a synthetic mock corpus (dev + demo fallback) | ✅ | — |
 
+### New in v0.2 — expanded collection & app coverage
+
+| Capability | Tier | Comparable commercial feature |
+|---|---|---|
+| **Collector APK `dump_all`** — one action captures everything below, then self-uninstalls | 1 (non-root) | Oxygen Android Agent |
+| **MediaStore inventory** — every media file's metadata (size, `date_taken`, owner app, dimensions) without pulling the files | 1 | media catalogue before selective pull |
+| **Trashed / favorite media detection** (`IS_TRASHED` / `IS_FAVORITE`) + EXIF GPS via `ACCESS_MEDIA_LOCATION` | 1 | recycle-bin / geotag surfacing |
+| **Installed-app inventory** with investigative classification (messaging / crypto / dating / browser) | 1 | UFED installed applications |
+| **Vault / anti-forensic app detection** (AppLock, Calculator Vault, hiders — table + name heuristic) | 1 | AXIOM "potentially unwanted apps" |
+| **Accounts** (Google / WhatsApp / Telegram / Snapchat identities via AccountManager) | 1 | User Accounts |
+| **Calendar events**, **app-usage telemetry** (foreground time, last-used) | 1 | Organizer / app usage |
+| **Instagram Direct recovery** — `direct.db` live + deleted DMs, µs timestamps, identity from shared_prefs, + DYI-export ingest | 2 (root/image) | Instagram `direct.db` decode |
+| **Snapchat recovery** — `arroyo.db` `conversation_message` (schema-less protobuf), identity from `main.db` `Friend`, WAL/freelist ephemeral carve | 2 (root/image) | arroyo.db decode |
+| **Dynamic App Finder** — auto-classifies chat tables in *unknown* app SQLite DBs (sender/text/time columns) | 0–2 | Cellebrite App Genie / Magnet Dynamic App Finder |
+| Anti-forensic-app + trashed-media signals fold into the **traffic-light risk verdict** | — | insights |
+
+All Tier-1 collection is driven by the (now much larger) `apk/` Collector helper; all Tier-2 app
+recovery mirrors the Telegram module (root `su`-copy of the app-private DB, then standard SQLite
+forensic recovery with confidence badges — **no app encryption is bypassed**). Every new dataset
+has its own dashboard view and a report section. Everything demos with **no phone and no root**
+against the synthetic corpus (`tools/make_corpus.py` seeds Instagram/Snapchat DBs + Collector JSON).
+
 Where we deliberately **don't** claim parity (and say so, honestly): cloud extraction,
 lock-screen bypass, physical/chip-off imaging, and defeating Signal's hardware-backed
 Keystore — none are achievable non-root in scope. See `docs/IMPLEMENTATION_PLAN.md` §0.

@@ -72,6 +72,14 @@ def generate_report(case_dir: str | Path) -> Path:
     tg_media      = case.read_derived("telegram_media") or []
     tg_convs      = case.read_derived("telegram_conversations") or {}
     tg_present    = bool(tg_messages or tg_users or tg_chats)
+    # --- Expanded Tier-1 + app-chat datasets (absent unless the relevant capture ran) ---
+    apps          = case.read_derived("apps") or []
+    accounts      = case.read_derived("accounts") or []
+    media_inv_sum = case.read_derived("media_inventory_summary") or {}
+    ig_messages   = case.read_derived("instagram") or []
+    sc_messages   = case.read_derived("snapchat") or []
+    discovered    = case.read_derived("discovered_chats") or {}
+    notable_apps  = [a for a in apps if isinstance(a, dict) and a.get("notable")]
 
     parts: list[str] = []
     parts.append(_HEAD)
@@ -135,6 +143,13 @@ def generate_report(case_dir: str | Path) -> Path:
         ("Contacts", len(contacts)),
         ("Calls", len(calls)),
         ("Media", len(media)),
+        ("Media inventory", media_inv_sum.get("total", 0)),
+        ("Installed apps", len(apps)),
+        ("Apps of interest", len(notable_apps)),
+        ("Accounts", len(accounts)),
+        ("Instagram msgs", len(ig_messages)),
+        ("Snapchat msgs", len(sc_messages)),
+        ("Discovered chats", len(discovered.get("messages", []) if isinstance(discovered, dict) else [])),
         ("Locations", len(locations)),
         ("Browser URLs", len(browser)),
         ("Flags", len(flags)),
@@ -187,9 +202,28 @@ def generate_report(case_dir: str | Path) -> Path:
                 f'<td class="mono">{_esc(r.get("provenance"))}</td></tr>')
         parts.append('</table>')
 
+    # --- Apps of interest (Tier-1 inventory insight) ---
+    if notable_apps:
+        parts.append(_apps_section(notable_apps, media_inv_sum, accounts))
+
     # --- Telegram Recovered Data ---
     if tg_present:
         parts.append(_telegram_section(tg_messages, tg_users, tg_chats, tg_media))
+
+    # --- Instagram / Snapchat app-chat recovery ---
+    if ig_messages:
+        parts.append(_app_chat_section(
+            "Instagram Direct (Tier&nbsp;2 — Root / Image)", ig_messages,
+            "Recovered from <code>direct.db</code>. No Instagram encryption was bypassed; the "
+            "database was read from app-private storage obtained with root / a filesystem image."))
+    if sc_messages:
+        parts.append(_app_chat_section(
+            "Snapchat (Tier&nbsp;2 — Root / Image)", sc_messages,
+            "Recovered from <code>arroyo.db</code> (protobuf message bodies decoded schema-less). "
+            "Ephemeral messages were carved from freelist/WAL where present. No encryption was bypassed."))
+    disc_msgs = discovered.get("messages", []) if isinstance(discovered, dict) else []
+    if disc_msgs:
+        parts.append(_discovered_section(discovered))
 
     # Messages preview
     if messages:
@@ -347,6 +381,106 @@ def _telegram_section(
             )
         parts.append('</table>')
 
+    return "\n".join(parts)
+
+
+def _app_chat_section(title: str, messages: list[dict], note: str) -> str:
+    """Render a recovered app-chat section (Instagram / Snapchat) with confidence badges."""
+    def _count(conf: str) -> int:
+        return sum(1 for m in messages if m.get("confidence") == conf)
+
+    parts = [f'<h2>{title}</h2>', f'<p class="note">{note}</p>']
+    parts.append(
+        '<table><tr>'
+        '<th style="color:#1c7d3f">Live</th><th style="color:#2258a8">Recovered</th>'
+        '<th style="color:#a6741a">Carved</th><th style="color:#a5322f">Gap only</th>'
+        '<th>Total</th></tr>'
+        f'<tr><td style="color:#1c7d3f">{_count("live")}</td>'
+        f'<td style="color:#2258a8">{_count("recovered")}</td>'
+        f'<td style="color:#a6741a">{_count("carved")}</td>'
+        f'<td style="color:#a5322f">{_count("deletion")}</td>'
+        f'<td><b>{len(messages)}</b></td></tr></table>')
+    displayable = [m for m in messages if m.get("body")]
+    if displayable:
+        parts.append('<table style="margin-top:8px"><tr><th>Confidence</th><th>Time</th>'
+                     '<th>Sender</th><th>Body</th><th>Provenance</th></tr>')
+        for m in displayable[:200]:
+            conf = m.get("confidence", "carved")
+            parts.append(
+                f'<tr><td>{_badge(conf.upper(), _CONF_COLORS.get(conf, _CONF_COLORS["carved"]))}</td>'
+                f'<td class="mono">{_esc(m.get("timestamp") or "")}</td>'
+                f'<td>{_esc(m.get("sender_name") or m.get("sender") or "")}</td>'
+                f'<td>{_esc((m.get("body") or "")[:300])}</td>'
+                f'<td class="mono">{_esc((m.get("provenance") or "")[:80])}</td></tr>')
+        parts.append('</table>')
+    return "\n".join(parts)
+
+
+def _discovered_section(discovered: dict) -> str:
+    """Render the generic Dynamic App Finder output (unknown-app chats)."""
+    tables = discovered.get("tables", [])
+    messages = discovered.get("messages", [])
+    parts = ['<h2>Discovered Chats (Dynamic App Finder)</h2>']
+    parts.append('<p class="note">Chat-like tables auto-detected in otherwise-unrecognised SQLite '
+                 'databases and column-classified without a dedicated parser — the open-source '
+                 'analogue of Cellebrite App Genie / Magnet Dynamic App Finder.</p>')
+    if tables:
+        parts.append('<table><tr><th>Database</th><th>Table</th><th>Text col</th>'
+                     '<th>Time col</th><th>Live</th><th>Recovered</th></tr>')
+        for t in tables:
+            roles = t.get("roles", {})
+            parts.append(
+                f'<tr><td class="mono">{_esc(t.get("db"))}</td><td>{_esc(t.get("table"))}</td>'
+                f'<td class="mono">{_esc(roles.get("text"))}</td>'
+                f'<td class="mono">{_esc(roles.get("timestamp"))}</td>'
+                f'<td>{_esc(t.get("live"))}</td><td>{_esc(t.get("recovered"))}</td></tr>')
+        parts.append('</table>')
+    disp = [m for m in messages if m.get("body")]
+    if disp:
+        parts.append('<table style="margin-top:8px"><tr><th>Confidence</th><th>App:Table</th>'
+                     '<th>Sender</th><th>Body</th></tr>')
+        for m in disp[:150]:
+            conf = m.get("confidence", "carved")
+            parts.append(
+                f'<tr><td>{_badge(conf.upper(), _CONF_COLORS.get(conf, _CONF_COLORS["carved"]))}</td>'
+                f'<td class="mono">{_esc(m.get("app") or "")}</td>'
+                f'<td>{_esc(m.get("sender_name") or "")}</td>'
+                f'<td>{_esc((m.get("body") or "")[:300])}</td></tr>')
+        parts.append('</table>')
+    return "\n".join(parts)
+
+
+def _apps_section(notable_apps: list[dict], media_sum: dict, accounts: list[dict]) -> str:
+    """Render 'Apps of interest' — messaging / crypto / dating / vault apps + insights."""
+    parts = ['<h2>Apps of interest</h2>']
+    anti = [a for a in notable_apps if a.get("category") == "anti_forensic"]
+    if anti:
+        names = ", ".join(_esc(a.get("friendly_name") or a.get("label") or a.get("package"))
+                          for a in anti)
+        parts.append(f'<p class="note" style="color:#a5322f"><b>Vault / anti-forensic app(s) '
+                     f'present:</b> {names} — content-hiding apps warrant closer review.</p>')
+    parts.append('<table><tr><th>App</th><th>Package</th><th>Category</th><th>Version</th>'
+                 '<th>Dangerous perms</th></tr>')
+    for a in notable_apps:
+        cat = a.get("category", "other")
+        cat_label = "vault / anti-forensic" if cat == "anti_forensic" else cat
+        color = ';color:#a5322f;font-weight:600' if cat == "anti_forensic" else ""
+        parts.append(
+            f'<tr style="{"background:#f6dedd" if cat == "anti_forensic" else ""}">'
+            f'<td><b>{_esc(a.get("friendly_name") or a.get("label"))}</b></td>'
+            f'<td class="mono">{_esc(a.get("package"))}</td>'
+            f'<td style="{color}">{_esc(cat_label)}</td>'
+            f'<td class="mono">{_esc(a.get("version_name"))}</td>'
+            f'<td>{_esc(len(a.get("dangerous_granted", [])))}</td></tr>')
+    parts.append('</table>')
+    if media_sum.get("total"):
+        parts.append(f'<p class="note">MediaStore inventory: {_esc(media_sum.get("total"))} items · '
+                     f'<b>{_esc(media_sum.get("trashed", 0))} trashed</b> · '
+                     f'{_esc(media_sum.get("favorite", 0))} favorited · '
+                     f'{_esc(media_sum.get("with_gps", 0))} geotagged.</p>')
+    if accounts:
+        acct_str = ", ".join(_esc(f'{a.get("app") or a.get("type")}') for a in accounts[:12])
+        parts.append(f'<p class="note">Device accounts ({len(accounts)}): {acct_str}.</p>')
     return "\n".join(parts)
 
 

@@ -19,6 +19,13 @@ import { TaggedView } from "./views/Tagged";
 import { CustodyView } from "./views/Custody";
 import { ReportView } from "./views/Report";
 import { TelegramView } from "./views/Telegram";
+import { InstagramView } from "./views/Instagram";
+import { SnapchatView } from "./views/Snapchat";
+import { DiscoveredChatsView } from "./views/DiscoveredChats";
+import { AppsView } from "./views/Apps";
+import { AccountsView } from "./views/Accounts";
+import { CalendarView } from "./views/Calendar";
+import { MediaInventoryView } from "./views/MediaInventory";
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
@@ -55,6 +62,13 @@ export default function App() {
           {caseId && view === "contacts" && <ContactsView caseId={caseId} />}
           {caseId && view === "calls" && <CallsView caseId={caseId} />}
           {caseId && view === "media" && <MediaView caseId={caseId} />}
+          {caseId && view === "mediainv" && <MediaInventoryView caseId={caseId} />}
+          {caseId && view === "apps" && <AppsView caseId={caseId} />}
+          {caseId && view === "accounts" && <AccountsView caseId={caseId} />}
+          {caseId && view === "calendar" && <CalendarView caseId={caseId} />}
+          {caseId && view === "instagram" && <InstagramView caseId={caseId} />}
+          {caseId && view === "snapchat" && <SnapchatView caseId={caseId} />}
+          {caseId && view === "discovered" && <DiscoveredChatsView caseId={caseId} />}
           {caseId && view === "locations" && <LocationsView caseId={caseId} />}
           {caseId && view === "browser" && <BrowserView caseId={caseId} />}
           {caseId && view === "timeline" && <TimelineView caseId={caseId} />}

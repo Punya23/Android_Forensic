@@ -28,7 +28,9 @@ def build_timeline(*,
                    media: Iterable[MediaItem] = (),
                    locations: Iterable[LocationPoint] = (),
                    telegram_messages: Iterable[dict] = (),
-                   telegram_media: Iterable[dict] = ()) -> list[dict]:
+                   telegram_media: Iterable[dict] = (),
+                   calendar_events: Iterable[dict] = (),
+                   media_inventory: Iterable[dict] = ()) -> list[dict]:
     """Build a sorted, unified timeline from all evidence types.
 
     Parameters
@@ -138,6 +140,33 @@ def build_timeline(*,
             confidence=conf,
             ref=tm.get("artifact_id", ""),
         )
+        (events if ts else undated).append(ev)
+
+    # --- Calendar events ---
+    for ce in calendar_events:
+        ts = ce.get("dtstart")
+        title = (ce.get("title") or "(no title)")[:120]
+        loc = ce.get("location") or ""
+        summary = f"Calendar: {title}" + (f" @ {loc}" if loc else "")
+        ev = TimelineEvent(timestamp=ts or "", kind="calendar", summary=summary,
+                           ref=ce.get("source_file", ""))
+        (events if ts else undated).append(ev)
+
+    # --- MediaStore inventory (metadata-only catalogue; date_taken preferred) ---
+    for mi in media_inventory:
+        ts = mi.get("date_taken") or mi.get("date_added")
+        name = mi.get("display_name") or mi.get("relative_path") or str(mi.get("media_id", ""))
+        owner = mi.get("owner_app")
+        badges = []
+        if mi.get("is_trashed"):
+            badges.append("trashed")
+        if mi.get("is_favorite"):
+            badges.append("favorite")
+        suffix = f" [{', '.join(badges)}]" if badges else ""
+        summary = (f"{mi.get('kind', 'media')} {name}"
+                   + (f" ({owner})" if owner else "") + suffix)
+        ev = TimelineEvent(timestamp=ts or "", kind="media_inventory", summary=summary,
+                           ref=str(mi.get("media_id", "")))
         (events if ts else undated).append(ev)
 
     # Sort timestamped events; append undated at the end.

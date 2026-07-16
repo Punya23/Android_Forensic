@@ -22,7 +22,8 @@ export function OverviewView({ caseId, setView }: { caseId: string; setView: (v:
   const counts = summary.counts;
   const tp = summary.throughput;
 
-  const tiles: { key: ViewKey; label: string; n: number }[] = [
+  // Base tiles always shown; app-chat and Tier-1 tiles appear only when they have data.
+  const baseTiles: { key: ViewKey; label: string; n: number }[] = [
     { key: "messages", label: "Messages", n: counts.messages },
     { key: "recovered", label: "Recovered", n: counts.recovered },
     { key: "contacts", label: "Contacts", n: counts.contacts },
@@ -32,6 +33,18 @@ export function OverviewView({ caseId, setView }: { caseId: string; setView: (v:
     { key: "browser", label: "Browser", n: counts.browser ?? 0 },
     { key: "timeline", label: "Timeline", n: counts.timeline },
   ];
+  const extraTilesAll: { key: ViewKey; label: string; n: number }[] = [
+    { key: "mediainv", label: "Media Inv.", n: counts.media_inventory ?? 0 },
+    { key: "apps", label: "Apps", n: counts.apps ?? 0 },
+    { key: "accounts", label: "Accounts", n: counts.accounts ?? 0 },
+    { key: "calendar", label: "Calendar", n: counts.calendar ?? 0 },
+    { key: "instagram", label: "Instagram", n: counts.instagram ?? 0 },
+    { key: "snapchat", label: "Snapchat", n: counts.snapchat ?? 0 },
+    { key: "discovered", label: "Discovered", n: summary.discovered_chat_count ?? 0 },
+  ];
+  const tiles = [...baseTiles, ...extraTilesAll.filter((t) => t.n > 0)];
+  const notableApps = summary.notable_apps ?? [];
+  const mediaSum = summary.media_inventory_summary;
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -88,6 +101,40 @@ export function OverviewView({ caseId, setView }: { caseId: string; setView: (v:
           </button>
         ))}
       </div>
+
+      {/* Apps of interest (Tier-1 inventory insight) */}
+      {notableApps.length > 0 && (
+        <div className="card p-4 mb-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold">Apps of interest ({notableApps.length})</h3>
+            <button className="text-xs text-accent hover:underline" onClick={() => setView("apps")}>
+              View all apps →
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {notableApps.slice(0, 30).map((a, i) => (
+              <span
+                key={i}
+                title={a.package}
+                className={`text-xs px-2 py-1 rounded border ${
+                  a.category === "anti_forensic"
+                    ? "border-deletion/50 bg-deletion/10 text-deletion"
+                    : "border-line bg-panel-2 text-ink/80"
+                }`}
+              >
+                {a.friendly_name || a.label || a.package}
+                <span className="text-muted/70 ml-1">· {a.category === "anti_forensic" ? "vault" : a.category}</span>
+              </span>
+            ))}
+          </div>
+          {mediaSum && (mediaSum.trashed > 0 || mediaSum.with_gps > 0) && (
+            <div className="text-xs text-muted mt-3 pt-3 border-t border-line/50">
+              MediaStore: {mediaSum.total} items · <span className="text-deletion">{mediaSum.trashed} trashed</span> ·{" "}
+              {mediaSum.favorite} favorited · {mediaSum.with_gps} geotagged
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Priority flags */}
       <div className="card p-4">

@@ -1,25 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   eRakshak Collector — Tier-1 forensic helper.
-  Declares the dangerous permissions it needs; declaring them does NOT grant them.
-  Contacts/media are grantable via `pm grant` with no root. Call log & SMS are
-  hard-restricted and require the temporary default-role swap documented in the README.
+
+  Declaring a permission does NOT grant it. The engine grants each one explicitly (and logs
+  it) via `pm grant` for the grantable ones, an appops set for usage-stats, or a temporary
+  default-role swap for the two hard-restricted ones (call log / SMS). Every collector reads
+  only what it was actually granted and reports what it could not reach, so the acquisition
+  is fully auditable.
+
+  Permission → how the engine grants it (all logged, alters_device=true):
+    READ_CONTACTS ............. pm grant                     (dangerous, not hard-restricted)
+    READ_MEDIA_IMAGES/VIDEO/AUDIO  pm grant                  (Android 13+ media groups)
+    READ_EXTERNAL_STORAGE ..... pm grant                     (<= Android 12 media enumeration)
+    ACCESS_MEDIA_LOCATION ..... pm grant                     (unredacted EXIF GPS from MediaStore)
+    READ_CALENDAR ............. pm grant
+    GET_ACCOUNTS .............. pm grant                      (best-effort; OEM-dependent on 8+)
+    QUERY_ALL_PACKAGES ........ normal (install-time)         (full installed-app inventory)
+    PACKAGE_USAGE_STATS ....... appops set GET_USAGE_STATS allow
+    READ_CALL_LOG ............. hard-restricted → default-Dialer role swap (revert after use)
+    READ_SMS .................. hard-restricted → default-SMS role swap  (revert after use)
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="io.erakshak.collector">
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Storage: needed to write JSON output to Downloads folder -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <!-- Storage (write JSON output + enumerate media on <= Android 12) -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
-    <!-- Content providers -->
-    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Media (Android 13+ split media permissions) + unredacted EXIF GPS -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+
+    <!-- Communications & PIM content providers -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+
+    <!-- Accounts, installed-app inventory, app-usage telemetry -->
+    <uses-permission android:name="android.permission.GET_ACCOUNTS" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:allowBackup="false"

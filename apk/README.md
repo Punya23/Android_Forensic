@@ -1,9 +1,37 @@
 # eRakshak Collector — Tier-1 Helper APK
 
-A **minimal, sideloaded** Android app that reads the artifacts the `shell` UID cannot reach
-without an app identity — **contacts**, and (behind an explicit, revert-after-use step)
-**call log** and **SMS** — and writes them as JSON to shared storage for the engine to
-`adb pull`.
+A **sideloaded** Android app that reads the artifacts the `shell` UID cannot reach without an
+app identity, and writes them as JSON to public `Download/` (via MediaStore on Android 10+) for
+the engine to `adb pull`. As of v0.2 it is a full non-root collector.
+
+## Collectors (v0.2)
+
+Each `--es action <name>` runs one collector; `dump_all` runs them all (off the main thread)
+and writes a `collector_manifest.json` summarising what ran, row counts, and any permission
+denials. Every collector returns a clean status instead of crashing when a permission is missing.
+
+| Action | Output | Permission | Grantable via `pm grant`? |
+|---|---|---|---|
+| `dump_contacts` | `contacts.json` (merged numbers + emails) | READ_CONTACTS | ✅ |
+| `dump_calllog` | `calllog.json` | READ_CALL_LOG | ❌ hard-restricted → Dialer role swap |
+| `dump_sms` | `sms.json` (+ MMS text) | READ_SMS | ❌ hard-restricted → SMS role swap |
+| `dump_media` | `media_inventory.json` (MediaStore: trashed/favorite/owner-app/EXIF-GPS) | READ_MEDIA_* / ACCESS_MEDIA_LOCATION | ✅ |
+| `dump_apps` | `apps.json` (inventory + vault/messaging classification) | QUERY_ALL_PACKAGES | ✅ (install-time) |
+| `dump_accounts` | `accounts.json` | GET_ACCOUNTS | ✅ (OEM-dependent visibility) |
+| `dump_calendar` | `calendar.json` | READ_CALENDAR | ✅ |
+| `dump_usage` | `usage.json` | PACKAGE_USAGE_STATS | via `appops set … GET_USAGE_STATS allow` |
+| `dump_device` | `device_extra.json` (Build/props, root indicators) | — | — |
+| `dump_all` | all of the above + `collector_manifest.json` | — | — |
+
+The engine drives `dump_all` when **Full collection** is enabled in the Acquisition view (or
+`--tier1-collect-all` on the CLI): install → grant the non-restricted permissions → enable the
+usage appop → `am start … dump_all` → pull every JSON → uninstall — all logged with
+`alters_device: true`.
+
+---
+
+The original minimal surface — **contacts**, and (behind an explicit, revert-after-use step)
+**call log** and **SMS** — is still available as the individual actions above.
 
 This is the **Tier-1** path in the acquisition model. It is **state-changing** by
 definition (it installs an app and grants it permissions), so every step it triggers is

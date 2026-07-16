@@ -54,6 +54,18 @@ from .parsers import (
     parse_whatsapp_export,
 )
 from .parsers.exif import extract_datetime
+from .parsers.collector import (
+    parse_media_inventory,
+    parse_apps,
+    parse_accounts,
+    parse_calendar,
+    parse_usage,
+    media_inventory_summary,
+)
+from .parsers.instagram import recover_instagram_messages, InstagramPaths
+from .parsers.snapchat import recover_snapchat_messages, SnapchatPaths
+from .parsers.appfinder import scan_sqlite_for_chats
+from .parsers.appchat import thread_conversations
 from .aleapp import run_aleapp, promote_aleapp_results
 from .recovery import recover_deleted_rows, detect_rowid_gaps, sqbrite_cross_check, map_columns_to_whatsapp, rows_meta_colnames
 from .report import generate_report
@@ -84,9 +96,13 @@ class PipelineConfig:
     tier1_contacts: bool = False  # run helper APK flow to collect contacts.json
     tier1_calllog: bool = False   # run helper APK call-log role-swap (intrusive, logged)
     tier1_sms: bool = False       # run helper APK SMS role-swap (intrusive, logged)
+    tier1_collect_all: bool = False  # run helper APK dump_all: media/apps/accounts/calendar/usage
     run_aleapp: bool = False      # run ALEAPP subprocess for broad OS artifact parsing
     tier2_telegram: bool = False  # root-required: pull cache4.db and run full forensic recovery
     tier2_telegram_max_media: int = 200  # max media files to pull per case (0 = skip media pull)
+    tier2_instagram: bool = False  # root-required: pull direct.db and run Instagram recovery
+    tier2_snapchat: bool = False   # root-required: pull arroyo.db/main.db and run Snapchat recovery
+    run_app_finder: bool = True    # generic SQLite chat discovery over otherwise-unrecognised DBs
 
 
 def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
@@ -109,9 +125,40 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     case.log("device.prestate", f"pre-acquisition snapshot: {pre}", tier=Tier.TIER0.value)
 
     staging = Path(tempfile.mkdtemp(prefix="triage_stage_"))
+    # All accumulators are declared up front (before the Tier-1 helpers run) so a Tier-1
+    # dump can append to them without a forward-reference, and so the later Tier-0 pull loop
+    # never re-initialises (and wipes) what Tier-1 already collected.
     contacts = []
     calls = []
+    media_items: list[MediaItem] = []
+    locations: list[LocationPoint] = []
+    app_messages = []                          # WhatsApp export + Telegram/app-DB + SMS
+    db_artifacts: list[tuple[Path, Any]] = []  # (stored path, ArtifactRecord)
+    browser_history: list[dict] = []
+    screenshots: list[dict] = []
+    media_inventory: list = []                 # MediaStore catalogue (Tier-1)
+    installed_apps: list = []                  # installed-app inventory (Tier-1)
+    accounts: list = []                        # device accounts (Tier-1)
+    calendar_events: list = []                 # calendar events (Tier-1)
+    app_usage: list = []                       # app-usage telemetry (Tier-1)
+    instagram_result: dict = {}                # Instagram recovery result (Tier-2 / corpus)
+    snapchat_result: dict = {}                 # Snapchat recovery result (Tier-2 / corpus)
+    discovered_chats: dict = {"tables": [], "messages": []}  # generic app-finder output
     tier1_skip_paths: set[str] = set()
+
+    # -- Tier 1 (optional): expanded helper-APK collection (dump_all) ---------
+    if cfg.tier1_collect_all:
+        progress("tier1", 0.045, "Running Tier-1 helper (full collection)")
+        if isinstance(source, RealDeviceSource):
+            _run_tier1_collect_all(
+                source, case, staging,
+                media_inventory=media_inventory, installed_apps=installed_apps,
+                accounts=accounts, calendar_events=calendar_events, app_usage=app_usage,
+                contacts=contacts, skip_paths=tier1_skip_paths)
+        else:
+            case.log("tier1.helper.collect_all",
+                     "Tier-1 full collection requested on mock source; skipped",
+                     result="skipped", tier=Tier.TIER1.value)
 
     # -- Tier 1 (optional): helper APK contacts dump --------------------------
     if cfg.tier1_contacts:
@@ -159,13 +206,6 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     # De-dupe while preserving order, and cap.
     seen = set()
     files = [f for f in all_files if not (f in seen or seen.add(f))][:cfg.max_files]
-
-    media_items: list[MediaItem] = []
-    locations: list[LocationPoint] = []
-    app_messages = []           # WhatsApp export + Telegram/app-DB + SMS
-    db_artifacts: list[tuple[Path, Any]] = []  # (stored path, ArtifactRecord)
-    browser_history: list[dict] = []
-    screenshots: list[dict] = []
 
     pull_start = time.monotonic()
     pulled_bytes = 0
@@ -298,6 +338,35 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
             case.log("parse.sms", f"{len(sms_msgs)} SMS (Tier 1 helper)",
                      tier=Tier.TIER1.value)
 
+        # Expanded Collector-APK outputs (media catalogue / apps / accounts / calendar / usage)
+        if name == "media_inventory.json":
+            inv = parse_media_inventory(stored)
+            media_inventory.extend(inv)
+            case.log("parse.media_inventory",
+                     f"{len(inv)} MediaStore entries (Tier 1 helper)", tier=Tier.TIER1.value)
+        if name == "apps.json":
+            apps = parse_apps(stored)
+            installed_apps.extend(apps)
+            notable = sum(1 for a in apps if a.notable)
+            case.log("parse.apps",
+                     f"{len(apps)} installed apps ({notable} notable) (Tier 1 helper)",
+                     tier=Tier.TIER1.value)
+        if name == "accounts.json":
+            accts = parse_accounts(stored)
+            accounts.extend(accts)
+            case.log("parse.accounts", f"{len(accts)} accounts (Tier 1 helper)",
+                     tier=Tier.TIER1.value)
+        if name == "calendar.json":
+            cal = parse_calendar(stored)
+            calendar_events.extend(cal)
+            case.log("parse.calendar", f"{len(cal)} calendar events (Tier 1 helper)",
+                     tier=Tier.TIER1.value)
+        if name == "usage.json":
+            usage = parse_usage(stored)
+            app_usage.extend(usage)
+            case.log("parse.usage", f"{len(usage)} app-usage rows (Tier 1 helper)",
+                     tier=Tier.TIER1.value)
+
     pull_elapsed = max(time.monotonic() - pull_start, 0.001)
 
     # -- dumpsys location (read-only) ---------------------------------------
@@ -353,6 +422,26 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
                 tier=Tier.TIER2.value,
             )
 
+    if cfg.tier2_instagram:
+        progress("tier2", 0.61, "Running Tier-2 Instagram recovery (root)")
+        if isinstance(source, RealDeviceSource):
+            instagram_result = _run_tier2_instagram(
+                source, case, staging, app_messages, recovered_rows) or {}
+        else:
+            case.log("tier2.instagram",
+                     "Tier-2 Instagram requested on non-real (mock) source; skipped",
+                     result="skipped", tier=Tier.TIER2.value)
+
+    if cfg.tier2_snapchat:
+        progress("tier2", 0.62, "Running Tier-2 Snapchat recovery (root)")
+        if isinstance(source, RealDeviceSource):
+            snapchat_result = _run_tier2_snapchat(
+                source, case, staging, app_messages, recovered_rows) or {}
+        else:
+            case.log("tier2.snapchat",
+                     "Tier-2 Snapchat requested on non-real (mock) source; skipped",
+                     result="skipped", tier=Tier.TIER2.value)
+
     # -- SQLite deleted-record recovery -------------------------------------
     progress("recover", 0.62, "Recovering deleted records")
     for stored, rec in db_artifacts:
@@ -402,6 +491,57 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
             case.log("recover.sqbrite", f"sqbrite error on {rec.source_path}: {exc}",
                      result="error", tier=Tier.TIER0.value)
 
+    # -- Dedicated app-chat recovery (Instagram / Snapchat) + generic discovery --
+    # Runs over every pulled SQLite DB. direct.db → Instagram, arroyo.db → Snapchat; any other
+    # unrecognised DB is scanned by the generic Dynamic App Finder so *unknown* chat apps still
+    # surface. On a non-root device the app-private DBs simply aren't present, so this is a
+    # no-op except for whatever appeared in shared storage / the synthetic corpus.
+    progress("appchat", 0.70, "Recovering app chats & scanning unknown databases")
+    _recognised = ("msgstore", "cache4", "history")
+    for stored, rec in db_artifacts:
+        nm = stored.name.lower()
+        try:
+            if (nm == "direct.db" or rec.app == "instagram") and not instagram_result:
+                res = recover_instagram_messages(stored, prefs_dir=stored.parent / "shared_prefs")
+                if res.get("available") and res.get("messages"):
+                    instagram_result = res
+                    _fold_app_chat_result(res, "instagram", app_messages, recovered_rows)
+                    case.log("parse.instagram",
+                             f"{res['counts']['total']} Instagram messages "
+                             f"({res['counts']['live']} live, "
+                             f"{res['counts']['carved_partial']} carved, "
+                             f"{res['counts']['deletion_detected']} gaps)",
+                             tier=Tier.TIER2.value, artifact_id=rec.artifact_id)
+            elif (nm == "arroyo.db" or rec.app == "snapchat") and not snapchat_result:
+                main_db = stored.parent / "main.db"
+                res = recover_snapchat_messages(
+                    stored, main_db=main_db if main_db.exists() else None)
+                if res.get("available") and res.get("messages"):
+                    snapchat_result = res
+                    _fold_app_chat_result(res, "snapchat", app_messages, recovered_rows)
+                    case.log("parse.snapchat",
+                             f"{res['counts']['total']} Snapchat messages "
+                             f"({res['counts']['live']} live, "
+                             f"{res['counts']['carved_partial']} carved, "
+                             f"{res['counts']['deletion_detected']} gaps)",
+                             tier=Tier.TIER2.value, artifact_id=rec.artifact_id)
+            elif (cfg.run_app_finder and not any(k in nm for k in _recognised)
+                  and rec.app not in ("telegram", "signal", "whatsapp")):
+                found = scan_sqlite_for_chats(stored)
+                if found.get("available"):
+                    discovered_chats["tables"].extend(
+                        {**t, "db": stored.name} for t in found.get("tables", []))
+                    discovered_chats["messages"].extend(found.get("messages", []))
+                    _fold_app_chat_result(found, f"app:{stored.stem}",
+                                          app_messages, recovered_rows)
+                    case.log("appfinder",
+                             f"discovered {len(found.get('tables', []))} chat table(s) in "
+                             f"{stored.name}: {found['counts']['total']} messages",
+                             tier=Tier.TIER0.value, artifact_id=rec.artifact_id)
+        except Exception as exc:
+            case.log("appchat", f"app-chat recovery error on {stored.name}: {exc}",
+                     result="error", tier=Tier.TIER0.value)
+
     # Recovered WhatsApp/Telegram-style messages become message rows too, so the
     # dashboard Messages view shows deleted content inline with its confidence badge.
     recovered_messages = _recovered_as_messages(recovered_rows)
@@ -440,11 +580,21 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     except Exception:
         pass
 
+    # Fold MediaStore-inventory GPS into the location set (metadata only — no file pulled).
+    for mi in media_inventory:
+        if mi.gps:
+            locations.append(LocationPoint(
+                latitude=mi.gps["lat"], longitude=mi.gps["lon"], source="mediastore",
+                timestamp=mi.date_taken, label=f"{mi.kind} {mi.display_name}".strip(),
+                source_file=mi.source_file))
+
     all_messages = list(app_messages) + recovered_messages
     timeline = build_timeline(messages=all_messages, calls=calls,
                               media=media_items, locations=locations,
                               telegram_messages=_tg_msgs,
-                              telegram_media=_tg_media)
+                              telegram_media=_tg_media,
+                              calendar_events=[c.to_dict() for c in calendar_events],
+                              media_inventory=[m.to_dict() for m in media_inventory])
 
     # -- analysis: social graph + risk verdict ------------------------------
     progress("analysis", 0.88, "Building communication graph & risk verdict")
@@ -454,8 +604,12 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     graph = build_communication_graph(
         messages=msg_dicts, calls=call_dicts, contacts=contact_dicts,
         owner_label=f"{device.manufacturer} {device.model}".strip() or "SUBJECT DEVICE")
+    notable_app_dicts = [a.to_dict() for a in installed_apps if a.notable]
+    trashed_media_count = sum(1 for m in media_inventory if m.is_trashed)
     risk = assess_risk(flags=[f.to_dict() for f in flags], recovered=recovered_rows,
-                       counts={"messages": len(all_messages)})
+                       counts={"messages": len(all_messages)},
+                       notable_apps=notable_app_dicts,
+                       trashed_media=trashed_media_count)
     case.log("analysis.risk", f"triage verdict: {risk['level'].upper()} (score {risk['score']})",
              tier=Tier.TIER0.value)
 
@@ -521,6 +675,25 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     case.write_derived("aleapp", aleapp_result)
     case.write_derived("whatsapp_media", wa_media_items)       # NEW
     case.write_derived("advanced", advanced_result)            # NEW
+    # Expanded Tier-1 collection datasets
+    case.write_derived("media_inventory", media_inventory)
+    case.write_derived("apps", installed_apps)
+    case.write_derived("accounts", accounts)
+    case.write_derived("calendar", calendar_events)
+    case.write_derived("usage", app_usage)
+    case.write_derived("media_inventory_summary", media_inventory_summary(media_inventory))
+    # App-chat recovery datasets (Instagram / Snapchat / generic Dynamic App Finder)
+    ig_msgs = instagram_result.get("messages", []) if instagram_result else []
+    sc_msgs = snapchat_result.get("messages", []) if snapchat_result else []
+    ig_users = instagram_result.get("users", []) if instagram_result else []
+    sc_users = snapchat_result.get("users", []) if snapchat_result else []
+    case.write_derived("instagram", ig_msgs)
+    case.write_derived("instagram_users", ig_users)
+    case.write_derived("instagram_conversations", thread_conversations(ig_msgs, ig_users))
+    case.write_derived("snapchat", sc_msgs)
+    case.write_derived("snapchat_users", sc_users)
+    case.write_derived("snapchat_conversations", thread_conversations(sc_msgs, sc_users))
+    case.write_derived("discovered_chats", discovered_chats)
 
     progress("report", 0.96, "Generating triage report")
     report_path = generate_report(case.root)
@@ -538,6 +711,14 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
             "browser": len(browser_history), "screenshots": len(screenshots),
             "aleapp_modules": len(aleapp_result.get("artifacts", {})),
             "whatsapp_media": len(wa_media_items),         # NEW
+            "media_inventory": len(media_inventory),
+            "apps": len(installed_apps),
+            "accounts": len(accounts),
+            "calendar": len(calendar_events),
+            "usage": len(app_usage),
+            "instagram": len(instagram_result.get("messages", [])) if instagram_result else 0,
+            "snapchat": len(snapchat_result.get("messages", [])) if snapchat_result else 0,
+            "discovered_chats": len(discovered_chats.get("messages", [])),
         },
         "risk": risk,
         "throughput": throughput,
@@ -758,6 +939,35 @@ def _recovered_as_messages(recovered_rows: list[dict]) -> list:
                 source_file=source_file, provenance=provenance,
                 flags=["deleted"]))
     return out
+
+
+def _fold_app_chat_result(result: dict, app_name: str, app_messages: list,
+                          recovered_rows: list) -> None:
+    """Fold an app-chat recovery result (Instagram/Snapchat/finder) into ``app_messages``.
+
+    Live + recovered + carved messages become :class:`Message` objects (deleted ones badged),
+    so they appear in the Messages view and the timeline. Deletion-gap rows (empty body) carry
+    no content and are represented only in the app's own dedicated dataset. These dicts are a
+    different shape from carved SQLite rows, so they are intentionally *not* added to
+    ``recovered_rows`` (which stays homogeneous for the Recovered view / report). The
+    ``recovered_rows`` parameter is accepted for signature symmetry with the Tier-2 helpers.
+    """
+    from .config import Confidence as _C
+    from .models import Message as _M
+    for md in result.get("messages", []):
+        conf_val = md.get("confidence", _C.LIVE.value)
+        try:
+            conf = _C(conf_val)
+        except ValueError:
+            conf = _C.CARVED_PARTIAL
+        body = (md.get("body") or "").strip()
+        if body and conf in (_C.LIVE, _C.RECOVERED_VERIFIED, _C.CARVED_PARTIAL):
+            app_messages.append(_M(
+                app=app_name,
+                sender=md.get("sender_name") or md.get("sender") or "<unknown>",
+                body=body, timestamp=md.get("timestamp"), confidence=conf,
+                source_file=md.get("source_file", ""), provenance=md.get("provenance", ""),
+                flags=(["deleted"] if conf != _C.LIVE else [])))
 
 
 def _dict_to_carved(d: dict):
@@ -1021,6 +1231,88 @@ def _run_tier2_telegram(
     )
 
 
+def _run_tier2_instagram(source: "RealDeviceSource", case: "Case", staging: "Path",
+                         app_messages: list, recovered_rows: list) -> dict:
+    """Root-pull Instagram ``direct.db`` (+ shared_prefs) and run recovery. Tier 2."""
+    remote_db = InstagramPaths.direct_db()
+    remote_prefs = InstagramPaths.prefs_dir()
+    stage_db = "/sdcard/Download/ig_direct_triage.db"
+    stage_prefs = "/sdcard/Download/ig_prefs_triage"
+
+    cp = source.adb.shell(f'su -c "cp {remote_db} {stage_db}"')
+    case.log("tier2.instagram.cp", f"su cp direct.db → {stage_db}",
+             command=f"adb shell su -c 'cp {remote_db} {stage_db}'",
+             result="ok" if cp.ok else "error", alters_device=False, tier=Tier.TIER2.value)
+    if not cp.ok:
+        case.log("tier2.instagram", "su cp failed (device may not be rooted or IG not installed)",
+                 result="error", tier=Tier.TIER2.value)
+        return {}
+    local_db = staging / "direct.db"
+    if not source.adb.pull(stage_db, local_db).ok or not local_db.exists():
+        case.log("tier2.instagram", "adb pull of direct.db failed", result="error",
+                 tier=Tier.TIER2.value)
+        return {}
+
+    # Best-effort: pull shared_prefs for user_id → username identity.
+    local_prefs = staging / "ig_shared_prefs"
+    if source.adb.shell(f'su -c "cp -r {remote_prefs} {stage_prefs}"').ok:
+        source.adb.pull(stage_prefs, local_prefs)
+
+    rec = case.ingest_file(local_db, source_path=remote_db, tier=Tier.TIER2,
+                           method="root-su-cp", category="database", app="instagram",
+                           flags=["tier2-root"], move=True)
+    stored = case.root / rec.stored_path
+    res = recover_instagram_messages(stored, prefs_dir=local_prefs if local_prefs.exists() else None)
+    if res.get("available") and res.get("messages"):
+        _fold_app_chat_result(res, "instagram", app_messages, recovered_rows)
+        c = res["counts"]
+        case.log("tier2.instagram.done",
+                 f"Instagram: live={c['live']} carved={c['carved_partial']} gaps={c['deletion_detected']}",
+                 tier=Tier.TIER2.value, artifact_id=rec.artifact_id)
+    return res
+
+
+def _run_tier2_snapchat(source: "RealDeviceSource", case: "Case", staging: "Path",
+                        app_messages: list, recovered_rows: list) -> dict:
+    """Root-pull Snapchat ``arroyo.db`` + ``main.db`` and run recovery. Tier 2."""
+    remote_arroyo = SnapchatPaths.arroyo_db()
+    remote_main = SnapchatPaths.main_db()
+    stage_arroyo = "/sdcard/Download/snap_arroyo_triage.db"
+    stage_main = "/sdcard/Download/snap_main_triage.db"
+
+    cp = source.adb.shell(f'su -c "cp {remote_arroyo} {stage_arroyo}"')
+    case.log("tier2.snapchat.cp", f"su cp arroyo.db → {stage_arroyo}",
+             command=f"adb shell su -c 'cp {remote_arroyo} {stage_arroyo}'",
+             result="ok" if cp.ok else "error", alters_device=False, tier=Tier.TIER2.value)
+    if not cp.ok:
+        case.log("tier2.snapchat", "su cp failed (device may not be rooted or Snapchat not installed)",
+                 result="error", tier=Tier.TIER2.value)
+        return {}
+    local_arroyo = staging / "arroyo.db"
+    if not source.adb.pull(stage_arroyo, local_arroyo).ok or not local_arroyo.exists():
+        case.log("tier2.snapchat", "adb pull of arroyo.db failed", result="error",
+                 tier=Tier.TIER2.value)
+        return {}
+
+    # main.db (identity) — best-effort.
+    local_main = staging / "main.db"
+    if source.adb.shell(f'su -c "cp {remote_main} {stage_main}"').ok:
+        source.adb.pull(stage_main, local_main)
+
+    rec = case.ingest_file(local_arroyo, source_path=remote_arroyo, tier=Tier.TIER2,
+                           method="root-su-cp", category="database", app="snapchat",
+                           flags=["tier2-root"], move=True)
+    stored = case.root / rec.stored_path
+    res = recover_snapchat_messages(stored, main_db=local_main if local_main.exists() else None)
+    if res.get("available") and res.get("messages"):
+        _fold_app_chat_result(res, "snapchat", app_messages, recovered_rows)
+        c = res["counts"]
+        case.log("tier2.snapchat.done",
+                 f"Snapchat: live={c['live']} carved={c['carved_partial']} gaps={c['deletion_detected']}",
+                 tier=Tier.TIER2.value, artifact_id=rec.artifact_id)
+    return res
+
+
 def _write_case_derived(case: "Case", name: str, data: object) -> None:
     """Write a derived JSON dataset to the case folder."""
     out = case.derived_dir / f"{name}.json"
@@ -1030,7 +1322,8 @@ def _write_case_derived(case: "Case", name: str, data: object) -> None:
             encoding="utf-8",
         )
     except Exception as exc:
-        log.warning("_write_case_derived(%s): %s", name, exc)
+        case.log("derived.write", f"failed writing derived dataset {name}: {exc}",
+                 result="error")
 
 
 def _pull_telegram_media(
@@ -1307,6 +1600,101 @@ def _run_tier1_contacts_helper(source: RealDeviceSource, case: Case, staging: Pa
 
     _best_effort_uninstall(source, case, package)
     return contacts, {remote_contacts}
+
+
+def _run_tier1_collect_all(
+    source: RealDeviceSource, case: Case, staging: Path, *,
+    media_inventory: list, installed_apps: list, accounts: list,
+    calendar_events: list, app_usage: list, contacts: list, skip_paths: set[str],
+) -> None:
+    """Drive the Collector helper's ``dump_all`` action and ingest every output.
+
+    Installs the helper, grants the non-hard-restricted runtime permissions via ``pm grant``,
+    enables the usage-stats appop, triggers ``dump_all``, then pulls and parses each JSON the
+    helper wrote to ``/sdcard/Download``. Every step is logged with ``alters_device=true``.
+    Individual grant/collector failures degrade gracefully — a denied permission just yields an
+    empty dataset rather than aborting the run. Finally uninstalls the helper.
+    """
+    package = "io.erakshak.collector"
+    activity = f"{package}/.MainActivity"
+    apk = _find_helper_apk()
+    if not apk:
+        case.log("tier1.helper.collect_all",
+                 "Collector APK not found (build apk/ first); skipping full Tier-1 collection",
+                 result="skipped", tier=Tier.TIER1.value)
+        return
+
+    install = source.adb.run("install", "-r", str(apk.resolve()))
+    _log_tier1_step(case, "tier1.helper.install", "install collector helper APK", install,
+                    alters_device=True)
+    if not install.ok:
+        return
+
+    grants = [
+        "android.permission.READ_CONTACTS",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.ACCESS_MEDIA_LOCATION",
+        "android.permission.READ_CALENDAR",
+        "android.permission.GET_ACCOUNTS",
+    ]
+    for perm in grants:
+        res = source.adb.shell(f"pm grant {package} {perm}")
+        _log_tier1_step(case, "tier1.helper.grant",
+                        f"grant {perm.rsplit('.', 1)[-1]} to collector helper", res,
+                        alters_device=True)
+    # Usage-stats is a special access, enabled via appops rather than pm grant.
+    appop = source.adb.shell(f"appops set {package} GET_USAGE_STATS allow")
+    _log_tier1_step(case, "tier1.helper.appops_usage",
+                    "enable GET_USAGE_STATS appop for collector helper", appop,
+                    alters_device=True)
+
+    dump = source.adb.shell(f"am start -n {activity} --es action dump_all")
+    _log_tier1_step(case, "tier1.helper.dump_all",
+                    "request full collection via helper activity", dump, alters_device=True)
+    if not dump.ok:
+        _best_effort_uninstall(source, case, package)
+        return
+    # MediaStore enumeration + app inventory take a few seconds on a real device.
+    time.sleep(6.0)
+
+    outputs = [
+        ("media_inventory.json", parse_media_inventory, media_inventory, "media_inventory"),
+        ("apps.json", parse_apps, installed_apps, "apps"),
+        ("accounts.json", parse_accounts, accounts, "accounts"),
+        ("calendar.json", parse_calendar, calendar_events, "calendar"),
+        ("usage.json", parse_usage, app_usage, "usage"),
+        ("contacts.json", parse_contacts_json, contacts, "contacts"),
+    ]
+    for fname, parser, target, label in outputs:
+        remote = f"/sdcard/Download/{fname}"
+        local = staging / f"tier1_{fname}"
+        pull = source.adb.pull(remote, local)
+        if not pull.ok or not local.exists():
+            case.log(f"tier1.helper.pull.{label}", f"{fname} not produced (permission denied?)",
+                     result="skipped", tier=Tier.TIER1.value)
+            continue
+        rec = case.ingest_file(local, source_path=remote, tier=Tier.TIER1,
+                               method="helper-apk", category="collector-output",
+                               flags=["tier1-helper"], move=True)
+        rows = parser(case.root / rec.stored_path)
+        target.extend(rows)
+        skip_paths.add(remote)
+        case.log(f"parse.{label}", f"{len(rows)} {label} rows (Tier 1 dump_all)",
+                 tier=Tier.TIER1.value, alters_device=False, artifact_id=rec.artifact_id)
+
+    # Pull the collector's own manifest for the audit trail (not parsed into a dataset).
+    for meta_file in ("collector_manifest.json", "device_extra.json"):
+        remote = f"/sdcard/Download/{meta_file}"
+        local = staging / f"tier1_{meta_file}"
+        if source.adb.pull(remote, local).ok and local.exists():
+            case.ingest_file(local, source_path=remote, tier=Tier.TIER1, method="helper-apk",
+                             category="collector-output", flags=["tier1-helper"], move=True)
+            skip_paths.add(remote)
+
+    _best_effort_uninstall(source, case, package)
 
 
 def _best_effort_uninstall(source: RealDeviceSource, case: Case, package: str) -> None:

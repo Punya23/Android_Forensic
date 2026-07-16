@@ -130,6 +130,95 @@ class MediaItem(Serialisable):
 
 
 @dataclass
+class InstalledApp(Serialisable):
+    """One installed package from the Collector helper's app inventory (Tier 1)."""
+
+    package: str
+    label: str = ""
+    version_name: str = ""
+    version_code: int = 0
+    first_install: Optional[str] = None
+    last_update: Optional[str] = None
+    installer: str = ""
+    is_system: bool = False
+    category: str = "other"       # messaging/social/crypto/dating/browser/anti_forensic/cloud/other
+    friendly_name: Optional[str] = None
+    notable: bool = False         # app of investigative interest
+    dangerous_granted: list[str] = field(default_factory=list)
+    permission_count: int = 0
+    source_file: str = ""
+
+
+@dataclass
+class Account(Serialisable):
+    """A device account (Google / WhatsApp / Telegram / …) from AccountManager (Tier 1)."""
+
+    name: str
+    type: str
+    app: Optional[str] = None
+    source_file: str = ""
+
+
+@dataclass
+class CalendarEvent(Serialisable):
+    """A calendar event from CalendarContract (Tier 1)."""
+
+    title: str
+    dtstart: Optional[str] = None
+    dtend: Optional[str] = None
+    location: str = ""
+    description: str = ""
+    organizer: str = ""
+    calendar: str = ""
+    all_day: bool = False
+    source_file: str = ""
+
+
+@dataclass
+class AppUsage(Serialisable):
+    """Per-app foreground-usage telemetry from UsageStatsManager (Tier 1)."""
+
+    package: str
+    total_foreground_ms: int = 0
+    total_foreground_min: float = 0.0
+    last_used: Optional[str] = None
+    friendly_name: Optional[str] = None
+    category: str = "other"
+    source_file: str = ""
+
+
+@dataclass
+class MediaInventoryItem(Serialisable):
+    """A MediaStore catalogue entry (metadata only — the file itself may not be pulled).
+
+    This is the non-root media artifact: it surfaces every media file's metadata including
+    the owning app, the trashed/favorite flags, and EXIF GPS, without copying gigabytes.
+    """
+
+    media_id: int
+    kind: str                     # image/video/audio/download
+    display_name: str = ""
+    mime_type: str = ""
+    size_bytes: int = 0
+    date_taken: Optional[str] = None
+    date_added: Optional[str] = None
+    date_modified: Optional[str] = None
+    width: int = 0
+    height: int = 0
+    duration_ms: int = 0
+    bucket: str = ""
+    owner_package: str = ""
+    owner_app: Optional[str] = None
+    relative_path: str = ""
+    data_path: str = ""
+    is_trashed: bool = False
+    is_favorite: bool = False
+    is_pending: bool = False
+    gps: Optional[dict[str, float]] = None
+    source_file: str = ""
+
+
+@dataclass
 class Flag(Serialisable):
     """A keyword / known-hash hit surfaced for analyst awareness."""
 

@@ -7,6 +7,8 @@ render a live 5–10-minute countdown, while REST endpoints serve the finished c
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -23,7 +25,7 @@ except Exception:  # pragma: no cover
 from . import TOOL_NAME, __version__
 from .acquire import MockDeviceSource, RealDeviceSource
 from .adb import Adb
-from .config import ACQUISITION_DISCLAIMER
+from .config import ACQUISITION_DISCLAIMER, Tier
 from .custody import Case
 from .pipeline import PipelineConfig, run_acquisition
 
@@ -83,7 +85,11 @@ def create_app(cases_root: Path = CASES_ROOT):
             scope_note=body.get("scope", ""), cases_root=cases_root,
             tier1_contacts=bool(body.get("tier1_contacts", False)),
             tier1_calllog=bool(body.get("tier1_calllog", False)),
-            tier1_sms=bool(body.get("tier1_sms", False)))
+            tier1_sms=bool(body.get("tier1_sms", False)),
+            tier1_collect_all=bool(body.get("tier1_collect_all", False)),
+            tier2_telegram=bool(body.get("tier2_telegram", False)),
+            tier2_instagram=bool(body.get("tier2_instagram", False)),
+            tier2_snapchat=bool(body.get("tier2_snapchat", False)))
         
 
         def emit(stage: str, pct: float, detail: str) -> None:
@@ -127,12 +133,22 @@ def create_app(cases_root: Path = CASES_ROOT):
         summary["counts"] = {name: len(case.read_derived(name)) for name in
                              ("messages", "contacts", "calls", "media",
                               "locations", "recovered", "flags", "timeline",
-                              "browser", "screenshots")}
+                              "browser", "screenshots",
+                              # expanded Tier-1 collection datasets
+                              "media_inventory", "apps", "accounts", "calendar", "usage",
+                              # app-chat recovery datasets
+                              "instagram", "snapchat")}
+        summary["discovered_chat_count"] = len(
+            (case.read_derived("discovered_chats") or {}).get("messages", []))
         # Analysis blocks (objects, not lists).
         summary["risk"] = case.read_derived("risk")
         summary["throughput"] = case.read_derived("throughput")
         summary["graph_stats"] = (case.read_derived("graph") or {}).get("stats", {}) \
             if isinstance(case.read_derived("graph"), dict) else {}
+        summary["media_inventory_summary"] = case.read_derived("media_inventory_summary") or {}
+        # A quick "apps of interest" roll-up for the Overview.
+        apps = case.read_derived("apps") or []
+        summary["notable_apps"] = [a for a in apps if isinstance(a, dict) and a.get("notable")]
         summary["tag_count"] = len(case.read_tags())
         return jsonify(summary)
 
@@ -141,10 +157,15 @@ def create_app(cases_root: Path = CASES_ROOT):
         list_sets = {"messages", "contacts", "calls", "media", "locations",
                      "recovered", "flags", "timeline", "rowid_gaps", "browser",
                      "screenshots",
+                     # expanded Tier-1 collection datasets
+                     "media_inventory", "apps", "accounts", "calendar", "usage",
+                     # Instagram / Snapchat / generic app-finder datasets
+                     "instagram", "instagram_users", "snapchat", "snapchat_users",
                      # Telegram deep-recovery datasets
                      "telegram_recovery", "telegram_users", "telegram_chats",
                      "telegram_media", "telegram_conversations"}
-        obj_sets = {"graph", "risk", "throughput"}
+        obj_sets = {"graph", "risk", "throughput", "media_inventory_summary",
+                    "instagram_conversations", "snapchat_conversations", "discovered_chats"}
         if dataset not in list_sets | obj_sets:
             abort(404)
         case = _open(cases_root, case_id)
@@ -168,6 +189,65 @@ def create_app(cases_root: Path = CASES_ROOT):
             abort(404)
         return jsonify(conv)
 
+    # -- data-export ingest (Instagram / Snapchat "Download Your Data") -------
+    @app.post("/api/case/<case_id>/import/<app_name>")
+    def import_export(case_id: str, app_name: str):
+        """Ingest an Instagram/Snapchat data-export (ZIP/JSON) into the case — a non-root path.
+
+        The uploaded file is hashed and recorded as a Tier-1 (consent/cloud) evidence artifact,
+        its messages are parsed and merged into the app's derived dataset, conversations are
+        rebuilt, and the report is regenerated. Every step is written to the audit trail.
+        """
+        if app_name not in ("instagram", "snapchat"):
+            abort(404)
+        case = _open(cases_root, case_id)
+        upload = request.files.get("file")
+        if upload is None or not upload.filename:
+            return jsonify({"error": "no file uploaded (multipart form field 'file')"}), 400
+
+        from .parsers import (parse_instagram_export, parse_snapchat_export,
+                              thread_conversations)
+        from .report import generate_report
+
+        suffix = Path(upload.filename).suffix or ".zip"
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix=f"{app_name}_export_")
+        os.close(fd)
+        tmp = Path(tmp_path)
+        upload.save(str(tmp))
+        try:
+            parser = parse_instagram_export if app_name == "instagram" else parse_snapchat_export
+            result = parser(tmp)
+            if not result.get("available"):
+                return jsonify({"error": result.get("error", "export parse failed")}), 400
+            new_msgs = result.get("messages", [])
+            if not new_msgs:
+                return jsonify({"error": "no messages found in export "
+                                        "(is this the right data-export file?)"}), 400
+
+            # Record the export file itself as a hashed Tier-1 artifact (chain of custody).
+            rec = case.ingest_file(tmp, source_path=f"data-export/{upload.filename}",
+                                   tier=Tier.TIER1, method="data-export",
+                                   category="app-export", app=app_name,
+                                   flags=["data-export"], move=True)
+            # Merge into the app's derived dataset and rebuild conversations.
+            existing = case.read_derived(app_name) or []
+            merged = list(existing) + new_msgs
+            case.write_derived(app_name, merged)
+            users = (case.read_derived(f"{app_name}_users") or []) + result.get("users", [])
+            case.write_derived(f"{app_name}_conversations", thread_conversations(merged, users))
+            case.log(f"import.{app_name}",
+                     f"imported {len(new_msgs)} {app_name} message(s) from data export "
+                     f"'{upload.filename}'",
+                     tier=Tier.TIER1.value, alters_device=False, artifact_id=rec.artifact_id)
+            try:
+                generate_report(case.root)
+            except Exception:
+                pass
+            return jsonify({"imported": len(new_msgs), "total": len(merged),
+                            "counts": result.get("counts"), "artifact_id": rec.artifact_id})
+        finally:
+            if tmp.exists():
+                tmp.unlink()
 
     # -- tags / bookmarks ----------------------------------------------------
     @app.get("/api/case/<case_id>/tags")
