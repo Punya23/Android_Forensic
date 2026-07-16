@@ -12,6 +12,7 @@ node_modules/
 dist/
 dist-electron/
 *.log
+*.tsbuildinfo
 
 # Tool output
 cases/
