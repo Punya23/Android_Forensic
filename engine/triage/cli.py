@@ -56,6 +56,14 @@ def cmd_acquire(args) -> int:
     if args.known_hashes:
         known = json.loads(Path(args.known_hashes).read_text())
 
+    # --overwrite: delete the existing case folder so the run is fresh
+    if getattr(args, "overwrite", False):
+        import shutil as _shutil
+        existing = Path(args.out) / args.case
+        if existing.exists():
+            _shutil.rmtree(existing)
+            print(f"[overwrite] removed existing case: {existing}")
+
     cfg = PipelineConfig(
     case_id=args.case,
     examiner=args.examiner,
@@ -63,14 +71,10 @@ def cmd_acquire(args) -> int:
     scope_note=args.scope,
     cases_root=Path(args.out),
     known_hashes=known,
-
     tier1_contacts=args.tier1_contacts,
     tier1_calllog=args.tier1_calllog,
     tier1_sms=args.tier1_sms,
-    tier1_collect_all=args.tier1_collect_all,
     tier2_telegram=args.tier2_telegram,
-    tier2_instagram=args.tier2_instagram,
-    tier2_snapchat=args.tier2_snapchat,
 )
     summary = run_acquisition(source, cfg, progress=_progress)
     print(json.dumps(summary["counts"], indent=2))
@@ -93,6 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--authority", default="", help="legal authority reference")
     a.add_argument("--scope", default="", help="scope / minimisation note")
     a.add_argument("--out", default="cases", help="cases root directory")
+    a.add_argument("--overwrite", action="store_true",
+               help="delete and re-create the case folder if it already exists")
     a.add_argument("--known-hashes", help="JSON file: {sha256: label} known-hash set")
     a.add_argument("--tier1-contacts", action="store_true",
                help="Run Tier-1 helper to collect contacts")
@@ -100,14 +106,8 @@ def main(argv: list[str] | None = None) -> int:
                help="Run Tier-1 helper to collect call log")
     a.add_argument("--tier1-sms", action="store_true",
                help="Run Tier-1 helper to collect SMS")
-    a.add_argument("--tier1-collect-all", action="store_true",
-               help="Run Tier-1 helper dump_all: media inventory, apps, accounts, calendar, usage")
     a.add_argument("--tier2-telegram", action="store_true",
                help="Root-required: pull cache4.db and run Telegram deep recovery")
-    a.add_argument("--tier2-instagram", action="store_true",
-               help="Root-required: pull direct.db and run Instagram recovery")
-    a.add_argument("--tier2-snapchat", action="store_true",
-               help="Root-required: pull arroyo.db/main.db and run Snapchat recovery")
 
 
     args = p.parse_args(argv)
