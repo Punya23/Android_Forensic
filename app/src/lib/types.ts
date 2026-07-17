@@ -477,3 +477,14 @@ export interface DiscoveredChats {
   messages: (ChatMessage & { app?: string; source_file?: string })[];
   counts?: Record<string, number>;
 }
+
+// --- Wi-Fi credential recovery (Tier 2) ------------------------------------
+
+export interface WifiNetwork {
+  ssid: string;
+  password: string;
+  security: string;          // WPA/WPA2 | WPA3 | WEP | OPEN | …
+  timestamp: string | null;
+  confidence: Confidence;
+  source_file: string;
+}

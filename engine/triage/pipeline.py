@@ -102,6 +102,7 @@ class PipelineConfig:
     tier2_telegram_max_media: int = 200  # max media files to pull per case (0 = skip media pull)
     tier2_instagram: bool = False  # root-required: pull direct.db and run Instagram recovery
     tier2_snapchat: bool = False   # root-required: pull arroyo.db/main.db and run Snapchat recovery
+    tier2_wifi: bool = False       # root-required: recover stored Wi-Fi credentials from system config
     run_app_finder: bool = True    # generic SQLite chat discovery over otherwise-unrecognised DBs
     # -- Case-intelligence layer (optional) ----------------------------------
     case_description: str = ""     # plain-language case brief; drives targeted collection
@@ -136,6 +137,7 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     calls = []
     media_items: list[MediaItem] = []
     locations: list[LocationPoint] = []
+    wifi_networks: list = []                   # Wi-Fi credentials (Tier-2 / root)
     app_messages = []                          # WhatsApp export + Telegram/app-DB + SMS
     db_artifacts: list[tuple[Path, Any]] = []  # (stored path, ArtifactRecord)
     browser_history: list[dict] = []
@@ -475,6 +477,15 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
                      "Tier-2 Snapchat requested on non-real (mock) source; skipped",
                      result="skipped", tier=Tier.TIER2.value)
 
+    if cfg.tier2_wifi:
+        progress("tier2", 0.63, "Running Tier-2 Wi-Fi credential recovery (root)")
+        if isinstance(source, RealDeviceSource):
+            wifi_networks = _run_tier2_wifi(source, case, staging)
+        else:
+            case.log("tier2.wifi",
+                     "Tier-2 Wi-Fi requested on non-real (mock) source; skipped",
+                     result="skipped", tier=Tier.TIER2.value)
+
     # -- SQLite deleted-record recovery -------------------------------------
     progress("recover", 0.62, "Recovering deleted records")
     for stored, rec in db_artifacts:
@@ -715,6 +726,7 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     case.write_derived("calendar", calendar_events)
     case.write_derived("usage", app_usage)
     case.write_derived("media_inventory_summary", media_inventory_summary(media_inventory))
+    case.write_derived("wifi", wifi_networks)  # Wi-Fi credentials (Tier 2)
     # App-chat recovery datasets (Instagram / Snapchat / generic Dynamic App Finder)
     ig_msgs = instagram_result.get("messages", []) if instagram_result else []
     sc_msgs = snapchat_result.get("messages", []) if snapchat_result else []
@@ -773,6 +785,7 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
             "instagram": len(instagram_result.get("messages", [])) if instagram_result else 0,
             "snapchat": len(snapchat_result.get("messages", [])) if snapchat_result else 0,
             "discovered_chats": len(discovered_chats.get("messages", [])),
+            "wifi": len(wifi_networks),
             "ai_findings": len(ai_findings.get("findings", [])) if ai_findings else 0,
         },
         "case_profile": case_profile_dict,
@@ -1368,6 +1381,144 @@ def _run_tier2_snapchat(source: "RealDeviceSource", case: "Case", staging: "Path
                  f"Snapchat: live={c['live']} carved={c['carved_partial']} gaps={c['deletion_detected']}",
                  tier=Tier.TIER2.value, artifact_id=rec.artifact_id)
     return res
+
+
+def _run_tier2_wifi(
+    source: "RealDeviceSource",
+    case: "Case",
+    staging: "Path",
+) -> list:
+    """Root-pull the Android Wi-Fi config and extract stored credentials.  Tier 2.
+
+    Probes for both config files (``wpa_supplicant.conf`` for Android ≤ 8 and
+    ``WifiConfigStore.xml`` for Android ≥ 9) and uses whichever is present —
+    no hardcoded Android version check.
+
+    The file is copied to ``/sdcard/Download/`` via ``su -c cp`` so that a
+    plain ``adb pull`` can retrieve it.  The original system file is **not
+    modified** (``cp`` is a read-only operation on the source).  Every action is
+    logged in the audit trail with ``alters_device=False``.
+
+    Returns
+    -------
+    list[WifiNetwork]
+        Parsed credential objects (may be empty if no root or no config found).
+    """
+    from .parsers.wifi import parse_wifi_config
+    from .models import WifiNetwork as _WN
+
+    REMOTE_CONF = "/data/misc/wifi/wpa_supplicant.conf"
+    REMOTE_XML  = "/data/misc/wifi/WifiConfigStore.xml"
+    STAGE_CONF  = "/sdcard/Download/wifi_wpa_triage.conf"
+    STAGE_XML   = "/sdcard/Download/wifi_store_triage.xml"
+
+    # 1. Verify root access.
+    root_check = source.adb.shell("su -c 'id'")
+    case.log(
+        "tier2.wifi.root_check",
+        f"root check: {'ok' if root_check.ok else 'failed'}",
+        command="adb shell su -c 'id'",
+        result="ok" if root_check.ok else "error",
+        alters_device=False,
+        tier=Tier.TIER2.value,
+    )
+    if not root_check.ok:
+        case.log("tier2.wifi", "root not available; Wi-Fi credential recovery skipped",
+                 result="skipped", tier=Tier.TIER2.value)
+        return []
+
+    # 2. Detect which config file exists on the device.
+    remote_path: Optional[str] = None
+    stage_path: Optional[str] = None
+    local_name: Optional[str] = None
+
+    for r_path, s_path, l_name in [
+        (REMOTE_XML,  STAGE_XML,  "wifi_store_triage.xml"),
+        (REMOTE_CONF, STAGE_CONF, "wifi_wpa_triage.conf"),
+    ]:
+        probe = source.adb.shell(f"su -c 'test -f {r_path} && echo exists'")
+        if probe.ok and "exists" in (probe.stdout or ""):
+            remote_path = r_path
+            stage_path  = s_path
+            local_name  = l_name
+            break
+
+    if not remote_path:
+        case.log(
+            "tier2.wifi",
+            "neither wpa_supplicant.conf nor WifiConfigStore.xml found on device",
+            result="skipped",
+            tier=Tier.TIER2.value,
+        )
+        return []
+
+    case.log(
+        "tier2.wifi.detect",
+        f"Wi-Fi config detected: {remote_path}",
+        tier=Tier.TIER2.value,
+    )
+
+    # 3. su cp → staging area on sdcard.
+    cp = source.adb.shell(f'su -c "cp {remote_path} {stage_path}"')
+    case.log(
+        "tier2.wifi.cp",
+        f"su cp: {remote_path} → {stage_path}",
+        command=f"adb shell su -c 'cp {remote_path} {stage_path}'",
+        result="ok" if cp.ok else "error",
+        alters_device=False,
+        tier=Tier.TIER2.value,
+    )
+    if not cp.ok:
+        case.log("tier2.wifi", f"su cp failed: {(cp.stderr or '')[:200]}",
+                 result="error", tier=Tier.TIER2.value)
+        return []
+
+    # 4. adb pull → local staging.
+    local_file = staging / local_name
+    pull = source.adb.pull(stage_path, local_file)
+    case.log(
+        "tier2.wifi.pull",
+        f"pull {local_name} from device staging area",
+        command=f"adb pull {stage_path}",
+        result="ok" if pull.ok else "error",
+        alters_device=False,
+        tier=Tier.TIER2.value,
+    )
+    if not pull.ok or not local_file.exists():
+        case.log("tier2.wifi", "adb pull of Wi-Fi config failed",
+                 result="error", tier=Tier.TIER2.value)
+        return []
+
+    # 5. Ingest into case manifest (Tier 2).
+    rec = case.ingest_file(
+        local_file,
+        source_path=remote_path,
+        tier=Tier.TIER2,
+        method="root-su-cp",
+        category="wifi_config",
+        flags=["tier2-root"],
+        move=True,
+    )
+    stored = case.root / rec.stored_path
+
+    # 6. Parse credentials.
+    try:
+        wifi_networks: list[_WN] = parse_wifi_config(stored)
+    except Exception as exc:
+        case.log("tier2.wifi.parse", f"parse error: {exc}",
+                 result="error", tier=Tier.TIER2.value)
+        return []
+
+    case.log(
+        "tier2.wifi.done",
+        f"Wi-Fi recovery: {len(wifi_networks)} networks "
+        f"({sum(1 for n in wifi_networks if n.password)} with password) "
+        f"from {stored.name}",
+        tier=Tier.TIER2.value,
+        artifact_id=rec.artifact_id,
+    )
+
+    return wifi_networks
 
 
 def _write_case_derived(case: "Case", name: str, data: object) -> None:

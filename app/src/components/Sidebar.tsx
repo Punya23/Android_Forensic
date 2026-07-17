@@ -15,6 +15,7 @@ export type ViewKey =
   | "apps"
   | "accounts"
   | "calendar"
+  | "wifi"
   | "locations"
   | "browser"
   | "timeline"
@@ -40,6 +41,7 @@ const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
   { key: "apps", label: "Installed Apps", icon: "📦" },
   { key: "accounts", label: "Accounts", icon: "🔑" },
   { key: "calendar", label: "Calendar", icon: "📅" },
+  { key: "wifi", label: "Wi-Fi Passwords", icon: "📶" },
   { key: "locations", label: "Locations", icon: "📍" },
   { key: "browser", label: "Browser History", icon: "🌐" },
   { key: "timeline", label: "Timeline", icon: "⏱", group: "Analysis" },

@@ -35,6 +35,7 @@ export function AcquisitionView({
   const [tier2Telegram, setTier2Telegram] = useState(false);
   const [tier2Instagram, setTier2Instagram] = useState(false);
   const [tier2Snapchat, setTier2Snapchat] = useState(false);
+  const [tier2Wifi, setTier2Wifi] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<number | null>(null);
 
@@ -88,6 +89,7 @@ export function AcquisitionView({
       setTier2Telegram(!!ov.tier2_telegram);
       setTier2Instagram(!!ov.tier2_instagram);
       setTier2Snapchat(!!ov.tier2_snapchat);
+      setTier2Wifi(!!ov.tier2_wifi);
     } catch (e) {
       setPlanError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -117,6 +119,7 @@ export function AcquisitionView({
         tier2_telegram: target.kind === "real" ? tier2Telegram : false,
         tier2_instagram: target.kind === "real" ? tier2Instagram : false,
         tier2_snapchat: target.kind === "real" ? tier2Snapchat : false,
+        tier2_wifi: target.kind === "real" ? tier2Wifi : false,
       });
     } catch (e) {
       stopTimer();
@@ -375,6 +378,31 @@ export function AcquisitionView({
               </div>
             </label>
           ))}
+
+          {/* Wi-Fi Credentials — separate from the messaging apps, distinct description */}
+          <label className="flex items-start gap-3 cursor-pointer border-t border-line pt-3">
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={!target || target.kind !== "real"}
+              checked={target?.kind === "real" ? tier2Wifi : false}
+              onChange={(e) => setTier2Wifi(e.target.checked)}
+            />
+            <div>
+              <div className="text-sm font-medium flex items-center gap-1.5">
+                <span>📶</span> Wi-Fi Credentials
+              </div>
+              <div className="text-xs text-muted mt-1">
+                Root-probe{" "}
+                <code className="text-accent">WifiConfigStore.xml</code>{" "}
+                (Android 9+) and{" "}
+                <code className="text-accent">wpa_supplicant.conf</code>{" "}
+                (Android ≤8) to recover stored SSID/password pairs. No
+                cracking — verbatim plaintext from OS storage. Logged as
+                non-device-altering.
+              </div>
+            </div>
+          </label>
         </div>
       </div>
 

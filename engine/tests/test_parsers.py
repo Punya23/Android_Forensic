@@ -848,3 +848,246 @@ def test_timeline_includes_telegram_events():
         if ev["kind"] == "telegram_message" and "deleted" in ev["summary"]
     )
     assert carved_ev["confidence"] == Confidence.CARVED_PARTIAL.value
+
+
+# ===========================================================================
+# Wi-Fi parser tests
+# ===========================================================================
+
+from triage.parsers.wifi import (
+    parse_wpa_supplicant_conf,
+    parse_wifi_config_store_xml,
+    parse_wifi_config,
+)
+
+
+_WPA_CONF_TYPICAL = """\
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=wifi
+update_config=1
+
+network={
+    ssid="HomeNetwork"
+    psk="mysecretpassword"
+    key_mgmt=WPA-PSK
+    priority=1
+}
+
+network={
+    ssid="OfficeWifi"
+    psk=unquotedpass123
+    key_mgmt=WPA-PSK
+}
+
+network={
+    ssid="OpenCafe"
+    key_mgmt=NONE
+}
+
+network={
+    ssid="OldWep"
+    wep_key0="weppass"
+    key_mgmt=NONE
+}
+"""
+
+_WPA_CONF_SPECIAL_CHARS = """\
+network={
+    ssid="My Network With Spaces & Special!"
+    psk="p@ssw0rd#2024"
+    key_mgmt=WPA-PSK
+}
+"""
+
+
+def test_wpa_conf_basic(tmp_path):
+    """Parse a typical wpa_supplicant.conf with multiple network blocks."""
+    p = tmp_path / "wpa_supplicant.conf"
+    p.write_text(_WPA_CONF_TYPICAL, encoding="utf-8")
+    nets = parse_wpa_supplicant_conf(p)
+    assert len(nets) == 4
+
+    home = nets[0]
+    assert home.ssid == "HomeNetwork"
+    assert home.password == "mysecretpassword"
+    assert home.security == "WPA/WPA2"
+
+    office = nets[1]
+    assert office.ssid == "OfficeWifi"
+    assert office.password == "unquotedpass123"
+    assert office.security == "WPA/WPA2"
+
+    open_net = nets[2]
+    assert open_net.ssid == "OpenCafe"
+    assert open_net.password == ""
+    assert open_net.security == "OPEN"
+
+    wep_net = nets[3]
+    assert wep_net.ssid == "OldWep"
+    assert wep_net.password == "weppass"
+    assert wep_net.security == "WEP"
+
+
+def test_wpa_conf_special_chars(tmp_path):
+    """SSIDs and PSKs with spaces, ampersands, and special characters are parsed correctly."""
+    p = tmp_path / "wpa_supplicant.conf"
+    p.write_text(_WPA_CONF_SPECIAL_CHARS, encoding="utf-8")
+    nets = parse_wpa_supplicant_conf(p)
+    assert len(nets) == 1
+    assert nets[0].ssid == "My Network With Spaces & Special!"
+    assert nets[0].password == "p@ssw0rd#2024"
+
+
+def test_wpa_conf_empty_file(tmp_path):
+    """Empty config file returns an empty list, not an exception."""
+    p = tmp_path / "wpa_supplicant.conf"
+    p.write_text("", encoding="utf-8")
+    assert parse_wpa_supplicant_conf(p) == []
+
+
+def test_wpa_conf_missing_file(tmp_path):
+    """Non-existent file returns empty list gracefully."""
+    assert parse_wpa_supplicant_conf(tmp_path / "does_not_exist.conf") == []
+
+
+_XML_TYPICAL = """\
+<?xml version="1.0" encoding="utf-8"?>
+<WifiConfigStoreData version="3">
+  <NetworkList>
+    <Network>
+      <WifiConfiguration>
+        <string name="SSID">&quot;HomeNetwork&quot;</string>
+        <string name="PreSharedKey">&quot;secretpass&quot;</string>
+        <string name="AllowedKeyMgmt">WPA_PSK</string>
+      </WifiConfiguration>
+    </Network>
+    <Network>
+      <WifiConfiguration>
+        <string name="SSID">&quot;CorpWifi&quot;</string>
+        <string name="PreSharedKey">&quot;corp_pass_2024&quot;</string>
+        <string name="AllowedKeyMgmt">WPA2_PSK</string>
+      </WifiConfiguration>
+    </Network>
+    <Network>
+      <WifiConfiguration>
+        <string name="SSID">&quot;OpenHotspot&quot;</string>
+        <string name="AllowedKeyMgmt">NONE</string>
+      </WifiConfiguration>
+    </Network>
+    <Network>
+      <WifiConfiguration>
+        <string name="SSID">&quot;Wpa3Net&quot;</string>
+        <string name="PreSharedKey">&quot;wpa3pass&quot;</string>
+        <string name="AllowedKeyMgmt">WPA3_SAE</string>
+      </WifiConfiguration>
+    </Network>
+  </NetworkList>
+</WifiConfigStoreData>
+"""
+
+_XML_NO_SSID = """\
+<?xml version="1.0" encoding="utf-8"?>
+<WifiConfigStoreData version="3">
+  <NetworkList>
+    <Network>
+      <WifiConfiguration>
+        <string name="PreSharedKey">&quot;pass&quot;</string>
+      </WifiConfiguration>
+    </Network>
+  </NetworkList>
+</WifiConfigStoreData>
+"""
+
+
+def test_xml_basic(tmp_path):
+    """Parse a typical WifiConfigStore.xml with multiple Network elements."""
+    p = tmp_path / "WifiConfigStore.xml"
+    p.write_text(_XML_TYPICAL, encoding="utf-8")
+    nets = parse_wifi_config_store_xml(p)
+    assert len(nets) == 4
+
+    home = nets[0]
+    assert home.ssid == "HomeNetwork"
+    assert home.password == "secretpass"
+    assert home.security == "WPA/WPA2"
+
+    corp = nets[1]
+    assert corp.ssid == "CorpWifi"
+    assert corp.password == "corp_pass_2024"
+    assert corp.security == "WPA/WPA2"
+
+    open_net = nets[2]
+    assert open_net.ssid == "OpenHotspot"
+    assert open_net.password == ""
+    assert open_net.security == "OPEN"
+
+    wpa3_net = nets[3]
+    assert wpa3_net.ssid == "Wpa3Net"
+    assert wpa3_net.security == "WPA3"
+
+
+def test_xml_skips_network_without_ssid(tmp_path):
+    """Networks without an SSID are silently skipped."""
+    p = tmp_path / "WifiConfigStore.xml"
+    p.write_text(_XML_NO_SSID, encoding="utf-8")
+    nets = parse_wifi_config_store_xml(p)
+    assert nets == []
+
+
+def test_xml_malformed_graceful(tmp_path):
+    """Malformed XML returns empty list instead of raising."""
+    p = tmp_path / "WifiConfigStore.xml"
+    p.write_text("<unclosed>", encoding="utf-8")
+    assert parse_wifi_config_store_xml(p) == []
+
+
+def test_xml_missing_file(tmp_path):
+    """Non-existent file returns empty list gracefully."""
+    assert parse_wifi_config_store_xml(tmp_path / "does_not_exist.xml") == []
+
+
+def test_dispatch_conf(tmp_path):
+    """parse_wifi_config() dispatches to the .conf parser for .conf files."""
+    p = tmp_path / "wpa_supplicant.conf"
+    p.write_text(_WPA_CONF_TYPICAL, encoding="utf-8")
+    nets = parse_wifi_config(p)
+    assert len(nets) == 4
+    assert all(hasattr(n, "ssid") for n in nets)
+
+
+def test_dispatch_xml(tmp_path):
+    """parse_wifi_config() dispatches to the XML parser for .xml files."""
+    p = tmp_path / "WifiConfigStore.xml"
+    p.write_text(_XML_TYPICAL, encoding="utf-8")
+    nets = parse_wifi_config(p)
+    assert len(nets) == 4
+
+
+def test_source_file_set(tmp_path):
+    """source_file field is set to the basename of the parsed file."""
+    p = tmp_path / "WifiConfigStore.xml"
+    p.write_text(_XML_TYPICAL, encoding="utf-8")
+    nets = parse_wifi_config(p)
+    assert all(n.source_file == "WifiConfigStore.xml" for n in nets)
+
+
+def test_confidence_live(tmp_path):
+    """All parsed networks carry LIVE confidence (read from OS storage, not carved)."""
+    from triage.config import Confidence
+    p = tmp_path / "WifiConfigStore.xml"
+    p.write_text(_XML_TYPICAL, encoding="utf-8")
+    nets = parse_wifi_config(p)
+    assert all(n.confidence == Confidence.LIVE for n in nets)
+
+
+def test_serialisable(tmp_path):
+    """WifiNetwork.to_dict() produces a JSON-serialisable dict with expected keys."""
+    import json as _json
+    p = tmp_path / "WifiConfigStore.xml"
+    p.write_text(_XML_TYPICAL, encoding="utf-8")
+    net = parse_wifi_config(p)[0]
+    d = net.to_dict()
+    # Must be JSON-serialisable.
+    raw = _json.dumps(d)
+    assert "HomeNetwork" in raw
+    # Must contain all expected keys.
+    assert {"ssid", "password", "security", "confidence", "source_file"} <= set(d.keys())

@@ -82,6 +82,7 @@ def generate_report(case_dir: str | Path) -> Path:
     notable_apps  = [a for a in apps if isinstance(a, dict) and a.get("notable")]
     case_profile  = case.read_derived("case_profile") or {}
     ai_findings   = case.read_derived("ai_findings") or {}
+    wifi_networks = case.read_derived("wifi") or []
 
     parts: list[str] = []
     parts.append(_HEAD)
@@ -204,6 +205,7 @@ def generate_report(case_dir: str | Path) -> Path:
         ("Instagram msgs", len(ig_messages)),
         ("Snapchat msgs", len(sc_messages)),
         ("Discovered chats", len(discovered.get("messages", []) if isinstance(discovered, dict) else [])),
+        ("Wi-Fi networks", len(wifi_networks)),
         ("Locations", len(locations)),
         ("Browser URLs", len(browser)),
         ("Flags", len(flags)),
@@ -279,6 +281,10 @@ def generate_report(case_dir: str | Path) -> Path:
     if disc_msgs:
         parts.append(_discovered_section(discovered))
 
+    # Wi-Fi credentials (Tier 2)
+    if wifi_networks:
+        parts.append(_wifi_section(wifi_networks))
+
     # Messages preview
     if messages:
         parts.append('<h2>Messages (preview)</h2>')
@@ -347,6 +353,60 @@ def _fmt_val(v: Any) -> str:
     if isinstance(v, dict) and "__blob__" in v:
         return f'<blob {v.get("len",0)}B>'
     return str(v)
+
+
+def _wifi_section(wifi_networks: list[dict]) -> str:
+    """Render the 'Wi-Fi Credentials' HTML section for the forensic report."""
+    _SEC_COLORS: dict[str, tuple[str, str]] = {
+        "WPA/WPA2": ("#2258a8", "#e2ecfa"),
+        "WPA3":     ("#1c7d3f", "#e4f4ea"),
+        "WEP":      ("#a6741a", "#f6ecd4"),
+        "OPEN":     ("#a5322f", "#f6dedd"),
+    }
+    parts: list[str] = []
+    parts.append('<h2>Wi-Fi Credentials (Tier&nbsp;2 — Root Acquisition)</h2>')
+    parts.append(
+        '<p class="note">The following stored Wi-Fi credentials were recovered from the '
+        'device\'s system configuration file '
+        '(<code>wpa_supplicant.conf</code> or <code>WifiConfigStore.xml</code>) '
+        'via a root shell copy. '
+        '<b>No active password cracking was performed.</b> '
+        'Passwords are reproduced verbatim from plaintext storage by the Android OS. '
+        'This evidence was obtained under Tier-2 (root) acquisition and is logged in '
+        'the audit trail.</p>'
+    )
+    with_pw = sum(1 for n in wifi_networks if isinstance(n, dict) and n.get("password"))
+    parts.append(
+        f'<p class="note">{_esc(len(wifi_networks))} network(s) recovered — '
+        f'{_esc(with_pw)} with a stored password.</p>'
+    )
+    parts.append(
+        '<table><tr>'
+        '<th>SSID</th><th>Security</th><th>Password</th><th>Confidence</th><th>Source</th>'
+        '</tr>'
+    )
+    for net in wifi_networks:
+        if not isinstance(net, dict):
+            continue
+        ssid = net.get("ssid", "")
+        pw   = net.get("password", "")
+        sec  = net.get("security", "")
+        conf = net.get("confidence", "live")
+        src  = net.get("source_file", "")
+        sec_colors = _SEC_COLORS.get(sec, ("#666", "#f5f5f5"))
+        conf_colors = _CONF_COLORS.get(conf, _CONF_COLORS["live"])
+        parts.append(
+            f'<tr>'
+            f'<td><b>{_esc(ssid)}</b></td>'
+            f'<td>{_badge(sec or "OPEN", sec_colors)}</td>'
+            f'<td class="mono" style="user-select:all;word-break:break-all">'
+            f'{_esc(pw) if pw else "<span style=\"color:#999\">— (open / enterprise)</span>"}</td>'
+            f'<td>{_badge(conf.upper(), conf_colors)}</td>'
+            f'<td class="mono" style="font-size:11px">{_esc(src)}</td>'
+            f'</tr>'
+        )
+    parts.append('</table>')
+    return "\n".join(parts)
 
 
 def _telegram_section(

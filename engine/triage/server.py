@@ -139,6 +139,7 @@ def create_app(cases_root: Path = CASES_ROOT):
             tier2_telegram=bool(body.get("tier2_telegram", False)),
             tier2_instagram=bool(body.get("tier2_instagram", False)),
             tier2_snapchat=bool(body.get("tier2_snapchat", False)),
+            tier2_wifi=bool(body.get("tier2_wifi", False)),
             case_description=str(body.get("case_description", "") or ""),
             run_ai_analysis=bool(body.get("run_ai_analysis", True)),
             llm_provider=str(body.get("llm_provider", "") or ""))
@@ -189,7 +190,9 @@ def create_app(cases_root: Path = CASES_ROOT):
                               # expanded Tier-1 collection datasets
                               "media_inventory", "apps", "accounts", "calendar", "usage",
                               # app-chat recovery datasets
-                              "instagram", "snapchat")}
+                              "instagram", "snapchat",
+                              # Tier-2 datasets
+                              "wifi")}
         summary["discovered_chat_count"] = len(
             (case.read_derived("discovered_chats") or {}).get("messages", []))
         # Analysis blocks (objects, not lists).
@@ -219,7 +222,9 @@ def create_app(cases_root: Path = CASES_ROOT):
                      "instagram", "instagram_users", "snapchat", "snapchat_users",
                      # Telegram deep-recovery datasets
                      "telegram_recovery", "telegram_users", "telegram_chats",
-                     "telegram_media", "telegram_conversations"}
+                     "telegram_media", "telegram_conversations",
+                     # Tier-2 Wi-Fi credentials
+                     "wifi"}
         obj_sets = {"graph", "risk", "throughput", "media_inventory_summary",
                     "instagram_conversations", "snapchat_conversations", "discovered_chats",
                     # case-intelligence datasets

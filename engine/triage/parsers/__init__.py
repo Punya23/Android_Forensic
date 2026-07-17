@@ -54,6 +54,11 @@ from .snapchat import (  # NEW — Snapchat Tier-2 recovery (arroyo.db protobuf)
 )
 from .appfinder import scan_sqlite_for_chats  # NEW — generic SQLite chat discovery
 from .appchat import thread_conversations, count_by_confidence
+from .wifi import (  # Wi-Fi credential parser (Tier 2)
+    parse_wifi_config,
+    parse_wpa_supplicant_conf,
+    parse_wifi_config_store_xml,
+)
 
 __all__ = [
     "extract_gps",
@@ -109,4 +114,8 @@ __all__ = [
     "scan_sqlite_for_chats",
     "thread_conversations",
     "count_by_confidence",
+    # Wi-Fi credential recovery (Tier 2)
+    "parse_wifi_config",
+    "parse_wpa_supplicant_conf",
+    "parse_wifi_config_store_xml",
 ]

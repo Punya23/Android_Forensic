@@ -27,6 +27,7 @@ import { AppsView } from "./views/Apps";
 import { AccountsView } from "./views/Accounts";
 import { CalendarView } from "./views/Calendar";
 import { MediaInventoryView } from "./views/MediaInventory";
+import { WifiView } from "./views/WiFi";
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
@@ -68,6 +69,7 @@ export default function App() {
           {caseId && view === "apps" && <AppsView caseId={caseId} />}
           {caseId && view === "accounts" && <AccountsView caseId={caseId} />}
           {caseId && view === "calendar" && <CalendarView caseId={caseId} />}
+          {caseId && view === "wifi" && <WifiView caseId={caseId} />}
           {caseId && view === "instagram" && <InstagramView caseId={caseId} />}
           {caseId && view === "snapchat" && <SnapchatView caseId={caseId} />}
           {caseId && view === "discovered" && <DiscoveredChatsView caseId={caseId} />}

@@ -22,7 +22,7 @@ import type {
 import { ConfidenceBadge } from "../components/Badges";
 import { SectionHeader, EmptyState } from "../components/common";
 import { fmtTs } from "../lib/hooks";
-import { api } from "../lib/api";
+import { api, BASE } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -37,7 +37,7 @@ const CONF_BG: Record<string, string> = {
 
 function mediaSrc(caseId: string, artifactId: string | null): string | null {
   if (!artifactId) return null;
-  return `${api.base}/case/${caseId}/media/${artifactId}`;
+  return `${BASE}/api/case/${caseId}/media/${artifactId}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +178,7 @@ export function TelegramView({ caseId }: { caseId: string }) {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`${api.base}/case/${caseId}/telegram/conversations`)
+    fetch(`${BASE}/api/case/${caseId}/telegram/conversations`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((data: TelegramConversationsMap) => {
         setConvs(data);

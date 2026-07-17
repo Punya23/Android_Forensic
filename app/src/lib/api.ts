@@ -12,7 +12,7 @@ import type {
   Progress,
 } from "./types";
 
-const BASE = import.meta.env.DEV ? "" : "http://127.0.0.1:5057";
+export const BASE = import.meta.env.DEV ? "" : "http://127.0.0.1:5057";
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`);
@@ -108,6 +108,7 @@ export const api = {
     tier2_telegram?: boolean;
     tier2_instagram?: boolean;
     tier2_snapchat?: boolean;
+    tier2_wifi?: boolean;
   }): Promise<{ case_id: string; started: boolean }> => {
     const res = await fetch(`${BASE}/api/acquire`, {
       method: "POST",

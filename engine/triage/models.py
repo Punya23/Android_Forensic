@@ -236,3 +236,23 @@ class TimelineEvent(Serialisable):
     summary: str
     confidence: Confidence = Confidence.LIVE
     ref: str = ""
+
+
+@dataclass
+class WifiNetwork(Serialisable):
+    """A stored Wi-Fi credential recovered from the device's system config.
+
+    Sourced from either ``/data/misc/wifi/wpa_supplicant.conf`` (Android ≤ 8)
+    or ``/data/misc/wifi/WifiConfigStore.xml`` (Android ≥ 9).  Both files
+    require root access and are pulled as Tier-2 evidence.
+
+    No active cracking is performed — the password is recovered verbatim from
+    the plaintext stored by the OS.
+    """
+
+    ssid: str
+    password: str
+    security: str = ""                   # WPA/WPA2/WEP/OPEN/…
+    timestamp: Optional[str] = None
+    confidence: Confidence = Confidence.LIVE
+    source_file: str = ""
