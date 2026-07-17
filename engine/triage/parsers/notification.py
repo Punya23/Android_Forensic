@@ -119,21 +119,33 @@ def _split_notification_blocks(text: str) -> List[str]:
     """Split the raw dumpsys output into per-notification blocks.
 
     Different Android versions use different delimiters; we try several
-    heuristics and fall back to treating the whole output as one block.
+    heuristics in priority order:
+
+    1. Android 11+ numbered entries (``  0: pkg=…``)
+    2. Blank-line-separated stanzas (Android 9/10)
+    3. Lines starting with ``Package:`` (Android 9 legacy)
+    4. ``pkg=`` token fallback
     """
     # Android 11+ uses numbered entries like "  0: pkg=..." or "  1: pkg=..."
     numbered = re.split(r"\n(?=\s{0,4}\d+:\s)", text)
-    if len(numbered) > 2:
-        return numbered
+    if len(numbered) > 1:
+        return [b for b in numbered if b.strip()]
 
-    # Older: blank-line-separated blocks
+    # Android 9 legacy: "Package:" at line start is the block boundary.
+    # Try this BEFORE blank-line split because blank lines appear inside
+    # multi-notification legacy output as well.
+    pkg_header = re.split(r"(?=^\s*Package\s*:)", text, flags=re.MULTILINE)
+    if len(pkg_header) > 1:
+        return [b for b in pkg_header if b.strip()]
+
+    # Blank-line-separated blocks (some intermediate Android versions)
     double_newline = re.split(r"\n\s*\n", text)
-    if len(double_newline) > 2:
-        return double_newline
+    if len(double_newline) > 1:
+        return [b for b in double_newline if b.strip()]
 
     # Last resort: split on any "pkg=" occurrence
     pkg_split = re.split(r"(?=pkg=)", text)
-    return pkg_split if pkg_split else [text]
+    return [b for b in pkg_split if b.strip()] if pkg_split else [text]
 
 
 # ---------------------------------------------------------------------------
