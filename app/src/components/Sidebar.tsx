@@ -3,6 +3,7 @@ import type { Health } from "../lib/types";
 export type ViewKey =
   | "acquire"
   | "overview"
+  | "intel"
   | "messages"
   | "contacts"
   | "calls"
@@ -26,6 +27,7 @@ export type ViewKey =
 
 const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
   { key: "overview", label: "Overview", icon: "▤" },
+  { key: "intel", label: "Case Intelligence", icon: "✦" },
   { key: "messages", label: "Messages", icon: "💬", group: "Communications" },
   { key: "telegram", label: "Telegram", icon: "✈" },
   { key: "instagram", label: "Instagram", icon: "📷" },

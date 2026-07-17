@@ -75,6 +75,8 @@ def cmd_acquire(args) -> int:
     tier1_calllog=args.tier1_calllog,
     tier1_sms=args.tier1_sms,
     tier2_telegram=args.tier2_telegram,
+    case_description=getattr(args, "case_description", "") or "",
+    llm_provider=getattr(args, "llm", "") or "",
 )
     summary = run_acquisition(source, cfg, progress=_progress)
     print(json.dumps(summary["counts"], indent=2))
@@ -108,6 +110,10 @@ def main(argv: list[str] | None = None) -> int:
                help="Run Tier-1 helper to collect SMS")
     a.add_argument("--tier2-telegram", action="store_true",
                help="Root-required: pull cache4.db and run Telegram deep recovery")
+    a.add_argument("--case-description", dest="case_description", default="",
+               help="Plain-language case brief → targeted collection plan + AI leads")
+    a.add_argument("--llm", default="",
+               help="LLM provider for the intelligence layer: heuristic|ollama|anthropic")
 
 
     args = p.parse_args(argv)

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { api, getSocket } from "../lib/api";
-import type { DeviceListing, Progress } from "../lib/types";
+import type { DeviceListing, PlanResponse, Progress } from "../lib/types";
 
 const STAGES = [
-  "init", "device", "tier1", "enumerate", "screenshot", "pull", "location", "recover", "flag",
-  "timeline", "analysis", "persist", "report", "done",
+  "init", "device", "intel", "tier1", "enumerate", "screenshot", "pull", "location", "recover",
+  "flag", "timeline", "analysis", "persist", "report", "done",
 ];
 
 export function AcquisitionView({
@@ -21,6 +21,10 @@ export function AcquisitionView({
   const [examiner, setExaminer] = useState("");
   const [authority, setAuthority] = useState("");
   const [scope, setScope] = useState("");
+  const [brief, setBrief] = useState("");
+  const [plan, setPlan] = useState<PlanResponse | null>(null);
+  const [planning, setPlanning] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +72,29 @@ export function AcquisitionView({
     timerRef.current = null;
   }
 
+  async function previewPlan() {
+    if (!brief.trim()) return;
+    setPlanning(true);
+    setPlanError(null);
+    try {
+      const p = await api.plan(brief.trim(), { allow_tier2: true });
+      setPlan(p);
+      // Reflect the recommended tier flags in the checkboxes (officer can still override).
+      const ov = p.plan.pipeline_overrides || {};
+      setTier1Contacts(!!ov.tier1_contacts);
+      setTier1Calllog(!!ov.tier1_calllog);
+      setTier1Sms(!!ov.tier1_sms);
+      setTier1CollectAll(!!ov.tier1_collect_all);
+      setTier2Telegram(!!ov.tier2_telegram);
+      setTier2Instagram(!!ov.tier2_instagram);
+      setTier2Snapchat(!!ov.tier2_snapchat);
+    } catch (e) {
+      setPlanError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPlanning(false);
+    }
+  }
+
   async function start() {
     if (!target || !examiner) return;
     setError(null);
@@ -82,6 +109,7 @@ export function AcquisitionView({
         examiner,
         authority,
         scope,
+        case_description: brief.trim() || undefined,
         tier1_contacts: target.kind === "real" ? tier1Contacts : false,
         tier1_calllog: target.kind === "real" ? tier1Calllog : false,
         tier1_sms: target.kind === "real" ? tier1Sms : false,
@@ -165,6 +193,79 @@ export function AcquisitionView({
           <label className="label">Scope / minimisation</label>
           <input className="input" placeholder="e.g. comms + media + location only" value={scope} onChange={(e) => setScope(e.target.value)} />
         </div>
+      </div>
+
+      {/* Case brief → AI collection plan */}
+      <div className="card p-4 mb-4 border-accent/30">
+        <div className="label mb-1">
+          <span className="text-accent">✦ Case brief</span> — targeted, intelligent triage (optional)
+        </div>
+        <p className="text-xs text-muted mb-3">
+          Describe the case in plain language (who, what, where). The tool extracts a case
+          profile, recommends which artifacts matter most, and — after acquisition — ranks the
+          collected data into investigative leads. Cheap artifacts are always collected; only
+          expensive/root pulls are prioritised. Nothing is skipped silently.
+        </p>
+        <textarea
+          className="input min-h-[72px] resize-y"
+          placeholder="e.g. Laksh is a suspect in the murder of Shubham. They met near the docks at midnight; suspect uses WhatsApp and Telegram."
+          value={brief}
+          onChange={(e) => setBrief(e.target.value)}
+        />
+        <div className="flex items-center gap-3 mt-2">
+          <button className="btn" disabled={!brief.trim() || planning} onClick={previewPlan}>
+            {planning ? "Planning…" : "Preview collection plan"}
+          </button>
+          {planError && <span className="text-xs text-deletion">{planError}</span>}
+          {plan && (
+            <span className="text-xs text-muted">
+              Detected: <span className="text-ink font-medium">{plan.profile.crime_label}</span>{" "}
+              · {plan.profile.extraction_method}
+            </span>
+          )}
+        </div>
+
+        {plan && (
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Extracted profile */}
+            <div className="rounded-md border border-line p-3">
+              <div className="text-xs uppercase tracking-wider text-muted mb-2">Extracted profile</div>
+              <ProfileChips label="Suspects" items={plan.profile.suspects} tone="text-deletion" />
+              <ProfileChips label="Victims" items={plan.profile.victims} tone="text-warn" />
+              <ProfileChips label="Other" items={plan.profile.other_entities} tone="text-ink" />
+              <ProfileChips label="Locations" items={plan.profile.locations} tone="text-accent" />
+              <ProfileChips label="Keywords" items={plan.profile.keywords} tone="text-muted" />
+            </div>
+            {/* Priority plan */}
+            <div className="rounded-md border border-line p-3">
+              <div className="text-xs uppercase tracking-wider text-muted mb-2">
+                Recommended focus (prioritise, never exclude)
+              </div>
+              <div className="space-y-1 max-h-52 overflow-auto">
+                {plan.plan.artifacts.map((a) => (
+                  <div key={a.artifact} className="flex items-center justify-between text-xs">
+                    <span className="flex items-center gap-1.5">
+                      <span className={a.collect ? "text-live" : "text-muted"}>
+                        {a.collect ? "●" : "○"}
+                      </span>
+                      {a.label}
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <PriorityPill p={a.priority} />
+                      <span className="text-muted">{a.cost}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {plan.plan.deprioritised.length > 0 && (
+                <div className="text-[11px] text-muted mt-2 leading-relaxed border-t border-line pt-2">
+                  Opt-in (not auto-collected, logged):{" "}
+                  {plan.plan.deprioritised.map((d) => d.label).join(", ")}.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Tier-1 options */}
@@ -300,6 +401,31 @@ export function AcquisitionView({
       )}
     </div>
   );
+}
+
+function ProfileChips({ label, items, tone }: { label: string; items: string[]; tone: string }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="flex items-baseline gap-2 mb-1.5">
+      <span className="text-[11px] uppercase tracking-wider text-muted w-16 shrink-0">{label}</span>
+      <div className="flex flex-wrap gap-1">
+        {items.map((it, i) => (
+          <span key={i} className={`text-xs rounded bg-panel px-1.5 py-0.5 border border-line ${tone}`}>
+            {it}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PriorityPill({ p }: { p: "high" | "medium" | "low" }) {
+  const cls = {
+    high: "text-deletion border-deletion/40 bg-deletion/10",
+    medium: "text-warn border-warn/40 bg-warn/10",
+    low: "text-muted border-line bg-panel",
+  }[p];
+  return <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${cls}`}>{p}</span>;
 }
 
 function DeviceOption({

@@ -62,6 +62,36 @@ export const api = {
     return data as { imported: number; total: number; counts?: Record<string, number> };
   },
 
+  // Case-intelligence: preview a targeted collection plan from a plain-language brief.
+  plan: async (
+    description: string,
+    opts?: { llm_provider?: string; allow_tier2?: boolean }
+  ): Promise<import("./types").PlanResponse> => {
+    const res = await fetch(`${BASE}/api/plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description, ...opts }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+    return data as import("./types").PlanResponse;
+  },
+
+  // Case-intelligence: (re-)run the AI findings analysis over a collected case.
+  analyze: async (
+    id: string,
+    body?: { description?: string; llm_provider?: string }
+  ): Promise<import("./types").AIFindings> => {
+    const res = await fetch(`${BASE}/api/case/${id}/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+    return data as import("./types").AIFindings;
+  },
+
   acquire: async (body: {
     mock?: string;
     serial?: string;
@@ -69,6 +99,8 @@ export const api = {
     examiner: string;
     authority?: string;
     scope?: string;
+    case_description?: string;
+    llm_provider?: string;
     tier1_contacts?: boolean;
     tier1_calllog?: boolean;
     tier1_sms?: boolean;

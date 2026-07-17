@@ -80,6 +80,8 @@ def generate_report(case_dir: str | Path) -> Path:
     sc_messages   = case.read_derived("snapchat") or []
     discovered    = case.read_derived("discovered_chats") or {}
     notable_apps  = [a for a in apps if isinstance(a, dict) and a.get("notable")]
+    case_profile  = case.read_derived("case_profile") or {}
+    ai_findings   = case.read_derived("ai_findings") or {}
 
     parts: list[str] = []
     parts.append(_HEAD)
@@ -108,6 +110,58 @@ def generate_report(case_dir: str | Path) -> Path:
           <p style="margin:8px 0 4px">{_esc(risk.get("headline"))}</p>
           <ul style="margin:6px 0 4px;padding-left:20px;font-size:13px">{reasons}</ul>
           <p style="font-size:11px;color:#666;margin:6px 0 0">{_esc(risk.get("disclaimer"))}</p>
+        </div>''')
+
+    # Case-intelligence: profile + AI leads (only if a case brief was provided)
+    if isinstance(case_profile, dict) and case_profile.get("crime_type"):
+        prof = case_profile
+        findings = ai_findings.get("findings", []) if isinstance(ai_findings, dict) else []
+        counts = ai_findings.get("counts", {}) if isinstance(ai_findings, dict) else {}
+        sev_col = {"critical": "#a5322f", "high": "#c0392b", "medium": "#a6741a",
+                   "low": "#1c7d3f", "info": "#666"}
+
+        def _chips(items):
+            return " ".join(
+                f'<span style="display:inline-block;background:#eef;border:1px solid #ccd;'
+                f'border-radius:4px;padding:1px 6px;margin:2px;font-size:12px">{_esc(x)}</span>'
+                for x in (items or [])) or '<span style="color:#999">—</span>'
+
+        rows = ""
+        for f in findings[:30]:
+            col = sev_col.get(f.get("severity"), "#666")
+            rows += (
+                f'<tr>'
+                f'<td><span style="color:{col};font-weight:700;text-transform:uppercase;'
+                f'font-size:11px">{_esc(f.get("severity"))}</span></td>'
+                f'<td style="font-family:monospace;font-size:11px">{_esc(f.get("confidence"))}</td>'
+                f'<td>{_esc(f.get("title"))}'
+                f'<div style="color:#555;font-family:monospace;font-size:11px;'
+                f'margin-top:2px;word-break:break-all">{_esc((f.get("snippet") or "")[:160])}</div></td>'
+                f'<td style="font-size:11px;color:#666">{_esc(f.get("source_type"))}<br>'
+                f'{_esc(f.get("source_file") or "")}</td>'
+                f'</tr>')
+
+        count_str = " · ".join(f'{k}: {v}' for k, v in counts.items() if k != "total")
+        parts.append(f'''
+        <div style="border:1px solid #556;border-radius:6px;padding:14px 18px;margin-bottom:22px;background:#fafaff">
+          <div style="font-size:16px;font-weight:700;color:#334">✦ Case Intelligence — {_esc(prof.get("crime_label"))}</div>
+          <p style="font-size:12px;color:#666;margin:4px 0 10px">
+            Extraction: {_esc(prof.get("extraction_method"))} ·
+            Analysis: {_esc(ai_findings.get("analysis_method", "n/a"))} ·
+            {_esc(counts.get("total", 0))} leads ({_esc(count_str)})
+          </p>
+          <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px">
+            <tr><td style="vertical-align:top;padding:2px 8px 2px 0;color:#666;width:80px">Suspects</td><td>{_chips(prof.get("suspects"))}</td></tr>
+            <tr><td style="vertical-align:top;padding:2px 8px 2px 0;color:#666">Victims</td><td>{_chips(prof.get("victims"))}</td></tr>
+            <tr><td style="vertical-align:top;padding:2px 8px 2px 0;color:#666">Locations</td><td>{_chips(prof.get("locations"))}</td></tr>
+          </table>
+          {('<table class="tbl" style="width:100%;border-collapse:collapse"><thead><tr>'
+            '<th>Severity</th><th>Confidence</th><th>Lead</th><th>Source</th></tr></thead>'
+            '<tbody>' + rows + '</tbody></table>') if rows else
+            '<p style="color:#999;font-size:12px">No leads matched the case profile.</p>'}
+          <p style="font-size:11px;color:#777;margin:10px 0 0">
+            {_esc(ai_findings.get("disclaimer", "AI-surfaced leads require human verification."))}
+          </p>
         </div>''')
 
     # Case + device

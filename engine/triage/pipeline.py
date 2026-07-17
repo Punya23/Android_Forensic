@@ -103,6 +103,10 @@ class PipelineConfig:
     tier2_instagram: bool = False  # root-required: pull direct.db and run Instagram recovery
     tier2_snapchat: bool = False   # root-required: pull arroyo.db/main.db and run Snapchat recovery
     run_app_finder: bool = True    # generic SQLite chat discovery over otherwise-unrecognised DBs
+    # -- Case-intelligence layer (optional) ----------------------------------
+    case_description: str = ""     # plain-language case brief; drives targeted collection
+    run_ai_analysis: bool = True   # after collection, score artifacts into ranked leads
+    llm_provider: str = ""         # "" → ERAKSHAK_LLM env (heuristic|ollama|anthropic)
 
 
 def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
@@ -145,6 +149,35 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     snapchat_result: dict = {}                 # Snapchat recovery result (Tier-2 / corpus)
     discovered_chats: dict = {"tables": [], "messages": []}  # generic app-finder output
     tier1_skip_paths: set[str] = set()
+    case_profile_dict: dict = {}               # case-intelligence profile (if described)
+    collection_plan_dict: dict = {}            # case-intelligence collection plan
+
+    # -- Case-intelligence planning (optional) --------------------------------
+    # If the officer supplied a plain-language case brief, derive a structured profile +
+    # targeted collection plan and apply it BEFORE the tier stages read their flags.
+    # Prioritise-never-exclude: this only ever *adds* collection/keywords — it never turns
+    # off a tier the caller explicitly requested, and cheap artifacts are always collected.
+    if cfg.case_description:
+        progress("intel", 0.04, "Planning targeted collection from case brief")
+        try:
+            from .intel import plan_case, get_provider
+            provider = get_provider(cfg.llm_provider or None)
+            profile, plan = plan_case(cfg.case_description, provider=provider,
+                                      allow_tier2=True)
+            case_profile_dict = profile.to_dict()
+            collection_plan_dict = plan.to_dict()
+            for flag, val in plan.pipeline_overrides.items():
+                if val and hasattr(cfg, flag):
+                    setattr(cfg, flag, getattr(cfg, flag) or bool(val))
+            cfg.keywords = list(cfg.keywords) + plan.keyword_rules()
+            case.log("intel.plan",
+                     f"Case-intelligence plan: crime='{plan.crime_label}' "
+                     f"({profile.extraction_method}); +{len(plan.extra_keywords)} keyword "
+                     f"rules; overrides={plan.pipeline_overrides}",
+                     tier=Tier.TIER0.value)
+        except Exception as exc:  # planning must never abort an acquisition
+            case.log("intel.plan", f"planning error: {exc}", result="error",
+                     tier=Tier.TIER0.value)
 
     # -- Tier 1 (optional): expanded helper-APK collection (dump_all) ---------
     if cfg.tier1_collect_all:
@@ -695,6 +728,27 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     case.write_derived("snapchat_conversations", thread_conversations(sc_msgs, sc_users))
     case.write_derived("discovered_chats", discovered_chats)
 
+    # -- Case-intelligence: persist profile/plan + rank collected leads -------
+    ai_findings: dict = {}
+    if case_profile_dict:
+        case.write_derived("case_profile", case_profile_dict)
+        case.write_derived("collection_plan", collection_plan_dict)
+        if cfg.run_ai_analysis:
+            progress("intel", 0.94, "Scoring artifacts into investigative leads")
+            try:
+                from .intel import analyze_case, get_provider
+                from .intel.planner import CaseProfile
+                profile = CaseProfile(**case_profile_dict)
+                ai_findings = analyze_case(
+                    case, profile, provider=get_provider(cfg.llm_provider or None))
+                case.log("intel.findings",
+                         f"AI leads: {ai_findings.get('counts', {}).get('total', 0)} "
+                         f"({ai_findings.get('analysis_method', 'deterministic')})",
+                         tier=Tier.TIER0.value)
+            except Exception as exc:
+                case.log("intel.findings", f"analysis error: {exc}", result="error",
+                         tier=Tier.TIER0.value)
+
     progress("report", 0.96, "Generating triage report")
     report_path = generate_report(case.root)
     case.log("report.generate", f"triage report written to {report_path.name}",
@@ -719,7 +773,10 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
             "instagram": len(instagram_result.get("messages", [])) if instagram_result else 0,
             "snapchat": len(snapchat_result.get("messages", [])) if snapchat_result else 0,
             "discovered_chats": len(discovered_chats.get("messages", [])),
+            "ai_findings": len(ai_findings.get("findings", [])) if ai_findings else 0,
         },
+        "case_profile": case_profile_dict,
+        "ai_findings_summary": ai_findings.get("counts", {}) if ai_findings else {},
         "risk": risk,
         "throughput": throughput,
         "graph_stats": graph["stats"],

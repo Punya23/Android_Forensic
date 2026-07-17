@@ -62,6 +62,55 @@ def create_app(cases_root: Path = CASES_ROOT):
                                   "label": meta.get("device", {}).get("model", d.name)})
         return jsonify({"real": real, "mock": mocks})
 
+    # -- case intelligence --------------------------------------------------
+    @app.post("/api/plan")
+    def plan_preview():
+        """Preview a targeted collection plan from a plain-language case brief.
+
+        Pure preview — no device, no case folder, no side effects. The officer reviews
+        (and can override) the profile + plan before actually acquiring.
+        """
+        body = request.get_json(force=True) or {}
+        description = str(body.get("description", "") or "").strip()
+        if not description:
+            return jsonify({"error": "a case description is required"}), 400
+        from .intel import plan_case, get_provider
+        provider = get_provider(str(body.get("llm_provider", "") or "") or None)
+        profile, plan = plan_case(
+            description, provider=provider,
+            allow_tier2=bool(body.get("allow_tier2", True)))
+        return jsonify({"profile": profile.to_dict(), "plan": plan.to_dict(),
+                        "provider": provider.name})
+
+    @app.post("/api/case/<case_id>/analyze")
+    def analyze_case_endpoint(case_id: str):
+        """(Re-)run the AI findings analysis over an existing case's collected artifacts.
+
+        Uses the case's stored profile, or a fresh description supplied in the body. Useful
+        after importing more data, or to switch LLM providers without re-acquiring.
+        """
+        case = _open(cases_root, case_id)
+        body = request.get_json(silent=True) or {}
+        from .intel import analyze_case, get_provider
+        from .intel.planner import CaseProfile, build_plan, extract_profile
+
+        provider = get_provider(str(body.get("llm_provider", "") or "") or None)
+        description = str(body.get("description", "") or "").strip()
+        if description:
+            profile = extract_profile(description, provider=provider)
+            case.write_derived("case_profile", profile.to_dict())
+            case.write_derived("collection_plan", build_plan(profile).to_dict())
+        else:
+            stored = case.read_derived("case_profile")
+            if not stored or not isinstance(stored, dict):
+                return jsonify({"error": "no case profile on file; supply a description"}), 400
+            profile = CaseProfile(**stored)
+        bundle = analyze_case(case, profile, provider=provider)
+        case.log("intel.findings",
+                 f"AI leads re-run: {bundle.get('counts', {}).get('total', 0)} "
+                 f"({bundle.get('analysis_method')})", tier=Tier.TIER0.value)
+        return jsonify(bundle)
+
     # -- acquisition --------------------------------------------------------
     @app.post("/api/acquire")
     def acquire():
@@ -89,8 +138,11 @@ def create_app(cases_root: Path = CASES_ROOT):
             tier1_collect_all=bool(body.get("tier1_collect_all", False)),
             tier2_telegram=bool(body.get("tier2_telegram", False)),
             tier2_instagram=bool(body.get("tier2_instagram", False)),
-            tier2_snapchat=bool(body.get("tier2_snapchat", False)))
-        
+            tier2_snapchat=bool(body.get("tier2_snapchat", False)),
+            case_description=str(body.get("case_description", "") or ""),
+            run_ai_analysis=bool(body.get("run_ai_analysis", True)),
+            llm_provider=str(body.get("llm_provider", "") or ""))
+
 
         def emit(stage: str, pct: float, detail: str) -> None:
             if socketio:
@@ -150,6 +202,10 @@ def create_app(cases_root: Path = CASES_ROOT):
         apps = case.read_derived("apps") or []
         summary["notable_apps"] = [a for a in apps if isinstance(a, dict) and a.get("notable")]
         summary["tag_count"] = len(case.read_tags())
+        # Case-intelligence roll-up for the Overview.
+        ai = case.read_derived("ai_findings")
+        summary["case_profile"] = case.read_derived("case_profile") or {}
+        summary["ai_findings_summary"] = (ai or {}).get("counts", {}) if isinstance(ai, dict) else {}
         return jsonify(summary)
 
     @app.get("/api/case/<case_id>/<dataset>")
@@ -165,7 +221,9 @@ def create_app(cases_root: Path = CASES_ROOT):
                      "telegram_recovery", "telegram_users", "telegram_chats",
                      "telegram_media", "telegram_conversations"}
         obj_sets = {"graph", "risk", "throughput", "media_inventory_summary",
-                    "instagram_conversations", "snapchat_conversations", "discovered_chats"}
+                    "instagram_conversations", "snapchat_conversations", "discovered_chats",
+                    # case-intelligence datasets
+                    "ai_findings", "case_profile", "collection_plan"}
         if dataset not in list_sets | obj_sets:
             abort(404)
         case = _open(cases_root, case_id)

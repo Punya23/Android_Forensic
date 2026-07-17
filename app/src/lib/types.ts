@@ -82,6 +82,80 @@ export interface CaseSummary {
   notable_apps?: InstalledApp[];
   discovered_chat_count?: number;
   tag_count: number;
+  case_profile?: CaseProfile;
+  ai_findings_summary?: Record<string, number>;
+}
+
+// -- Case-intelligence layer ------------------------------------------------
+export interface CaseProfile {
+  description: string;
+  crime_type: string;
+  crime_label: string;
+  suspects: string[];
+  victims: string[];
+  other_entities: string[];
+  locations: string[];
+  keywords: string[];
+  timeframe: string | null;
+  summary: string;
+  extraction_method: string;
+  confidence: number;
+}
+
+export interface ArtifactPlan {
+  artifact: string;
+  label: string;
+  priority: "high" | "medium" | "low";
+  cost: "cheap" | "expensive";
+  tier: string;
+  collect: boolean;
+  rationale: string;
+}
+
+export interface CollectionPlan {
+  crime_type: string;
+  crime_label: string;
+  artifacts: ArtifactPlan[];
+  pipeline_overrides: Record<string, boolean>;
+  extra_keywords: { term: string; severity: string; is_regex: boolean }[];
+  deprioritised: { artifact: string; label: string; reason: string }[];
+  notes: string[];
+  rationale: string;
+}
+
+export interface Finding {
+  id: string;
+  title: string;
+  severity: "critical" | "high" | "medium" | "low" | "info";
+  score: number;
+  category: string;
+  snippet: string;
+  source_type: string;
+  source_file: string;
+  timestamp: string | null;
+  confidence: Confidence;
+  entities_matched: string[];
+  keywords_matched: string[];
+  rationale: string;
+  requires_verification: boolean;
+}
+
+export interface AIFindings {
+  generated_for: string;
+  extraction_method: string;
+  analysis_method: string;
+  entities: string[];
+  keyword_patterns: string[];
+  counts: Record<string, number>;
+  findings: Finding[];
+  narrative: string;
+  disclaimer: string;
+}
+
+export interface PlanResponse {
+  profile: CaseProfile;
+  plan: CollectionPlan;
+  provider: string;
 }
 
 export interface GraphNode {

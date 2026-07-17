@@ -6,6 +6,7 @@ import { Sidebar, type ViewKey } from "./components/Sidebar";
 import { GlobalSearch } from "./components/GlobalSearch";
 import { AcquisitionView } from "./views/Acquisition";
 import { OverviewView } from "./views/Overview";
+import { CaseIntelView } from "./views/CaseIntel";
 import { MessagesView } from "./views/Messages";
 import { ContactsView } from "./views/Contacts";
 import { CallsView } from "./views/Calls";
@@ -58,6 +59,7 @@ export default function App() {
             <div className="p-8 text-muted">No case loaded. Start an acquisition first.</div>
           )}
           {caseId && view === "overview" && <OverviewView caseId={caseId} setView={setView} />}
+          {caseId && view === "intel" && <CaseIntelView caseId={caseId} />}
           {caseId && view === "messages" && <MessagesView caseId={caseId} />}
           {caseId && view === "contacts" && <ContactsView caseId={caseId} />}
           {caseId && view === "calls" && <CallsView caseId={caseId} />}
