@@ -59,6 +59,27 @@ from .wifi import (  # Wi-Fi credential parser (Tier 2)
     parse_wpa_supplicant_conf,
     parse_wifi_config_store_xml,
 )
+from .notification import (  # NEW — Notification history (dumpsys)
+    parse_notification_history,
+    get_notification_history,
+    parse_notification_timestamp,
+    build_notification_timeline,
+    get_notification_summary,
+)
+from .bluetooth import (  # NEW — Bluetooth device history (dumpsys)
+    parse_bluetooth_history,
+    get_bluetooth_history,
+    parse_bluetooth_timestamp,
+    build_bluetooth_timeline,
+    get_bluetooth_summary,
+)
+from .celltower import (  # NEW — Cell tower history (dumpsys)
+    parse_celltower_history,
+    get_celltower_history,
+    parse_celltower_timestamp,
+    build_celltower_timeline,
+    get_celltower_summary,
+)
 
 __all__ = [
     "extract_gps",
@@ -118,4 +139,22 @@ __all__ = [
     "parse_wifi_config",
     "parse_wpa_supplicant_conf",
     "parse_wifi_config_store_xml",
+    # Notification history (dumpsys) — Tier 0
+    "parse_notification_history",
+    "get_notification_history",
+    "parse_notification_timestamp",
+    "build_notification_timeline",
+    "get_notification_summary",
+    # Bluetooth device history (dumpsys) — Tier 0
+    "parse_bluetooth_history",
+    "get_bluetooth_history",
+    "parse_bluetooth_timestamp",
+    "build_bluetooth_timeline",
+    "get_bluetooth_summary",
+    # Cell tower history (dumpsys) — Tier 0
+    "parse_celltower_history",
+    "get_celltower_history",
+    "parse_celltower_timestamp",
+    "build_celltower_timeline",
+    "get_celltower_summary",
 ]
