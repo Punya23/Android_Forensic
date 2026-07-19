@@ -80,6 +80,35 @@ from .celltower import (  # NEW — Cell tower history (dumpsys)
     build_celltower_timeline,
     get_celltower_summary,
 )
+from .screen_time import (  # NEW — Screen time / device usage (dumpsys power + batterystats)
+    parse_screen_time,
+    get_screen_time,
+    parse_battery_stats,
+    get_app_usage,
+    build_screen_timeline,
+    get_screen_time_summary,
+    detect_usage_patterns,
+)
+from .google_search import (  # NEW — Google search history + account info
+    parse_google_accounts,
+    get_google_accounts,
+    parse_browser_search_history,
+    get_browser_search_history,
+    parse_google_search_cache,
+    get_google_search_history,
+    build_search_timeline,
+    get_search_summary,
+)
+from .google_maps import (  # NEW — Google Maps location history
+    parse_current_location,
+    get_current_location,
+    parse_google_takeout_location,
+    parse_maps_cache,
+    build_location_timeline,
+    build_location_points,
+    get_location_summary,
+    detect_location_anomalies,
+)
 
 __all__ = [
     "extract_gps",
@@ -157,4 +186,30 @@ __all__ = [
     "parse_celltower_timestamp",
     "build_celltower_timeline",
     "get_celltower_summary",
+    # Screen time / device usage (dumpsys power + batterystats) — Tier 0
+    "parse_screen_time",
+    "get_screen_time",
+    "parse_battery_stats",
+    "get_app_usage",
+    "build_screen_timeline",
+    "get_screen_time_summary",
+    "detect_usage_patterns",
+    # Google search history + account info — Tier 0 / Tier 2
+    "parse_google_accounts",
+    "get_google_accounts",
+    "parse_browser_search_history",
+    "get_browser_search_history",
+    "parse_google_search_cache",
+    "get_google_search_history",
+    "build_search_timeline",
+    "get_search_summary",
+    # Google Maps location history — Tier 0 / Tier 2
+    "parse_current_location",
+    "get_current_location",
+    "parse_google_takeout_location",
+    "parse_maps_cache",
+    "build_location_timeline",
+    "build_location_points",
+    "get_location_summary",
+    "detect_location_anomalies",
 ]
