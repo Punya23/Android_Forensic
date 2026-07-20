@@ -10,12 +10,21 @@ a failure in one artifact is logged and the run continues.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import time
+
+from .priority import get_priority_files, should_pull_file
+from .metrics import reset as _metrics_reset, start_timer, stop_timer, track_stage_time, add_bytes, display_speed_metrics
+from .checkpoint import (
+    checkpoint_exists, load_checkpoint, save_checkpoint,
+    clear_checkpoint, start_autosave, stop_autosave,
+)
 
 from .acquire import AcquisitionSource, RealDeviceSource
 from .analysis import assess_risk, build_communication_graph
@@ -108,11 +117,33 @@ class PipelineConfig:
     case_description: str = ""     # plain-language case brief; drives targeted collection
     run_ai_analysis: bool = True   # after collection, score artifacts into ranked leads
     llm_provider: str = ""         # "" → ERAKSHAK_LLM env (heuristic|ollama|anthropic)
+    # -- Performance options --------------------------------------------------
+    use_priority_filter: bool = False  # sort files by forensic value; skip low-value until budget allows
+    parallel_workers: int = 8          # ThreadPoolExecutor max_workers for parallel file pulls
 
 
 def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
-                    progress: ProgressFn = _noop) -> dict[str, Any]:
-    """Execute a full triage acquisition and return a summary dict."""
+                    progress: ProgressFn = _noop,
+                    socketio: Any = None) -> dict[str, Any]:
+    """Execute a full triage acquisition and return a summary dict.
+
+    Parameters
+    ----------
+    source:
+        AcquisitionSource implementation (real device or mock).
+    cfg:
+        Pipeline configuration (case ID, tiers, performance options, etc.).
+    progress:
+        Callable ``(stage, pct, detail)`` for live progress reporting.
+    socketio:
+        Optional Flask-SocketIO instance.  When supplied, stage data is emitted
+        as ``stage_data`` events so the dashboard can render partial results
+        immediately (progressive display).
+    """
+    _metrics_reset()                        # reset per-run metrics
+    _run_t0 = start_timer()                 # wall-clock start for the whole run
+    _autosave_thread = None
+
     progress("init", 0.0, "Opening case folder")
     meta = CaseMeta(case_id=cfg.case_id, examiner=cfg.examiner,
                     legal_authority=cfg.legal_authority, scope_note=cfg.scope_note)
@@ -260,149 +291,69 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
                      command="exec-out screencap -p", tier=Tier.TIER0.value)
 
     total = max(len(files), 1)
-    for i, dev_path in enumerate(files):
-        if dev_path in tier1_skip_paths:
+
+    # ── Stage 1 progressive emit: device info is ready ─────────────────────
+    _emit_stage_data("device", {
+        "manufacturer": device.manufacturer,
+        "model": device.model,
+        "android_version": device.android_version,
+        "serial": device.serial,
+        "pre_state": pre,
+    }, socketio)
+
+    # ── Tier 0: parallel file pull ──────────────────────────────────────────
+    # Pull results are folded into the shared accumulators under a lock so
+    # that only the slow I/O (source.pull_file) runs concurrently.
+    _ingest_lock = threading.Lock()
+    pull_start = time.monotonic()
+    pulled_bytes = 0
+
+    # Optional priority ordering (opt-in via cfg.use_priority_filter)
+    ordered_files = get_priority_files(files) if cfg.use_priority_filter else files
+
+    pull_results: List[Dict] = _parallel_pull_files(
+        files=ordered_files,
+        source=source,
+        staging=staging,
+        case=case,
+        progress=progress,
+        pull_start=pull_start,
+        total=total,
+        tier1_skip_paths=tier1_skip_paths,
+        ingest_lock=_ingest_lock,
+        use_priority_filter=cfg.use_priority_filter,
+        max_workers=min(cfg.parallel_workers, max(len(ordered_files), 1)),
+    )
+
+    # Fold parallel results into accumulators ──────────────────────────────
+    for res in pull_results:
+        if not res:
             continue
-        pct = 0.10 + 0.42 * (i / total)
-        name = dev_path.rsplit("/", 1)[-1]
-        progress("pull", pct, f"Pulling {name}")
-        pulled = source.pull_file(dev_path, staging)
-        if not pulled:
-            case.log("adb.pull", f"failed/absent: {dev_path}", result="skipped",
-                     tier=Tier.TIER0.value)
-            continue
-
-        category, app = _categorise(dev_path)
-        rec = case.ingest_file(pulled.local_path, source_path=dev_path,
-                               tier=Tier.TIER0, method=source.method,
-                               category=category, app=app,
-                               flags=pulled.flags, move=True)
-        stored = case.root / rec.stored_path
-        pulled_bytes += rec.size_bytes
-
-        # Media → catalogue + EXIF GPS/date
-        if category in ("image", "video", "audio"):
-            gps = extract_gps(stored) if category == "image" else None
-            dt = extract_datetime(stored) if category == "image" else None
-            mi = MediaItem(artifact_id=rec.artifact_id, stored_path=rec.stored_path,
-                           kind=category, size_bytes=rec.size_bytes, app=app,
-                           trashed="trashed" in rec.flags, timestamp=_iso_or_none(dt),
-                           gps=gps, sha256=rec.sha256)
-            media_items.append(mi)
-            if gps:
-                locations.append(LocationPoint(
-                    latitude=gps["lat"], longitude=gps["lon"], source="exif",
-                    timestamp=_iso_or_none(dt), label=f"photo {name}",
-                    source_file=rec.stored_path))
-
-        # WhatsApp export → parse messages
-        if category == "app-export" or (name.lower().endswith(".txt")
-                                        and "whatsapp" in dev_path.lower()):
-            msgs = parse_whatsapp_export(stored)
-            if msgs:
-                app_messages.extend(msgs)
-                case.log("parse.whatsapp", f"{len(msgs)} messages from {name}",
-                         tier=Tier.TIER0.value)
-
-        # Browser history DB (Chrome-style)
-        if name.lower() == "history" or name.lower().endswith("history.db"):
-            hist = parse_browser_history(stored)
-            if hist:
-                browser_history.extend(hist)
-                case.log("parse.browser", f"{len(hist)} history rows from {name}",
-                         tier=Tier.TIER0.value)
-
-        # SQLite DB → queue for recovery + heuristic live-chat parse (Telegram/app DBs)
-        is_db = (category == "database" or name.endswith((".db", ".sqlite", ".sqlite3"))
-                 or name.lower() == "history")
-        if is_db:
-            db_artifacts.append((stored, rec))
-
-            # ---- WhatsApp msgstore.db — dedicated schema-aware parser --------
-            if name.lower() in ("msgstore.db", "msgstore.db.crypt15") or (
-                app == "whatsapp" and name.lower().startswith("msgstore")
-            ):
-                wa_msgs = parse_whatsapp_db(stored)
-                if wa_msgs:
-                    app_messages.extend(wa_msgs)
-                    case.log(
-                        "parse.whatsapp_db",
-                        f"{len(wa_msgs)} live WhatsApp messages from {name} (msgstore.db parser)",
-                        tier=Tier.TIER0.value,
-                        artifact_id=rec.artifact_id,
-                    )
-                # NEW: attempt E2E recovery after live parse
-                try:
-                    e2e_msgs = recover_e2e_messages(stored)
-                    if e2e_msgs:
-                        app_messages.extend(e2e_msgs)
-                        case.log(
-                            "parse.whatsapp_e2e",
-                            f"{len(e2e_msgs)} E2E-recovered messages from {name}",
-                            tier=Tier.TIER0.value,
-                            artifact_id=rec.artifact_id,
-                        )
-                except Exception as exc:
-                    case.log("parse.whatsapp_e2e", f"E2E recovery error on {name}: {exc}",
-                             result="error", tier=Tier.TIER0.value)
-                # Skip generic parse_app_db for this file — the dedicated parser is authoritative.
-
-            # ---- Other recognised messaging-app stores -----------------------
-            elif app in ("telegram", "signal") or "cache4" in name.lower():
-                if app == "telegram" or "cache4" in name.lower():
-                    chat = parse_telegram_db(stored)
-                else:
-                    chat = parse_app_db(stored)
-                if chat:
-                    app_messages.extend(chat)
-                    case.log("parse.appdb", f"{len(chat)} live messages from {name}",
-                             tier=Tier.TIER0.value, artifact_id=rec.artifact_id)
-
-        # Tier-1 helper output (contacts / call log / SMS JSON)
-        if name == "contacts.json":
-            contacts.extend(parse_contacts_json(stored))
-            case.log("parse.contacts", f"{len(contacts)} contacts (Tier 1 helper)",
-                     tier=Tier.TIER1.value, alters_device=False)
-        if name == "calllog.json":
-            calls.extend(parse_calllog_json(stored))
-            case.log("parse.calllog", f"{len(calls)} calls (Tier 1 helper)",
-                     tier=Tier.TIER1.value)
-        if name == "sms.json":
-            sms_msgs = parse_sms_json(stored)
-            app_messages.extend(sms_msgs)
-            case.log("parse.sms", f"{len(sms_msgs)} SMS (Tier 1 helper)",
-                     tier=Tier.TIER1.value)
-
-        # Expanded Collector-APK outputs (media catalogue / apps / accounts / calendar / usage)
-        if name == "media_inventory.json":
-            inv = parse_media_inventory(stored)
-            media_inventory.extend(inv)
-            case.log("parse.media_inventory",
-                     f"{len(inv)} MediaStore entries (Tier 1 helper)", tier=Tier.TIER1.value)
-        if name == "apps.json":
-            apps = parse_apps(stored)
-            installed_apps.extend(apps)
-            notable = sum(1 for a in apps if a.notable)
-            case.log("parse.apps",
-                     f"{len(apps)} installed apps ({notable} notable) (Tier 1 helper)",
-                     tier=Tier.TIER1.value)
-        if name == "accounts.json":
-            accts = parse_accounts(stored)
-            accounts.extend(accts)
-            case.log("parse.accounts", f"{len(accts)} accounts (Tier 1 helper)",
-                     tier=Tier.TIER1.value)
-        if name == "calendar.json":
-            cal = parse_calendar(stored)
-            calendar_events.extend(cal)
-            case.log("parse.calendar", f"{len(cal)} calendar events (Tier 1 helper)",
-                     tier=Tier.TIER1.value)
-        if name == "usage.json":
-            usage = parse_usage(stored)
-            app_usage.extend(usage)
-            case.log("parse.usage", f"{len(usage)} app-usage rows (Tier 1 helper)",
-                     tier=Tier.TIER1.value)
+        pulled_bytes += res.get("size_bytes", 0)
+        media_items.extend(res.get("media_items", []))
+        locations.extend(res.get("locations", []))
+        app_messages.extend(res.get("app_messages", []))
+        browser_history.extend(res.get("browser_history", []))
+        db_artifacts.extend(res.get("db_artifacts", []))
+        contacts.extend(res.get("contacts", []))
+        calls.extend(res.get("calls", []))
+        media_inventory.extend(res.get("media_inventory", []))
+        installed_apps.extend(res.get("installed_apps", []))
+        accounts.extend(res.get("accounts", []))
+        calendar_events.extend(res.get("calendar_events", []))
+        app_usage.extend(res.get("app_usage", []))
 
     pull_elapsed = max(time.monotonic() - pull_start, 0.001)
+    track_stage_time("pull", pull_elapsed)
+    add_bytes(pulled_bytes)
+
+    # ── Stage 2 progressive emit: communication data ready ─────────────────
+    _emit_stage_data("communication", {
+        "contacts": len(contacts),
+        "calls": len(calls),
+        "messages": len(app_messages),
+        "browser_history": len(browser_history),
+    }, socketio)
 
     # -- dumpsys location (read-only) ---------------------------------------
     progress("location", 0.57, "Reading last known location")
@@ -669,6 +620,18 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     # -- persist derived + report -------------------------------------------
     progress("persist", 0.92, "Writing derived datasets")
 
+    # ── Stage 3 progressive emit: app data ready ───────────────────────────
+    _emit_stage_data("app_data", {
+        "media_items": len(media_items),
+        "locations": len(locations),
+        "recovered_rows": len(recovered_rows),
+        "flags": len(flags),
+        "installed_apps": len(installed_apps),
+        "accounts": len(accounts),
+        "calendar_events": len(calendar_events),
+        "app_usage": len(app_usage),
+    }, socketio)
+
     # NEW: WhatsApp Media folder cataloguing
     wa_media_items: list[dict] = []
     try:
@@ -761,12 +724,36 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
                 case.log("intel.findings", f"analysis error: {exc}", result="error",
                          tier=Tier.TIER0.value)
 
+    # ── Stage 4 progressive emit: analysis + timeline ready ────────────────
+    _emit_stage_data("analysis", {
+        "risk": risk,
+        "timeline_events": len(timeline),
+        "graph_nodes": graph["stats"].get("nodes", 0),
+        "graph_edges": graph["stats"].get("edges", 0),
+        "speed": display_speed_metrics(),
+    }, socketio)
+
     progress("report", 0.96, "Generating triage report")
     report_path = generate_report(case.root)
     case.log("report.generate", f"triage report written to {report_path.name}",
              tier=Tier.TIER0.value)
 
     progress("done", 1.0, "Acquisition complete")
+
+    # ── Cleanup: stop auto-save, clear checkpoint, record total time ────────
+    stop_autosave(_autosave_thread)
+    try:
+        clear_checkpoint(case.root)
+    except Exception:
+        pass
+    _total_elapsed = stop_timer(_run_t0)
+    track_stage_time("total", _total_elapsed)
+
+    from .metrics import get_performance_report
+    _perf_report = get_performance_report()
+    _perf_report["speed_summary"] = display_speed_metrics(
+        files_done=len(case.manifest), files_total=len(case.manifest))
+
     summary = case.custody_summary()
     summary.update({
         "counts": {
@@ -792,6 +779,7 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
         "ai_findings_summary": ai_findings.get("counts", {}) if ai_findings else {},
         "risk": risk,
         "throughput": throughput,
+        "performance": _perf_report,
         "graph_stats": graph["stats"],
         "case_dir": str(case.root),
         "report": str(report_path),
@@ -799,7 +787,453 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     return summary
 
 
+
 # --- helpers ----------------------------------------------------------------
+
+# ── Task 3: Progressive display helpers ──────────────────────────────────────
+
+def _emit_stage_data(stage: str, data: Any, socketio: Any = None) -> None:
+    """Emit extracted data immediately via SocketIO (no-op if unavailable).
+
+    Parameters
+    ----------
+    stage:
+        Named pipeline stage, e.g. ``"device"``, ``"communication"``.
+    data:
+        JSON-serialisable dict to send to the dashboard.
+    socketio:
+        Flask-SocketIO instance, or None to skip emission.
+    """
+    if socketio is None:
+        return
+    try:
+        socketio.emit("stage_data", {"stage": stage, "data": data})
+    except Exception:
+        pass  # never let a socket error abort an acquisition
+
+
+def _display_stage_results(stage: str, results: Dict, case: Any) -> None:
+    """Log a human-readable stage summary to the case audit log.
+
+    Parameters
+    ----------
+    stage:
+        Named pipeline stage.
+    results:
+        Dict of counts/values returned by the stage.
+    case:
+        Active :class:`~triage.custody.Case` instance.
+    """
+    try:
+        parts = [f"{k}={v}" for k, v in results.items() if isinstance(v, (int, float, str))]
+        case.log(f"stage.{stage}", " | ".join(parts), tier=Tier.TIER0.value)
+    except Exception:
+        pass
+
+
+def _extract_stage(stage: str, source: AcquisitionSource) -> Dict:
+    """Extract metadata for a named pipeline stage from *source*.
+
+    This is a lightweight adapter used by progressive display — it does not
+    pull files, only reads cheap metadata that is available from the source
+    without any file I/O.
+
+    Parameters
+    ----------
+    stage:
+        One of ``"device"``, ``"pre_state"``.
+    source:
+        Active acquisition source.
+
+    Returns
+    -------
+    Dict
+        Stage-specific metadata dict, or an empty dict on error.
+    """
+    try:
+        if stage == "device":
+            d = source.device_info()
+            return {"manufacturer": d.manufacturer, "model": d.model,
+                    "android_version": d.android_version, "serial": d.serial}
+        if stage == "pre_state":
+            return source.pre_state()
+    except Exception:
+        pass
+    return {}
+
+
+# ── Task 1: Parallel pull helpers ────────────────────────────────────────────
+
+def _process_pulled_file(
+    pulled: Any,
+    rec: Any,
+    stored: Path,
+    dev_path: str,
+    case: Any,
+) -> Dict:
+    """Process a pulled file immediately (categorise, EXIF, parse).
+
+    Runs *after* the file has been ingested into the case; does the per-file
+    analysis that was previously inside the sequential pull loop.
+
+    Parameters
+    ----------
+    pulled:
+        :class:`~triage.acquire.base.PulledFile` returned by the source.
+    rec:
+        :class:`~triage.models.ArtifactRecord` from ``case.ingest_file``.
+    stored:
+        Absolute path to the ingested file inside the case folder.
+    dev_path:
+        Original device-side path (used for logging).
+    case:
+        Active :class:`~triage.custody.Case` instance.
+
+    Returns
+    -------
+    Dict
+        Collected data: media_items, locations, app_messages, etc.
+    """
+    result: Dict[str, List] = {
+        "size_bytes": rec.size_bytes,
+        "media_items": [],
+        "locations": [],
+        "app_messages": [],
+        "browser_history": [],
+        "db_artifacts": [],
+        "contacts": [],
+        "calls": [],
+        "media_inventory": [],
+        "installed_apps": [],
+        "accounts": [],
+        "calendar_events": [],
+        "app_usage": [],
+    }
+
+    category = rec.category
+    app = rec.app
+    name = stored.name
+
+    # Media → catalogue + EXIF GPS/date
+    if category in ("image", "video", "audio"):
+        gps = extract_gps(stored) if category == "image" else None
+        dt = extract_datetime(stored) if category == "image" else None
+        mi = MediaItem(
+            artifact_id=rec.artifact_id, stored_path=rec.stored_path,
+            kind=category, size_bytes=rec.size_bytes, app=app,
+            trashed="trashed" in rec.flags, timestamp=_iso_or_none(dt),
+            gps=gps, sha256=rec.sha256,
+        )
+        result["media_items"].append(mi)
+        if gps:
+            result["locations"].append(LocationPoint(
+                latitude=gps["lat"], longitude=gps["lon"], source="exif",
+                timestamp=_iso_or_none(dt), label=f"photo {name}",
+                source_file=rec.stored_path))
+
+    # WhatsApp export → parse messages
+    if category == "app-export" or (name.lower().endswith(".txt")
+                                    and "whatsapp" in dev_path.lower()):
+        try:
+            msgs = parse_whatsapp_export(stored)
+            if msgs:
+                result["app_messages"].extend(msgs)
+                case.log("parse.whatsapp", f"{len(msgs)} messages from {name}",
+                         tier=Tier.TIER0.value)
+        except Exception as exc:
+            case.log("parse.whatsapp", f"export parse error on {name}: {exc}",
+                     result="error", tier=Tier.TIER0.value)
+
+    # Browser history DB (Chrome-style)
+    if name.lower() == "history" or name.lower().endswith("history.db"):
+        try:
+            hist = parse_browser_history(stored)
+            if hist:
+                result["browser_history"].extend(hist)
+                case.log("parse.browser", f"{len(hist)} history rows from {name}",
+                         tier=Tier.TIER0.value)
+        except Exception as exc:
+            case.log("parse.browser", f"browser parse error on {name}: {exc}",
+                     result="error", tier=Tier.TIER0.value)
+
+    # SQLite DB → queue for recovery + live-chat parse
+    is_db = (category == "database"
+             or name.endswith((".db", ".sqlite", ".sqlite3"))
+             or name.lower() == "history")
+    if is_db:
+        result["db_artifacts"].append((stored, rec))
+
+        # ---- WhatsApp msgstore.db — dedicated schema-aware parser --------
+        if name.lower() in ("msgstore.db", "msgstore.db.crypt15") or (
+            app == "whatsapp" and name.lower().startswith("msgstore")
+        ):
+            try:
+                wa_msgs = parse_whatsapp_db(stored)
+                if wa_msgs:
+                    result["app_messages"].extend(wa_msgs)
+                    case.log("parse.whatsapp_db",
+                             f"{len(wa_msgs)} live WhatsApp messages from {name}",
+                             tier=Tier.TIER0.value, artifact_id=rec.artifact_id)
+            except Exception as exc:
+                case.log("parse.whatsapp_db", f"WA parse error on {name}: {exc}",
+                         result="error", tier=Tier.TIER0.value)
+            # E2E recovery after live parse
+            try:
+                e2e_msgs = recover_e2e_messages(stored)
+                if e2e_msgs:
+                    result["app_messages"].extend(e2e_msgs)
+                    case.log("parse.whatsapp_e2e",
+                             f"{len(e2e_msgs)} E2E-recovered messages from {name}",
+                             tier=Tier.TIER0.value, artifact_id=rec.artifact_id)
+            except Exception as exc:
+                case.log("parse.whatsapp_e2e", f"E2E recovery error on {name}: {exc}",
+                         result="error", tier=Tier.TIER0.value)
+
+        # ---- Other recognised messaging-app stores -----------------------
+        elif app in ("telegram", "signal") or "cache4" in name.lower():
+            try:
+                if app == "telegram" or "cache4" in name.lower():
+                    chat = parse_telegram_db(stored)
+                else:
+                    chat = parse_app_db(stored)
+                if chat:
+                    result["app_messages"].extend(chat)
+                    case.log("parse.appdb", f"{len(chat)} live messages from {name}",
+                             tier=Tier.TIER0.value, artifact_id=rec.artifact_id)
+            except Exception as exc:
+                case.log("parse.appdb", f"app-db parse error on {name}: {exc}",
+                         result="error", tier=Tier.TIER0.value)
+
+    # Tier-1 helper output (contacts / call log / SMS JSON)
+    if name == "contacts.json":
+        try:
+            c = parse_contacts_json(stored)
+            result["contacts"].extend(c)
+            case.log("parse.contacts", f"{len(c)} contacts (Tier 1 helper)",
+                     tier=Tier.TIER1.value, alters_device=False)
+        except Exception:
+            pass
+    if name == "calllog.json":
+        try:
+            cl = parse_calllog_json(stored)
+            result["calls"].extend(cl)
+            case.log("parse.calllog", f"{len(cl)} calls (Tier 1 helper)",
+                     tier=Tier.TIER1.value)
+        except Exception:
+            pass
+    if name == "sms.json":
+        try:
+            sms = parse_sms_json(stored)
+            result["app_messages"].extend(sms)
+            case.log("parse.sms", f"{len(sms)} SMS (Tier 1 helper)", tier=Tier.TIER1.value)
+        except Exception:
+            pass
+
+    # Expanded Collector-APK outputs
+    if name == "media_inventory.json":
+        try:
+            inv = parse_media_inventory(stored)
+            result["media_inventory"].extend(inv)
+            case.log("parse.media_inventory",
+                     f"{len(inv)} MediaStore entries (Tier 1 helper)", tier=Tier.TIER1.value)
+        except Exception:
+            pass
+    if name == "apps.json":
+        try:
+            apps_list = parse_apps(stored)
+            result["installed_apps"].extend(apps_list)
+            notable = sum(1 for a in apps_list if a.notable)
+            case.log("parse.apps",
+                     f"{len(apps_list)} installed apps ({notable} notable) (Tier 1 helper)",
+                     tier=Tier.TIER1.value)
+        except Exception:
+            pass
+    if name == "accounts.json":
+        try:
+            accts = parse_accounts(stored)
+            result["accounts"].extend(accts)
+            case.log("parse.accounts", f"{len(accts)} accounts (Tier 1 helper)",
+                     tier=Tier.TIER1.value)
+        except Exception:
+            pass
+    if name == "calendar.json":
+        try:
+            cal = parse_calendar(stored)
+            result["calendar_events"].extend(cal)
+            case.log("parse.calendar", f"{len(cal)} calendar events (Tier 1 helper)",
+                     tier=Tier.TIER1.value)
+        except Exception:
+            pass
+    if name == "usage.json":
+        try:
+            usage = parse_usage(stored)
+            result["app_usage"].extend(usage)
+            case.log("parse.usage", f"{len(usage)} app-usage rows (Tier 1 helper)",
+                     tier=Tier.TIER1.value)
+        except Exception:
+            pass
+
+    return result
+
+
+def _pull_and_process_file(
+    device_path: str,
+    source: AcquisitionSource,
+    staging: Path,
+    case: Any,
+    ingest_lock: threading.Lock,
+    pull_start: float,
+    use_priority_filter: bool,
+) -> Optional[Dict]:
+    """Pull a single file and process it immediately.
+
+    This function runs inside a :class:`~concurrent.futures.ThreadPoolExecutor`
+    worker thread.  The slow I/O (``source.pull_file``) runs fully in parallel;
+    ``case.ingest_file`` (which moves the file and updates the manifest) is
+    serialised via *ingest_lock* to keep the case folder consistent.
+
+    Parameters
+    ----------
+    device_path:
+        Device-side path of the file to pull.
+    source:
+        Active :class:`~triage.acquire.base.AcquisitionSource`.
+    staging:
+        Temporary staging directory.
+    case:
+        Active :class:`~triage.custody.Case` instance.
+    ingest_lock:
+        Shared lock protecting ``case.ingest_file``.
+    pull_start:
+        Monotonic timestamp when the pull phase started (for priority gating).
+    use_priority_filter:
+        When True, skip the file if its priority score is below the time-based
+        threshold (see :func:`~triage.priority.should_pull_file`).
+
+    Returns
+    -------
+    Optional[Dict]
+        Processed result dict, or None if the file was skipped/failed.
+    """
+    elapsed = time.monotonic() - pull_start
+    if use_priority_filter and not should_pull_file(device_path, elapsed):
+        return None  # defer or skip based on time budget
+
+    # ── Pull (runs in parallel — the slow part) ──────────────────────────
+    _t0 = start_timer()
+    try:
+        pulled = source.pull_file(device_path, staging)
+    except Exception as exc:
+        case.log("adb.pull", f"exception pulling {device_path}: {exc}",
+                 result="error", tier=Tier.TIER0.value)
+        return None
+    _pull_time = stop_timer(_t0)
+    track_stage_time("pull", _pull_time)
+
+    if not pulled:
+        case.log("adb.pull", f"failed/absent: {device_path}",
+                 result="skipped", tier=Tier.TIER0.value)
+        return None
+
+    # ── Ingest (serialised — protects the manifest and artifact store) ───
+    category, app = _categorise(device_path)
+    with ingest_lock:
+        rec = case.ingest_file(
+            pulled.local_path, source_path=device_path,
+            tier=Tier.TIER0, method=source.method,
+            category=category, app=app,
+            flags=pulled.flags, move=True,
+        )
+    stored = case.root / rec.stored_path
+
+    # ── Per-file processing (parse / EXIF / DB — can run in parallel) ───
+    return _process_pulled_file(pulled, rec, stored, device_path, case)
+
+
+def _parallel_pull_files(
+    files: List[str],
+    source: AcquisitionSource,
+    staging: Path,
+    case: Any,
+    progress: ProgressFn,
+    pull_start: float,
+    total: int,
+    tier1_skip_paths: set,
+    ingest_lock: threading.Lock,
+    use_priority_filter: bool,
+    max_workers: int = 8,
+) -> List[Dict]:
+    """Pull multiple files in parallel using ThreadPoolExecutor.
+
+    Submits all pull tasks to a thread pool and processes results as they
+    complete so progress is updated in real-time and the first results are
+    visible to the analyst before the last file is pulled.
+
+    Parameters
+    ----------
+    files:
+        Ordered list of device-side file paths (already de-duped and capped).
+    source:
+        Active acquisition source.
+    staging:
+        Temporary staging directory.
+    case:
+        Active case instance.
+    progress:
+        Progress callback ``(stage, pct, detail)``.
+    pull_start:
+        Monotonic timestamp when the pull phase started.
+    total:
+        Total number of files (used to compute percentage).
+    tier1_skip_paths:
+        Set of paths already handled by a Tier-1 helper — skip these.
+    ingest_lock:
+        Shared lock protecting ``case.ingest_file``.
+    use_priority_filter:
+        Forward to :func:`_pull_and_process_file`.
+    max_workers:
+        Thread pool size (defaults to ``min(8, len(files))``).
+
+    Returns
+    -------
+    List[Dict]
+        One result dict per successfully pulled file.
+    """
+    results: List[Dict] = []
+    workers = min(max_workers, max(len(files), 1))
+    done_count = 0
+
+    # Filter out tier-1 skips before submitting
+    to_pull = [f for f in files if f not in tier1_skip_paths]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers,
+                                               thread_name_prefix="triage_pull") as executor:
+        future_to_path = {
+            executor.submit(
+                _pull_and_process_file,
+                dev_path, source, staging, case, ingest_lock,
+                pull_start, use_priority_filter,
+            ): dev_path
+            for dev_path in to_pull
+        }
+
+        for future in concurrent.futures.as_completed(future_to_path):
+            dev_path = future_to_path[future]
+            done_count += 1
+            pct = 0.10 + 0.42 * (done_count / max(total, 1))
+            name = dev_path.rsplit("/", 1)[-1]
+            progress("pull", pct, f"Pulled {name} ({done_count}/{len(to_pull)})")
+            try:
+                res = future.result()
+                if res is not None:
+                    results.append(res)
+            except Exception as exc:
+                case.log("adb.pull", f"worker error for {dev_path}: {exc}",
+                         result="error", tier=Tier.TIER0.value)
+
+    return results
+
+
 
 def _process_whatsapp_media(media_root: Path, case: Any) -> list[dict]:
     """Process WhatsApp media files from *media_root* and return catalogued items.
