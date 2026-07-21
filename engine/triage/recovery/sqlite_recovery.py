@@ -370,7 +370,7 @@ def _unallocated_region(page: bytes, hdr_off: int) -> tuple[int, int]:
 def _carve_region(page: bytes, page_abs_base: int, region_off: int, region_len: int,
                   expected_cols: Optional[int], source_file: str, page_num: int,
                   provenance_kind: str, confidence: Confidence,
-                  seen_rowids: set[int]) -> list[CarvedRow]:
+                  seen_records: set[tuple[int, tuple[Any, ...]]]) -> list[CarvedRow]:
     """Slide through a byte region attempting to carve table-leaf cells."""
     rows: list[CarvedRow] = []
     end = min(region_off + region_len, len(page))
@@ -379,7 +379,8 @@ def _carve_region(page: bytes, page_abs_base: int, region_off: int, region_len: 
         carved = _try_carve_cell(page, off, expected_cols)
         if carved:
             rowid, payload_len, values, clean = carved
-            if rowid not in seen_rowids or provenance_kind == "freeblock":
+            rec_key = (rowid, tuple(values))
+            if rec_key not in seen_records or provenance_kind == "freeblock":
                 conf = confidence if clean else Confidence.CARVED_PARTIAL
                 warnings = [] if clean else ["header/column mismatch or truncated payload"]
                 rows.append(CarvedRow(
@@ -388,9 +389,10 @@ def _carve_region(page: bytes, page_abs_base: int, region_off: int, region_len: 
                     rowid=rowid, page=page_num, offset=page_abs_base + off,
                     warnings=warnings,
                 ))
-                seen_rowids.add(rowid)
-                # Advance past this record's declared payload to reduce overlap noise.
-                off += max(payload_len, 1)
+                seen_records.add(rec_key)
+                # Advance past this record's declared payload only if the parse was clean.
+                # If unclean, the payload_len might be garbage, so advance by 1 to avoid skipping valid data.
+                off += max(payload_len, 1) if clean else 1
                 continue
         off += 1
     return rows
@@ -574,7 +576,7 @@ def recover_deleted_rows(
             expected_cols = max(set(counts), key=counts.count) if counts else None
 
     n_pages = len(data) // page_size
-    seen_rowids: set[int] = set()
+    seen_records: set[tuple[int, tuple[Any, ...]]] = set()
     results: list[CarvedRow] = []
 
     # 1) Freelist pages — highest-confidence deleted content.
@@ -585,7 +587,7 @@ def recover_deleted_rows(
             continue
         results += _carve_region(
             page, (pnum - 1) * page_size, 0, len(page), expected_cols,
-            db_path.name, pnum, "freelist", Confidence.RECOVERED_VERIFIED, seen_rowids)
+            db_path.name, pnum, "freelist", Confidence.RECOVERED_VERIFIED, seen_records)
 
     # 2) Live leaf pages: freeblocks + unallocated gaps hold deleted cells whose header
     #    bytes were clobbered by the freeblock header. First try a structured full-cell
@@ -612,13 +614,13 @@ def recover_deleted_rows(
                 db_path.name, pnum, kind)
 
     # 3) WAL frames — un-checkpointed page versions.
-    results += _recover_from_wal(db_path, expected_cols, seen_rowids)
+    results += _recover_from_wal(db_path, expected_cols, seen_records)
 
     return results
 
 
 def _recover_from_wal(db_path: Path, expected_cols: Optional[int],
-                      seen_rowids: set[int]) -> list[CarvedRow]:
+                      seen_records: set[tuple[int, tuple[Any, ...]]]) -> list[CarvedRow]:
     wal = db_path.with_name(db_path.name + "-wal")
     if not wal.exists():
         return []
@@ -647,7 +649,7 @@ def _recover_from_wal(db_path: Path, expected_cols: Optional[int],
             results += _carve_region(
                 page, off + 24, 0, len(page), expected_cols,
                 wal.name, page_num, f"wal frame {frame_idx} (db page {page_num})",
-                Confidence.RECOVERED_VERIFIED, seen_rowids)
+                Confidence.RECOVERED_VERIFIED, seen_records)
         off += frame_size
     return results
 

@@ -630,9 +630,9 @@ class TestWhatsAppEndToEnd:
         assert len(msgs) > 0
         assert summary["total"] > 0
 
-    def test_full_pipeline_advanced(self, sample_messages: list):
+    def test_full_pipeline_advanced(self, sample_messages: list, tmp_path: Path):
         """Advanced analysis runs cleanly on a full message set."""
-        report = run_advanced_analysis(Path("/tmp"), sample_messages)
+        report = run_advanced_analysis(tmp_path, sample_messages)
         assert "social_graph" in report
         assert "communication_patterns" in report
         assert "timeline" in report
@@ -793,8 +793,8 @@ class TestAdvancedFeatures:
                     "anomalies", "recovery_metrics", "meta"):
             assert key in report
 
-    def test_run_advanced_analysis_wrapper(self, sample_messages: list):
+    def test_run_advanced_analysis_wrapper(self, sample_messages: list, tmp_path: Path):
         """run_advanced_analysis module-level function returns a valid report."""
-        report = run_advanced_analysis(Path("/tmp"), sample_messages)
+        report = run_advanced_analysis(tmp_path, sample_messages)
         assert "social_graph" in report
-        assert report.get("case_dir") == "/tmp"
+        assert report.get("case_dir") == str(tmp_path)
