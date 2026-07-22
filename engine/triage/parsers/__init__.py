@@ -109,6 +109,16 @@ from .google_maps import (  # NEW — Google Maps location history
     get_location_summary,
     detect_location_anomalies,
 )
+from .whatsapp_backup import (  # NEW — WhatsApp backup recovery (Tier 2)
+    discover_backups,
+    extract_key,
+    decrypt_backup,
+    verify_sqlite_header,
+    recover_messages_from_db,
+    recover_media_files,
+    backup_recovery_summary,
+    BackupInfo,
+)
 
 __all__ = [
     "extract_gps",
@@ -212,4 +222,13 @@ __all__ = [
     "build_location_points",
     "get_location_summary",
     "detect_location_anomalies",
+    # WhatsApp backup recovery (Tier 2)
+    "discover_backups",
+    "extract_key",
+    "decrypt_backup",
+    "verify_sqlite_header",
+    "recover_messages_from_db",
+    "recover_media_files",
+    "backup_recovery_summary",
+    "BackupInfo",
 ]

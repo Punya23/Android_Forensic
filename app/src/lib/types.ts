@@ -488,3 +488,47 @@ export interface WifiNetwork {
   confidence: Confidence;
   source_file: string;
 }
+
+// --- WhatsApp backup recovery (Tier 2) -------------------------------------
+
+export interface WhatsAppBackupMessage {
+  backup_file: string;       // source .crypt* filename
+  chat_id: string;           // key_remote_jid / chat identifier
+  sender: string;            // JID or "me"
+  body: string;
+  timestamp: string | null;
+  media_type: string;        // image | video | audio | document | …
+  media_path: string;        // relative path stored in the DB
+  confidence: Confidence;
+  source_file: string;       // decrypted DB filename
+  provenance: string;        // e.g. "freelist page 4"
+  flags: string[];
+}
+
+export interface WhatsAppBackupMedia {
+  artifact_id: string;
+  backup_message_id: string;
+  file_name: string;
+  file_path_on_device: string;
+  size_bytes: number;
+  sha256: string;
+  recovered: boolean;        // true if pulled from a .trashed-* location
+}
+
+export interface WhatsAppBackupSummary {
+  per_file: Record<string, {
+    live: number;
+    recovered: number;
+    carved: number;
+    deletion: number;
+    total: number;
+  }>;
+  totals: {
+    messages: number;
+    media: number;
+    live: number;
+    recovered: number;
+    carved: number;
+    deletion: number;
+  };
+}

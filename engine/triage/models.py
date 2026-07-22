@@ -256,3 +256,44 @@ class WifiNetwork(Serialisable):
     timestamp: Optional[str] = None
     confidence: Confidence = Confidence.LIVE
     source_file: str = ""
+
+
+# --- WhatsApp backup recovery -----------------------------------------------
+
+@dataclass
+class WhatsAppBackupMessage(Serialisable):
+    """A message recovered from a decrypted WhatsApp msgstore backup.
+
+    Captures both live rows (present in the decrypted DB) and deleted rows
+    recovered via freelist, WAL, or unallocated-space carving.
+    """
+
+    backup_file: str                     # source .crypt* filename (e.g. msgstore-2024-01-01.1.db.crypt14)
+    chat_id: str                         # key_remote_jid / chat identifier
+    sender: str                          # JID (phone@s.whatsapp.net) or "me"
+    body: str                            # text content of the message
+    timestamp: Optional[str] = None      # ISO-8601 converted from epoch-ms
+    media_type: str = ""                 # image/video/audio/document/…
+    media_path: str = ""                 # relative path stored in the DB (may not exist on device)
+    confidence: Confidence = Confidence.LIVE
+    source_file: str = ""               # decrypted SQLite filename
+    provenance: str = ""                 # e.g. "freelist page 4", "WAL frame 12"
+    flags: list[str] = field(default_factory=list)
+
+
+@dataclass
+class WhatsAppBackupMedia(Serialisable):
+    """A media file linked to a WhatsApp backup message.
+
+    Created when a message references a media_path that was found and pulled
+    from the device.  ``recovered`` is True when the file was found in a trash
+    folder rather than its original location.
+    """
+
+    artifact_id: str                     # ArtifactRecord.artifact_id in the case manifest
+    backup_message_id: str = ""          # the chat_id + timestamp key of the parent message
+    file_name: str = ""                  # basename of the media file
+    file_path_on_device: str = ""        # full path where the file was found on the device
+    size_bytes: int = 0
+    sha256: str = ""
+    recovered: bool = False              # True if pulled from a .trashed-* location

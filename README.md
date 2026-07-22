@@ -35,6 +35,9 @@ prejudice the later full laboratory examination.
 | Contacts / call-log parsing (Tier-1 helper APK output) | ✅ | agent-based logical extraction |
 | Keyword + known-hash flagging | ✅ | Cyacomb known-content detection |
 | Cross-artifact timeline reconstruction | ✅ | timeline view |
+| **Notification history parser** (`dumpsys notification --history`) | ✅ | device activity analysis |
+| **Bluetooth device history** (`dumpsys bluetooth_manager`) | ✅ | connected devices analysis |
+| **Cell tower history** (`dumpsys telephony.registry`) | ✅ | location data analysis |
 | Forensic Preview Dashboard (Electron + React) with live 5–10 min progress | ✅ | MDI field dashboard |
 | NIST/SWGDE-aligned HTML report + Section 65B certificate block | ✅ | court-ready reporting |
 | **Sealed evidence-package export** (ZIP + SHA-256 verification manifest) | ✅ | evidence export |

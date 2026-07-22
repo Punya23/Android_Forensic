@@ -61,6 +61,12 @@ from .parsers import (
     TelegramPaths,
     parse_whatsapp_db,
     parse_whatsapp_export,
+    parse_notification_history,
+    get_notification_history,
+    parse_bluetooth_history,
+    get_bluetooth_history,
+    parse_celltower_history,
+    get_celltower_history,
 )
 from .parsers.exif import extract_datetime
 from .parsers.collector import (
@@ -112,6 +118,8 @@ class PipelineConfig:
     tier2_instagram: bool = False  # root-required: pull direct.db and run Instagram recovery
     tier2_snapchat: bool = False   # root-required: pull arroyo.db/main.db and run Snapchat recovery
     tier2_wifi: bool = False       # root-required: recover stored Wi-Fi credentials from system config
+    tier2_whatsapp_backup: bool = False       # root-required: decrypt msgstore.db.crypt* backups
+    tier2_whatsapp_backup_max_files: int = 5  # max backup files to decrypt (most-recent-first)
     run_app_finder: bool = True    # generic SQLite chat discovery over otherwise-unrecognised DBs
     # -- Case-intelligence layer (optional) ----------------------------------
     case_description: str = ""     # plain-language case brief; drives targeted collection
@@ -168,7 +176,12 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     calls = []
     media_items: list[MediaItem] = []
     locations: list[LocationPoint] = []
+    notifications: list[dict] = []             # dumpsys notification --history
+    bluetooth_devices: list[dict] = []         # dumpsys bluetooth_manager
+    cell_towers: list[dict] = []               # dumpsys telephony.registry
     wifi_networks: list = []                   # Wi-Fi credentials (Tier-2 / root)
+    wa_backup_messages: list = []              # WhatsApp backup recovered messages (Tier-2)
+    wa_backup_media: list = []                 # WhatsApp backup recovered media (Tier-2)
     app_messages = []                          # WhatsApp export + Telegram/app-DB + SMS
     db_artifacts: list[tuple[Path, Any]] = []  # (stored path, ArtifactRecord)
     browser_history: list[dict] = []
@@ -364,6 +377,41 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
         case.log("shell.dumpsys", "dumpsys location captured",
                  command="dumpsys location", tier=Tier.TIER0.value)
 
+    # -- dumpsys notifications (read-only) ----------------------------------
+    progress("notification", 0.575, "Reading notification history")
+    dumpsys_notif = source.shell_readonly("dumpsys notification --history")
+    if not dumpsys_notif.strip():
+        dumpsys_notif = source.shell_readonly("dumpsys notification")
+    
+    if dumpsys_notif:
+        notifications = parse_notification_history(dumpsys_notif)
+        if notifications:
+            case.write_derived("notifications", notifications)
+            case.log("shell.dumpsys", f"dumpsys notification captured ({len(notifications)} items)",
+                     command="dumpsys notification --history", tier=Tier.TIER0.value)
+
+    # -- dumpsys bluetooth (read-only) --------------------------------------
+    progress("bluetooth", 0.58, "Reading bluetooth history")
+    dumpsys_bt = source.shell_readonly("dumpsys bluetooth_manager")
+    
+    if dumpsys_bt:
+        bluetooth_devices = parse_bluetooth_history(dumpsys_bt)
+        if bluetooth_devices:
+            case.write_derived("bluetooth", bluetooth_devices)
+            case.log("shell.dumpsys", f"dumpsys bluetooth captured ({len(bluetooth_devices)} items)",
+                     command="dumpsys bluetooth_manager", tier=Tier.TIER0.value)
+
+    # -- dumpsys celltower (read-only) --------------------------------------
+    progress("celltower", 0.585, "Reading cell tower history")
+    dumpsys_cell = source.shell_readonly("dumpsys telephony.registry")
+    
+    if dumpsys_cell:
+        cell_towers = parse_celltower_history(dumpsys_cell)
+        if cell_towers:
+            case.write_derived("celltower", cell_towers)
+            case.log("shell.dumpsys", f"dumpsys telephony.registry captured ({len(cell_towers)} items)",
+                     command="dumpsys telephony.registry", tier=Tier.TIER0.value)
+
     # -- ALEAPP broad artifact parsing -------------------------------------
     aleapp_result: dict = {"available": False, "artifacts": {}, "report_dir": "", "error": None}
     if cfg.run_aleapp:
@@ -436,6 +484,21 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
             case.log("tier2.wifi",
                      "Tier-2 Wi-Fi requested on non-real (mock) source; skipped",
                      result="skipped", tier=Tier.TIER2.value)
+
+    if cfg.tier2_whatsapp_backup:
+        progress("tier2", 0.635, "Running Tier-2 WhatsApp backup recovery (root)")
+        if isinstance(source, RealDeviceSource):
+            wa_backup_messages, wa_backup_media = _run_tier2_whatsapp_backup(
+                source, case, staging,
+                app_messages=app_messages,
+                max_files=cfg.tier2_whatsapp_backup_max_files,
+            )
+        else:
+            case.log(
+                "tier2.whatsapp_backup",
+                "Tier-2 WhatsApp backup requested on non-real (mock) source; skipped",
+                result="skipped", tier=Tier.TIER2.value,
+            )
 
     # -- SQLite deleted-record recovery -------------------------------------
     progress("recover", 0.62, "Recovering deleted records")
@@ -589,7 +652,10 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
                               telegram_messages=_tg_msgs,
                               telegram_media=_tg_media,
                               calendar_events=[c.to_dict() for c in calendar_events],
-                              media_inventory=[m.to_dict() for m in media_inventory])
+                              media_inventory=[m.to_dict() for m in media_inventory],
+                              notifications=notifications,
+                              bluetooth_devices=bluetooth_devices,
+                              cell_towers=cell_towers)
 
     # -- analysis: social graph + risk verdict ------------------------------
     progress("analysis", 0.88, "Building communication graph & risk verdict")
@@ -690,6 +756,8 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     case.write_derived("usage", app_usage)
     case.write_derived("media_inventory_summary", media_inventory_summary(media_inventory))
     case.write_derived("wifi", wifi_networks)  # Wi-Fi credentials (Tier 2)
+    case.write_derived("whatsapp_backup_messages", wa_backup_messages)  # WA backup (Tier 2)
+    case.write_derived("whatsapp_backup_media", wa_backup_media)        # WA backup media (Tier 2)
     # App-chat recovery datasets (Instagram / Snapchat / generic Dynamic App Finder)
     ig_msgs = instagram_result.get("messages", []) if instagram_result else []
     sc_msgs = snapchat_result.get("messages", []) if snapchat_result else []
@@ -773,7 +841,12 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
             "snapchat": len(snapchat_result.get("messages", [])) if snapchat_result else 0,
             "discovered_chats": len(discovered_chats.get("messages", [])),
             "wifi": len(wifi_networks),
+            "whatsapp_backup_messages": len(wa_backup_messages),
+            "whatsapp_backup_media": len(wa_backup_media),
             "ai_findings": len(ai_findings.get("findings", [])) if ai_findings else 0,
+            "notifications": len(notifications),
+            "bluetooth_devices": len(bluetooth_devices),
+            "cell_towers": len(cell_towers),
         },
         "case_profile": case_profile_dict,
         "ai_findings_summary": ai_findings.get("counts", {}) if ai_findings else {},
@@ -1953,6 +2026,244 @@ def _run_tier2_wifi(
     )
 
     return wifi_networks
+
+
+def _run_tier2_whatsapp_backup(
+    source: "RealDeviceSource",
+    case: "Case",
+    staging: "Path",
+    app_messages: list,
+    max_files: int = 5,
+) -> tuple[list, list]:
+    """Discover, decrypt, and recover messages from WhatsApp msgstore backup files.  Tier 2.
+
+    Steps
+    -----
+    1. Discover ``msgstore*.db.crypt{12,14,15}`` files in both backup roots.
+    2. Verify root access (``su -c id``).
+    3. For each backup (most-recent-first, up to *max_files*):
+       a. Pull the matching key file via root.
+       b. Pull the backup file via ``adb pull`` (it lives in shared storage).
+       c. Decrypt to a temporary SQLite DB.
+       d. Run full forensic recovery (live + freelist + sqbrite + gaps).
+       e. Pull referenced media files.
+    4. Fold recovered messages into ``app_messages`` for the Messages view.
+    5. Write a per-backup stats summary.
+
+    Returns
+    -------
+    tuple[list[WhatsAppBackupMessage], list[WhatsAppBackupMedia]]
+        Both lists may be empty if root is unavailable or no backups are found.
+    """
+    from .parsers.whatsapp_backup import (
+        discover_backups,
+        extract_key,
+        decrypt_backup,
+        recover_messages_from_db,
+        recover_media_files,
+        backup_recovery_summary,
+    )
+    from .models import Message as _Msg
+    from .config import Confidence as _Conf
+
+    all_messages: list = []
+    all_media: list = []
+
+    # 1. Root check.
+    root_check = source.adb.shell("su -c 'id'")
+    case.log(
+        "tier2.whatsapp_backup.root_check",
+        f"root check: {'ok' if root_check.ok else 'failed'}",
+        command="adb shell su -c 'id'",
+        result="ok" if root_check.ok else "error",
+        alters_device=False,
+        tier=Tier.TIER2.value,
+    )
+    if not root_check.ok:
+        case.log(
+            "tier2.whatsapp_backup",
+            "root not available; WhatsApp backup recovery requires root — skipped",
+            result="skipped",
+            tier=Tier.TIER2.value,
+        )
+        return [], []
+
+    # 2. Discover backup files.
+    case.log("tier2.whatsapp_backup.discover",
+             "Scanning for msgstore backup files",
+             tier=Tier.TIER2.value)
+    backups = discover_backups(source)
+    if not backups:
+        case.log(
+            "tier2.whatsapp_backup",
+            "no msgstore.db.crypt* backup files found on device",
+            result="skipped",
+            tier=Tier.TIER2.value,
+        )
+        return [], []
+
+    case.log(
+        "tier2.whatsapp_backup.discover",
+        f"found {len(backups)} backup(s): {', '.join(b.filename for b in backups[:5])}",
+        tier=Tier.TIER2.value,
+    )
+
+    # Key cache: avoid pulling the same key file twice.
+    _key_cache: dict[str, Optional[bytes]] = {}
+
+    for backup in backups[:max(max_files, 1)]:
+        fname = backup.filename
+        crypt_ver = backup.crypt_version  # e.g. "crypt14"
+
+        case.log(
+            "tier2.whatsapp_backup.process",
+            f"Processing {fname} ({backup.size_bytes // 1024} KB, {crypt_ver})",
+            tier=Tier.TIER2.value,
+        )
+
+        # 3a. Pull encryption key (cached per crypt version).
+        if crypt_ver not in _key_cache:
+            key_bytes = extract_key(source, crypt_ver, case, staging)
+            _key_cache[crypt_ver] = key_bytes
+        else:
+            key_bytes = _key_cache[crypt_ver]
+
+        if key_bytes is None:
+            case.log(
+                "tier2.whatsapp_backup",
+                f"key not available for {fname}; skipping this backup",
+                result="skipped",
+                tier=Tier.TIER2.value,
+            )
+            continue
+
+        # 3b. Pull the backup file itself (lives in shared storage, no root needed).
+        safe_name = fname.replace(".", "_")
+        local_crypt = staging / f"wa_backup_{safe_name}"
+        pull_backup = source.adb.pull(backup.device_path, local_crypt)
+        case.log(
+            "tier2.whatsapp_backup.pull",
+            f"pull {fname}",
+            command=f"adb pull {backup.device_path}",
+            result="ok" if pull_backup.ok else "error",
+            alters_device=False,
+            tier=Tier.TIER2.value,
+        )
+        if not pull_backup.ok or not local_crypt.exists():
+            case.log("tier2.whatsapp_backup",
+                     f"adb pull of {fname} failed",
+                     result="error", tier=Tier.TIER2.value)
+            continue
+
+        # Ingest the encrypted backup into the manifest for chain-of-custody.
+        crypt_rec = case.ingest_file(
+            local_crypt,
+            source_path=backup.device_path,
+            tier=Tier.TIER2,
+            method="adb-pull",
+            category="database",
+            app="whatsapp",
+            flags=["whatsapp-backup", crypt_ver, "encrypted"],
+            move=False,  # keep it; we need it for decryption next
+        )
+
+        # 3c. Decrypt to a temp SQLite file.
+        local_decrypted = staging / f"wa_backup_{safe_name}_decrypted.db"
+        ok = decrypt_backup(local_crypt, key_bytes, local_decrypted,
+                            crypt_ver, case)
+        if not ok:
+            case.log("tier2.whatsapp_backup.decrypt",
+                     f"decryption failed for {fname}",
+                     result="error", tier=Tier.TIER2.value)
+            continue
+
+        # Ingest the decrypted DB too (forensic copy, Tier 2).
+        db_rec = case.ingest_file(
+            local_decrypted,
+            source_path=f"{backup.device_path} (decrypted)",
+            tier=Tier.TIER2,
+            method="decrypted",
+            category="database",
+            app="whatsapp",
+            flags=["whatsapp-backup", "decrypted"],
+            move=False,
+        )
+        decrypted_stored = case.root / db_rec.stored_path
+        case.log(
+            "tier2.whatsapp_backup.decrypt.ok",
+            f"{fname} decrypted → {decrypted_stored.name}",
+            tier=Tier.TIER2.value,
+            artifact_id=db_rec.artifact_id,
+        )
+
+        # 3d. Recover messages (live + freelist + sqbrite + gaps).
+        msgs = recover_messages_from_db(decrypted_stored, backup_filename=fname)
+        all_messages.extend(msgs)
+
+        counts = {
+            "live": sum(1 for m in msgs if str(getattr(m.confidence, "value", m.confidence)) == "live"),
+            "recovered": sum(1 for m in msgs if str(getattr(m.confidence, "value", m.confidence)) == "recovered"),
+            "carved": sum(1 for m in msgs if str(getattr(m.confidence, "value", m.confidence)) == "carved"),
+            "deletion": sum(1 for m in msgs if str(getattr(m.confidence, "value", m.confidence)) == "deletion"),
+        }
+        case.log(
+            "tier2.whatsapp_backup.recover",
+            (f"{fname}: live={counts['live']} recovered={counts['recovered']} "
+             f"carved={counts['carved']} gaps={counts['deletion']}"),
+            tier=Tier.TIER2.value,
+            artifact_id=db_rec.artifact_id,
+        )
+
+        # Fold into app_messages for Messages view + flagging + timeline.
+        for m in msgs:
+            conf_val = m.confidence.value if hasattr(m.confidence, "value") else str(m.confidence)
+            try:
+                conf = _Conf(conf_val)
+            except ValueError:
+                conf = _Conf.CARVED_PARTIAL
+            body = (m.body or "").strip()
+            if body and conf in (_Conf.LIVE, _Conf.RECOVERED_VERIFIED, _Conf.CARVED_PARTIAL):
+                app_messages.append(_Msg(
+                    app="whatsapp-backup",
+                    sender=m.sender or "<unknown>",
+                    body=body,
+                    timestamp=m.timestamp,
+                    confidence=conf,
+                    source_file=fname,
+                    provenance=m.provenance,
+                    flags=(["deleted"] if conf != _Conf.LIVE else []) + (m.flags or []),
+                ))
+
+        # 3e. Media file recovery.
+        media_msgs = [m for m in msgs if m.media_path and m.media_path.strip()]
+        if media_msgs:
+            media_items = recover_media_files(
+                source=source, case=case, staging=staging,
+                messages=media_msgs, max_media=50,
+            )
+            all_media.extend(media_items)
+            case.log(
+                "tier2.whatsapp_backup.media",
+                f"{fname}: {len(media_items)} media files pulled",
+                tier=Tier.TIER2.value,
+            )
+
+    # 4. Write per-backup summary.
+    summary = backup_recovery_summary(all_messages, all_media)
+    _write_case_derived(case, "whatsapp_backup_summary", summary)
+    case.log(
+        "tier2.whatsapp_backup.done",
+        (f"WhatsApp backup recovery complete: "
+         f"{summary['totals']['messages']} messages "
+         f"({summary['totals']['live']} live, "
+         f"{summary['totals']['recovered']} recovered, "
+         f"{summary['totals']['carved']} carved, "
+         f"{summary['totals']['deletion']} gaps), "
+         f"{summary['totals']['media']} media files"),
+        tier=Tier.TIER2.value,
+    )
+
+    return all_messages, all_media
 
 
 def _write_case_derived(case: "Case", name: str, data: object) -> None:

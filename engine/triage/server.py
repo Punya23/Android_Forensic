@@ -140,6 +140,8 @@ def create_app(cases_root: Path = CASES_ROOT):
             tier2_instagram=bool(body.get("tier2_instagram", False)),
             tier2_snapchat=bool(body.get("tier2_snapchat", False)),
             tier2_wifi=bool(body.get("tier2_wifi", False)),
+            tier2_whatsapp_backup=bool(body.get("tier2_whatsapp_backup", False)),
+            tier2_whatsapp_backup_max_files=int(body.get("tier2_whatsapp_backup_max_files", 5)),
             case_description=str(body.get("case_description", "") or ""),
             run_ai_analysis=bool(body.get("run_ai_analysis", True)),
             llm_provider=str(body.get("llm_provider", "") or ""))
@@ -192,7 +194,8 @@ def create_app(cases_root: Path = CASES_ROOT):
                               # app-chat recovery datasets
                               "instagram", "snapchat",
                               # Tier-2 datasets
-                              "wifi")}
+                              "wifi",
+                              "whatsapp_backup_messages", "whatsapp_backup_media")}
         summary["discovered_chat_count"] = len(
             (case.read_derived("discovered_chats") or {}).get("messages", []))
         # Analysis blocks (objects, not lists).
@@ -224,11 +227,15 @@ def create_app(cases_root: Path = CASES_ROOT):
                      "telegram_recovery", "telegram_users", "telegram_chats",
                      "telegram_media", "telegram_conversations",
                      # Tier-2 Wi-Fi credentials
-                     "wifi"}
+                     "wifi",
+                     # WhatsApp backup recovery (Tier 2)
+                     "whatsapp_backup_messages", "whatsapp_backup_media"}
         obj_sets = {"graph", "risk", "throughput", "media_inventory_summary",
                     "instagram_conversations", "snapchat_conversations", "discovered_chats",
                     # case-intelligence datasets
-                    "ai_findings", "case_profile", "collection_plan"}
+                    "ai_findings", "case_profile", "collection_plan",
+                    # WhatsApp backup summary
+                    "whatsapp_backup_summary"}
         if dataset not in list_sets | obj_sets:
             abort(404)
         case = _open(cases_root, case_id)
@@ -251,6 +258,28 @@ def create_app(cases_root: Path = CASES_ROOT):
         if conv is None:
             abort(404)
         return jsonify(conv)
+
+    # -- WhatsApp backup recovery endpoints ----------------------------------
+    @app.get("/api/case/<case_id>/whatsapp_backup/messages")
+    def whatsapp_backup_messages(case_id: str):
+        """Serve recovered WhatsApp backup messages (all backups merged)."""
+        case = _open(cases_root, case_id)
+        data = case.read_derived("whatsapp_backup_messages") or []
+        return jsonify(data)
+
+    @app.get("/api/case/<case_id>/whatsapp_backup/media")
+    def whatsapp_backup_media(case_id: str):
+        """Serve the pulled WhatsApp backup media index."""
+        case = _open(cases_root, case_id)
+        data = case.read_derived("whatsapp_backup_media") or []
+        return jsonify(data)
+
+    @app.get("/api/case/<case_id>/whatsapp_backup/summary")
+    def whatsapp_backup_summary(case_id: str):
+        """Serve per-backup stats (live/recovered/carved/deletion counts)."""
+        case = _open(cases_root, case_id)
+        data = case.read_derived("whatsapp_backup_summary") or {}
+        return jsonify(data)
 
     # -- data-export ingest (Instagram / Snapchat "Download Your Data") -------
     @app.post("/api/case/<case_id>/import/<app_name>")

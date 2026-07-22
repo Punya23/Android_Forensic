@@ -10,6 +10,7 @@ export type ViewKey =
   | "media"
   | "mediainv"
   | "telegram"
+  | "whatsapp_backup"
   | "instagram"
   | "snapchat"
   | "apps"
@@ -31,6 +32,7 @@ const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
   { key: "intel", label: "Case Intelligence", icon: "✦" },
   { key: "messages", label: "Messages", icon: "💬", group: "Communications" },
   { key: "telegram", label: "Telegram", icon: "✈" },
+  { key: "whatsapp_backup", label: "WA Backup Recovery", icon: "🔓" },
   { key: "instagram", label: "Instagram", icon: "📷" },
   { key: "snapchat", label: "Snapchat", icon: "👻" },
   { key: "discovered", label: "Discovered Chats", icon: "🔎" },

@@ -36,6 +36,7 @@ export function AcquisitionView({
   const [tier2Instagram, setTier2Instagram] = useState(false);
   const [tier2Snapchat, setTier2Snapchat] = useState(false);
   const [tier2Wifi, setTier2Wifi] = useState(false);
+  const [tier2WhatsappBackup, setTier2WhatsappBackup] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<number | null>(null);
 
@@ -90,6 +91,7 @@ export function AcquisitionView({
       setTier2Instagram(!!ov.tier2_instagram);
       setTier2Snapchat(!!ov.tier2_snapchat);
       setTier2Wifi(!!ov.tier2_wifi);
+      setTier2WhatsappBackup(!!ov.tier2_whatsapp_backup);
     } catch (e) {
       setPlanError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -120,6 +122,7 @@ export function AcquisitionView({
         tier2_instagram: target.kind === "real" ? tier2Instagram : false,
         tier2_snapchat: target.kind === "real" ? tier2Snapchat : false,
         tier2_wifi: target.kind === "real" ? tier2Wifi : false,
+        tier2_whatsapp_backup: target.kind === "real" ? tier2WhatsappBackup : false,
       });
     } catch (e) {
       stopTimer();
@@ -400,6 +403,31 @@ export function AcquisitionView({
                 (Android ≤8) to recover stored SSID/password pairs. No
                 cracking — verbatim plaintext from OS storage. Logged as
                 non-device-altering.
+              </div>
+            </div>
+          </label>
+
+          {/* WhatsApp Backup Recovery */}
+          <label className="flex items-start gap-3 cursor-pointer border-t border-line pt-3">
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={!target || target.kind !== "real"}
+              checked={target?.kind === "real" ? tier2WhatsappBackup : false}
+              onChange={(e) => setTier2WhatsappBackup(e.target.checked)}
+            />
+            <div>
+              <div className="text-sm font-medium flex items-center gap-1.5">
+                <span>🔓</span> WhatsApp Backup Recovery
+              </div>
+              <div className="text-xs text-muted mt-1">
+                Root-pull the encryption key, then decrypt and analyse daily{" "}
+                <code className="text-accent">msgstore.db.crypt*</code>{" "}
+                backup files. Recovers live messages plus deleted rows (freelist,
+                WAL, carving). Up to 5 most-recent backups processed by default.
+                Requires{" "}
+                <code className="text-accent">whatsapp-crypt14-decrypter</code>{" "}
+                or <code className="text-accent">pycryptodome</code> as fallback.
               </div>
             </div>
           </label>

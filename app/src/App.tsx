@@ -20,6 +20,7 @@ import { TaggedView } from "./views/Tagged";
 import { CustodyView } from "./views/Custody";
 import { ReportView } from "./views/Report";
 import { TelegramView } from "./views/Telegram";
+import { WhatsAppBackupView } from "./views/WhatsAppBackup";
 import { InstagramView } from "./views/Instagram";
 import { SnapchatView } from "./views/Snapchat";
 import { DiscoveredChatsView } from "./views/DiscoveredChats";
@@ -82,6 +83,7 @@ export default function App() {
           {caseId && view === "custody" && <CustodyView caseId={caseId} />}
           {caseId && view === "report" && <ReportView caseId={caseId} />}
           {caseId && view === "telegram" && <TelegramView caseId={caseId} />}
+          {caseId && view === "whatsapp_backup" && <WhatsAppBackupView caseId={caseId} />}
         </div>
       </main>
     </div>

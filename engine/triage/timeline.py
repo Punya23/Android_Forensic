@@ -20,6 +20,9 @@ from .models import (
     TimelineEvent,
 )
 from .config import Confidence
+from .parsers.notification import build_notification_timeline
+from .parsers.bluetooth import build_bluetooth_timeline
+from .parsers.celltower import build_celltower_timeline
 
 
 def build_timeline(*,
@@ -30,7 +33,10 @@ def build_timeline(*,
                    telegram_messages: Iterable[dict] = (),
                    telegram_media: Iterable[dict] = (),
                    calendar_events: Iterable[dict] = (),
-                   media_inventory: Iterable[dict] = ()) -> list[dict]:
+                   media_inventory: Iterable[dict] = (),
+                   notifications: Iterable[dict] = (),
+                   bluetooth_devices: Iterable[dict] = (),
+                   cell_towers: Iterable[dict] = ()) -> list[dict]:
     """Build a sorted, unified timeline from all evidence types.
 
     Parameters
@@ -168,6 +174,16 @@ def build_timeline(*,
         ev = TimelineEvent(timestamp=ts or "", kind="media_inventory", summary=summary,
                            ref=str(mi.get("media_id", "")))
         (events if ts else undated).append(ev)
+
+    # --- Dumpsys history events ---
+    for ev in build_notification_timeline(list(notifications)):
+        (events if ev.timestamp else undated).append(ev)
+
+    for ev in build_bluetooth_timeline(list(bluetooth_devices)):
+        (events if ev.timestamp else undated).append(ev)
+
+    for ev in build_celltower_timeline(list(cell_towers)):
+        (events if ev.timestamp else undated).append(ev)
 
     # Sort timestamped events; append undated at the end.
     events.sort(key=lambda e: e.timestamp)
