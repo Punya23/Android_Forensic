@@ -1,0 +1,162 @@
+[
+  {
+    "package": "com.whatsapp",
+    "label": "WhatsApp",
+    "version_name": "2.24.1",
+    "version_code": 100,
+    "first_install": "2025-02-19T21:20:00Z",
+    "last_update": "2025-02-19T22:43:20Z",
+    "installer": "com.android.vending",
+    "is_system": false,
+    "category": "messaging",
+    "friendly_name": "WhatsApp",
+    "notable": true,
+    "dangerous_granted": [
+      "CAMERA",
+      "READ_CONTACTS",
+      "RECORD_AUDIO"
+    ],
+    "permission_count": 3,
+    "source_file": "apps.json"
+  },
+  {
+    "package": "org.telegram.messenger",
+    "label": "Telegram",
+    "version_name": "10.9.0",
+    "version_code": 100,
+    "first_install": "2025-02-19T21:20:00Z",
+    "last_update": "2025-02-19T22:43:20Z",
+    "installer": "com.android.vending",
+    "is_system": false,
+    "category": "messaging",
+    "friendly_name": "Telegram",
+    "notable": true,
+    "dangerous_granted": [
+      "ACCESS_FINE_LOCATION",
+      "READ_CONTACTS"
+    ],
+    "permission_count": 2,
+    "source_file": "apps.json"
+  },
+  {
+    "package": "com.instagram.android",
+    "label": "Instagram",
+    "version_name": "312.0",
+    "version_code": 100,
+    "first_install": "2025-02-19T21:20:00Z",
+    "last_update": "2025-02-19T22:43:20Z",
+    "installer": "com.android.vending",
+    "is_system": false,
+    "category": "messaging",
+    "friendly_name": "Instagram",
+    "notable": true,
+    "dangerous_granted": [
+      "CAMERA",
+      "READ_MEDIA_IMAGES"
+    ],
+    "permission_count": 2,
+    "source_file": "apps.json"
+  },
+  {
+    "package": "com.snapchat.android",
+    "label": "Snapchat",
+    "version_name": "12.60",
+    "version_code": 100,
+    "first_install": "2025-02-19T21:20:00Z",
+    "last_update": "2025-02-19T22:43:20Z",
+    "installer": "com.android.vending",
+    "is_system": false,
+    "category": "messaging",
+    "friendly_name": "Snapchat",
+    "notable": true,
+    "dangerous_granted": [
+      "ACCESS_FINE_LOCATION",
+      "CAMERA"
+    ],
+    "permission_count": 2,
+    "source_file": "apps.json"
+  },
+  {
+    "package": "com.calculator.vault.hider",
+    "label": "Calculator Vault",
+    "version_name": "3.2",
+    "version_code": 100,
+    "first_install": "2025-02-19T21:20:00Z",
+    "last_update": "2025-02-19T22:43:20Z",
+    "installer": "com.android.vending",
+    "is_system": false,
+    "category": "anti_forensic",
+    "friendly_name": "Calculator Vault",
+    "notable": true,
+    "dangerous_granted": [
+      "CAMERA",
+      "READ_EXTERNAL_STORAGE"
+    ],
+    "permission_count": 2,
+    "source_file": "apps.json"
+  },
+  {
+    "package": "io.metamask",
+    "label": "MetaMask",
+    "version_name": "7.10",
+    "version_code": 100,
+    "first_install": "2025-02-19T21:20:00Z",
+    "last_update": "2025-02-19T22:43:20Z",
+    "installer": "com.android.vending",
+    "is_system": false,
+    "category": "crypto",
+    "friendly_name": "MetaMask",
+    "notable": true,
+    "dangerous_granted": [],
+    "permission_count": 0,
+    "source_file": "apps.json"
+  },
+  {
+    "package": "com.android.chrome",
+    "label": "Chrome",
+    "version_name": "126.0",
+    "version_code": 100,
+    "first_install": "2025-02-19T21:20:00Z",
+    "last_update": "2025-02-19T22:43:20Z",
+    "installer": "com.android.vending",
+    "is_system": false,
+    "category": "browser",
+    "friendly_name": "Chrome",
+    "notable": true,
+    "dangerous_granted": [],
+    "permission_count": 0,
+    "source_file": "apps.json"
+  },
+  {
+    "package": "com.android.settings",
+    "label": "Settings",
+    "version_name": "14",
+    "version_code": 100,
+    "first_install": "2025-02-19T21:20:00Z",
+    "last_update": "2025-02-19T22:43:20Z",
+    "installer": "com.android.vending",
+    "is_system": true,
+    "category": "other",
+    "friendly_name": null,
+    "notable": false,
+    "dangerous_granted": [],
+    "permission_count": 0,
+    "source_file": "apps.json"
+  },
+  {
+    "package": "com.google.android.gms",
+    "label": "Google Play services",
+    "version_name": "24.0",
+    "version_code": 100,
+    "first_install": "2025-02-19T21:20:00Z",
+    "last_update": "2025-02-19T22:43:20Z",
+    "installer": "com.android.vending",
+    "is_system": true,
+    "category": "other",
+    "friendly_name": null,
+    "notable": false,
+    "dangerous_granted": [],
+    "permission_count": 0,
+    "source_file": "apps.json"
+  }
+]

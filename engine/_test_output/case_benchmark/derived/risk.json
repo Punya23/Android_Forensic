@@ -1,0 +1,38 @@
+{
+  "level": "red",
+  "score": 97,
+  "headline": "High-priority — strong indicators present; recommend full lab examination",
+  "reasons": [
+    {
+      "points": 40,
+      "label": "critical keyword hits",
+      "detail": "26 hit(s) on: weapon",
+      "severity": "critical"
+    },
+    {
+      "points": 20,
+      "label": "watch-list keyword hits",
+      "detail": "321 hit(s) across messages & recovered content",
+      "severity": "warn"
+    },
+    {
+      "points": 15,
+      "label": "recovered deleted content",
+      "detail": "466 deleted/carved row(s) recovered — deletion activity present",
+      "severity": "warn"
+    },
+    {
+      "points": 12,
+      "label": "vault / anti-forensic app installed",
+      "detail": "1 content-hiding app(s): Calculator Vault",
+      "severity": "warn"
+    },
+    {
+      "points": 10,
+      "label": "keywords inside deleted content",
+      "detail": "327 watch-list hit(s) found in recovered/deleted data",
+      "severity": "warn"
+    }
+  ],
+  "disclaimer": "Prioritisation aid only. A triage light is not a determination of guilt and does not replace full forensic examination."
+}

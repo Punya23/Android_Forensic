@@ -1,0 +1,47 @@
+[
+  {
+    "package": "com.whatsapp",
+    "total_foreground_ms": 5400000,
+    "total_foreground_min": 90.0,
+    "last_used": "2025-07-08T18:23:20Z",
+    "friendly_name": "WhatsApp",
+    "category": "other",
+    "source_file": "usage.json"
+  },
+  {
+    "package": "org.telegram.messenger",
+    "total_foreground_ms": 3600000,
+    "total_foreground_min": 60.0,
+    "last_used": "2025-07-08T18:21:40Z",
+    "friendly_name": "Telegram",
+    "category": "other",
+    "source_file": "usage.json"
+  },
+  {
+    "package": "com.snapchat.android",
+    "total_foreground_ms": 1200000,
+    "total_foreground_min": 20.0,
+    "last_used": "2025-07-08T18:15:00Z",
+    "friendly_name": "Snapchat",
+    "category": "other",
+    "source_file": "usage.json"
+  },
+  {
+    "package": "com.calculator.vault.hider",
+    "total_foreground_ms": 900000,
+    "total_foreground_min": 15.0,
+    "last_used": "2025-07-08T18:20:00Z",
+    "friendly_name": "Hider",
+    "category": "other",
+    "source_file": "usage.json"
+  },
+  {
+    "package": "io.metamask",
+    "total_foreground_ms": 600000,
+    "total_foreground_min": 10.0,
+    "last_used": "2025-07-08T18:08:20Z",
+    "friendly_name": "Metamask",
+    "category": "other",
+    "source_file": "usage.json"
+  }
+]

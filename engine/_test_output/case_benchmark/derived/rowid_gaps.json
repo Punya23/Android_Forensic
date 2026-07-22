@@ -1,0 +1,28 @@
+{
+  "/sdcard/Download/History::urls": [
+    {
+      "after_rowid": 3,
+      "before_rowid": 5,
+      "missing": 1
+    }
+  ],
+  "/sdcard/Download/chatcache.db::messages": [
+    {
+      "after_rowid": 19,
+      "before_rowid": 260,
+      "missing": 240
+    }
+  ],
+  "/sdcard/Android/media/com.whatsapp/WhatsApp/Databases/msgstore.db::messages": [
+    {
+      "after_rowid": 2,
+      "before_rowid": 5,
+      "missing": 2
+    },
+    {
+      "after_rowid": 5,
+      "before_rowid": 7,
+      "missing": 1
+    }
+  ]
+}

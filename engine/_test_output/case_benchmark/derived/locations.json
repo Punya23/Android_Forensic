@@ -1,0 +1,74 @@
+[
+  {
+    "latitude": 19.0759,
+    "longitude": 72.8776,
+    "source": "exif",
+    "timestamp": null,
+    "label": "photo IMG_20260706_2145.jpg",
+    "source_file": "artifacts/sdcard/DCIM/Camera/IMG_20260706_2145.jpg"
+  },
+  {
+    "latitude": 19.0654,
+    "longitude": 72.8412,
+    "source": "exif",
+    "timestamp": null,
+    "label": "photo IMG_20260706_2150.jpg",
+    "source_file": "artifacts/sdcard/DCIM/Camera/IMG_20260706_2150.jpg"
+  },
+  {
+    "latitude": 18.922,
+    "longitude": 72.8347,
+    "source": "exif",
+    "timestamp": null,
+    "label": "photo .trashed-1751900000-IMG_evidence.jpg",
+    "source_file": "artifacts/sdcard/DCIM/Camera/.trashed-1751900000-IMG_evidence.jpg"
+  },
+  {
+    "latitude": 19.076,
+    "longitude": 72.8779,
+    "source": "exif",
+    "timestamp": null,
+    "label": "photo IMG-20260706-WA0007.jpg",
+    "source_file": "artifacts/sdcard/Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/IMG-20260706-WA0007.jpg"
+  },
+  {
+    "latitude": 19.07,
+    "longitude": 72.88,
+    "source": "exif",
+    "timestamp": null,
+    "label": "photo photo_2026-07-06_21-10-33.jpg",
+    "source_file": "artifacts/sdcard/Android/media/org.telegram.messenger/Telegram/Telegram Images/photo_2026-07-06_21-10-33.jpg"
+  },
+  {
+    "latitude": 19.075983,
+    "longitude": 72.877655,
+    "source": "dumpsys:fused",
+    "timestamp": null,
+    "label": "last known fix",
+    "source_file": "dumpsys location"
+  },
+  {
+    "latitude": 19.0761,
+    "longitude": 72.878001,
+    "source": "dumpsys:gps",
+    "timestamp": null,
+    "label": "last known fix",
+    "source_file": "dumpsys location"
+  },
+  {
+    "latitude": 19.0759,
+    "longitude": 72.8776,
+    "source": "mediastore",
+    "timestamp": "2025-07-06T11:06:40Z",
+    "label": "image IMG_20260706_2145.jpg",
+    "source_file": "media_inventory.json"
+  },
+  {
+    "latitude": 18.922,
+    "longitude": 72.8347,
+    "source": "mediastore",
+    "timestamp": "2025-07-06T13:06:40Z",
+    "label": "image evidence_photo.jpg",
+    "source_file": "media_inventory.json"
+  }
+]

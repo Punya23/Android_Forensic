@@ -1,0 +1,537 @@
+{
+  "nodes": [
+    {
+      "id": "owner:self",
+      "label": "Samsung SM-G991B (Galaxy S21)",
+      "type": "owner",
+      "weight": 192,
+      "channels": [
+        "device"
+      ]
+    },
+    {
+      "id": "name:user0",
+      "label": "user0",
+      "type": "contact",
+      "weight": 19,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "id": "name:user1",
+      "label": "user1",
+      "type": "contact",
+      "weight": 19,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "id": "name:user2",
+      "label": "user2",
+      "type": "contact",
+      "weight": 19,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "id": "name:user3",
+      "label": "user3",
+      "type": "contact",
+      "weight": 18,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "id": "name:user4",
+      "label": "user4",
+      "type": "contact",
+      "weight": 17,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "id": "name:user5",
+      "label": "user5",
+      "type": "contact",
+      "weight": 17,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "id": "name:user6",
+      "label": "user6",
+      "type": "contact",
+      "weight": 17,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "id": "name:user7",
+      "label": "user7",
+      "type": "contact",
+      "weight": 17,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "id": "name:user8",
+      "label": "user8",
+      "type": "contact",
+      "weight": 17,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "id": "name:rahul",
+      "label": "Rahul",
+      "type": "contact",
+      "weight": 5,
+      "channels": [
+        "app:chatcache",
+        "telegram"
+      ]
+    },
+    {
+      "id": "name:rahul verma",
+      "label": "Rahul Verma",
+      "type": "contact",
+      "weight": 4,
+      "channels": [
+        "whatsapp"
+      ]
+    },
+    {
+      "id": "name:<unknown>",
+      "label": "<unknown>",
+      "type": "contact",
+      "weight": 4,
+      "channels": [
+        "whatsapp"
+      ]
+    },
+    {
+      "id": "name:imran",
+      "label": "Imran",
+      "type": "contact",
+      "weight": 4,
+      "channels": [
+        "app:chatcache",
+        "telegram"
+      ]
+    },
+    {
+      "id": "name:imran k",
+      "label": "Imran K",
+      "type": "contact",
+      "weight": 3,
+      "channels": [
+        "whatsapp"
+      ]
+    },
+    {
+      "id": "name:+91 99300 55822",
+      "label": "+91 99300 55822",
+      "type": "contact",
+      "weight": 2,
+      "channels": [
+        "sms"
+      ]
+    },
+    {
+      "id": "name:+91 98200 44711",
+      "label": "+91 98200 44711",
+      "type": "contact",
+      "weight": 1,
+      "channels": [
+        "sms"
+      ]
+    },
+    {
+      "id": "name:vm-hdfcbk",
+      "label": "VM-HDFCBK",
+      "type": "contact",
+      "weight": 1,
+      "channels": [
+        "sms"
+      ]
+    },
+    {
+      "id": "name:<encrypted>",
+      "label": "<encrypted>",
+      "type": "contact",
+      "weight": 1,
+      "channels": [
+        "whatsapp"
+      ]
+    },
+    {
+      "id": "name:imran_k99",
+      "label": "imran_k99",
+      "type": "contact",
+      "weight": 1,
+      "channels": [
+        "snapchat"
+      ]
+    },
+    {
+      "id": "name:rahul_v",
+      "label": "rahul_v",
+      "type": "contact",
+      "weight": 1,
+      "channels": [
+        "snapchat"
+      ]
+    },
+    {
+      "id": "name:778812",
+      "label": "778812",
+      "type": "contact",
+      "weight": 1,
+      "channels": [
+        "instagram"
+      ]
+    },
+    {
+      "id": "name:119020",
+      "label": "119020",
+      "type": "contact",
+      "weight": 1,
+      "channels": [
+        "instagram"
+      ]
+    },
+    {
+      "id": "num:+919820044711",
+      "label": "Imran K",
+      "type": "contact",
+      "weight": 1,
+      "channels": [
+        "call"
+      ]
+    },
+    {
+      "id": "num:+919930055822",
+      "label": "Rahul Verma",
+      "type": "contact",
+      "weight": 1,
+      "channels": [
+        "call"
+      ]
+    },
+    {
+      "id": "num:+919000009090",
+      "label": "Warehouse 9",
+      "type": "contact",
+      "weight": 1,
+      "channels": [
+        "call"
+      ]
+    },
+    {
+      "id": "num:+919001122334",
+      "label": "Auntie",
+      "type": "contact",
+      "weight": 0,
+      "channels": []
+    }
+  ],
+  "edges": [
+    {
+      "source": "owner:self",
+      "target": "name:user0",
+      "weight": 19,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:user1",
+      "weight": 19,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:user2",
+      "weight": 19,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:user3",
+      "weight": 18,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:user4",
+      "weight": 17,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:user5",
+      "weight": 17,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:user6",
+      "weight": 17,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:user7",
+      "weight": 17,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:user8",
+      "weight": 17,
+      "channels": [
+        "app:chatcache"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:rahul",
+      "weight": 5,
+      "channels": [
+        "app:chatcache",
+        "telegram"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:rahul verma",
+      "weight": 4,
+      "channels": [
+        "whatsapp"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:<unknown>",
+      "weight": 4,
+      "channels": [
+        "whatsapp"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:imran",
+      "weight": 4,
+      "channels": [
+        "app:chatcache",
+        "telegram"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:imran k",
+      "weight": 3,
+      "channels": [
+        "whatsapp"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:+91 99300 55822",
+      "weight": 2,
+      "channels": [
+        "sms"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:+91 98200 44711",
+      "weight": 1,
+      "channels": [
+        "sms"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:vm-hdfcbk",
+      "weight": 1,
+      "channels": [
+        "sms"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:<encrypted>",
+      "weight": 1,
+      "channels": [
+        "whatsapp"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:imran_k99",
+      "weight": 1,
+      "channels": [
+        "snapchat"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:rahul_v",
+      "weight": 1,
+      "channels": [
+        "snapchat"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:778812",
+      "weight": 1,
+      "channels": [
+        "instagram"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "name:119020",
+      "weight": 1,
+      "channels": [
+        "instagram"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "num:+919820044711",
+      "weight": 1,
+      "channels": [
+        "call"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "num:+919930055822",
+      "weight": 1,
+      "channels": [
+        "call"
+      ]
+    },
+    {
+      "source": "owner:self",
+      "target": "num:+919000009090",
+      "weight": 1,
+      "channels": [
+        "call"
+      ]
+    }
+  ],
+  "stats": {
+    "participants": 26,
+    "interactions": 192,
+    "channels": [
+      "app:chatcache",
+      "call",
+      "instagram",
+      "sms",
+      "snapchat",
+      "telegram",
+      "whatsapp"
+    ],
+    "top_contacts": [
+      {
+        "label": "user0",
+        "weight": 19,
+        "channels": [
+          "app:chatcache"
+        ]
+      },
+      {
+        "label": "user1",
+        "weight": 19,
+        "channels": [
+          "app:chatcache"
+        ]
+      },
+      {
+        "label": "user2",
+        "weight": 19,
+        "channels": [
+          "app:chatcache"
+        ]
+      },
+      {
+        "label": "user3",
+        "weight": 18,
+        "channels": [
+          "app:chatcache"
+        ]
+      },
+      {
+        "label": "user4",
+        "weight": 17,
+        "channels": [
+          "app:chatcache"
+        ]
+      },
+      {
+        "label": "user5",
+        "weight": 17,
+        "channels": [
+          "app:chatcache"
+        ]
+      },
+      {
+        "label": "user6",
+        "weight": 17,
+        "channels": [
+          "app:chatcache"
+        ]
+      },
+      {
+        "label": "user7",
+        "weight": 17,
+        "channels": [
+          "app:chatcache"
+        ]
+      },
+      {
+        "label": "user8",
+        "weight": 17,
+        "channels": [
+          "app:chatcache"
+        ]
+      },
+      {
+        "label": "Rahul",
+        "weight": 5,
+        "channels": [
+          "app:chatcache",
+          "telegram"
+        ]
+      }
+    ]
+  }
+}

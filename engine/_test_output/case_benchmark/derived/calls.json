@@ -1,0 +1,29 @@
+[
+  {
+    "number": "+91 98200 44711",
+    "name": "Imran K",
+    "call_type": "outgoing",
+    "timestamp": "2025-07-06T18:21:40Z",
+    "duration_s": 154,
+    "confidence": "live",
+    "source_file": "calllog.json"
+  },
+  {
+    "number": "+91 99300 55822",
+    "name": "Rahul Verma",
+    "call_type": "incoming",
+    "timestamp": "2025-07-06T18:28:20Z",
+    "duration_s": 42,
+    "confidence": "live",
+    "source_file": "calllog.json"
+  },
+  {
+    "number": "+91 90000 09090",
+    "name": "",
+    "call_type": "missed",
+    "timestamp": "2025-07-06T18:35:00Z",
+    "duration_s": 0,
+    "confidence": "live",
+    "source_file": "calllog.json"
+  }
+]

@@ -1,5 +1,16 @@
 """Artifact parsers — turn pulled files into typed rows for the dashboard."""
-from .exif import extract_gps, is_image
+from .exif import (
+    extract_gps,
+    extract_datetime,
+    is_image,
+    # Enhanced EXIF extraction (Task 1)
+    extract_gps_enhanced,
+    extract_altitude,
+    extract_device_info,
+    extract_orientation,
+    extract_software,
+    extract_all_gps_data,
+)
 from .whatsapp_txt import parse_whatsapp_export, stream_whatsapp_export
 from .whatsapp_db import parse_whatsapp_db
 from .contacts import parse_contacts_json
@@ -122,7 +133,15 @@ from .whatsapp_backup import (  # NEW — WhatsApp backup recovery (Tier 2)
 
 __all__ = [
     "extract_gps",
+    "extract_datetime",
     "is_image",
+    # Enhanced EXIF (Task 1)
+    "extract_gps_enhanced",
+    "extract_altitude",
+    "extract_device_info",
+    "extract_orientation",
+    "extract_software",
+    "extract_all_gps_data",
     "parse_whatsapp_export",
     "stream_whatsapp_export",
     "parse_whatsapp_db",

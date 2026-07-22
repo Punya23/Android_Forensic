@@ -1,0 +1,1699 @@
+{
+  "social_graph": {
+    "nodes": [
+      {
+        "id": "user6",
+        "messages": 17,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "<recovered>",
+        "messages": 467,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "<encrypted>",
+        "messages": 1,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "Rahul",
+        "messages": 5,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "rahul_v",
+        "messages": 1,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "imran_k99",
+        "messages": 1,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "Imran K",
+        "messages": 4,
+        "sent": 4,
+        "received": 0
+      },
+      {
+        "id": "778812",
+        "messages": 1,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "user7",
+        "messages": 17,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "<unknown>",
+        "messages": 4,
+        "sent": 0,
+        "received": 4
+      },
+      {
+        "id": "user8",
+        "messages": 17,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "119020",
+        "messages": 1,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "user3",
+        "messages": 18,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "SUBJECT",
+        "messages": 0,
+        "sent": 5,
+        "received": 10
+      },
+      {
+        "id": "user2",
+        "messages": 19,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "VM-HDFCBK",
+        "messages": 1,
+        "sent": 1,
+        "received": 0
+      },
+      {
+        "id": "user5",
+        "messages": 17,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "Rahul Verma",
+        "messages": 6,
+        "sent": 5,
+        "received": 1
+      },
+      {
+        "id": "user0",
+        "messages": 19,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "Imran",
+        "messages": 4,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "<system>",
+        "messages": 1,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "user1",
+        "messages": 19,
+        "sent": 0,
+        "received": 0
+      },
+      {
+        "id": "user4",
+        "messages": 17,
+        "sent": 0,
+        "received": 0
+      }
+    ],
+    "edges": [
+      {
+        "source": "Rahul Verma",
+        "target": "SUBJECT",
+        "weight": 5,
+        "direction": "incoming"
+      },
+      {
+        "source": "Imran K",
+        "target": "SUBJECT",
+        "weight": 4,
+        "direction": "incoming"
+      },
+      {
+        "source": "VM-HDFCBK",
+        "target": "SUBJECT",
+        "weight": 1,
+        "direction": "incoming"
+      },
+      {
+        "source": "SUBJECT",
+        "target": "Rahul Verma",
+        "weight": 1,
+        "direction": "outgoing"
+      },
+      {
+        "source": "SUBJECT",
+        "target": "<unknown>",
+        "weight": 4,
+        "direction": "outgoing"
+      }
+    ],
+    "stats": {
+      "unique_contacts": 22,
+      "total_edges": 5,
+      "most_active": "<recovered>"
+    },
+    "top_contacts": [
+      {
+        "name": "<recovered>",
+        "messages": 467
+      },
+      {
+        "name": "user0",
+        "messages": 19
+      },
+      {
+        "name": "user1",
+        "messages": 19
+      },
+      {
+        "name": "user2",
+        "messages": 19
+      },
+      {
+        "name": "user3",
+        "messages": 18
+      },
+      {
+        "name": "user4",
+        "messages": 17
+      },
+      {
+        "name": "user5",
+        "messages": 17
+      },
+      {
+        "name": "user6",
+        "messages": 17
+      },
+      {
+        "name": "user7",
+        "messages": 17
+      },
+      {
+        "name": "user8",
+        "messages": 17
+      }
+    ]
+  },
+  "communication_patterns": {
+    "bursts": [
+      {
+        "start": "2025-07-06T11:06:40Z",
+        "end": "2025-07-06T11:13:19Z",
+        "count": 160,
+        "senders": [
+          "user6",
+          "user8",
+          "user3",
+          "user2",
+          "user5",
+          "user0",
+          "user1",
+          "user4",
+          "user7"
+        ]
+      },
+      {
+        "start": "2025-07-06T18:20:00Z",
+        "end": "2025-07-06T18:27:40Z",
+        "count": 22,
+        "senders": [
+          "119020",
+          "<recovered>",
+          "VM-HDFCBK",
+          "Rahul",
+          "rahul_v",
+          "imran_k99",
+          "778812",
+          "Imran",
+          "+91 99300 55822",
+          "<unknown>",
+          "+91 98200 44711"
+        ]
+      },
+      {
+        "start": "2026-07-06T20:59:11",
+        "end": "2026-07-06T21:05:20",
+        "count": 8,
+        "senders": [
+          "<system>",
+          "Imran K",
+          "Rahul Verma"
+        ]
+      }
+    ],
+    "response_times": {
+      "fast": 2,
+      "medium": 0,
+      "slow": 0,
+      "mean_s": 19.5,
+      "samples": 2
+    },
+    "hourly_distribution": {
+      "11": 160,
+      "18": 22,
+      "20": 1,
+      "21": 7
+    },
+    "daily_distribution": {
+      "Sunday": 182,
+      "Monday": 8
+    },
+    "peak_hour": 11,
+    "quiet_hours_activity": 0
+  },
+  "timeline": {
+    "events": [
+      {
+        "timestamp": "2025-07-06T11:06:40Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:06:41Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:06:42Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:06:43Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:06:44Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:06:45Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:06:46Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:06:47Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:06:48Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:06:49Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:06:50Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:06:51Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:10:52Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:10:53Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:10:54Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:10:55Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:10:56Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:10:57Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:10:58Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:10:59Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:00Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:01Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:02Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:03Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:04Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:05Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:06Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:07Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:08Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:09Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:10Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:11Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:12Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:13Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:14Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:15Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:16Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:17Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:18Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:19Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:20Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:21Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:22Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:23Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:24Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:25Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:26Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:27Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:28Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:29Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:30Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:31Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:32Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:33Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:34Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:35Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:36Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:37Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:38Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:39Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:40Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:41Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:42Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:43Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:44Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:45Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:46Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:47Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:48Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:49Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:50Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:51Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:52Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:53Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:54Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:55Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:56Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:57Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:58Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:11:59Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:00Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:01Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:02Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:03Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:04Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:05Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:06Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:07Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:08Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:09Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:10Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:11Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:12Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:13Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:14Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:15Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:16Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:17Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:18Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:19Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:20Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:21Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:22Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:23Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:24Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:25Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:26Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:27Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:28Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:29Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:30Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:31Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:32Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:33Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:34Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:35Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:36Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:37Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:38Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:39Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:40Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:41Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:42Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:43Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:44Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:45Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:46Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:47Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:48Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:49Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:50Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:51Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:52Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:53Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:54Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:55Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:56Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:57Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:58Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:12:59Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:00Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:01Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:02Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:03Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:04Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:05Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:06Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:07Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:08Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:09Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:10Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:11Z",
+        "sender": "user4",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:12Z",
+        "sender": "user5",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:13Z",
+        "sender": "user6",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:14Z",
+        "sender": "user7",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:15Z",
+        "sender": "user8",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:16Z",
+        "sender": "user0",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:17Z",
+        "sender": "user1",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:18Z",
+        "sender": "user2",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T11:13:19Z",
+        "sender": "user3",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:20:00Z",
+        "sender": "imran_k99",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:20:00Z",
+        "sender": "778812",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:20:04Z",
+        "sender": "<unknown>",
+        "direction": "outgoing",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:20:04Z",
+        "sender": "Rahul",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:20:10Z",
+        "sender": "Imran K",
+        "direction": "incoming",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:20:39Z",
+        "sender": "<unknown>",
+        "direction": "outgoing",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:20:39Z",
+        "sender": "Imran",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:21:00Z",
+        "sender": "VM-HDFCBK",
+        "direction": "incoming",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:21:00Z",
+        "sender": "rahul_v",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:21:00Z",
+        "sender": "119020",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:21:12Z",
+        "sender": "Rahul",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:22:00Z",
+        "sender": "Rahul Verma",
+        "direction": "incoming",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:22:10Z",
+        "sender": "Rahul Verma",
+        "direction": "outgoing",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:22:50Z",
+        "sender": "Imran",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:23:31Z",
+        "sender": "<unknown>",
+        "direction": "outgoing",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:23:31Z",
+        "sender": "Rahul",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:24:07Z",
+        "sender": "Imran",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:25:20Z",
+        "sender": "<unknown>",
+        "direction": "outgoing",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:25:20Z",
+        "sender": "Rahul",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:25:20Z",
+        "sender": "<recovered>",
+        "direction": "unknown",
+        "confidence": "carved",
+        "has_flags": true
+      },
+      {
+        "timestamp": "2025-07-06T18:26:40Z",
+        "sender": "Imran",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2025-07-06T18:27:40Z",
+        "sender": "Rahul",
+        "direction": "unknown",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2026-07-06T20:59:11",
+        "sender": "<system>",
+        "direction": "system",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2026-07-06T21:00:04",
+        "sender": "Rahul Verma",
+        "direction": "incoming",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2026-07-06T21:00:39",
+        "sender": "Imran K",
+        "direction": "incoming",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2026-07-06T21:01:12",
+        "sender": "Rahul Verma",
+        "direction": "incoming",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2026-07-06T21:02:50",
+        "sender": "Imran K",
+        "direction": "incoming",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2026-07-06T21:03:31",
+        "sender": "Rahul Verma",
+        "direction": "incoming",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2026-07-06T21:04:07",
+        "sender": "Imran K",
+        "direction": "incoming",
+        "confidence": "live",
+        "has_flags": false
+      },
+      {
+        "timestamp": "2026-07-06T21:05:20",
+        "sender": "Rahul Verma",
+        "direction": "incoming",
+        "confidence": "live",
+        "has_flags": false
+      }
+    ],
+    "activity_heatmap": {
+      "2025-07-06T11:00:00+00:00": 160,
+      "2025-07-06T18:00:00+00:00": 22,
+      "2026-07-06T20:00:00+00:00": 1,
+      "2026-07-06T21:00:00+00:00": 7
+    },
+    "date_range": {
+      "start": "2025-07-06T11:06:40Z",
+      "end": "2026-07-06T21:05:20"
+    },
+    "total_days_active": 2,
+    "avg_messages_per_active_day": 95.0
+  },
+  "anomalies": {
+    "volume_spikes": [],
+    "quiet_hours_events": [],
+    "rapid_switches": [
+      {
+        "window_start": "2025-07-06T11:06:40+00:00",
+        "window_end": "2025-07-06T18:20:00+00:00",
+        "unique_senders": 9,
+        "message_count": 160,
+        "senders": [
+          "user6",
+          "user8",
+          "user3",
+          "user2",
+          "user5"
+        ]
+      },
+      {
+        "window_start": "2025-07-06T18:20:00+00:00",
+        "window_end": "2026-07-06T20:59:11+00:00",
+        "unique_senders": 11,
+        "message_count": 22,
+        "senders": [
+          "119020",
+          "<recovered>",
+          "VM-HDFCBK",
+          "Rahul",
+          "rahul_v"
+        ]
+      }
+    ],
+    "confidence_downgrades": [
+      {
+        "timestamp": "2025-07-06T18:25:20Z",
+        "confidence": "carved",
+        "provenance": "sqbrite secondary pass"
+      }
+    ],
+    "summary": {
+      "total_spikes": 0,
+      "quiet_hours_total": 0,
+      "rapid_switch_events": 2,
+      "confidence_downgrade_n": 1
+    }
+  },
+  "recovery_metrics": {
+    "total": 468,
+    "by_confidence": {
+      "deletion": 1,
+      "carved": 467
+    },
+    "with_timestamp": 1,
+    "with_identified_sender": 1,
+    "with_substantive_body": 465,
+    "body_completeness_pct": 99.4,
+    "recovery_rate_estimate": 99.4
+  },
+  "meta": {
+    "total_messages": 657,
+    "live_messages": 189,
+    "recovered_messages": 468
+  },
+  "case_dir": "_test_output/case_benchmark"
+}

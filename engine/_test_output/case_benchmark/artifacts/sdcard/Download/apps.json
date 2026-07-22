@@ -1,0 +1,169 @@
+[
+  {
+    "package": "com.whatsapp",
+    "label": "WhatsApp",
+    "version_name": "2.24.1",
+    "version_code": 100,
+    "first_install": 1740000000000,
+    "last_update": 1740005000000,
+    "installer": "com.android.vending",
+    "is_system": false,
+    "category": "messaging",
+    "friendly_name": "WhatsApp",
+    "notable": true,
+    "requested_permissions": [
+      "android.permission.READ_CONTACTS",
+      "android.permission.CAMERA",
+      "android.permission.RECORD_AUDIO"
+    ],
+    "granted_permissions": [
+      "android.permission.READ_CONTACTS",
+      "android.permission.CAMERA",
+      "android.permission.RECORD_AUDIO"
+    ]
+  },
+  {
+    "package": "org.telegram.messenger",
+    "label": "Telegram",
+    "version_name": "10.9.0",
+    "version_code": 100,
+    "first_install": 1740000000000,
+    "last_update": 1740005000000,
+    "installer": "com.android.vending",
+    "is_system": false,
+    "category": "messaging",
+    "friendly_name": "Telegram",
+    "notable": true,
+    "requested_permissions": [
+      "android.permission.READ_CONTACTS",
+      "android.permission.ACCESS_FINE_LOCATION"
+    ],
+    "granted_permissions": [
+      "android.permission.READ_CONTACTS",
+      "android.permission.ACCESS_FINE_LOCATION"
+    ]
+  },
+  {
+    "package": "com.instagram.android",
+    "label": "Instagram",
+    "version_name": "312.0",
+    "version_code": 100,
+    "first_install": 1740000000000,
+    "last_update": 1740005000000,
+    "installer": "com.android.vending",
+    "is_system": false,
+    "category": "messaging",
+    "friendly_name": "Instagram",
+    "notable": true,
+    "requested_permissions": [
+      "android.permission.CAMERA",
+      "android.permission.READ_MEDIA_IMAGES"
+    ],
+    "granted_permissions": [
+      "android.permission.CAMERA",
+      "android.permission.READ_MEDIA_IMAGES"
+    ]
+  },
+  {
+    "package": "com.snapchat.android",
+    "label": "Snapchat",
+    "version_name": "12.60",
+    "version_code": 100,
+    "first_install": 1740000000000,
+    "last_update": 1740005000000,
+    "installer": "com.android.vending",
+    "is_system": false,
+    "category": "messaging",
+    "friendly_name": "Snapchat",
+    "notable": true,
+    "requested_permissions": [
+      "android.permission.CAMERA",
+      "android.permission.ACCESS_FINE_LOCATION"
+    ],
+    "granted_permissions": [
+      "android.permission.CAMERA",
+      "android.permission.ACCESS_FINE_LOCATION"
+    ]
+  },
+  {
+    "package": "com.calculator.vault.hider",
+    "label": "Calculator Vault",
+    "version_name": "3.2",
+    "version_code": 100,
+    "first_install": 1740000000000,
+    "last_update": 1740005000000,
+    "installer": "com.android.vending",
+    "is_system": false,
+    "category": "anti_forensic",
+    "friendly_name": "Calculator Vault",
+    "notable": true,
+    "requested_permissions": [
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.CAMERA"
+    ],
+    "granted_permissions": [
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.CAMERA"
+    ]
+  },
+  {
+    "package": "io.metamask",
+    "label": "MetaMask",
+    "version_name": "7.10",
+    "version_code": 100,
+    "first_install": 1740000000000,
+    "last_update": 1740005000000,
+    "installer": "com.android.vending",
+    "is_system": false,
+    "category": "crypto",
+    "friendly_name": "MetaMask",
+    "notable": true,
+    "requested_permissions": [],
+    "granted_permissions": []
+  },
+  {
+    "package": "com.android.chrome",
+    "label": "Chrome",
+    "version_name": "126.0",
+    "version_code": 100,
+    "first_install": 1740000000000,
+    "last_update": 1740005000000,
+    "installer": "com.android.vending",
+    "is_system": false,
+    "category": "browser",
+    "friendly_name": "Chrome",
+    "notable": true,
+    "requested_permissions": [],
+    "granted_permissions": []
+  },
+  {
+    "package": "com.android.settings",
+    "label": "Settings",
+    "version_name": "14",
+    "version_code": 100,
+    "first_install": 1740000000000,
+    "last_update": 1740005000000,
+    "installer": "com.android.vending",
+    "is_system": true,
+    "category": "other",
+    "friendly_name": null,
+    "notable": false,
+    "requested_permissions": [],
+    "granted_permissions": []
+  },
+  {
+    "package": "com.google.android.gms",
+    "label": "Google Play services",
+    "version_name": "24.0",
+    "version_code": 100,
+    "first_install": 1740000000000,
+    "last_update": 1740005000000,
+    "installer": "com.android.vending",
+    "is_system": true,
+    "category": "other",
+    "friendly_name": null,
+    "notable": false,
+    "requested_permissions": [],
+    "granted_permissions": []
+  }
+]

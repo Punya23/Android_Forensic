@@ -1,0 +1,32 @@
+{
+  "case_id": "case_benchmark",
+  "examiner": "tester",
+  "legal_authority": "",
+  "scope_note": "",
+  "created_at": "2026-07-22T15:42:44Z",
+  "tool_name": "eRakshak Triage Engine",
+  "tool_version": "0.1.0",
+  "device": {
+    "manufacturer": "Samsung",
+    "brand": "samsung",
+    "model": "SM-G991B (Galaxy S21)",
+    "product": "o1sxxx",
+    "android_version": "14",
+    "sdk": "34",
+    "build_id": "UP1A.231005.007",
+    "serial": "R58N90ABCDE",
+    "imei": "35-901234-567890-1",
+    "carrier": "Airtel",
+    "rooted": false,
+    "extra": {}
+  },
+  "pre_state": {
+    "screen_locked": false,
+    "battery_level": 76,
+    "device_time": "2026-07-06T22:03:44+0530",
+    "time_skew_seconds": 3,
+    "root_available": false,
+    "note": "MOCK DEVICE \u2014 synthetic fixtures for development/demo, not a real seizure"
+  },
+  "custody_transfers": []
+}
