@@ -89,6 +89,15 @@ from .timeline import build_timeline
 from .parsers.whatsapp_e2e import recover_e2e_messages, simulate_e2e_decryption_workflow
 from .parsers.media import parse_whatsapp_media_folder, get_whatsapp_media_summary
 from .advanced import AdvancedForensicFeatures, run_advanced_analysis
+# NEW: Location analysis (clustering, place ID, movement, anomaly, summary)
+from .forensics import (
+    extract_all_media_locations,
+    build_location_timeline as _build_forensic_timeline,
+    identify_places_from_locations,
+    detect_location_anomalies,
+    generate_location_summary,
+    generate_location_html_summary,
+)
 
 ProgressFn = Callable[[str, float, str], None]
 
@@ -731,6 +740,39 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
         case.log("analysis.advanced", f"Advanced analysis error: {exc}",
                  result="error", tier=Tier.TIER0.value)
 
+    # NEW: Location-tracing analysis (Tasks 6-10)
+    location_analysis_result: dict = {}
+    try:
+        # Collect media-file GPS locations from the staging area.
+        media_locations = _process_media_locations(staging, case)
+        # Build forensic timeline enrichment.
+        loc_timeline = _build_location_timeline(media_locations)
+        # Identify home/work/frequent places.
+        loc_places = _identify_places(media_locations)
+        # Detect behavioural anomalies.
+        loc_anomalies = _detect_location_anomalies(media_locations)
+        # Generate the aggregate summary.
+        loc_summary = generate_location_summary(media_locations)
+        location_analysis_result = {
+            "media_locations": media_locations,
+            "timeline":        loc_timeline,
+            "places":          loc_places,
+            "anomalies":       loc_anomalies,
+            "summary":         loc_summary,
+        }
+        case.log(
+            "analysis.location",
+            f"Location analysis: {len(media_locations)} media GPS points, "
+            f"{loc_summary.get('unique_places', 0)} clusters, "
+            f"{len(loc_anomalies)} anomalies",
+            tier=Tier.TIER0.value,
+        )
+        # Generate HTML location report.
+        _generate_location_report(media_locations, case.root)
+    except Exception as exc:
+        case.log("analysis.location", f"Location analysis error: {exc}",
+                 result="error", tier=Tier.TIER0.value)
+
     case.write_derived("messages", all_messages)
     case.write_derived("contacts", contacts)
     case.write_derived("calls", calls)
@@ -748,6 +790,11 @@ def run_acquisition(source: AcquisitionSource, cfg: PipelineConfig,
     case.write_derived("aleapp", aleapp_result)
     case.write_derived("whatsapp_media", wa_media_items)       # NEW
     case.write_derived("advanced", advanced_result)            # NEW
+    case.write_derived("media_locations",      location_analysis_result.get("media_locations", []))   # Task 6-10
+    case.write_derived("location_timeline",    location_analysis_result.get("timeline", {}))          # Task 6-10
+    case.write_derived("location_places",      location_analysis_result.get("places", {}))            # Task 7
+    case.write_derived("location_anomalies",   location_analysis_result.get("anomalies", []))         # Task 9
+    case.write_derived("location_summary",     location_analysis_result.get("summary", {}))           # Task 10
     # Expanded Tier-1 collection datasets
     case.write_derived("media_inventory", media_inventory)
     case.write_derived("apps", installed_apps)
@@ -2679,3 +2726,105 @@ def _find_helper_apk() -> Optional[Path]:
         if candidate.exists():
             return candidate
     return None
+
+
+# ---------------------------------------------------------------------------
+# Tasks 6-11: Location-analysis pipeline helpers
+# ---------------------------------------------------------------------------
+
+def _process_media_locations(staging: Path, case: Any) -> List[Dict[str, Any]]:
+    """Process media items in *staging* for GPS location data.
+
+    Scans the staging directory (and the case artifacts tree) for media files
+    with embedded EXIF GPS data using the forensics
+    ``extract_all_media_locations`` extractor.
+
+    Args:
+        staging: Temporary staging directory used during the acquisition run.
+        case:    Active :class:`~triage.custody.Case` instance.
+
+    Returns:
+        List of location dicts (each with ``'lat'``, ``'lon'``,
+        ``'timestamp'``, ``'source'``, etc.).
+    """
+    locs: List[Dict[str, Any]] = []
+    # Probe both the staging temp dir and the artifacts already pulled.
+    search_roots = [staging, case.root / "artifacts"]
+    for root in search_roots:
+        if not root.exists():
+            continue
+        try:
+            batch = extract_all_media_locations(root)
+            locs.extend(batch)
+        except Exception:
+            pass
+    return locs
+
+
+def _build_location_timeline(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Build a chronological location timeline from extracted media GPS data.
+
+    Args:
+        locations: Output of :func:`_process_media_locations`.
+
+    Returns:
+        Timeline dict produced by
+        :func:`~engine.triage.forensics.location_timeline.build_location_timeline`.
+    """
+    try:
+        return _build_forensic_timeline(locations)
+    except Exception:
+        return {}
+
+
+def _identify_places(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Identify home, work, and frequently visited places from GPS data.
+
+    Args:
+        locations: List of GPS location dicts.
+
+    Returns:
+        Places dict from
+        :func:`~engine.triage.forensics.place_identification.identify_places_from_locations`.
+    """
+    try:
+        return identify_places_from_locations(locations)
+    except Exception:
+        return {}
+
+
+def _detect_location_anomalies(locations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Detect anomalous location patterns (late-night, unusual, new).
+
+    Args:
+        locations: Chronologically ordered list of GPS location dicts.
+
+    Returns:
+        List of anomaly dicts from
+        :func:`~engine.triage.forensics.location_anomaly.detect_location_anomalies`.
+    """
+    try:
+        return detect_location_anomalies(locations)
+    except Exception:
+        return []
+
+
+def _generate_location_report(locations: List[Dict[str, Any]], case_dir: Path) -> None:
+    """Generate an HTML location summary report in the case directory.
+
+    Creates ``<case_dir>/reports/location_summary.html`` — a dark-themed
+    self-contained report with statistics, movement analysis, place
+    identification, anomaly table, and (if folium is installed) an
+    interactive map.
+
+    Args:
+        locations: List of GPS location dicts to report on.
+        case_dir:  Root directory of the active case.
+    """
+    try:
+        reports_dir = case_dir / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        report_path = reports_dir / "location_summary.html"
+        generate_location_html_summary(locations, report_path)
+    except Exception:
+        pass

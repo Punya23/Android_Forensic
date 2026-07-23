@@ -6,6 +6,11 @@ Sub-modules:
     media_location       -- Extract GPS from WhatsApp/Telegram/SMS/Instagram media
     location_correlation -- Correlate photo locations with messages
     location_timeline    -- Build timelines and generate Folium maps + HTML strips
+    gps_clustering       -- Group nearby GPS points into clusters (Haversine/greedy)
+    place_identification -- Identify home, work, and frequent places from GPS data
+    movement_analysis    -- Detect movement patterns (speed, type, stationary periods)
+    location_anomaly     -- Flag unusual/late-night/new location patterns
+    location_summary     -- Aggregate report: stats + places + anomalies + HTML output
 """
 from __future__ import annotations
 
@@ -47,6 +52,53 @@ from .location_timeline import (
     generate_timeline_visualization,
 )
 
+# --- GPS clustering ---
+from .gps_clustering import (
+    cluster_gps_points,
+    calculate_distance,
+    get_cluster_center,
+    get_cluster_bounds,
+    get_cluster_visit_pattern,
+)
+
+# --- Place identification ---
+from .place_identification import (
+    identify_places_from_locations,
+    identify_home_location,
+    identify_work_location,
+    identify_frequent_places,
+    get_place_name,
+    calculate_place_confidence,
+)
+
+# --- Movement analysis ---
+from .movement_analysis import (
+    detect_movement_pattern,
+    calculate_speed,
+    classify_movement_type,
+    get_time_between_points,
+    detect_stationary_periods,
+    calculate_movement_statistics,
+)
+
+# --- Location anomaly detection ---
+from .location_anomaly import (
+    detect_location_anomalies,
+    detect_late_night_visits,
+    detect_unusual_locations,
+    detect_new_locations,
+    calculate_anomaly_score,
+)
+
+# --- Location summary report ---
+from .location_summary import (
+    generate_location_summary,
+    get_location_statistics,
+    get_place_statistics,
+    get_anomaly_statistics,
+    generate_location_html_summary,
+)
+
 __all__ = [
     # Models
     "MediaLocation",
@@ -74,4 +126,36 @@ __all__ = [
     "add_markers_with_timestamps",
     "add_paths_between_locations",
     "generate_timeline_visualization",
+    # GPS clustering
+    "cluster_gps_points",
+    "calculate_distance",
+    "get_cluster_center",
+    "get_cluster_bounds",
+    "get_cluster_visit_pattern",
+    # Place identification
+    "identify_places_from_locations",
+    "identify_home_location",
+    "identify_work_location",
+    "identify_frequent_places",
+    "get_place_name",
+    "calculate_place_confidence",
+    # Movement analysis
+    "detect_movement_pattern",
+    "calculate_speed",
+    "classify_movement_type",
+    "get_time_between_points",
+    "detect_stationary_periods",
+    "calculate_movement_statistics",
+    # Anomaly detection
+    "detect_location_anomalies",
+    "detect_late_night_visits",
+    "detect_unusual_locations",
+    "detect_new_locations",
+    "calculate_anomaly_score",
+    # Summary report
+    "generate_location_summary",
+    "get_location_statistics",
+    "get_place_statistics",
+    "get_anomaly_statistics",
+    "generate_location_html_summary",
 ]
