@@ -13,6 +13,7 @@ const http = require("http");
 
 const { renderReportToPdf, shutdownRenderer } = require("./pdf/pdfRenderer.cjs");
 const { writeTempPdf, deleteTempPdf, sweepTempDir } = require("./pdf/tempFileManager.cjs");
+const { openPdfPreview } = require("./windows/previewWindow.cjs");
 const { ENGINE_PORT } = require("./config.cjs");
 
 const isDev = !app.isPackaged;
@@ -40,14 +41,15 @@ async function waitForEngine(timeoutMs = 20000) {
   const start = Date.now();
 
   while (Date.now() - start < timeoutMs) {
-    if (await engineUp()) return true;
+    if (await engineUp()) {
+      return true;
+    }
 
     await new Promise((r) => setTimeout(r, 400));
   }
 
   return false;
 }
-
 
 // ---------------- START PYTHON ENGINE ----------------
 
@@ -143,33 +145,42 @@ function createWindow() {
 // ---------------- PDF EXPORT IPC ----------------
 
 
-ipcMain.handle(
-  "export-report-pdf",
-  async (_event, caseId) => {
+let exportInFlight = false;
 
-    if (
-      typeof caseId !== "string" ||
-      !caseId.trim()
-    ) {
-
-      throw new Error(
-        "export-report-pdf: caseId must be a non-empty string"
-      );
-
-    }
-
-
-    const pdfBuffer =
-      await renderReportToPdf(caseId);
-
-
-    return writeTempPdf(
-      caseId,
-      pdfBuffer
-    );
-
+ipcMain.handle("export-and-preview-report", async (event, caseId) => {
+  if (typeof caseId !== "string" || !caseId.trim()) {
+    throw new Error("export-and-preview-report: caseId must be a non-empty string");
   }
-);
+  if (exportInFlight) {
+    throw new Error("An export is already in progress. Please wait for it to finish.");
+  }
+  exportInFlight = true;
+  try {
+    const pdfBuffer = await renderReportToPdf(caseId);
+    const filePath = writeTempPdf(caseId, pdfBuffer);
+    console.log("Generated PDF:", filePath);
+    const safeCaseId = caseId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const suggestedFileName = `report-${safeCaseId}.pdf`;
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+
+    await openPdfPreview(filePath, suggestedFileName, {
+      onClosed: () => {
+        if (senderWindow && !senderWindow.isDestroyed()) {
+          senderWindow.webContents.send("pdf-preview-closed", filePath);
+        }
+      },
+    });
+
+    return true;
+  } finally {
+    exportInFlight = false;
+  }
+});
+
+
+
+
+
 
 
 

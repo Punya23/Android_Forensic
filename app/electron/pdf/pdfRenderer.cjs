@@ -31,6 +31,23 @@ async function renderReportToPdf(caseId) {
         const response = await page.goto(url, {
             waitUntil: "networkidle",
         });
+        // TEMP DEBUG
+        // Give the page a few extra seconds in case JavaScript is still rendering.
+        await page.waitForTimeout(3000);
+
+        // Save a screenshot so we can see exactly what Playwright is seeing.
+        await page.screenshot({
+            path: "debug-report.png",
+            fullPage: true,
+        });
+
+        // Print some useful diagnostics.
+        console.log("Page title:", await page.title());
+
+        console.log(
+            "Body text:",
+            await page.locator("body").textContent()
+        );
 
         if (!response || !response.ok()) {
             const status = response ? response.status() : "no response";
