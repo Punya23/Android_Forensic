@@ -9,6 +9,7 @@ Usage::
         MediaLocation, LocationCluster, LocationAnomaly, LocationTrace
     )
 """
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -18,6 +19,7 @@ from typing import Any, Dict, List, Optional
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _clean_dict(d: Dict[str, Any]) -> Dict[str, Any]:
     """Recursively make a dict JSON-safe (convert sets → lists, etc.)."""
@@ -48,6 +50,7 @@ def _validate_lon(lon: Optional[float]) -> None:
 # MediaLocation
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class MediaLocation:
     """A single media file with an associated physical location.
@@ -76,9 +79,9 @@ class MediaLocation:
     device_make: Optional[str] = None
     device_model: Optional[str] = None
     software: Optional[str] = None
-    source_app: str = "unknown"          # whatsapp / telegram / sms / instagram / unknown
-    media_type: str = "unknown"          # image / video / audio / unknown
-    confidence: str = "medium"           # high / medium / low
+    source_app: str = "unknown"  # whatsapp / telegram / sms / instagram / unknown
+    media_type: str = "unknown"  # image / video / audio / unknown
+    confidence: str = "medium"  # high / medium / low
 
     def __post_init__(self) -> None:
         _validate_lat(self.latitude)
@@ -91,7 +94,7 @@ class MediaLocation:
     @property
     def gps(self) -> Optional[Dict[str, float]]:
         if self.has_gps:
-            return {"lat": self.latitude, "lon": self.longitude}   # type: ignore[return-value]
+            return {"lat": self.latitude, "lon": self.longitude}  # type: ignore[return-value]
         return None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -104,6 +107,7 @@ class MediaLocation:
 # ---------------------------------------------------------------------------
 # LocationCluster
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class LocationCluster:
@@ -125,7 +129,7 @@ class LocationCluster:
     count: int = 0
     first_visit: Optional[str] = None
     last_visit: Optional[str] = None
-    place_type: str = "unknown"          # home / work / frequent / unknown
+    place_type: str = "unknown"  # home / work / frequent / unknown
 
     def __post_init__(self) -> None:
         _validate_lat(self.center_lat)
@@ -141,6 +145,7 @@ class LocationCluster:
 # LocationAnomaly
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class LocationAnomaly:
     """A detected anomaly in a subject's location pattern.
@@ -154,11 +159,11 @@ class LocationAnomaly:
         explanation   -- Human-readable description of the anomaly
     """
 
-    anomaly_type: str                    # late_night / new_location / unusual_pattern
+    anomaly_type: str  # late_night / new_location / unusual_pattern
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     timestamp: Optional[str] = None
-    severity: str = "info"               # info / warn / critical
+    severity: str = "info"  # info / warn / critical
     explanation: str = ""
 
     def __post_init__(self) -> None:
@@ -180,6 +185,7 @@ class LocationAnomaly:
 # LocationTrace
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class LocationTrace:
     """The complete location trace for a subject derived from media evidence.
@@ -197,7 +203,7 @@ class LocationTrace:
     total_locations: int = 0
     unique_places: int = 0
     time_span_days: Optional[float] = None
-    movement_pattern: str = "unknown"    # stationary / local / mobile / unknown
+    movement_pattern: str = "unknown"  # stationary / local / mobile / unknown
     anomalies: List[Dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:

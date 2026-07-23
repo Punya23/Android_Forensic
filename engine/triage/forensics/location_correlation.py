@@ -20,6 +20,7 @@ Usage::
         determine_significance,
     )
 """
+
 from __future__ import annotations
 
 import calendar
@@ -37,7 +38,7 @@ from typing import Any, Dict, List, Optional
 # ---------------------------------------------------------------------------
 
 # Default time window (seconds) used in find_messages_near_time.
-DEFAULT_WINDOW_S = 300   # 5 minutes
+DEFAULT_WINDOW_S = 300  # 5 minutes
 
 # Coordinate pattern: match floating-point numbers that look like GPS coords
 # in message bodies (e.g. "48.8566, 2.3522" or "48.8566° N, 2.3522° E").
@@ -49,19 +50,20 @@ _COORD_RE = re.compile(
 _COORD_TOLERANCE = 0.01
 
 # Correlation score weights
-_WEIGHT_NEARBY   = 0.4
-_WEIGHT_MENTION  = 0.4
-_WEIGHT_PHOTO    = 0.2
+_WEIGHT_NEARBY = 0.4
+_WEIGHT_MENTION = 0.4
+_WEIGHT_PHOTO = 0.2
 
 # Significance tier boundaries
-_SCORE_HIGH   = 0.8
+_SCORE_HIGH = 0.8
 _SCORE_MEDIUM = 0.6
-_SCORE_LOW    = 0.4
+_SCORE_LOW = 0.4
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _iso_to_epoch(ts: Optional[str]) -> Optional[float]:
     """Convert an ISO-8601 string (UTC) to a Unix timestamp float.
@@ -101,6 +103,7 @@ def _coords_in_text(text: str, lat: float, lon: float) -> bool:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def find_messages_near_time(
     messages: List[Any],
@@ -270,28 +273,37 @@ def correlate_locations_with_messages(
     results: List[Dict[str, Any]] = []
 
     for loc in locations:
-        gps        = loc.get("gps") or {}
-        lat        = gps.get("lat")
-        lon        = gps.get("lon")
-        timestamp  = loc.get("timestamp")
-        filename   = loc.get("filename_meta", {}).get("raw") or ""
+        gps = loc.get("gps") or {}
+        lat = gps.get("lat")
+        lon = gps.get("lon")
+        timestamp = loc.get("timestamp")
+        filename = loc.get("filename_meta", {}).get("raw") or ""
         if not filename:
             from pathlib import Path as _P
+
             filename = _P(loc.get("file", "")).name
 
-        nearby  = find_messages_near_time(messages, timestamp, window_seconds) if timestamp else []
-        mention = find_messages_mentioning_location(messages, lat, lon) if (lat and lon) else []
-        photo   = find_messages_with_media(messages, filename)
+        nearby = (
+            find_messages_near_time(messages, timestamp, window_seconds)
+            if timestamp
+            else []
+        )
+        mention = (
+            find_messages_mentioning_location(messages, lat, lon)
+            if (lat and lon)
+            else []
+        )
+        photo = find_messages_with_media(messages, filename)
 
-        score  = calculate_correlation_score(nearby, mention, photo)
-        sig    = determine_significance(score)
+        score = calculate_correlation_score(nearby, mention, photo)
+        sig = determine_significance(score)
 
         enriched = dict(loc)
-        enriched["nearby_messages"]  = [_msg_to_dict(m) for m in nearby]
+        enriched["nearby_messages"] = [_msg_to_dict(m) for m in nearby]
         enriched["mention_messages"] = [_msg_to_dict(m) for m in mention]
-        enriched["photo_messages"]   = [_msg_to_dict(m) for m in photo]
+        enriched["photo_messages"] = [_msg_to_dict(m) for m in photo]
         enriched["correlation_score"] = score
-        enriched["significance"]      = sig
+        enriched["significance"] = sig
         results.append(enriched)
 
     return results
@@ -301,6 +313,7 @@ def correlate_locations_with_messages(
 # Private serialisation helper
 # ---------------------------------------------------------------------------
 
+
 def _msg_to_dict(msg: Any) -> Dict[str, Any]:
     """Convert a Message object (or plain dict) to a plain dict."""
     if isinstance(msg, dict):
@@ -309,9 +322,9 @@ def _msg_to_dict(msg: Any) -> Dict[str, Any]:
         return msg.to_dict()
     # Fallback: extract known Message fields
     return {
-        "app":       getattr(msg, "app", ""),
-        "sender":    getattr(msg, "sender", ""),
-        "body":      getattr(msg, "body", ""),
+        "app": getattr(msg, "app", ""),
+        "sender": getattr(msg, "sender", ""),
+        "body": getattr(msg, "body", ""),
         "timestamp": getattr(msg, "timestamp", None),
         "direction": getattr(msg, "direction", "unknown"),
     }

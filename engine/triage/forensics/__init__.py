@@ -12,6 +12,7 @@ Sub-modules:
     location_anomaly     -- Flag unusual/late-night/new location patterns
     location_summary     -- Aggregate report: stats + places + anomalies + HTML output
 """
+
 from __future__ import annotations
 
 # --- Data models ---

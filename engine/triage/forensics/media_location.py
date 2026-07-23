@@ -24,6 +24,7 @@ Each result dict is a JSON-safe snapshot with:
 Graceful degradation: files with no EXIF, no GPS, or inaccessible paths are
 skipped silently unless ``include_no_gps=True`` is passed.
 """
+
 from __future__ import annotations
 
 import re
@@ -32,9 +33,11 @@ from typing import Any, Dict, List, Optional
 
 from ..config import IMAGE_EXTS, VIDEO_EXTS
 
+
 # We import lazily to avoid circular-import issues at module load time.
 def _exif():  # noqa: ANN201
     from ..parsers.exif import extract_gps_enhanced
+
     return extract_gps_enhanced
 
 
@@ -66,6 +69,7 @@ _IG_FOLDERS = {"instagram", "instagram images", "instagram videos"}
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _classify_media(path: Path) -> str:
     """Return 'image', 'video', or 'unknown' based on file extension."""
@@ -117,15 +121,15 @@ def _extract_location_record(
         return None
 
     return {
-        "file":          str(path),
-        "gps":           gps,
-        "altitude":      exif_data.get("altitude"),
-        "timestamp":     timestamp,
-        "source":        source,
-        "media_type":    media_type,
-        "device_make":   exif_data.get("device_make"),
-        "device_model":  exif_data.get("device_model"),
-        "software":      exif_data.get("software"),
+        "file": str(path),
+        "gps": gps,
+        "altitude": exif_data.get("altitude"),
+        "timestamp": timestamp,
+        "source": source,
+        "media_type": media_type,
+        "device_make": exif_data.get("device_make"),
+        "device_model": exif_data.get("device_model"),
+        "software": exif_data.get("software"),
         "filename_meta": fname_meta,
     }
 
@@ -163,6 +167,7 @@ def _find_subfolders(root: Path, name_set: set) -> List[Path]:
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def parse_media_filename(filename: str) -> Dict[str, Any]:
     """Parse a media filename to extract embedded metadata.
 
@@ -181,10 +186,10 @@ def parse_media_filename(filename: str) -> Dict[str, Any]:
     """
     result: Dict[str, Any] = {
         "date": None,
-        "app":  None,
+        "app": None,
         "type": None,
-        "seq":  None,
-        "raw":  filename,
+        "seq": None,
+        "raw": filename,
     }
     stem = Path(filename).stem
 
@@ -192,8 +197,8 @@ def parse_media_filename(filename: str) -> Dict[str, Any]:
     m = _WA_FILENAME_RE.match(stem)
     if m:
         result["type"] = m.group("type").upper()
-        result["app"]  = "WA"
-        result["seq"]  = m.group("seq")
+        result["app"] = "WA"
+        result["seq"] = m.group("seq")
         result["date"] = _date_str_to_iso(m.group("date"))
         return result
 

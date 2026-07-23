@@ -18,6 +18,7 @@ Usage::
 
     anomalies = detect_location_anomalies(locations)
 """
+
 from __future__ import annotations
 
 import calendar
@@ -32,8 +33,8 @@ from .gps_clustering import calculate_distance, cluster_gps_points
 # Constants
 # ---------------------------------------------------------------------------
 
-_LATE_NIGHT_START_H = 23   # 11 PM UTC
-_LATE_NIGHT_END_H   = 5    # 5 AM UTC
+_LATE_NIGHT_START_H = 23  # 11 PM UTC
+_LATE_NIGHT_END_H = 5  # 5 AM UTC
 
 # Z-score threshold for unusual-location detection.
 _UNUSUAL_SIGMA = 2.0
@@ -45,14 +46,15 @@ _NEW_LOCATION_RADIUS_KM = 1.0
 _HISTORY_FRACTION = 0.70
 
 # Anomaly score weights.
-_W_NIGHT    = 0.35
-_W_UNUSUAL  = 0.45
-_W_NEW      = 0.20
+_W_NIGHT = 0.35
+_W_UNUSUAL = 0.45
+_W_NEW = 0.20
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _iso_to_epoch(ts: Optional[str]) -> Optional[float]:
     """Convert an ISO-8601 UTC string to a Unix float. Returns None on failure."""
@@ -124,10 +126,10 @@ def _anomaly_dict(
     """Build a standard anomaly output dict."""
     lat, lon = _flat_lat_lon(loc)
     return {
-        "type":        anomaly_type,
-        "location":    {"lat": lat, "lon": lon},
-        "timestamp":   loc.get("timestamp"),
-        "severity":    severity,
+        "type": anomaly_type,
+        "location": {"lat": lat, "lon": lon},
+        "timestamp": loc.get("timestamp"),
+        "severity": severity,
         "explanation": explanation,
     }
 
@@ -136,7 +138,10 @@ def _anomaly_dict(
 # Public API
 # ---------------------------------------------------------------------------
 
-def calculate_anomaly_score(location: Dict[str, Any], history: List[Dict[str, Any]]) -> float:
+
+def calculate_anomaly_score(
+    location: Dict[str, Any], history: List[Dict[str, Any]]
+) -> float:
     """Calculate an anomaly score (0.0–1.0) for a single location.
 
     Combines three binary signals with fixed weights:
@@ -170,12 +175,14 @@ def calculate_anomaly_score(location: Dict[str, Any], history: List[Dict[str, An
     for h in history:
         h_lat, h_lon = _flat_lat_lon(h)
         if h_lat is not None and h_lon is not None:
-            distances.append(calculate_distance(float(h_lat), float(h_lon), c_lat, c_lon))
+            distances.append(
+                calculate_distance(float(h_lat), float(h_lon), c_lat, c_lon)
+            )
 
     if distances:
-        mean_d  = sum(distances) / len(distances)
-        sigma   = _std_dev(distances)
-        loc_d   = calculate_distance(float(lat), float(lon), c_lat, c_lon)
+        mean_d = sum(distances) / len(distances)
+        sigma = _std_dev(distances)
+        loc_d = calculate_distance(float(lat), float(lon), c_lat, c_lon)
         z_score = (loc_d - mean_d) / sigma if sigma > 0 else 0.0
         if z_score > _UNUSUAL_SIGMA:
             score += _W_UNUSUAL
@@ -185,7 +192,10 @@ def calculate_anomaly_score(location: Dict[str, Any], history: List[Dict[str, An
     is_new = True
     for cl in clusters:
         c = cl["center"]
-        if calculate_distance(float(lat), float(lon), c["lat"], c["lon"]) <= _NEW_LOCATION_RADIUS_KM:
+        if (
+            calculate_distance(float(lat), float(lon), c["lat"], c["lon"])
+            <= _NEW_LOCATION_RADIUS_KM
+        ):
             is_new = False
             break
     if is_new:
@@ -209,15 +219,17 @@ def detect_late_night_visits(locations: List[Dict[str, Any]]) -> List[Dict[str, 
         ts = loc.get("timestamp")
         if _is_late_night(ts):
             h = _utc_hour(ts)
-            anomalies.append(_anomaly_dict(
-                anomaly_type="late_night_visit",
-                loc=loc,
-                severity="warn",
-                explanation=(
-                    f"Location recorded at {h:02d}:xx UTC — within the late-night "
-                    f"window (23:00–05:00 UTC)."
-                ),
-            ))
+            anomalies.append(
+                _anomaly_dict(
+                    anomaly_type="late_night_visit",
+                    loc=loc,
+                    severity="warn",
+                    explanation=(
+                        f"Location recorded at {h:02d}:xx UTC — within the late-night "
+                        f"window (23:00–05:00 UTC)."
+                    ),
+                )
+            )
     return anomalies
 
 
@@ -246,11 +258,9 @@ def detect_unusual_locations(locations: List[Dict[str, Any]]) -> List[Dict[str, 
         return []
 
     c_lat, c_lon = _centroid(locations)
-    distances = [
-        calculate_distance(lat, lon, c_lat, c_lon) for _, lat, lon in valid
-    ]
+    distances = [calculate_distance(lat, lon, c_lat, c_lon) for _, lat, lon in valid]
     mean_d = sum(distances) / len(distances)
-    sigma  = _std_dev(distances)
+    sigma = _std_dev(distances)
 
     if sigma == 0:
         return []
@@ -259,15 +269,17 @@ def detect_unusual_locations(locations: List[Dict[str, Any]]) -> List[Dict[str, 
     for (loc, lat, lon), dist in zip(valid, distances):
         z = (dist - mean_d) / sigma
         if z > _UNUSUAL_SIGMA:
-            anomalies.append(_anomaly_dict(
-                anomaly_type="unusual_location",
-                loc=loc,
-                severity="warn",
-                explanation=(
-                    f"Location is {dist:.1f} km from the centroid — "
-                    f"{z:.1f}σ above mean ({mean_d:.1f} km)."
-                ),
-            ))
+            anomalies.append(
+                _anomaly_dict(
+                    anomaly_type="unusual_location",
+                    loc=loc,
+                    severity="warn",
+                    explanation=(
+                        f"Location is {dist:.1f} km from the centroid — "
+                        f"{z:.1f}σ above mean ({mean_d:.1f} km)."
+                    ),
+                )
+            )
     return anomalies
 
 
@@ -293,7 +305,7 @@ def detect_new_locations(locations: List[Dict[str, Any]]) -> List[Dict[str, Any]
 
     split = int(n * _HISTORY_FRACTION)
     history = sorted_locs[:split]
-    recent  = sorted_locs[split:]
+    recent = sorted_locs[split:]
 
     # Build historical clusters.
     hist_clusters = cluster_gps_points(history, radius_km=_NEW_LOCATION_RADIUS_KM)
@@ -307,21 +319,26 @@ def detect_new_locations(locations: List[Dict[str, Any]]) -> List[Dict[str, Any]
         is_new = True
         for cl in hist_clusters:
             c = cl["center"]
-            if calculate_distance(float(lat), float(lon), c["lat"], c["lon"]) <= _NEW_LOCATION_RADIUS_KM:
+            if (
+                calculate_distance(float(lat), float(lon), c["lat"], c["lon"])
+                <= _NEW_LOCATION_RADIUS_KM
+            ):
                 is_new = False
                 break
 
         if is_new:
-            anomalies.append(_anomaly_dict(
-                anomaly_type="new_location",
-                loc=loc,
-                severity="info",
-                explanation=(
-                    f"Location ({lat:.5f}, {lon:.5f}) has not been visited "
-                    f"in the historical baseline (first {int(_HISTORY_FRACTION * 100)}% "
-                    f"of the timeline)."
-                ),
-            ))
+            anomalies.append(
+                _anomaly_dict(
+                    anomaly_type="new_location",
+                    loc=loc,
+                    severity="info",
+                    explanation=(
+                        f"Location ({lat:.5f}, {lon:.5f}) has not been visited "
+                        f"in the historical baseline (first {int(_HISTORY_FRACTION * 100)}% "
+                        f"of the timeline)."
+                    ),
+                )
+            )
     return anomalies
 
 
@@ -374,8 +391,10 @@ def detect_location_anomalies(locations: List[Dict[str, Any]]) -> List[Dict[str,
 
     # Sort: severity descending, then timestamp ascending.
     _sev_order = {"critical": 0, "warn": 1, "info": 2}
-    unique.sort(key=lambda a: (
-        _sev_order.get(a["severity"], 99),
-        a.get("timestamp") or "",
-    ))
+    unique.sort(
+        key=lambda a: (
+            _sev_order.get(a["severity"], 99),
+            a.get("timestamp") or "",
+        )
+    )
     return unique
