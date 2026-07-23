@@ -672,6 +672,52 @@ export interface WifiNetwork {
   source_file: string;
 }
 
+// --- MediaStore trash (deleted / pending media, non-root recovery) ---------
+
+export interface MediaStoreTrashItem {
+  original_name: string;
+  state: "trashed" | "pending";
+  kind: string;
+  owner_app: string | null;
+  size_bytes: number;
+  media_id: number | null;
+  /** True when the actual file was pulled — we hold the bytes. */
+  file_recoverable: boolean;
+  artifact_id: string | null;
+  stored_path: string | null;
+  sha256: string | null;
+  /** MediaStore auto-purge time (ISO). */
+  expires_at: string | null;
+  /** date_expires minus the 30-day window — when the user trashed it. */
+  estimated_deleted_at: string | null;
+  deleted_at_is_estimate: boolean;
+  retention_window_days: number;
+  days_until_auto_purge: number | null;
+  gps: { lat: number; lon: number } | null;
+  confidence: Confidence;
+  /** Where the evidence came from. */
+  source: "mediastore" | "filesystem" | "both";
+  note: string;
+  provenance: string;
+  requires_verification: boolean;
+}
+
+export interface MediaStoreTrashSummary {
+  total: number;
+  trashed: number;
+  pending: number;
+  file_recovered: number;
+  deletion_detected_only: number;
+  recovered_bytes: number;
+  expiring_within_3_days: number;
+  note: string;
+}
+
+export interface MediaStoreTrash {
+  items: MediaStoreTrashItem[];
+  summary: MediaStoreTrashSummary;
+}
+
 // --- WhatsApp backup recovery (Tier 2) -------------------------------------
 
 export interface WhatsAppBackupMessage {

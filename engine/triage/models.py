@@ -214,6 +214,9 @@ class MediaInventoryItem(Serialisable):
     is_trashed: bool = False
     is_favorite: bool = False
     is_pending: bool = False
+    # MediaColumns.DATE_EXPIRES (ISO). For a trashed item this is the auto-purge time;
+    # the deletion itself happened ~30 days earlier (Android's TRASH_MAX_DURATION).
+    date_expires: Optional[str] = None
     gps: Optional[dict[str, float]] = None
     source_file: str = ""
 

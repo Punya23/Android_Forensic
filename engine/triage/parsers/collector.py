@@ -135,6 +135,7 @@ def parse_media_inventory(path: str | Path) -> list[MediaInventoryItem]:
             is_trashed=bool(r.get("is_trashed")),
             is_favorite=bool(r.get("is_favorite")),
             is_pending=bool(r.get("is_pending")),
+            date_expires=_s_to_iso(r.get("date_expires")),
             gps=gps,
             source_file=src,
         ))

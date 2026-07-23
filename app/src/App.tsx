@@ -29,6 +29,7 @@ import { AppsView } from "./views/Apps";
 import { AccountsView } from "./views/Accounts";
 import { CalendarView } from "./views/Calendar";
 import { MediaInventoryView } from "./views/MediaInventory";
+import { DeletedMediaView } from "./views/DeletedMedia";
 import { WifiView } from "./views/WiFi";
 
 export default function App() {
@@ -69,6 +70,7 @@ export default function App() {
           {caseId && view === "calls" && <CallsView caseId={caseId} />}
           {caseId && view === "media" && <MediaView caseId={caseId} />}
           {caseId && view === "mediainv" && <MediaInventoryView caseId={caseId} />}
+          {caseId && view === "deletedmedia" && <DeletedMediaView caseId={caseId} />}
           {caseId && view === "apps" && <AppsView caseId={caseId} />}
           {caseId && view === "accounts" && <AccountsView caseId={caseId} />}
           {caseId && view === "calendar" && <CalendarView caseId={caseId} />}

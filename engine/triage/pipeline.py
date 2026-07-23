@@ -1089,6 +1089,24 @@ def run_acquisition(
     case.write_derived(
         "media_inventory_summary", media_inventory_summary(media_inventory)
     )
+    # MediaStore trash: fuse the DB's trashed/pending rows with the .trashed-* files we
+    # actually pulled → recovered files + defensible deletion timestamps (non-root).
+    try:
+        from .forensics import analyze_mediastore_trash
+        trash = analyze_mediastore_trash(media_inventory, case.manifest)
+        case.write_derived("mediastore_trash", trash)
+        ts = trash["summary"]
+        if ts["total"]:
+            case.log(
+                "forensics.mediastore_trash",
+                f"MediaStore trash: {ts['total']} item(s) — {ts['file_recovered']} file(s) "
+                f"recovered intact, {ts['deletion_detected_only']} deletion-detected; "
+                f"{ts['expiring_within_3_days']} expiring within 3 days.",
+                tier=Tier.TIER0.value,
+            )
+    except Exception as exc:  # trash analysis must never abort a run
+        case.log("forensics.mediastore_trash", f"trash analysis error: {exc}",
+                 result="error", tier=Tier.TIER0.value)
     case.write_derived("wifi", wifi_networks)  # Wi-Fi credentials (Tier 2)
     case.write_derived(
         "whatsapp_backup_messages", wa_backup_messages
@@ -1241,6 +1259,9 @@ def run_acquisition(
                 "screenshots": len(screenshots),
                 "aleapp_modules": len(aleapp_result.get("artifacts", {})),
                 "whatsapp_media": len(wa_media_items),  # NEW
+                "mediastore_trash": sum(
+                    1 for m in media_inventory if m.is_trashed or m.is_pending
+                ),
                 "media_inventory": len(media_inventory),
                 "apps": len(installed_apps),
                 "accounts": len(accounts),

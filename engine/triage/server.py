@@ -1146,6 +1146,8 @@ def create_app(cases_root: Path = CASES_ROOT):
             "location_summary",
             "advanced",
 
+            "mediastore_trash",
+
             "whatsapp_backup_summary"
 
         }

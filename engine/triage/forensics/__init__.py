@@ -92,6 +92,12 @@ from .location_anomaly import (
 )
 
 # --- Location summary report ---
+from .mediastore_trash import (
+    analyze_mediastore_trash,
+    parse_trash_filename,
+    TRASH_WINDOW_DAYS,
+)
+
 from .location_summary import (
     generate_location_summary,
     get_location_statistics,
@@ -159,4 +165,8 @@ __all__ = [
     "get_place_statistics",
     "get_anomaly_statistics",
     "generate_location_html_summary",
+    # MediaStore trash recovery
+    "analyze_mediastore_trash",
+    "parse_trash_filename",
+    "TRASH_WINDOW_DAYS",
 ]
