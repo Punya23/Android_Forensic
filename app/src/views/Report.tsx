@@ -1,5 +1,6 @@
 import { api } from "../lib/api";
 import { SectionHeader } from "../components/common";
+import { useState } from "react";
 
 export function ReportView({ caseId }: { caseId: string }) {
   const url = api.reportUrl(caseId);
@@ -11,7 +12,18 @@ export function ReportView({ caseId }: { caseId: string }) {
         right={
           <div className="flex gap-2">
             <a className="btn-ghost text-sm" href={url} target="_blank" rel="noreferrer">Open in new tab</a>
-            <a className="btn-accent text-sm" href={url} download={`${caseId}-report.html`}>Download</a>
+            <button
+              className="btn-accent text-sm"
+              onClick={async () => {
+                try {
+                  await window.erakshak.exportAndPreviewReport(caseId);
+                } catch (error) {
+                  console.error("PDF export failed:", error);
+                }
+              }}
+            >
+              Download PDF
+            </button>
           </div>
         }
       />

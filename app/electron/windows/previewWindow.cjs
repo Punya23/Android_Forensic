@@ -60,7 +60,7 @@ async function openPdfPreview(
 
             nodeIntegration: false,
 
-        },
+        }
 
     });
 
@@ -84,9 +84,10 @@ async function openPdfPreview(
 
 
     // Open DevTools for debugging
-    previewWin.webContents.openDevTools({
-        mode: "detach",
-    });
+    // DevTools disabled after PDF preview verification
+    // previewWin.webContents.openDevTools({
+    //     mode: "detach",
+    // });
 
 
 

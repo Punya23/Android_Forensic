@@ -214,6 +214,8 @@ ipcMain.handle(
 // ---------------- APP START ----------------
 
 
+// ---------------- APP START ----------------
+
 app.whenReady().then(async () => {
 
 
@@ -236,11 +238,7 @@ app.whenReady().then(async () => {
 
 });
 
-
-
-
 // ---------------- WINDOW CLOSE ----------------
-
 
 app.on("window-all-closed", () => {
 
@@ -253,10 +251,7 @@ app.on("window-all-closed", () => {
 });
 
 
-
-
 // ---------------- SAFE QUIT CLEANUP ----------------
-
 
 app.on(
   "before-quit",
