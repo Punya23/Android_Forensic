@@ -86,6 +86,14 @@ def get_file_priority(file_path: str) -> int:
     name = PurePosixPath(lower).name
     suffix = PurePosixPath(name).suffix  # includes the dot
 
+    # A SQLite WAL / shared-memory / rollback-journal sidecar must be pulled with the
+    # same urgency as its parent DB — the newest committed rows and every superseded
+    # (deleted/edited) row version live in the -wal until checkpoint, so leaving it
+    # behind silently discards recoverable evidence. These names end in -wal/-shm/
+    # -journal, which are NOT extensions, so they would otherwise score 0.
+    if any(name.endswith(sfx) for sfx in ("-wal", "-shm", "-journal")):
+        return 100
+
     # Path-level boost: known forensic app directories or file names
     path_boost = any(token in lower for token in _HIGH_VALUE_PATHS)
 

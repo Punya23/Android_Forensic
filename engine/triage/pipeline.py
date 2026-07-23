@@ -1332,8 +1332,33 @@ def _pull_and_process_file(
         )
     stored = case.root / rec.stored_path
 
+    # ── SQLite WAL/journal co-location ───────────────────────────────────
+    # Ingest renames each file by content, so a DB and its sidecars end up unrelated in
+    # the case store and SQLite could never merge the WAL. Re-pull the sidecars to the
+    # exact name <stored>-wal so the recovery pass (and SQLite itself) associates them.
+    # Missing sidecars are normal; this is best-effort and never fails the DB.
+    _colocate_sqlite_sidecars(device_path, stored, source, case)
+
     # ── Per-file processing (parse / EXIF / DB — can run in parallel) ───
     return _process_pulled_file(pulled, rec, stored, device_path, case)
+
+
+def _colocate_sqlite_sidecars(device_path: str, stored: Path,
+                              source: AcquisitionSource, case: Any) -> None:
+    """Pull a DB's -wal/-shm/-journal next to *stored* under the exact SQLite names."""
+    name = Path(device_path).name.lower()
+    if not (name.endswith((".db", ".sqlite", ".sqlite3")) or name == "history"
+            or any(k in name for k in ("msgstore", "cache4", "mmssms"))):
+        return
+    for suf in _SQLITE_SIDECAR_SUFFIXES:
+        try:
+            if source.pull_to_path(device_path + suf, Path(str(stored) + suf)):
+                case.log("adb.pull.sidecar",
+                         f"co-located {Path(device_path).name}{suf} with its DB — "
+                         f"WAL-resident (newest + deleted) rows are now recoverable",
+                         tier=Tier.TIER0.value)
+        except Exception:
+            continue
 
 
 def _parallel_pull_files(
@@ -1688,6 +1713,62 @@ def _collect_gaps(db_artifacts: list[tuple[Path, Any]]) -> dict[str, Any]:
         except Exception:
             continue
     return out
+
+
+# The write-ahead log and shared-memory/rollback-journal sidecars that MUST travel
+# with any live SQLite database. The newest committed rows live in the -wal until a
+# checkpoint, and the -wal additionally retains superseded (i.e. deleted/edited) page
+# images — so a .db copied without them silently loses recoverable evidence. Opening
+# the .db later with any ordinary SQLite client would checkpoint and destroy the -wal,
+# so the only correct move is to copy the whole set off the device first.
+_SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+
+
+def _su_pull_sqlite(source: "RealDeviceSource", remote_db: str, staging_remote: str,
+                    local_db: "Path", case: "Case", tier: "Tier", label: str) -> bool:
+    """Root-copy a SQLite DB *and its -wal/-shm/-journal sidecars* off the device.
+
+    The primary DB is copied via ``su -c cp`` (a byte copy — it does NOT checkpoint the
+    WAL) to an adb-readable staging path, then pulled to *local_db*. Each sidecar is then
+    copied/pulled best-effort so it lands next to *local_db* under the exact name SQLite
+    and the WAL carver expect (``<local_db>-wal`` etc.). A missing sidecar is normal and
+    never an error. Returns ``True`` iff the primary DB was pulled.
+    """
+    def _one(r_src: str, r_stage: str, l_dst: "Path", tag: str, required: bool) -> bool:
+        cp = source.adb.shell(f'su -c "cp {r_src} {r_stage}"')
+        if not cp.ok:
+            if required:
+                case.log(f"{label}.cp", f"su cp failed: {r_src} ({cp.stderr[:160]})",
+                         command=f"adb shell su -c 'cp {r_src} {r_stage}'",
+                         result="error", alters_device=False, tier=tier.value)
+            return False
+        pull = source.adb.pull(r_stage, l_dst)
+        ok = pull.ok and l_dst.exists()
+        # Sidecars are logged only when present, so their absence is not noise.
+        if ok or required:
+            case.log(f"{label}.pull", f"{tag}: {r_src}",
+                     command=f"adb pull {r_stage}",
+                     result="ok" if ok else "error",
+                     alters_device=False, tier=tier.value)
+        # Best-effort tidy of the staging copy we created on shared storage.
+        source.adb.shell(f'su -c "rm -f {r_stage}"')
+        return ok
+
+    if not _one(remote_db, staging_remote, local_db, "primary db", required=True):
+        return False
+    pulled = []
+    for suf in _SQLITE_SIDECAR_SUFFIXES:
+        if _one(remote_db + suf, staging_remote + suf,
+                Path(str(local_db) + suf), f"sidecar {suf}", required=False):
+            pulled.append(suf)
+    if pulled:
+        case.log(f"{label}.sidecars",
+                 f"Recovered WAL/journal sidecars {pulled} alongside {local_db.name} — "
+                 f"newest and superseded rows are now carvable.",
+                 alters_device=False, tier=tier.value)
+    return True
+
+
 def _run_tier2_telegram(
     source: "RealDeviceSource",
     case: "Case",
@@ -1719,43 +1800,17 @@ def _run_tier2_telegram(
     REMOTE_DB = "/data/data/org.telegram.messenger/files/cache4.db"
     REMOTE_STAGING = "/sdcard/Download/tg_cache4_triage.db"
 
-    # 1. Copy to accessible location via su.
-    cp_result = source.adb.shell(
-        f'su -c "cp {REMOTE_DB} {REMOTE_STAGING}"'
-    )
-    case.log(
-        "tier2.telegram.cp",
-        f"su cp: {REMOTE_DB} → {REMOTE_STAGING}",
-        command=f"adb shell su -c 'cp {REMOTE_DB} {REMOTE_STAGING}'",
-        result="ok" if cp_result.ok else "error",
-        alters_device=False,
-        tier=Tier.TIER2.value,
-    )
-    if not cp_result.ok:
-        case.log(
-            "tier2.telegram",
-            f"su cp failed (device may not be rooted or Telegram not installed): "
-            f"{cp_result.stderr[:200]}",
-            result="error",
-            tier=Tier.TIER2.value,
-        )
-        return
-
-    # 2. Pull to local staging.
+    # Copy cache4.db AND its -wal/-shm sidecars off the device, then pull. Telegram
+    # bundles its own SQLite (no AOSP secure_delete hardening), so freelist + WAL carving
+    # is the highest-yield deleted-message surface it has — losing the WAL would throw it
+    # away. The carver reads <local_db>-wal, which now lands beside the DB.
     local_db = staging / "tg_cache4.db"
-    pull = source.adb.pull(REMOTE_STAGING, local_db)
-    case.log(
-        "tier2.telegram.pull",
-        "pull tg_cache4.db from device staging area",
-        command=f"adb pull {REMOTE_STAGING}",
-        result="ok" if pull.ok else "error",
-        alters_device=False,
-        tier=Tier.TIER2.value,
-    )
-    if not pull.ok or not local_db.exists():
+    if not _su_pull_sqlite(source, REMOTE_DB, REMOTE_STAGING, local_db,
+                           case, Tier.TIER2, "tier2.telegram"):
         case.log(
             "tier2.telegram",
-            "adb pull of cache4.db failed",
+            "su cp / adb pull of cache4.db failed (device may not be rooted or "
+            "Telegram not installed)",
             result="error",
             tier=Tier.TIER2.value,
         )
@@ -1929,18 +1984,14 @@ def _run_tier2_instagram(source: "RealDeviceSource", case: "Case", staging: "Pat
     stage_db = "/sdcard/Download/ig_direct_triage.db"
     stage_prefs = "/sdcard/Download/ig_prefs_triage"
 
-    cp = source.adb.shell(f'su -c "cp {remote_db} {stage_db}"')
-    case.log("tier2.instagram.cp", f"su cp direct.db → {stage_db}",
-             command=f"adb shell su -c 'cp {remote_db} {stage_db}'",
-             result="ok" if cp.ok else "error", alters_device=False, tier=Tier.TIER2.value)
-    if not cp.ok:
-        case.log("tier2.instagram", "su cp failed (device may not be rooted or IG not installed)",
-                 result="error", tier=Tier.TIER2.value)
-        return {}
+    # direct.db + its WAL/journal sidecars (Instagram bundles its own SQLite).
     local_db = staging / "direct.db"
-    if not source.adb.pull(stage_db, local_db).ok or not local_db.exists():
-        case.log("tier2.instagram", "adb pull of direct.db failed", result="error",
-                 tier=Tier.TIER2.value)
+    if not _su_pull_sqlite(source, remote_db, stage_db, local_db,
+                           case, Tier.TIER2, "tier2.instagram"):
+        case.log("tier2.instagram",
+                 "su cp / adb pull of direct.db failed (device may not be rooted or "
+                 "IG not installed)",
+                 result="error", tier=Tier.TIER2.value)
         return {}
 
     # Best-effort: pull shared_prefs for user_id → username identity.
@@ -1970,24 +2021,20 @@ def _run_tier2_snapchat(source: "RealDeviceSource", case: "Case", staging: "Path
     stage_arroyo = "/sdcard/Download/snap_arroyo_triage.db"
     stage_main = "/sdcard/Download/snap_main_triage.db"
 
-    cp = source.adb.shell(f'su -c "cp {remote_arroyo} {stage_arroyo}"')
-    case.log("tier2.snapchat.cp", f"su cp arroyo.db → {stage_arroyo}",
-             command=f"adb shell su -c 'cp {remote_arroyo} {stage_arroyo}'",
-             result="ok" if cp.ok else "error", alters_device=False, tier=Tier.TIER2.value)
-    if not cp.ok:
-        case.log("tier2.snapchat", "su cp failed (device may not be rooted or Snapchat not installed)",
+    # arroyo.db (messages) + WAL/journal sidecars — the deleted-Snap surface.
+    local_arroyo = staging / "arroyo.db"
+    if not _su_pull_sqlite(source, remote_arroyo, stage_arroyo, local_arroyo,
+                           case, Tier.TIER2, "tier2.snapchat"):
+        case.log("tier2.snapchat",
+                 "su cp / adb pull of arroyo.db failed (device may not be rooted or "
+                 "Snapchat not installed)",
                  result="error", tier=Tier.TIER2.value)
         return {}
-    local_arroyo = staging / "arroyo.db"
-    if not source.adb.pull(stage_arroyo, local_arroyo).ok or not local_arroyo.exists():
-        case.log("tier2.snapchat", "adb pull of arroyo.db failed", result="error",
-                 tier=Tier.TIER2.value)
-        return {}
 
-    # main.db (identity) — best-effort.
+    # main.db (identity) + sidecars — best-effort.
     local_main = staging / "main.db"
-    if source.adb.shell(f'su -c "cp {remote_main} {stage_main}"').ok:
-        source.adb.pull(stage_main, local_main)
+    _su_pull_sqlite(source, remote_main, stage_main, local_main,
+                    case, Tier.TIER2, "tier2.snapchat.main")
 
     rec = case.ingest_file(local_arroyo, source_path=remote_arroyo, tier=Tier.TIER2,
                            method="root-su-cp", category="database", app="snapchat",

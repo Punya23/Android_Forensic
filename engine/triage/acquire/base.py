@@ -51,6 +51,25 @@ class AcquisitionSource(ABC):
     def pull_file(self, device_path: str, staging_dir: Path) -> Optional[PulledFile]:
         """Pull a single file into `staging_dir`; return None on failure."""
 
+    def pull_to_path(self, device_path: str, dest: Path) -> bool:
+        """Pull *device_path* to an EXACT local *dest* (not a random staging name).
+
+        Needed for SQLite sidecars: a ``-wal``/``-shm`` file is only usable if it sits
+        next to its parent DB under the exact name ``<db>-wal``, so the recovery pass
+        (and any SQLite client) associates them. Returns True on success. Default
+        implementation adapts :meth:`pull_file`; sources may override for efficiency.
+        """
+        pulled = self.pull_file(device_path, dest.parent)
+        if not pulled:
+            return False
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if pulled.local_path != dest:
+                pulled.local_path.replace(dest)
+            return dest.exists()
+        except OSError:
+            return False
+
     def capture_screenshot(self, staging_dir: Path) -> Optional[PulledFile]:
         """Capture a screenshot of the current screen (Oxygen/MDI 'manual' capture).
         Opt-in and read-only; default no-op for sources that can't. State-changing only in
