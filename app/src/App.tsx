@@ -2,11 +2,12 @@ import { useEffect, useState } from "react";
 import { api } from "./lib/api";
 import type { Health } from "./lib/types";
 import { TagProvider } from "./lib/tagStore";
-import { Sidebar, type ViewKey } from "./components/Sidebar";
+import { Sidebar, isCaseIndependent, type ViewKey } from "./components/Sidebar";
 import { GlobalSearch } from "./components/GlobalSearch";
 import { AcquisitionView } from "./views/Acquisition";
 import { OverviewView } from "./views/Overview";
 import { CaseIntelView } from "./views/CaseIntel";
+import { KnowledgeBaseView } from "./views/KnowledgeBase";
 import { MessagesView } from "./views/Messages";
 import { ContactsView } from "./views/Contacts";
 import { CallsView } from "./views/Calls";
@@ -57,7 +58,8 @@ export default function App() {
         <TopBar health={health} caseId={caseId} setView={setView} />
         <div className="flex-1 overflow-auto">
           {view === "acquire" && <AcquisitionView onCaseReady={onCaseReady} onOpenCase={onCaseReady} />}
-          {view !== "acquire" && !caseId && (
+          {view === "knowledge" && <KnowledgeBaseView />}
+          {!isCaseIndependent(view) && !caseId && (
             <div className="p-8 text-muted">No case loaded. Start an acquisition first.</div>
           )}
           {caseId && view === "overview" && <OverviewView caseId={caseId} setView={setView} />}

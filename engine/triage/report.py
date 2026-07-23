@@ -82,6 +82,8 @@ def generate_report(case_dir: str | Path) -> Path:
     notable_apps  = [a for a in apps if isinstance(a, dict) and a.get("notable")]
     case_profile  = case.read_derived("case_profile") or {}
     ai_findings   = case.read_derived("ai_findings") or {}
+    collect_plan  = case.read_derived("collection_plan") or {}
+    case_learning = case.read_derived("case_learning") or {}
     wifi_networks = case.read_derived("wifi") or []
 
     parts: list[str] = []
@@ -143,23 +145,117 @@ def generate_report(case_dir: str | Path) -> Path:
                 f'</tr>')
 
         count_str = " · ".join(f'{k}: {v}' for k, v in counts.items() if k != "total")
+
+        # --- parties, in canonical forensic nomenclature ---------------------
+        role_rows = ""
+        for r in (prof.get("roles") or []):
+            if r.get("role") == "third_party":
+                continue
+            weight = "700" if r.get("adverse") else "400"
+            role_rows += (
+                f'<tr><td style="padding:2px 8px 2px 0;color:#666;width:120px">'
+                f'{_esc(r.get("label"))}</td>'
+                f'<td style="font-weight:{weight}">{_esc(r.get("name"))}'
+                f'<span style="color:#999;font-size:11px;margin-left:6px">'
+                f'{_esc(r.get("evidence") or "")}</span></td></tr>')
+
+        # --- retrieved precedent, with provenance ----------------------------
+        precedents = collect_plan.get("precedents") or []
+        prec_html = ""
+        if precedents:
+            prec_rows = "".join(
+                f'<tr><td style="font-family:monospace;font-size:11px">'
+                f'{_esc(p.get("case_number"))}</td>'
+                f'<td style="font-size:12px">{_esc(p.get("title"))}</td>'
+                f'<td style="font-size:11px;color:#555">'
+                f'{_esc(", ".join(p.get("decisive_artifacts") or []) or "—")}</td>'
+                f'<td style="font-size:11px;color:#777">{_esc(p.get("source"))}</td></tr>'
+                for p in precedents[:6])
+            prec_html = (
+                '<div style="margin-top:12px">'
+                '<div style="font-size:13px;font-weight:700;color:#334;margin-bottom:4px">'
+                'Prior-case studies consulted for collection planning</div>'
+                '<table class="tbl" style="width:100%;border-collapse:collapse">'
+                '<thead><tr><th>Reference</th><th>Study</th><th>Solved by</th>'
+                '<th>Provenance</th></tr></thead><tbody>' + prec_rows + '</tbody></table>'
+                '<p style="font-size:11px;color:#a33;margin:6px 0 0">'
+                'These studies were used only to rank which artifacts to collect. They '
+                'are <b>not evidence in this case</b> and carry no precedential weight. '
+                'Entries marked synthetic are expert-curated teaching exemplars, not '
+                'real case records.</p></div>')
+
+        # --- artifacts whose ranking the evidence moved ----------------------
+        moved = [a for a in (collect_plan.get("artifacts") or []) if a.get("adjustment")]
+        moved_html = ""
+        if moved:
+            moved_rows = "".join(
+                f'<tr><td style="font-size:12px">{_esc(a.get("label"))}</td>'
+                f'<td style="font-size:11px;color:#666">{_esc(a.get("doctrine_priority"))}'
+                f' &rarr; <b>{_esc(a.get("priority"))}</b></td>'
+                f'<td style="font-size:11px;color:#555">'
+                f'{_esc("; ".join((a.get("evidence") or [])[:2]))}</td></tr>'
+                for a in moved[:8])
+            moved_html = (
+                '<div style="margin-top:12px">'
+                '<div style="font-size:13px;font-weight:700;color:#334;margin-bottom:4px">'
+                'Evidence-based re-ranking (doctrinal &rarr; applied)</div>'
+                '<table class="tbl" style="width:100%;border-collapse:collapse">'
+                '<thead><tr><th>Artifact</th><th>Ranking</th><th>Basis</th></tr></thead>'
+                '<tbody>' + moved_rows + '</tbody></table></div>')
+
+        # --- what this run taught the system ---------------------------------
+        learn_html = ""
+        if case_learning.get("recorded"):
+            graded = ", ".join(f"{k}: {v}" for k, v in
+                               sorted((case_learning.get("yields") or {}).items()))
+            learn_html = (
+                '<div style="margin-top:12px;border-top:1px dashed #ccd;padding-top:8px">'
+                '<div style="font-size:13px;font-weight:700;color:#334">'
+                'Recorded for future case planning</div>'
+                f'<p style="font-size:11px;color:#555;margin:4px 0 0">{_esc(graded)}</p>'
+                f'<p style="font-size:11px;color:#a33;margin:4px 0 0">'
+                f'{_esc(case_learning.get("note", ""))} Grade: '
+                f'{_esc(case_learning.get("grade", ""))} '
+                f'(weight {_esc(case_learning.get("weight", ""))}).</p></div>')
+
+        savings = collect_plan.get("estimated_savings") or {}
+        savings_html = ""
+        if savings.get("estimated_minutes_saved"):
+            savings_html = (
+                f'<p style="font-size:11px;color:#666;margin:6px 0 0">Targeted collection '
+                f'deferred {_esc(len(savings.get("deprioritised_artifacts") or []))} '
+                f'expensive pull(s), an estimated '
+                f'{_esc(savings.get("estimated_minutes_saved"))} of '
+                f'{_esc(savings.get("estimated_minutes_full_run"))} minutes. '
+                f'{_esc(savings.get("basis", ""))} — deferred artifacts were not deleted '
+                f'and can still be collected while the device is in custody.</p>')
+
         parts.append(f'''
         <div style="border:1px solid #556;border-radius:6px;padding:14px 18px;margin-bottom:22px;background:#fafaff">
           <div style="font-size:16px;font-weight:700;color:#334">✦ Case Intelligence — {_esc(prof.get("crime_label"))}</div>
           <p style="font-size:12px;color:#666;margin:4px 0 10px">
+            {('Case number: ' + _esc(prof.get("case_number")) + ' · ') if prof.get("case_number") else ''}
             Extraction: {_esc(prof.get("extraction_method"))} ·
+            Planning basis: {_esc(collect_plan.get("evidence_basis", "doctrine"))} ·
             Analysis: {_esc(ai_findings.get("analysis_method", "n/a"))} ·
             {_esc(counts.get("total", 0))} leads ({_esc(count_str)})
           </p>
           <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px">
-            <tr><td style="vertical-align:top;padding:2px 8px 2px 0;color:#666;width:80px">Suspects</td><td>{_chips(prof.get("suspects"))}</td></tr>
-            <tr><td style="vertical-align:top;padding:2px 8px 2px 0;color:#666">Victims</td><td>{_chips(prof.get("victims"))}</td></tr>
+            {role_rows or
+             f'<tr><td style="padding:2px 8px 2px 0;color:#666;width:120px">Suspects</td>'
+             f'<td>{_chips(prof.get("suspects"))}</td></tr>'
+             f'<tr><td style="padding:2px 8px 2px 0;color:#666">Victims</td>'
+             f'<td>{_chips(prof.get("victims"))}</td></tr>'}
             <tr><td style="vertical-align:top;padding:2px 8px 2px 0;color:#666">Locations</td><td>{_chips(prof.get("locations"))}</td></tr>
           </table>
+          {savings_html}
           {('<table class="tbl" style="width:100%;border-collapse:collapse"><thead><tr>'
             '<th>Severity</th><th>Confidence</th><th>Lead</th><th>Source</th></tr></thead>'
             '<tbody>' + rows + '</tbody></table>') if rows else
             '<p style="color:#999;font-size:12px">No leads matched the case profile.</p>'}
+          {prec_html}
+          {moved_html}
+          {learn_html}
           <p style="font-size:11px;color:#777;margin:10px 0 0">
             {_esc(ai_findings.get("disclaimer", "AI-surfaced leads require human verification."))}
           </p>

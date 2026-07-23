@@ -4,6 +4,7 @@ export type ViewKey =
   | "acquire"
   | "overview"
   | "intel"
+  | "knowledge"
   | "messages"
   | "contacts"
   | "calls"
@@ -51,8 +52,16 @@ const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
   { key: "graph", label: "Social Graph", icon: "🕸" },
   { key: "tagged", label: "Tagged Items", icon: "★" },
   { key: "custody", label: "Chain of Custody", icon: "🔒", group: "Forensics" },
+  { key: "knowledge", label: "Knowledge Base", icon: "📚" },
   { key: "report", label: "Report", icon: "📄" },
 ];
+
+/** Views that work without a case loaded — they read installation-wide state. */
+const CASE_INDEPENDENT: ReadonlySet<ViewKey> = new Set<ViewKey>(["acquire", "knowledge"]);
+
+export function isCaseIndependent(view: ViewKey): boolean {
+  return CASE_INDEPENDENT.has(view);
+}
 
 export function Sidebar({
   view,
@@ -79,7 +88,9 @@ export function Sidebar({
         {NAV.map((item) => {
           const showGroup = item.group && item.group !== lastGroup;
           if (item.group) lastGroup = item.group;
-          const disabled = !caseId;
+          // The Knowledge Base reads installation-wide state, so it stays reachable
+          // before any case is loaded.
+          const disabled = !caseId && !isCaseIndependent(item.key);
           return (
             <div key={item.key}>
               {showGroup && (

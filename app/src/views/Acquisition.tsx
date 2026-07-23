@@ -22,6 +22,7 @@ export function AcquisitionView({
   const [authority, setAuthority] = useState("");
   const [scope, setScope] = useState("");
   const [brief, setBrief] = useState("");
+  const [caseNumber, setCaseNumber] = useState("");
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [planning, setPlanning] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
@@ -79,7 +80,10 @@ export function AcquisitionView({
     setPlanning(true);
     setPlanError(null);
     try {
-      const p = await api.plan(brief.trim(), { allow_tier2: true });
+      const p = await api.plan(brief.trim(), {
+        allow_tier2: true,
+        case_number: caseNumber.trim() || undefined,
+      });
       setPlan(p);
       // Reflect the recommended tier flags in the checkboxes (officer can still override).
       const ov = p.plan.pipeline_overrides || {};
@@ -99,6 +103,22 @@ export function AcquisitionView({
     }
   }
 
+  /** Act on a "prior cases suggest reconsidering" prompt by ticking its tier flag. */
+  function enableRecommendation(flag: string) {
+    const setters: Record<string, (v: boolean) => void> = {
+      tier1_contacts: setTier1Contacts,
+      tier1_calllog: setTier1Calllog,
+      tier1_sms: setTier1Sms,
+      tier1_collect_all: setTier1CollectAll,
+      tier2_telegram: setTier2Telegram,
+      tier2_instagram: setTier2Instagram,
+      tier2_snapchat: setTier2Snapchat,
+      tier2_wifi: setTier2Wifi,
+      tier2_whatsapp_backup: setTier2WhatsappBackup,
+    };
+    setters[flag]?.(true);
+  }
+
   async function start() {
     if (!target || !examiner) return;
     setError(null);
@@ -114,6 +134,7 @@ export function AcquisitionView({
         authority,
         scope,
         case_description: brief.trim() || undefined,
+        case_number: caseNumber.trim() || undefined,
         tier1_contacts: target.kind === "real" ? tier1Contacts : false,
         tier1_calllog: target.kind === "real" ? tier1Calllog : false,
         tier1_sms: target.kind === "real" ? tier1Sms : false,
@@ -207,18 +228,40 @@ export function AcquisitionView({
           <span className="text-accent">✦ Case brief</span> — targeted, intelligent triage (optional)
         </div>
         <p className="text-xs text-muted mb-3">
-          Describe the case in plain language (who, what, where). The tool extracts a case
-          profile, recommends which artifacts matter most, and — after acquisition — ranks the
-          collected data into investigative leads. Cheap artifacts are always collected; only
-          expensive/root pulls are prioritised. Nothing is skipped silently.
+          Describe the case in plain language, naming each party and their role. The tool
+          extracts a case profile, searches prior case studies for what actually solved
+          similar cases, and recommends which artifacts matter most here. Cheap artifacts
+          are always collected; only expensive/root pulls are prioritised. Nothing is
+          skipped silently.
         </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-2">
+          <div>
+            <label className="label">FIR / case number</label>
+            <input
+              className="input"
+              placeholder="e.g. FIR-2026/0114"
+              value={caseNumber}
+              onChange={(e) => setCaseNumber(e.target.value)}
+            />
+          </div>
+          <div className="sm:col-span-2 flex items-end">
+            <p className="text-[11px] text-muted leading-relaxed">
+              Use forensic nomenclature: <b>accused</b> / <b>suspect</b> for the person
+              under investigation, <b>victim</b> / <b>deceased</b> for the person harmed,
+              plus <b>complainant</b>, <b>witness</b>, <b>panch witness</b>. Avoid
+              “guilty” and “innocent” — those are trial outcomes, not investigative roles.
+            </p>
+          </div>
+        </div>
+
         <textarea
           className="input min-h-[72px] resize-y"
-          placeholder="e.g. Laksh is a suspect in the murder of Shubham. They met near the docks at midnight; suspect uses WhatsApp and Telegram."
+          placeholder="e.g. Accused Laksh is a suspect in the murder of deceased Shubham. Complainant Kavita reported they met near the docks at midnight."
           value={brief}
           onChange={(e) => setBrief(e.target.value)}
         />
-        <div className="flex items-center gap-3 mt-2">
+        <div className="flex items-center gap-3 mt-2 flex-wrap">
           <button className="btn" disabled={!brief.trim() || planning} onClick={previewPlan}>
             {planning ? "Planning…" : "Preview collection plan"}
           </button>
@@ -226,22 +269,62 @@ export function AcquisitionView({
           {plan && (
             <span className="text-xs text-muted">
               Detected: <span className="text-ink font-medium">{plan.profile.crime_label}</span>{" "}
-              · {plan.profile.extraction_method}
+              · {plan.profile.extraction_method} · planning basis{" "}
+              <span className="text-ink">{plan.plan.evidence_basis}</span>
+              {plan.case_bank_size > 0 && <> · {plan.case_bank_size} case studies</>}
             </span>
           )}
         </div>
 
+        {/* Nomenclature coaching — advisory, never blocking */}
+        {plan && plan.profile.nomenclature_warnings.length > 0 && (
+          <div className="mt-3 rounded-md border border-warn/40 bg-warn/5 p-3 space-y-1">
+            {plan.profile.nomenclature_warnings.map((w, i) => (
+              <div key={i} className="text-[11px] leading-relaxed">
+                <span className={w.severity === "warn" ? "text-warn" : "text-muted"}>
+                  {w.severity === "warn" ? "⚠" : "ℹ"}
+                </span>{" "}
+                <span className="text-muted">{w.message}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {plan && (
           <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Extracted profile */}
+            {/* Parties, in canonical roles */}
             <div className="rounded-md border border-line p-3">
-              <div className="text-xs uppercase tracking-wider text-muted mb-2">Extracted profile</div>
-              <ProfileChips label="Suspects" items={plan.profile.suspects} tone="text-deletion" />
-              <ProfileChips label="Victims" items={plan.profile.victims} tone="text-warn" />
-              <ProfileChips label="Other" items={plan.profile.other_entities} tone="text-ink" />
+              <div className="text-xs uppercase tracking-wider text-muted mb-2">
+                Parties (forensic nomenclature)
+              </div>
+              {plan.profile.roles.filter((r) => r.role !== "third_party").length > 0 ? (
+                <div className="space-y-1 mb-3">
+                  {plan.profile.roles
+                    .filter((r) => r.role !== "third_party")
+                    .map((r) => (
+                      <div key={r.name} className="flex items-center justify-between text-xs">
+                        <span className={r.adverse ? "text-deletion font-medium" : "text-ink"}>
+                          {r.name}
+                        </span>
+                        <span className="flex items-center gap-2">
+                          <span className="text-muted">{r.label}</span>
+                          <span className="text-[10px] text-muted font-mono">
+                            {Math.round(r.confidence * 100)}%
+                          </span>
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted mb-3">
+                  No party roles detected — name the parties and their roles for precise
+                  scoring.
+                </p>
+              )}
               <ProfileChips label="Locations" items={plan.profile.locations} tone="text-accent" />
               <ProfileChips label="Keywords" items={plan.profile.keywords} tone="text-muted" />
             </div>
+
             {/* Priority plan */}
             <div className="rounded-md border border-line p-3">
               <div className="text-xs uppercase tracking-wider text-muted mb-2">
@@ -255,6 +338,16 @@ export function AcquisitionView({
                         {a.collect ? "●" : "○"}
                       </span>
                       {a.label}
+                      {a.adjustment && (
+                        <span
+                          className={
+                            a.adjustment === "promoted" ? "text-live" : "text-warn"
+                          }
+                          title={a.evidence.join(" · ")}
+                        >
+                          {a.adjustment === "promoted" ? "▲" : "▼"}
+                        </span>
+                      )}
                     </span>
                     <span className="flex items-center gap-1.5">
                       <PriorityPill p={a.priority} />
@@ -267,9 +360,79 @@ export function AcquisitionView({
                 <div className="text-[11px] text-muted mt-2 leading-relaxed border-t border-line pt-2">
                   Opt-in (not auto-collected, logged):{" "}
                   {plan.plan.deprioritised.map((d) => d.label).join(", ")}.
+                  {plan.plan.estimated_savings.estimated_minutes_saved > 0 && (
+                    <>
+                      {" "}
+                      Deferring these saves roughly{" "}
+                      {plan.plan.estimated_savings.estimated_minutes_saved} of{" "}
+                      {plan.plan.estimated_savings.estimated_minutes_full_run} minutes
+                      ({plan.plan.estimated_savings.basis}).
+                    </>
+                  )}
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Actionable precedent: a similar case was solved on something we're skipping */}
+        {plan && plan.plan.recommendations.length > 0 && (
+          <div className="mt-4 rounded-md border border-warn/50 bg-warn/5 p-3">
+            <div className="text-xs uppercase tracking-wider text-warn mb-2">
+              Prior cases suggest reconsidering
+            </div>
+            <div className="space-y-2">
+              {plan.plan.recommendations.map((r) => (
+                <div key={r.artifact} className="text-xs">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-ink">{r.message}</span>
+                    {r.pipeline_flag && (
+                      <button
+                        className="btn-ghost shrink-0"
+                        onClick={() => enableRecommendation(r.pipeline_flag!)}
+                      >
+                        Enable
+                      </button>
+                    )}
+                  </div>
+                  {r.reasons.slice(0, 1).map((reason, i) => (
+                    <div key={i} className="text-[11px] text-muted mt-0.5">
+                      {reason}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Retrieved precedent, with provenance */}
+        {plan && plan.plan.precedents.length > 0 && (
+          <div className="mt-4 rounded-md border border-line p-3">
+            <div className="text-xs uppercase tracking-wider text-muted mb-2">
+              Prior-case studies consulted
+            </div>
+            <div className="space-y-1.5">
+              {plan.plan.precedents.map((p) => (
+                <div key={p.case_number} className="text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[11px] text-accent">{p.case_number}</span>
+                    <span className="text-ink truncate">{p.title}</span>
+                    <span className="text-[10px] text-muted font-mono ml-auto shrink-0">
+                      {p.score.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-muted">
+                    Solved by: {p.decisive_artifacts.join(", ") || "—"} · {p.source}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-warn mt-2 leading-relaxed border-t border-line pt-2">
+              These studies rank artifacts for collection planning only. They are not
+              evidence in this case and carry no precedential weight. Entries marked
+              synthetic are expert-curated teaching exemplars, not real case records.
+            </p>
           </div>
         )}
       </div>

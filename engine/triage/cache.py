@@ -59,6 +59,9 @@ _CACHE_ROOT = Path("cases") / "cache"
 #: Default max cache age in seconds (1 hour).
 DEFAULT_MAX_AGE: int = 3600
 
+#: 24-hour cache expiry in seconds.
+CACHE_24H: int = 86400
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -201,3 +204,77 @@ def clear_cache(key: Optional[str] = None) -> None:
                 except OSError:
                     pass
             logger.debug("Cache cleared: %d entries removed", removed)
+
+
+# ---------------------------------------------------------------------------
+# Task 6: Aggressive Caching (24-Hour)
+# ---------------------------------------------------------------------------
+
+def set(key: str, data: Any) -> None:
+    """Cache data with 24-hour expiry."""
+    set_cached_data(key, data)
+
+
+def get(key: str) -> Optional[Any]:
+    """Get cached data if fresh (within 24 hours)."""
+    return get_cached_data(key, max_age=CACHE_24H)
+
+
+def cleanup_expired(max_age: int = CACHE_24H) -> None:
+    """Remove expired cache entries."""
+    if not _CACHE_ROOT.is_dir():
+        return
+        
+    now = time.time()
+    for f in _CACHE_ROOT.glob("cache_*.json"):
+        try:
+            envelope = json.loads(f.read_text(encoding="utf-8"))
+            saved_at = float(envelope.get("saved_at_epoch", 0))
+            if (now - saved_at) > max_age:
+                f.unlink()
+        except Exception:
+            # Corrupted cache file, safe to remove
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+
+def get_cache_size() -> int:
+    """Get total cache size in bytes."""
+    if not _CACHE_ROOT.is_dir():
+        return 0
+    return sum(f.stat().st_size for f in _CACHE_ROOT.glob("cache_*.json") if f.is_file())
+
+
+def get_cache_stats(max_age: int = CACHE_24H) -> Dict[str, int]:
+    """Get cache statistics."""
+    stats = {
+        "total": 0,
+        "fresh": 0,
+        "expired": 0,
+        "size_bytes": 0
+    }
+    
+    if not _CACHE_ROOT.is_dir():
+        return stats
+        
+    now = time.time()
+    for f in _CACHE_ROOT.glob("cache_*.json"):
+        if not f.is_file():
+            continue
+            
+        stats["total"] += 1
+        stats["size_bytes"] += f.stat().st_size
+        
+        try:
+            envelope = json.loads(f.read_text(encoding="utf-8"))
+            saved_at = float(envelope.get("saved_at_epoch", 0))
+            if (now - saved_at) <= max_age:
+                stats["fresh"] += 1
+            else:
+                stats["expired"] += 1
+        except Exception:
+            stats["expired"] += 1
+            
+    return stats
