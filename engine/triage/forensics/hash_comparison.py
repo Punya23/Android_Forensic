@@ -3,6 +3,7 @@
 Provides functionality to compare hashes of two different acquisitions,
 identifying files that are new, missing, identical, or modified (different hash).
 """
+
 from __future__ import annotations
 
 import json
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 def load_case_hashes(case_dir: Path) -> Dict[str, str]:
     """Load hashes from a case's manifest.json.
-    
+
     Returns:
         Dict mapping sha256 to original file path (or stored path if preferred,
         but typically we map by path to compare hashes, or by hash to find dupes).
@@ -24,7 +25,7 @@ def load_case_hashes(case_dir: Path) -> Dict[str, str]:
     manifest_path = case_dir / "manifest.json"
     if not manifest_path.exists():
         return {}
-        
+
     hash_map = {}
     try:
         with open(manifest_path, "r", encoding="utf-8") as f:
@@ -38,13 +39,15 @@ def load_case_hashes(case_dir: Path) -> Dict[str, str]:
                     hash_map[path] = sha256
     except Exception as exc:
         logger.error("Failed to load hashes from %s: %s", case_dir, exc)
-        
+
     return hash_map
 
 
-def get_hash_differences(hash_map1: Dict[str, str], hash_map2: Dict[str, str]) -> Dict[str, List[str]]:
+def get_hash_differences(
+    hash_map1: Dict[str, str], hash_map2: Dict[str, str]
+) -> Dict[str, List[str]]:
     """Get differences between two hash maps (paths -> hashes).
-    
+
     Returns:
         Dict with keys: 'different', 'missing', 'new', 'same'
     """
@@ -52,7 +55,7 @@ def get_hash_differences(hash_map1: Dict[str, str], hash_map2: Dict[str, str]) -
     different = []
     missing = []
     new = []
-    
+
     # Check what's in map1 vs map2
     for path, hash1 in hash_map1.items():
         if path in hash_map2:
@@ -63,36 +66,31 @@ def get_hash_differences(hash_map1: Dict[str, str], hash_map2: Dict[str, str]) -
                 different.append(path)
         else:
             missing.append(path)
-            
+
     # Check what's new in map2
     for path in hash_map2:
         if path not in hash_map1:
             new.append(path)
-            
-    return {
-        "same": same,
-        "different": different,
-        "missing": missing,
-        "new": new
-    }
+
+    return {"same": same, "different": different, "missing": missing, "new": new}
 
 
 def get_similarity_score(case1: Path, case2: Path) -> float:
     """Calculate similarity score between cases based on identical hashes (0-100)."""
     hash_map1 = load_case_hashes(case1)
     hash_map2 = load_case_hashes(case2)
-    
+
     if not hash_map1 and not hash_map2:
         return 100.0
     if not hash_map1 or not hash_map2:
         return 0.0
-        
+
     differences = get_hash_differences(hash_map1, hash_map2)
     total_unique_paths = len(hash_map1) + len(differences["new"])
-    
+
     if total_unique_paths == 0:
         return 100.0
-        
+
     same_count = len(differences["same"])
     return (same_count / total_unique_paths) * 100.0
 
@@ -101,16 +99,16 @@ def compare_hashes(case1: Path, case2: Path) -> Dict[str, Any]:
     """Compare hashes between two cases and return a summary dictionary."""
     hash_map1 = load_case_hashes(case1)
     hash_map2 = load_case_hashes(case2)
-    
+
     differences = get_hash_differences(hash_map1, hash_map2)
-    
+
     total1 = len(hash_map1)
     total2 = len(hash_map2)
-    
+
     total_unique = total1 + len(differences["new"])
     same_count = len(differences["same"])
     score = (same_count / total_unique * 100.0) if total_unique > 0 else 100.0
-    
+
     return {
         "same": differences["same"],
         "different": differences["different"],
@@ -123,8 +121,8 @@ def compare_hashes(case1: Path, case2: Path) -> Dict[str, Any]:
             "modified": len(differences["different"]),
             "removed": len(differences["missing"]),
             "added": len(differences["new"]),
-            "similarity_score": score
-        }
+            "similarity_score": score,
+        },
     }
 
 
@@ -132,13 +130,13 @@ def generate_comparison_report(case1: Path, case2: Path) -> str:
     """Generate HTML comparison report."""
     results = compare_hashes(case1, case2)
     summary = results["summary"]
-    
+
     c1_name = case1.name
     c2_name = case2.name
-    
-    score = summary['similarity_score']
+
+    score = summary["similarity_score"]
     score_color = "#10b981" if score > 90 else "#f59e0b" if score > 70 else "#ef4444"
-    
+
     def _create_list_html(items, title):
         if not items:
             return ""

@@ -23,6 +23,7 @@ Usage::
     summary = generate_location_summary(locations)
     generate_location_html_summary(locations, output_path=Path("report/location.html"))
 """
+
 from __future__ import annotations
 
 import html as _html_mod
@@ -41,6 +42,7 @@ from .location_timeline import build_location_timeline, plot_locations_on_map
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _iso_to_epoch(ts: Optional[str]) -> Optional[float]:
     if not ts:
@@ -69,12 +71,15 @@ def _esc(s: Any) -> str:
 
 
 def _sev_color(severity: str) -> str:
-    return {"critical": "#ef4444", "warn": "#f59e0b", "info": "#60a5fa"}.get(severity, "#94a3b8")
+    return {"critical": "#ef4444", "warn": "#f59e0b", "info": "#60a5fa"}.get(
+        severity, "#94a3b8"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Public API — statistics helpers
 # ---------------------------------------------------------------------------
+
 
 def get_location_statistics(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Compute basic statistics for a list of GPS locations.
@@ -98,7 +103,7 @@ def get_location_statistics(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
             }
     """
     timeline = build_location_timeline(locations)
-    stats    = timeline.get("statistics", {})
+    stats = timeline.get("statistics", {})
 
     with_gps = sum(1 for loc in locations if _flat_lat_lon(loc)[0] is not None)
     clusters = cluster_gps_points(locations, radius_km=0.5)
@@ -117,13 +122,13 @@ def get_location_statistics(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
     movement_pattern = movement_result.get("overall", "unknown")
 
     return {
-        "count":            stats.get("total", len(locations)),
-        "with_gps":         with_gps,
-        "unique_places":    unique_places,
-        "time_span":        time_span,
-        "time_span_days":   span_days,
-        "first_event":      stats.get("first_event"),
-        "last_event":       stats.get("last_event"),
+        "count": stats.get("total", len(locations)),
+        "with_gps": with_gps,
+        "unique_places": unique_places,
+        "time_span": time_span,
+        "time_span_days": span_days,
+        "first_event": stats.get("first_event"),
+        "last_event": stats.get("last_event"),
         "movement_pattern": movement_pattern,
     }
 
@@ -148,10 +153,10 @@ def get_place_statistics(places: List[Dict[str, Any]]) -> Dict[str, Any]:
     work = next((p for p in places if p.get("place_type") == "work"), None)
     frequent = [p for p in places if p.get("place_type") == "frequent"]
     return {
-        "home":            home,
-        "work":            work,
+        "home": home,
+        "work": work,
         "frequent_places": frequent,
-        "total_places":    len(places),
+        "total_places": len(places),
     }
 
 
@@ -171,22 +176,23 @@ def get_anomaly_statistics(anomalies: List[Dict[str, Any]]) -> Dict[str, Any]:
             }
     """
     by_type: Dict[str, int] = {}
-    by_sev:  Dict[str, int] = {}
+    by_sev: Dict[str, int] = {}
     for a in anomalies:
         t = a.get("type", "unknown")
         s = a.get("severity", "info")
         by_type[t] = by_type.get(t, 0) + 1
-        by_sev[s]  = by_sev.get(s, 0) + 1
+        by_sev[s] = by_sev.get(s, 0) + 1
     return {
         "total_anomalies": len(anomalies),
-        "by_type":         by_type,
-        "by_severity":     by_sev,
+        "by_type": by_type,
+        "by_severity": by_sev,
     }
 
 
 # ---------------------------------------------------------------------------
 # Public API — orchestration
 # ---------------------------------------------------------------------------
+
 
 def generate_location_summary(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Generate a comprehensive summary of all location data.
@@ -213,27 +219,28 @@ def generate_location_summary(locations: List[Dict[str, Any]]) -> Dict[str, Any]
             }
     """
     loc_stats = get_location_statistics(locations)
-    places    = identify_places_from_locations(locations)
-    movement  = detect_movement_pattern(locations)
+    places = identify_places_from_locations(locations)
+    movement = detect_movement_pattern(locations)
     anomalies = detect_location_anomalies(locations)
     anom_stats = get_anomaly_statistics(anomalies)
 
     return {
-        "total_locations":  loc_stats["count"],
-        "unique_places":    loc_stats["unique_places"],
-        "time_span":        loc_stats["time_span"],
+        "total_locations": loc_stats["count"],
+        "unique_places": loc_stats["unique_places"],
+        "time_span": loc_stats["time_span"],
         "movement_pattern": loc_stats["movement_pattern"],
-        "statistics":       loc_stats,
-        "places":           places,
-        "movement":         movement,
-        "anomalies":        anomalies,
-        "anomaly_stats":    anom_stats,
+        "statistics": loc_stats,
+        "places": places,
+        "movement": movement,
+        "anomalies": anomalies,
+        "anomaly_stats": anom_stats,
     }
 
 
 # ---------------------------------------------------------------------------
 # Public API — HTML report
 # ---------------------------------------------------------------------------
+
 
 def generate_location_html_summary(
     locations: List[Dict[str, Any]],
@@ -256,11 +263,11 @@ def generate_location_html_summary(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    summary   = generate_location_summary(locations)
-    places    = summary["places"]
-    movement  = summary["movement"]
+    summary = generate_location_summary(locations)
+    places = summary["places"]
+    movement = summary["movement"]
     anomalies = summary["anomalies"]
-    stats     = summary["statistics"]
+    stats = summary["statistics"]
     mov_stats = movement.get("statistics", {})
 
     # --- Folium map (optional) ---
@@ -272,17 +279,20 @@ def generate_location_html_summary(
             map_html = map_path.read_text(encoding="utf-8")
             # Strip everything outside <body>...</body> for inline embedding.
             import re as _re
-            m = _re.search(r"<body[^>]*>(.*?)</body>", map_html, _re.DOTALL | _re.IGNORECASE)
+
+            m = _re.search(
+                r"<body[^>]*>(.*?)</body>", map_html, _re.DOTALL | _re.IGNORECASE
+            )
             map_html = m.group(1).strip() if m else map_html
     except Exception:
         map_html = _fallback_map_table(locations)
 
     # --- Render sections ---
-    stats_cards     = _render_stats_cards(stats, movement)
+    stats_cards = _render_stats_cards(stats, movement)
     movement_section = _render_movement_section(movement)
-    places_section  = _render_places_section(places)
+    places_section = _render_places_section(places)
     anomaly_section = _render_anomaly_section(anomalies, summary["anomaly_stats"])
-    map_section     = f'<div class="map-wrap">{map_html}</div>'
+    map_section = f'<div class="map-wrap">{map_html}</div>'
 
     html = _HTML_TEMPLATE.format(
         stats_cards=stats_cards,
@@ -298,34 +308,53 @@ def generate_location_html_summary(
 # HTML rendering helpers
 # ---------------------------------------------------------------------------
 
+
 def _render_stats_cards(stats: Dict[str, Any], movement: Dict[str, Any]) -> str:
     cards = [
-        ("📍 Total Locations",   stats.get("count", 0),           "#60a5fa"),
-        ("🗺 With GPS",          stats.get("with_gps", 0),         "#34d399"),
-        ("📌 Unique Places",     stats.get("unique_places", 0),    "#a78bfa"),
-        ("⏱ Time Span",         _esc(stats.get("time_span", "—")), "#f59e0b"),
-        ("🚶 Movement",          _esc(stats.get("movement_pattern", "unknown")), "#fb7185"),
-        ("📏 Total Distance",    f"{movement.get('statistics', {}).get('total_distance', 0):.1f} km", "#38bdf8"),
-        ("⚡ Max Speed",         f"{movement.get('statistics', {}).get('max_speed', 0):.1f} km/h", "#e879f9"),
-        ("🛑 Stationary Periods", len(movement.get("stationary_periods", [])), "#94a3b8"),
+        ("📍 Total Locations", stats.get("count", 0), "#60a5fa"),
+        ("🗺 With GPS", stats.get("with_gps", 0), "#34d399"),
+        ("📌 Unique Places", stats.get("unique_places", 0), "#a78bfa"),
+        ("⏱ Time Span", _esc(stats.get("time_span", "—")), "#f59e0b"),
+        ("🚶 Movement", _esc(stats.get("movement_pattern", "unknown")), "#fb7185"),
+        (
+            "📏 Total Distance",
+            f"{movement.get('statistics', {}).get('total_distance', 0):.1f} km",
+            "#38bdf8",
+        ),
+        (
+            "⚡ Max Speed",
+            f"{movement.get('statistics', {}).get('max_speed', 0):.1f} km/h",
+            "#e879f9",
+        ),
+        (
+            "🛑 Stationary Periods",
+            len(movement.get("stationary_periods", [])),
+            "#94a3b8",
+        ),
     ]
     parts = []
     for label, value, color in cards:
-        parts.append(f"""
+        parts.append(
+            f"""
         <div class="stat-card" style="border-top:3px solid {color}">
             <div class="stat-value" style="color:{color}">{value}</div>
             <div class="stat-label">{label}</div>
-        </div>""")
+        </div>"""
+        )
     return "".join(parts)
 
 
 def _render_movement_section(movement: Dict[str, Any]) -> str:
     overall = _esc(movement.get("overall", "unknown"))
     seg_rows = ""
-    for seg in movement.get("segments", [])[:50]:   # cap for readability
+    for seg in movement.get("segments", [])[:50]:  # cap for readability
         mt = _esc(seg.get("movement_type", ""))
-        color = {"stationary": "#94a3b8", "walking": "#34d399",
-                 "biking": "#f59e0b", "driving": "#ef4444"}.get(seg.get("movement_type", ""), "#e2e8f0")
+        color = {
+            "stationary": "#94a3b8",
+            "walking": "#34d399",
+            "biking": "#f59e0b",
+            "driving": "#ef4444",
+        }.get(seg.get("movement_type", ""), "#e2e8f0")
         seg_rows += f"""
         <tr>
             <td>{_esc(seg.get('from_timestamp', '—'))}</td>
@@ -365,21 +394,21 @@ def _render_places_section(places: Dict[str, Any]) -> str:
         if not place:
             return f'<tr><td><b>{label}</b></td><td colspan="4" class="muted">Not identified</td></tr>'
         center = place.get("center", {})
-        lat    = center.get("lat", "—")
-        lon    = center.get("lon", "—")
-        conf   = place.get("confidence", 0)
+        lat = center.get("lat", "—")
+        lon = center.get("lon", "—")
+        conf = place.get("confidence", 0)
         visits = place.get("count", 0)
-        name   = _esc(place.get("place_name", ""))
+        name = _esc(place.get("place_name", ""))
         return (
-            f'<tr><td><b>{label}</b></td>'
-            f'<td>{name}</td>'
-            f'<td>{lat:.6f}, {lon:.6f}</td>'
-            f'<td>{visits}</td>'
-            f'<td>{conf:.0%}</td></tr>'
+            f"<tr><td><b>{label}</b></td>"
+            f"<td>{name}</td>"
+            f"<td>{lat:.6f}, {lon:.6f}</td>"
+            f"<td>{visits}</td>"
+            f"<td>{conf:.0%}</td></tr>"
         )
 
-    home_row = place_row("🏠 Home",  places.get("home"))
-    work_row = place_row("🏢 Work",  places.get("work"))
+    home_row = place_row("🏠 Home", places.get("home"))
+    work_row = place_row("🏢 Work", places.get("work"))
 
     freq_rows = ""
     for i, fp in enumerate(places.get("frequent_places", [])[:10], 1):
@@ -387,14 +416,14 @@ def _render_places_section(places: Dict[str, Any]) -> str:
         lat = center.get("lat", "—")
         lon = center.get("lon", "—")
         visits = fp.get("count", 0)
-        conf   = fp.get("confidence", 0)
-        name   = _esc(fp.get("place_name", ""))
+        conf = fp.get("confidence", 0)
+        name = _esc(fp.get("place_name", ""))
         freq_rows += (
-            f'<tr><td>#{i} Frequent</td>'
-            f'<td>{name}</td>'
-            f'<td>{lat:.6f}, {lon:.6f}</td>'
-            f'<td>{visits}</td>'
-            f'<td>{conf:.0%}</td></tr>'
+            f"<tr><td>#{i} Frequent</td>"
+            f"<td>{name}</td>"
+            f"<td>{lat:.6f}, {lon:.6f}</td>"
+            f"<td>{visits}</td>"
+            f"<td>{conf:.0%}</td></tr>"
         )
 
     return f"""
@@ -421,12 +450,14 @@ def _render_anomaly_section(
 
     rows = ""
     for a in anomalies:
-        sev   = a.get("severity", "info")
+        sev = a.get("severity", "info")
         color = _sev_color(sev)
-        loc   = a.get("location", {})
-        lat   = loc.get("lat")
-        lon   = loc.get("lon")
-        coord = f"{lat:.5f}, {lon:.5f}" if (lat is not None and lon is not None) else "—"
+        loc = a.get("location", {})
+        lat = loc.get("lat")
+        lon = loc.get("lon")
+        coord = (
+            f"{lat:.5f}, {lon:.5f}" if (lat is not None and lon is not None) else "—"
+        )
         rows += f"""
         <tr>
             <td><span class="badge" style="background:{color}">{_esc(sev.upper())}</span></td>
@@ -459,7 +490,9 @@ def _fallback_map_table(locations: List[Dict[str, Any]]) -> str:
     for loc in locations:
         lat, lon = _flat_lat_lon(loc)
         if lat is not None and lon is not None:
-            gps_locs.append((lat, lon, loc.get("timestamp", "—"), loc.get("source", "—")))
+            gps_locs.append(
+                (lat, lon, loc.get("timestamp", "—"), loc.get("source", "—"))
+            )
     for lat, lon, ts, src in gps_locs[:100]:
         rows += f"<tr><td>{ts}</td><td>{lat:.6f}</td><td>{lon:.6f}</td><td>{_esc(src)}</td></tr>"
     return f"""

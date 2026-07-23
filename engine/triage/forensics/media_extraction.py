@@ -6,6 +6,7 @@ Pulls media files in phases:
 3. Large images (background)
 4. Videos (on-demand / skipped)
 """
+
 from __future__ import annotations
 
 import logging
@@ -56,7 +57,9 @@ def extract_thumbnails(media_root: Path, adb: Adb) -> List[Dict]:
     return thumbs
 
 
-def extract_small_images(media_root: Path, adb: Adb, max_size_mb: int = 5) -> List[Dict]:
+def extract_small_images(
+    media_root: Path, adb: Adb, max_size_mb: int = 5
+) -> List[Dict]:
     """Extract images under max_size_mb."""
     small_imgs: List[Dict] = []
     files = adb.list_files(str(media_root), timeout=30)
@@ -71,12 +74,17 @@ def extract_small_images(media_root: Path, adb: Adb, max_size_mb: int = 5) -> Li
     return small_imgs
 
 
-def extract_large_images_background(media_root: Path, adb: Adb, callback: Callable) -> None:
+def extract_large_images_background(
+    media_root: Path, adb: Adb, callback: Callable
+) -> None:
     """Extract large images in background thread."""
+
     def _worker():
         files = adb.list_files(str(media_root), timeout=30)
         for f in files:
-            if any(f.lower().endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")):
+            if any(
+                f.lower().endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")
+            ):
                 size = get_media_file_size(f, adb)
                 if size > 5 * 1024 * 1024:
                     callback(f, size)
@@ -105,5 +113,5 @@ def should_extract_media(device_path: str, elapsed_time: float) -> bool:
     if elapsed_time < PHASE_1_LIMIT_S:
         return "/.thumbnails/" in device_path
     if elapsed_time < PHASE_2_LIMIT_S:
-        return True # allow small images (size check done elsewhere)
-    return True # allow all
+        return True  # allow small images (size check done elsewhere)
+    return True  # allow all

@@ -13,6 +13,7 @@ Typical usage::
     locations = [{"lat": 28.61, "lon": 77.20, "timestamp": "2024-03-01T09:00:00Z"}, ...]
     clusters  = cluster_gps_points(locations, radius_km=0.5)
 """
+
 from __future__ import annotations
 
 import calendar
@@ -31,6 +32,7 @@ _EARTH_RADIUS_KM = 6371.0
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _iso_to_epoch(ts: Optional[str]) -> Optional[float]:
     """Convert an ISO-8601 UTC string to a Unix float. Returns None on failure."""
@@ -53,6 +55,7 @@ def _epoch_to_iso(epoch: float) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculate the great-circle distance in kilometres between two GPS points.
 
@@ -72,7 +75,10 @@ def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     phi2 = math.radians(lat2)
     d_phi = math.radians(lat2 - lat1)
     d_lam = math.radians(lon2 - lon1)
-    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lam / 2) ** 2
+    a = (
+        math.sin(d_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lam / 2) ** 2
+    )
     return 2 * _EARTH_RADIUS_KM * math.asin(math.sqrt(a))
 
 
@@ -163,13 +169,12 @@ def get_cluster_visit_pattern(cluster: Dict[str, Any]) -> Dict[str, Any]:
 
     epochs.sort()
     first_visit = _epoch_to_iso(epochs[0])
-    last_visit  = _epoch_to_iso(epochs[-1])
+    last_visit = _epoch_to_iso(epochs[-1])
     visit_count = len(epochs)
 
     if visit_count >= 2:
         gaps_hours = [
-            (epochs[i] - epochs[i - 1]) / 3600.0
-            for i in range(1, len(epochs))
+            (epochs[i] - epochs[i - 1]) / 3600.0 for i in range(1, len(epochs))
         ]
         average_duration = sum(gaps_hours) / len(gaps_hours)
     else:
@@ -271,11 +276,13 @@ def cluster_gps_points(
             cl["center_lon"] = (cl["center_lon"] * (n - 1) + p_lon) / n
         else:
             # Start a new single-point cluster.
-            clusters.append({
-                "center_lat": p_lat,
-                "center_lon": p_lon,
-                "points": [point],
-            })
+            clusters.append(
+                {
+                    "center_lat": p_lat,
+                    "center_lon": p_lon,
+                    "points": [point],
+                }
+            )
 
     # Build final output dicts.
     result: List[Dict[str, Any]] = []
@@ -284,21 +291,23 @@ def cluster_gps_points(
         timestamps = sorted(
             filter(None, (_iso_to_epoch(p.get("timestamp")) for p in pts))
         )
-        first_visit = _epoch_to_iso(timestamps[0])  if timestamps else None
-        last_visit  = _epoch_to_iso(timestamps[-1]) if timestamps else None
+        first_visit = _epoch_to_iso(timestamps[0]) if timestamps else None
+        last_visit = _epoch_to_iso(timestamps[-1]) if timestamps else None
 
         center = {
             "lat": round(cl["center_lat"], 8),
             "lon": round(cl["center_lon"], 8),
         }
-        result.append({
-            "center":      center,
-            "points":      pts,
-            "count":       len(pts),
-            "first_visit": first_visit,
-            "last_visit":  last_visit,
-            "bounds":      get_cluster_bounds(pts),
-        })
+        result.append(
+            {
+                "center": center,
+                "points": pts,
+                "count": len(pts),
+                "first_visit": first_visit,
+                "last_visit": last_visit,
+                "bounds": get_cluster_bounds(pts),
+            }
+        )
 
     # Sort by descending point count (most-visited place first).
     result.sort(key=lambda c: c["count"], reverse=True)

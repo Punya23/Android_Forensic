@@ -16,6 +16,7 @@ Usage::
     places = identify_places_from_locations(locations)
     # places == {'home': {...}, 'work': {...}, 'frequent_places': [...]}
 """
+
 from __future__ import annotations
 
 import calendar
@@ -30,17 +31,18 @@ from .gps_clustering import cluster_gps_points, get_cluster_center
 # Constants
 # ---------------------------------------------------------------------------
 
-_NIGHT_START_H = 22   # 10 PM UTC
-_NIGHT_END_H   = 6    # 6 AM UTC
-_WORK_START_H  = 9    # 9 AM UTC
-_WORK_END_H    = 17   # 5 PM UTC
+_NIGHT_START_H = 22  # 10 PM UTC
+_NIGHT_END_H = 6  # 6 AM UTC
+_WORK_START_H = 9  # 9 AM UTC
+_WORK_END_H = 17  # 5 PM UTC
 _DEFAULT_MIN_VISITS = 3
-_CLUSTER_RADIUS_KM  = 0.5
+_CLUSTER_RADIUS_KM = 0.5
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _iso_to_epoch(ts: Optional[str]) -> Optional[float]:
     """Convert an ISO-8601 UTC string to a Unix float. Returns None on failure."""
@@ -68,7 +70,7 @@ def _utc_weekday(ts: Optional[str]) -> Optional[int]:
     ep = _iso_to_epoch(ts)
     if ep is None:
         return None
-    return time.gmtime(ep).tm_wday   # 0=Mon, 6=Sun
+    return time.gmtime(ep).tm_wday  # 0=Mon, 6=Sun
 
 
 def _is_night(ts: Optional[str]) -> bool:
@@ -85,7 +87,7 @@ def _is_work_hours(ts: Optional[str]) -> bool:
     wd = _utc_weekday(ts)
     if h is None or wd is None:
         return False
-    return wd <= 4 and _WORK_START_H <= h < _WORK_END_H   # Mon–Fri
+    return wd <= 4 and _WORK_START_H <= h < _WORK_END_H  # Mon–Fri
 
 
 def _filter_by_hour(locations: List[Dict[str, Any]], pred) -> List[Dict[str, Any]]:
@@ -96,6 +98,7 @@ def _filter_by_hour(locations: List[Dict[str, Any]], pred) -> List[Dict[str, Any
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def get_place_name(lat: float, lon: float) -> str:
     """Get a human-readable place name from coordinates.
@@ -144,7 +147,7 @@ def calculate_place_confidence(place: Dict[str, Any]) -> float:
 
     # Time-span score: days between first and last visit (saturates at 30).
     ep_first = _iso_to_epoch(place.get("first_visit"))
-    ep_last  = _iso_to_epoch(place.get("last_visit"))
+    ep_last = _iso_to_epoch(place.get("last_visit"))
     if ep_first is not None and ep_last is not None and ep_last > ep_first:
         span_days = (ep_last - ep_first) / 86400.0
         span_score = min(span_days / 30.0, 1.0)
@@ -176,11 +179,11 @@ def identify_home_location(locations: List[Dict[str, Any]]) -> Optional[Dict[str
     clusters = cluster_gps_points(night_locs, radius_km=_CLUSTER_RADIUS_KM)
     if not clusters:
         return None
-    best = clusters[0]   # already sorted by count descending
+    best = clusters[0]  # already sorted by count descending
     center = best["center"]
-    best["place_type"]  = "home"
-    best["place_name"]  = get_place_name(center["lat"], center["lon"])
-    best["confidence"]  = calculate_place_confidence(best)
+    best["place_type"] = "home"
+    best["place_name"] = get_place_name(center["lat"], center["lon"])
+    best["confidence"] = calculate_place_confidence(best)
     return best
 
 
@@ -207,9 +210,9 @@ def identify_work_location(locations: List[Dict[str, Any]]) -> Optional[Dict[str
         return None
     best = clusters[0]
     center = best["center"]
-    best["place_type"]  = "work"
-    best["place_name"]  = get_place_name(center["lat"], center["lon"])
-    best["confidence"]  = calculate_place_confidence(best)
+    best["place_type"] = "work"
+    best["place_name"] = get_place_name(center["lat"], center["lon"])
+    best["confidence"] = calculate_place_confidence(best)
     return best
 
 
@@ -237,9 +240,9 @@ def identify_frequent_places(
     for cl in clusters:
         if cl["count"] >= min_visits:
             center = cl["center"]
-            cl["place_type"]  = "frequent"
-            cl["place_name"]  = get_place_name(center["lat"], center["lon"])
-            cl["confidence"]  = calculate_place_confidence(cl)
+            cl["place_type"] = "frequent"
+            cl["place_name"] = get_place_name(center["lat"], center["lon"])
+            cl["confidence"] = calculate_place_confidence(cl)
             result.append(cl)
     return result
 
@@ -278,18 +281,20 @@ def identify_places_from_locations(locations: List[Dict[str, Any]]) -> Dict[str,
         else:
             flat.append(loc)
 
-    gps_locs = [l for l in flat if l.get("lat") is not None and l.get("lon") is not None]
+    gps_locs = [
+        l for l in flat if l.get("lat") is not None and l.get("lon") is not None
+    ]
 
-    home   = identify_home_location(gps_locs)
-    work   = identify_work_location(gps_locs)
+    home = identify_home_location(gps_locs)
+    work = identify_work_location(gps_locs)
     frequent = identify_frequent_places(gps_locs)
 
     all_clusters = cluster_gps_points(gps_locs, radius_km=_CLUSTER_RADIUS_KM)
 
     return {
-        "home":             home,
-        "work":             work,
-        "frequent_places":  frequent,
-        "total_clusters":   len(all_clusters),
+        "home": home,
+        "work": work,
+        "frequent_places": frequent,
+        "total_clusters": len(all_clusters),
         "total_gps_points": len(gps_locs),
     }

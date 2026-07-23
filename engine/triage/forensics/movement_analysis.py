@@ -19,6 +19,7 @@ Usage::
     #     'statistics': {...},
     # }
 """
+
 from __future__ import annotations
 
 import calendar
@@ -34,9 +35,9 @@ from .gps_clustering import calculate_distance
 # ---------------------------------------------------------------------------
 
 # Movement type thresholds (km/h).
-_STATIONARY_MAX   = 5.0
-_WALKING_MAX      = 15.0
-_BIKING_MAX       = 30.0
+_STATIONARY_MAX = 5.0
+_WALKING_MAX = 15.0
+_BIKING_MAX = 30.0
 # > 30 km/h → driving
 
 # Minimum stationary duration to record as a stationary period (minutes).
@@ -49,6 +50,7 @@ _MIN_TIME_DELTA_S = 1.0
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _iso_to_epoch(ts: Optional[str]) -> Optional[float]:
     """Convert an ISO-8601 UTC string to a Unix float. Returns None on failure."""
@@ -86,6 +88,7 @@ def _sort_by_time(locations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def get_time_between_points(p1: Dict[str, Any], p2: Dict[str, Any]) -> float:
     """Calculate the time elapsed between two GPS points in hours.
@@ -134,7 +137,7 @@ def calculate_speed(prev: Dict[str, Any], curr: Dict[str, Any]) -> float:
         return 0.0
 
     dist_km = calculate_distance(float(lat1), float(lon1), float(lat2), float(lon2))
-    time_h  = time_s / 3600.0
+    time_h = time_s / 3600.0
     return dist_km / time_h if time_h > 0 else 0.0
 
 
@@ -230,22 +233,24 @@ def _maybe_add_period(
 ) -> None:
     """Helper: add a stationary period if it exceeds the minimum duration."""
     ep_start = _iso_to_epoch(valid[start_idx].get("timestamp"))
-    ep_end   = _iso_to_epoch(valid[end_idx].get("timestamp"))
+    ep_end = _iso_to_epoch(valid[end_idx].get("timestamp"))
     if ep_start is None or ep_end is None:
         return
-    duration_h   = abs(ep_end - ep_start) / 3600.0
+    duration_h = abs(ep_end - ep_start) / 3600.0
     duration_min = duration_h * 60.0
     if duration_min < _MIN_STATIONARY_MINUTES:
         return
 
     lat, lon = _flat_lat_lon(valid[start_idx])
-    periods.append({
-        "start":    valid[start_idx]["timestamp"],
-        "end":      valid[end_idx]["timestamp"],
-        "duration": round(duration_h, 4),
-        "lat":      lat,
-        "lon":      lon,
-    })
+    periods.append(
+        {
+            "start": valid[start_idx]["timestamp"],
+            "end": valid[end_idx]["timestamp"],
+            "duration": round(duration_h, 4),
+            "lat": lat,
+            "lon": lon,
+        }
+    )
 
 
 def calculate_movement_statistics(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -280,11 +285,11 @@ def calculate_movement_statistics(locations: List[Dict[str, Any]]) -> Dict[str, 
 
     stats: Dict[str, Any] = {
         "total_distance": 0.0,
-        "avg_speed":      0.0,
-        "max_speed":      0.0,
+        "avg_speed": 0.0,
+        "max_speed": 0.0,
         "movement_types": {"stationary": 0, "walking": 0, "biking": 0, "driving": 0},
-        "segment_count":  0,
-        "total_time":     0.0,
+        "segment_count": 0,
+        "total_time": 0.0,
     }
 
     if len(valid) < 2:
@@ -292,7 +297,12 @@ def calculate_movement_statistics(locations: List[Dict[str, Any]]) -> Dict[str, 
 
     speeds: List[float] = []
     total_dist = 0.0
-    type_counts: Dict[str, int] = {"stationary": 0, "walking": 0, "biking": 0, "driving": 0}
+    type_counts: Dict[str, int] = {
+        "stationary": 0,
+        "walking": 0,
+        "biking": 0,
+        "driving": 0,
+    }
 
     for i in range(1, len(valid)):
         lat1, lon1 = _flat_lat_lon(valid[i - 1])
@@ -309,18 +319,18 @@ def calculate_movement_statistics(locations: List[Dict[str, Any]]) -> Dict[str, 
 
     # Total time between first and last valid timestamped point.
     ep_first = _iso_to_epoch(valid[0].get("timestamp"))
-    ep_last  = _iso_to_epoch(valid[-1].get("timestamp"))
+    ep_last = _iso_to_epoch(valid[-1].get("timestamp"))
     total_time = abs(ep_last - ep_first) / 3600.0 if (ep_first and ep_last) else 0.0
 
     moving_speeds = [s for s in speeds if s > 0]
     avg_speed = sum(moving_speeds) / len(moving_speeds) if moving_speeds else 0.0
 
     stats["total_distance"] = round(total_dist, 3)
-    stats["avg_speed"]      = round(avg_speed, 2)
-    stats["max_speed"]      = round(max(speeds), 2) if speeds else 0.0
+    stats["avg_speed"] = round(avg_speed, 2)
+    stats["max_speed"] = round(max(speeds), 2) if speeds else 0.0
     stats["movement_types"] = type_counts
-    stats["segment_count"]  = len(speeds)
-    stats["total_time"]     = round(total_time, 3)
+    stats["segment_count"] = len(speeds)
+    stats["total_time"] = round(total_time, 3)
     return stats
 
 
@@ -369,14 +379,16 @@ def detect_movement_pattern(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
             continue
 
         speed = calculate_speed(valid[i - 1], valid[i])
-        dist  = calculate_distance(float(lat1), float(lon1), float(lat2), float(lon2))
-        segments.append({
-            "from_timestamp": valid[i - 1].get("timestamp"),
-            "to_timestamp":   valid[i].get("timestamp"),
-            "distance_km":    round(dist, 4),
-            "speed_kmh":      round(speed, 2),
-            "movement_type":  classify_movement_type(speed),
-        })
+        dist = calculate_distance(float(lat1), float(lon1), float(lat2), float(lon2))
+        segments.append(
+            {
+                "from_timestamp": valid[i - 1].get("timestamp"),
+                "to_timestamp": valid[i].get("timestamp"),
+                "distance_km": round(dist, 4),
+                "speed_kmh": round(speed, 2),
+                "movement_type": classify_movement_type(speed),
+            }
+        )
 
     # Overall label: most common non-stationary type; fallback to 'stationary'.
     type_counts: Dict[str, int] = {}
@@ -393,8 +405,8 @@ def detect_movement_pattern(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
     stationary_periods = detect_stationary_periods(locations)
 
     return {
-        "overall":            overall,
-        "segments":           segments,
-        "statistics":         statistics,
+        "overall": overall,
+        "segments": segments,
+        "statistics": statistics,
         "stationary_periods": stationary_periods,
     }

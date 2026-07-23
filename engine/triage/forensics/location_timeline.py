@@ -26,6 +26,7 @@ Usage::
     plot_locations_on_map(locations, Path("output/map.html"))
     generate_timeline_visualization(timeline["events"], Path("output/timeline.html"))
 """
+
 from __future__ import annotations
 
 import calendar
@@ -41,6 +42,7 @@ from typing import Any, Dict, List, Optional
 
 try:
     import folium  # type: ignore
+
     _HAVE_FOLIUM = True
 except ImportError:
     _HAVE_FOLIUM = False
@@ -52,20 +54,20 @@ except ImportError:
 
 # Source-app colour palette for the map markers and timeline badges.
 _APP_COLORS: Dict[str, str] = {
-    "whatsapp":  "#25D366",
-    "telegram":  "#2AABEE",
-    "sms":       "#FF6B35",
+    "whatsapp": "#25D366",
+    "telegram": "#2AABEE",
+    "sms": "#FF6B35",
     "instagram": "#C13584",
-    "unknown":   "#888888",
+    "unknown": "#888888",
 }
 
 # Folium icon colours (limited set supported by Folium/Font Awesome)
 _APP_FOLIUM_COLORS: Dict[str, str] = {
-    "whatsapp":  "green",
-    "telegram":  "blue",
-    "sms":       "orange",
+    "whatsapp": "green",
+    "telegram": "blue",
+    "sms": "orange",
     "instagram": "purple",
-    "unknown":   "gray",
+    "unknown": "gray",
 }
 
 # Default map tile layer
@@ -75,6 +77,7 @@ _DEFAULT_TILES = "OpenStreetMap"
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _iso_to_epoch(ts: Optional[str]) -> Optional[float]:
     """Convert an ISO-8601 UTC string to a Unix float. Returns None on failure."""
@@ -103,11 +106,15 @@ def _days_between(ts1: Optional[str], ts2: Optional[str]) -> Optional[float]:
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     import math
+
     R = 6371.0
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlam = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    a = (
+        math.sin(dphi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    )
     return 2 * R * math.asin(math.sqrt(a))
 
 
@@ -133,6 +140,7 @@ def _center_of_locations(locations: List[Dict[str, Any]]) -> tuple[float, float]
 # Public API — Timeline building
 # ---------------------------------------------------------------------------
 
+
 def create_timeline_events(locations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Create structured event dicts from a list of location dicts.
 
@@ -150,20 +158,22 @@ def create_timeline_events(locations: List[Dict[str, Any]]) -> List[Dict[str, An
     """
     events: List[Dict[str, Any]] = []
     for loc in _sort_locations(locations):
-        gps  = loc.get("gps") or {}
+        gps = loc.get("gps") or {}
         path = loc.get("file", "")
-        events.append({
-            "timestamp":    loc.get("timestamp"),
-            "lat":          gps.get("lat"),
-            "lon":          gps.get("lon"),
-            "altitude":     loc.get("altitude"),
-            "file":         path,
-            "filename":     Path(path).name if path else "",
-            "source_app":   loc.get("source", "unknown"),
-            "device_make":  loc.get("device_make"),
-            "device_model": loc.get("device_model"),
-            "software":     loc.get("software"),
-        })
+        events.append(
+            {
+                "timestamp": loc.get("timestamp"),
+                "lat": gps.get("lat"),
+                "lon": gps.get("lon"),
+                "altitude": loc.get("altitude"),
+                "file": path,
+                "filename": Path(path).name if path else "",
+                "source_app": loc.get("source", "unknown"),
+                "device_make": loc.get("device_make"),
+                "device_model": loc.get("device_model"),
+                "software": loc.get("software"),
+            }
+        )
     return events
 
 
@@ -197,17 +207,17 @@ def build_location_timeline(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     timestamped = [e["timestamp"] for e in events if e.get("timestamp")]
     first_ts = min(timestamped) if timestamped else None
-    last_ts  = max(timestamped) if timestamped else None
+    last_ts = max(timestamped) if timestamped else None
     span_days = _days_between(first_ts, last_ts)
 
     return {
         "events": events,
         "statistics": {
-            "total":          len(events),
-            "with_gps":       with_gps,
-            "sources":        sources,
-            "first_event":    first_ts,
-            "last_event":     last_ts,
+            "total": len(events),
+            "with_gps": with_gps,
+            "sources": sources,
+            "first_event": first_ts,
+            "last_event": last_ts,
             "time_span_days": round(span_days, 2) if span_days is not None else None,
         },
     }
@@ -216,6 +226,7 @@ def build_location_timeline(locations: List[Dict[str, Any]]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Public API — Folium map
 # ---------------------------------------------------------------------------
+
 
 def add_markers_with_timestamps(
     locations: List[Dict[str, Any]],
@@ -251,12 +262,12 @@ def add_markers_with_timestamps(
         if lat is None or lon is None:
             continue
 
-        ts       = loc.get("timestamp") or "Unknown time"
-        source   = loc.get("source", "unknown")
-        fname    = Path(loc.get("file", "")).name
-        device   = loc.get("device_model") or loc.get("device_make") or "Unknown device"
+        ts = loc.get("timestamp") or "Unknown time"
+        source = loc.get("source", "unknown")
+        fname = Path(loc.get("file", "")).name
+        device = loc.get("device_model") or loc.get("device_make") or "Unknown device"
         altitude = loc.get("altitude")
-        alt_str  = f"Alt: {altitude:.1f} m" if altitude is not None else "Alt: N/A"
+        alt_str = f"Alt: {altitude:.1f} m" if altitude is not None else "Alt: N/A"
 
         popup_html = (
             f"<b>#{i} — {source.title()}</b><br>"
@@ -344,7 +355,7 @@ def plot_locations_on_map(
         return
 
     sorted_locs = _sort_locations(locations)
-    gps_locs    = [l for l in sorted_locs if (l.get("gps") or {}).get("lat")]
+    gps_locs = [l for l in sorted_locs if (l.get("gps") or {}).get("lat")]
 
     center_lat, center_lon = _center_of_locations(gps_locs) if gps_locs else (0.0, 0.0)
     fmap = folium.Map(
@@ -366,6 +377,7 @@ def plot_locations_on_map(
 # ---------------------------------------------------------------------------
 # Public API — HTML timeline visualisation
 # ---------------------------------------------------------------------------
+
 
 def generate_timeline_visualization(
     events: List[Dict[str, Any]],
@@ -391,24 +403,25 @@ def generate_timeline_visualization(
     html_parts: List[str] = [_TIMELINE_HTML_HEAD]
 
     for i, ev in enumerate(events):
-        ts       = ev.get("timestamp") or "Unknown"
-        lat      = ev.get("lat")
-        lon      = ev.get("lon")
-        source   = ev.get("source_app", "unknown")
+        ts = ev.get("timestamp") or "Unknown"
+        lat = ev.get("lat")
+        lon = ev.get("lon")
+        source = ev.get("source_app", "unknown")
         filename = html.escape(ev.get("filename") or "")
-        device   = html.escape(
+        device = html.escape(
             " ".join(filter(None, [ev.get("device_make"), ev.get("device_model")]))
             or "Unknown device"
         )
         altitude = ev.get("altitude")
-        color    = _APP_COLORS.get(source, "#888888")
+        color = _APP_COLORS.get(source, "#888888")
 
         coord_str = (
             f"{lat:.6f}, {lon:.6f}" if lat is not None and lon is not None else "No GPS"
         )
         alt_str = f"{altitude:.1f} m" if altitude is not None else "—"
 
-        html_parts.append(f"""
+        html_parts.append(
+            f"""
         <div class="event" style="border-top: 4px solid {color}">
             <div class="badge" style="background:{color}">{html.escape(source.upper())}</div>
             <div class="ts">{html.escape(ts)}</div>
@@ -416,7 +429,8 @@ def generate_timeline_visualization(
             <div class="detail">🏔 Alt: {alt_str}</div>
             <div class="detail">📁 {filename}</div>
             <div class="detail">📱 {device}</div>
-        </div>""")
+        </div>"""
+        )
 
     html_parts.append(_TIMELINE_HTML_FOOT)
     output_path.write_text("\n".join(html_parts), encoding="utf-8")

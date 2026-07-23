@@ -4,6 +4,7 @@ Validates the integrity of extracted files by comparing their current
 hashes against the original hashes recorded in the manifest.json.
 Generates an HTML dashboard reporting the results.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -21,7 +22,7 @@ def load_manifest(case_dir: Path) -> List[Dict]:
     manifest_path = case_dir / "manifest.json"
     if not manifest_path.exists():
         return []
-    
+
     try:
         with open(manifest_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -35,14 +36,14 @@ def verify_single_file(file_path: Path, expected_hash: str) -> bool:
     """Verify a single file's hash matches the expected hash."""
     if not file_path.exists() or not expected_hash:
         return False
-        
+
     try:
         # We assume sha256 for expected_hash
         sha256 = hashlib.sha256()
         with open(file_path, "rb") as f:
             for chunk in iter(lambda: f.read(65536), b""):
                 sha256.update(chunk)
-                
+
         actual_hash = sha256.hexdigest()
         return actual_hash.lower() == expected_hash.lower()
     except Exception as exc:
@@ -54,41 +55,47 @@ def verify_all_hashes(case_dir: Path) -> Dict[str, Any]:
     """Verify all hashes in manifest."""
     start_time = time.monotonic()
     artifacts = load_manifest(case_dir)
-    
+
     total_files = 0
     verified = 0
     failed = 0
     failed_files = []
-    
+
     for artifact in artifacts:
         rel_path = artifact.get("stored_path")
         expected_hash = artifact.get("sha256_hash")
-        
+
         if not rel_path or not expected_hash:
             continue
-            
+
         file_path = case_dir / rel_path
         total_files += 1
-        
+
         if verify_single_file(file_path, expected_hash):
             verified += 1
         else:
             failed += 1
-            failed_files.append({
-                "path": rel_path,
-                "expected": expected_hash,
-            })
-            
+            failed_files.append(
+                {
+                    "path": rel_path,
+                    "expected": expected_hash,
+                }
+            )
+
     elapsed = time.monotonic() - start_time
-    status = "INTACT" if failed == 0 and total_files > 0 else "TAMPERED" if failed > 0 else "UNKNOWN"
-    
+    status = (
+        "INTACT"
+        if failed == 0 and total_files > 0
+        else "TAMPERED" if failed > 0 else "UNKNOWN"
+    )
+
     return {
         "total_files": total_files,
         "verified": verified,
         "failed": failed,
         "integrity_status": status,
         "verification_time": elapsed,
-        "failed_files": failed_files
+        "failed_files": failed_files,
     }
 
 
@@ -101,25 +108,31 @@ def get_verification_summary(case_dir: Path) -> Dict[str, Any]:
 def generate_verification_dashboard(case_dir: Path) -> str:
     """Generate HTML verification dashboard."""
     verification = verify_all_hashes(case_dir)
-    
+
     total = verification["total_files"]
     verified = verification["verified"]
     failed = verification["failed"]
     status = verification["integrity_status"]
     elapsed = verification["verification_time"]
     failed_files = verification["failed_files"]
-    
-    status_color = "#10b981" if status == "INTACT" else "#ef4444" if status == "TAMPERED" else "#64748b"
-    
+
+    status_color = (
+        "#10b981"
+        if status == "INTACT"
+        else "#ef4444" if status == "TAMPERED" else "#64748b"
+    )
+
     failed_html = ""
     if failed_files:
-        failed_html = "<table><thead><tr><th>File</th><th>Expected Hash</th></tr></thead><tbody>"
+        failed_html = (
+            "<table><thead><tr><th>File</th><th>Expected Hash</th></tr></thead><tbody>"
+        )
         for f in failed_files:
             failed_html += f"<tr><td>{f['path']}</td><td>{f['expected']}</td></tr>"
         failed_html += "</tbody></table>"
     else:
         failed_html = "<p class='muted'>All files verified successfully.</p>"
-        
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>

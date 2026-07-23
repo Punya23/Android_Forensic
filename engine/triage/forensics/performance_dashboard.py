@@ -3,6 +3,7 @@
 Generates a dark-themed HTML report displaying acquisition performance,
 including stage timings, throughput, bottleneck detection, and heatmaps.
 """
+
 from __future__ import annotations
 
 import logging
@@ -31,31 +32,33 @@ def get_bottlenecks() -> List[Dict[str, Any]]:
     stage_times = get_stage_times()
     if not stage_times:
         return []
-        
+
     total_time = sum(stage_times.values())
     if total_time == 0:
         return []
-        
+
     avg_time = total_time / len(stage_times)
     bottlenecks = []
-    
+
     for stage, time_s in stage_times.items():
         if time_s > avg_time * 2 and time_s > 5.0:
             percentage = (time_s / total_time) * 100
-            
+
             suggestion = "Optimize parsing"
             if stage == "pull":
                 suggestion = "Use batch transfer or pre-fetch"
             elif stage == "hash":
                 suggestion = "Use memory mapping for large files"
-                
-            bottlenecks.append({
-                "stage": stage,
-                "time_s": round(time_s, 2),
-                "percentage": round(percentage, 1),
-                "suggestion": suggestion
-            })
-            
+
+            bottlenecks.append(
+                {
+                    "stage": stage,
+                    "time_s": round(time_s, 2),
+                    "percentage": round(percentage, 1),
+                    "suggestion": suggestion,
+                }
+            )
+
     # Sort by time descending
     return sorted(bottlenecks, key=lambda x: x["time_s"], reverse=True)
 
@@ -65,29 +68,47 @@ def generate_performance_heatmap() -> str:
     stage_times = get_stage_times()
     if not stage_times:
         return "<div class='muted'>No stage data available yet.</div>"
-        
+
     total_time = sum(stage_times.values())
     if total_time == 0:
         return "<div class='muted'>Total time is zero.</div>"
-        
-    html = ['<div style="display: flex; height: 30px; width: 100%; border-radius: 6px; overflow: hidden; margin-top: 10px;">']
-    
-    colors = ["#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6"]
-    
-    legend = ['<div style="display: flex; flex-wrap: wrap; gap: 15px; margin-top: 10px; font-size: 0.8rem;">']
-    
-    for i, (stage, time_s) in enumerate(sorted(stage_times.items(), key=lambda x: x[1], reverse=True)):
+
+    html = [
+        '<div style="display: flex; height: 30px; width: 100%; border-radius: 6px; overflow: hidden; margin-top: 10px;">'
+    ]
+
+    colors = [
+        "#3b82f6",
+        "#ef4444",
+        "#10b981",
+        "#f59e0b",
+        "#8b5cf6",
+        "#ec4899",
+        "#14b8a6",
+    ]
+
+    legend = [
+        '<div style="display: flex; flex-wrap: wrap; gap: 15px; margin-top: 10px; font-size: 0.8rem;">'
+    ]
+
+    for i, (stage, time_s) in enumerate(
+        sorted(stage_times.items(), key=lambda x: x[1], reverse=True)
+    ):
         pct = (time_s / total_time) * 100
         if pct < 1.0:
             continue
-            
+
         color = colors[i % len(colors)]
-        html.append(f'<div style="width: {pct}%; background-color: {color};" title="{stage}: {time_s:.1f}s ({pct:.1f}%)"></div>')
-        legend.append(f'<div style="display: flex; align-items: center; gap: 5px;"><div style="width: 10px; height: 10px; background-color: {color}; border-radius: 2px;"></div>{stage} ({pct:.1f}%)</div>')
-        
-    html.append('</div>')
-    legend.append('</div>')
-    
+        html.append(
+            f'<div style="width: {pct}%; background-color: {color};" title="{stage}: {time_s:.1f}s ({pct:.1f}%)"></div>'
+        )
+        legend.append(
+            f'<div style="display: flex; align-items: center; gap: 5px;"><div style="width: 10px; height: 10px; background-color: {color}; border-radius: 2px;"></div>{stage} ({pct:.1f}%)</div>'
+        )
+
+    html.append("</div>")
+    legend.append("</div>")
+
     return "".join(html) + "".join(legend)
 
 
@@ -98,9 +119,9 @@ def generate_performance_dashboard(case_dir: Path) -> str:
     mb_min = metrics.get("mb_per_min", 0)
     bytes_proc = metrics.get("bytes_processed", 0)
     mb_proc = bytes_proc / (1024 * 1024)
-    
+
     heatmap = generate_performance_heatmap()
-    
+
     bottlenecks = get_bottlenecks()
     bottleneck_html = ""
     if bottlenecks:
@@ -153,7 +174,7 @@ def generate_performance_dashboard(case_dir: Path) -> str:
 </div>
 </body>
 </html>"""
-    
+
     try:
         reports_dir = Path(case_dir) / "reports"
         reports_dir.mkdir(parents=True, exist_ok=True)
