@@ -28,27 +28,27 @@ import { api } from "../lib/api";
 // ---------------------------------------------------------------------------
 
 const CONF_BG: Record<string, string> = {
-  live:      "bg-live/10 border-live/40",
+  live: "bg-live/10 border-live/40",
   recovered: "bg-recovered/10 border-recovered/40",
-  carved:    "bg-carved/10 border-carved/40",
-  deletion:  "bg-deletion/10 border-deletion/40",
+  carved: "bg-carved/10 border-carved/40",
+  deletion: "bg-deletion/10 border-deletion/40",
 };
 
 const CONF_RING: Record<string, string> = {
-  live:      "ring-live/50",
+  live: "ring-live/50",
   recovered: "ring-recovered/50",
-  carved:    "ring-carved/50",
-  deletion:  "ring-deletion/50",
+  carved: "ring-carved/50",
+  deletion: "ring-deletion/50",
 };
 
 const MEDIA_ICON: Record<string, string> = {
-  image:    "🖼",
-  video:    "🎬",
-  audio:    "🎵",
+  image: "🖼",
+  video: "🎬",
+  audio: "🎵",
   document: "📄",
-  sticker:  "🎭",
-  gif:      "🎞",
-  vcard:    "👤",
+  sticker: "🎭",
+  gif: "🎞",
+  vcard: "👤",
   location: "📍",
 };
 
@@ -96,11 +96,10 @@ function BackupListItem({
   return (
     <button
       onClick={onSelect}
-      className={`w-full text-left px-4 py-3 border-b border-line transition-colors ${
-        selected
-          ? "bg-accent/15 border-l-2 border-l-accent"
-          : "hover:bg-panel-2"
-      }`}
+      className={`w-full text-left px-4 py-3 border-b border-line transition-colors ${selected
+        ? "bg-accent/15 border-l-2 border-l-accent"
+        : "hover:bg-panel-2"
+        }`}
     >
       <div className="flex items-center justify-between gap-2 mb-1">
         <span className="font-mono text-xs text-accent truncate">{cryptVer}</span>
@@ -152,7 +151,7 @@ function MessageBubble({ msg }: { msg: WhatsAppBackupMessage }) {
           <span className="text-[10px] font-semibold opacity-60 truncate max-w-[120px]">
             {isMe ? "You" : msg.sender}
           </span>
-          <ConfidenceBadge confidence={conf} />
+          <ConfidenceBadge c={conf} />
           {msg.flags?.includes("deleted") && (
             <span className="text-[9px] px-1 rounded bg-deletion/20 text-deletion border border-deletion/30">
               deleted
@@ -294,7 +293,10 @@ export function WhatsAppBackupView({ caseId }: { caseId: string }) {
     return (
       <div className="p-8">
         <SectionHeader title="WhatsApp Backup Recovery" />
-        <EmptyState message="No WhatsApp backup messages recovered. Enable Tier-2 WhatsApp Backup Recovery and re-run the acquisition on a rooted device." />
+        <EmptyState
+          title="No WhatsApp backup messages recovered."
+          detail="Enable Tier-2 WhatsApp Backup Recovery and re-run the acquisition on a rooted device."
+        />
       </div>
     );
   }
@@ -356,7 +358,10 @@ export function WhatsAppBackupView({ caseId }: { caseId: string }) {
           {/* Chat groups */}
           <div className="flex-1 overflow-y-auto px-4 py-4">
             {chatGroups.length === 0 ? (
-              <EmptyState message="No messages match the current filter." />
+              <EmptyState
+                title="No messages match the current filter."
+                detail="Try changing the search term."
+              />
             ) : (
               chatGroups.map(([chatId, msgs]) => (
                 <ChatGroup key={chatId} chatId={chatId} messages={msgs} />

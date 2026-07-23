@@ -109,6 +109,7 @@ export const api = {
     tier2_instagram?: boolean;
     tier2_snapchat?: boolean;
     tier2_wifi?: boolean;
+    tier2_whatsapp_backup?: boolean;
   }): Promise<{ case_id: string; started: boolean }> => {
     const res = await fetch(`${BASE}/api/acquire`, {
       method: "POST",
