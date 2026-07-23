@@ -1081,6 +1081,14 @@ def _process_pulled_file(
     Dict
         Collected data: media_items, locations, app_messages, etc.
     """
+    if hasattr(rec, "sha256_hash") and rec.sha256_hash:
+        _display_hash_realtime(
+            dev_path,
+            rec.sha256_hash,
+            getattr(rec, "md5_hash", ""),
+            rec.size_bytes
+        )
+
     result: Dict[str, List] = {
         "size_bytes": rec.size_bytes,
         "media_items": [],
@@ -2995,3 +3003,37 @@ def _generate_performance_summary(case_dir: Path) -> None:
         generate_performance_dashboard(case_dir)
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Task 1: Real-Time Hash Display
+# ---------------------------------------------------------------------------
+
+def _format_hash_display(sha256: str, md5: str) -> str:
+    """Format hash for display with truncation."""
+    display = ""
+    if sha256:
+        display = f"SHA256:{sha256[:16]}..."
+    elif md5:
+        display = f"MD5:{md5[:16]}..."
+    return display
+
+
+def _display_hash_realtime(file_path: str, sha256: str, md5: str, size: int) -> None:
+    """Display hash information in real-time."""
+    hash_str = _format_hash_display(sha256, md5)
+    if hash_str:
+        logger.info(f"HASH [{hash_str}] {size}B - {file_path}")
+        _emit_hash_progress(file_path, sha256, md5, size)
+
+
+def _emit_hash_progress(file_path: str, sha256: str, md5: str, size: int) -> None:
+    """Emit hash progress event for real-time display."""
+    # In a real UI this would emit a signal or socket event
+    pass
+
+
+def _update_hash_progress(current: int, total: int) -> None:
+    """Update hash progress tracking."""
+    pct = (current / total) * 100 if total > 0 else 0
+    logger.debug(f"Hash Progress: {current}/{total} ({pct:.1f}%)")

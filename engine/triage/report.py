@@ -115,6 +115,13 @@ def generate_report(case_dir: str | Path) -> Path:
           <p style="font-size:11px;color:#666;margin:6px 0 0">{_esc(risk.get("disclaimer"))}</p>
         </div>''')
 
+    # Hash Verification Section
+    try:
+        parts.append(_generate_hash_verification_section(Path(case_dir)))
+    except Exception:
+        pass
+
+
     # Case-intelligence: profile + AI leads (only if a case brief was provided)
     if isinstance(case_profile, dict) and case_profile.get("crime_type"):
         prof = case_profile
