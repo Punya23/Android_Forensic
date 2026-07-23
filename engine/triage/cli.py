@@ -76,7 +76,10 @@ def cmd_acquire(args) -> int:
     tier1_sms=args.tier1_sms,
     tier2_telegram=args.tier2_telegram,
     case_description=getattr(args, "case_description", "") or "",
+    case_number=getattr(args, "case_number", "") or "",
     llm_provider=getattr(args, "llm", "") or "",
+    use_case_bank=not getattr(args, "no_case_bank", False),
+    learn_from_case=not getattr(args, "no_learn", False),
 )
     summary = run_acquisition(source, cfg, progress=_progress)
     print(json.dumps(summary["counts"], indent=2))
@@ -112,8 +115,16 @@ def main(argv: list[str] | None = None) -> int:
                help="Root-required: pull cache4.db and run Telegram deep recovery")
     a.add_argument("--case-description", dest="case_description", default="",
                help="Plain-language case brief → targeted collection plan + AI leads")
+    a.add_argument("--case-number", dest="case_number", default="",
+               help="FIR / crime number, recorded on the case profile and used when "
+                    "learning from this case's outcome")
     a.add_argument("--llm", default="",
                help="LLM provider for the intelligence layer: heuristic|ollama|anthropic")
+    a.add_argument("--no-case-bank", dest="no_case_bank", action="store_true",
+               help="Plan from the expert ontology alone: skip prior-case retrieval and "
+                    "the learned knowledge graph")
+    a.add_argument("--no-learn", dest="no_learn", action="store_true",
+               help="Do not feed this run's outcome back into the knowledge graph")
 
 
     args = p.parse_args(argv)

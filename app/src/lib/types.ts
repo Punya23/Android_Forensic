@@ -87,8 +87,41 @@ export interface CaseSummary {
 }
 
 // -- Case-intelligence layer ------------------------------------------------
+
+/** Canonical procedural role from the engine's forensic nomenclature vocabulary. */
+export type RoleKey =
+  | "accused" | "suspect" | "co_accused" | "absconder"
+  | "victim" | "deceased" | "complainant" | "informant"
+  | "witness" | "panch_witness" | "missing_person" | "third_party";
+
+export interface RoleAssignment {
+  name: string;
+  role: RoleKey;
+  label: string;
+  /** True for accused / suspect / co-accused / absconder — people under investigation. */
+  adverse: boolean;
+  /** The phrase in the description that assigned this role. */
+  evidence: string;
+  confidence: number;
+}
+
+export interface NomenclatureWarning {
+  term: string;
+  severity: "warn" | "info";
+  message: string;
+}
+
+export interface RoleDefinition {
+  key: RoleKey;
+  label: string;
+  definition: string;
+  adverse: boolean;
+  aliases: string[];
+}
+
 export interface CaseProfile {
   description: string;
+  case_number: string;
   crime_type: string;
   crime_label: string;
   suspects: string[];
@@ -100,6 +133,8 @@ export interface CaseProfile {
   summary: string;
   extraction_method: string;
   confidence: number;
+  roles: RoleAssignment[];
+  nomenclature_warnings: NomenclatureWarning[];
 }
 
 export interface ArtifactPlan {
@@ -110,6 +145,43 @@ export interface ArtifactPlan {
   tier: string;
   collect: boolean;
   rationale: string;
+  /** Belief breakdown — what each evidence source said before fusion. */
+  doctrine_priority: "high" | "medium" | "low" | "";
+  doctrine_score: number;
+  precedent_score: number | null;
+  learned_score: number | null;
+  fused_score: number;
+  evidence: string[];
+  adjustment: "" | "promoted" | "demoted";
+}
+
+/** A prior case study retrieved as precedent for collection planning. */
+export interface Precedent {
+  case_number: string;
+  title: string;
+  crime_type: string;
+  crime_match: boolean;
+  score: number;
+  lexical: number;
+  matched_terms: string[];
+  decisive_artifacts: string[];
+  useless_artifacts: string[];
+  outcome: string;
+  lessons: string[];
+  /** Provenance — synthetic exemplar vs a real worked case. */
+  source: string;
+}
+
+export interface PlanRecommendation {
+  artifact: string;
+  label: string;
+  current_priority: string;
+  pipeline_flag: string | null;
+  tier: string;
+  cases: string[];
+  reasons: string[];
+  message: string;
+  co_occurs_with?: { artifact: string; cases: number }[];
 }
 
 export interface CollectionPlan {
@@ -121,6 +193,103 @@ export interface CollectionPlan {
   deprioritised: { artifact: string; label: string; reason: string }[];
   notes: string[];
   rationale: string;
+  precedents: Precedent[];
+  similar_crime_types: {
+    crime_type: string;
+    label: string;
+    similarity: number;
+    shared_decisive_artifacts: string[];
+  }[];
+  knowledge_graph_stats: KnowledgeGraphStats;
+  evidence_basis: "doctrine" | "doctrine+precedent" | "doctrine+observation" | "fused";
+  estimated_savings: {
+    deprioritised_artifacts: string[];
+    estimated_minutes_saved: number;
+    estimated_minutes_full_run: number;
+    basis: string;
+  };
+  recommendations: PlanRecommendation[];
+}
+
+// -- Case bank (retrieval corpus) -------------------------------------------
+export type ArtifactYield = "decisive" | "supporting" | "none";
+
+export interface ArtifactOutcome {
+  artifact: string;
+  yield: ArtifactYield;
+  note: string;
+}
+
+export interface CaseStudy {
+  case_number: string;
+  title: string;
+  crime_type: string;
+  description: string;
+  roles: Record<string, string[]>;
+  artifacts: ArtifactOutcome[];
+  outcome: string;
+  lessons: string[];
+  source: string;
+  decisive?: string[];
+}
+
+export interface CaseBankResponse {
+  total: number;
+  crime_type: string | null;
+  studies: CaseStudy[];
+  disclaimer: string;
+}
+
+export interface CaseBankSearchResponse {
+  query: string;
+  crime_type: string | null;
+  total: number;
+  results: Precedent[];
+}
+
+// -- Knowledge graph (learned artifact priors) ------------------------------
+export interface KnowledgeGraphStats {
+  cases_observed: number;
+  distinct_cases: number;
+  edges: number;
+  observed_edges: number;
+  crime_types: string[];
+  well_observed_edges: number;
+}
+
+export interface ArtifactPrior {
+  artifact: string;
+  /** Raw learned posterior, or null when the link has never been observed. */
+  posterior: number | null;
+  /** 0..1 — how much the planner is allowed to trust the posterior. */
+  strength: number;
+  observations: number;
+  doctrine: number;
+  /** Posterior shrunk toward doctrine — what the planner actually uses. */
+  blended: number;
+  decisive: number;
+  none: number;
+  source: string;
+}
+
+export interface KnowledgeGraphView {
+  crime_type: string;
+  artifact_priors: Record<string, ArtifactPrior>;
+  similar_crime_types: CollectionPlan["similar_crime_types"];
+  stats: KnowledgeGraphStats;
+  disclaimer: string;
+}
+
+export interface CaseLearning {
+  recorded: boolean;
+  grade?: "provisional" | "confirmed";
+  weight?: number;
+  case_number?: string;
+  crime_type?: string;
+  edges_updated?: number;
+  yields?: Record<string, ArtifactYield>;
+  note?: string;
+  reason?: string;
 }
 
 export interface Finding {
@@ -156,6 +325,20 @@ export interface PlanResponse {
   profile: CaseProfile;
   plan: CollectionPlan;
   provider: string;
+  case_bank_size: number;
+}
+
+export interface NomenclatureCheckResponse {
+  roles: RoleAssignment[];
+  warnings: NomenclatureWarning[];
+}
+
+export interface OutcomeResponse {
+  case_id: string;
+  learning: CaseLearning;
+  promoted_to_case_bank: CaseStudy | null;
+  corpus_size: number;
+  graph_stats: KnowledgeGraphStats;
 }
 
 export interface GraphNode {

@@ -65,7 +65,13 @@ export const api = {
   // Case-intelligence: preview a targeted collection plan from a plain-language brief.
   plan: async (
     description: string,
-    opts?: { llm_provider?: string; allow_tier2?: boolean }
+    opts?: {
+      llm_provider?: string;
+      allow_tier2?: boolean;
+      case_number?: string;
+      /** Set false to preview the pure-ontology plan with no retrieval or learning. */
+      use_case_bank?: boolean;
+    }
   ): Promise<import("./types").PlanResponse> => {
     const res = await fetch(`${BASE}/api/plan`, {
       method: "POST",
@@ -75,6 +81,77 @@ export const api = {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
     return data as import("./types").PlanResponse;
+  },
+
+  /** Validate a draft description's forensic nomenclature before acquiring. */
+  checkNomenclature: async (
+    description: string
+  ): Promise<import("./types").NomenclatureCheckResponse> => {
+    const res = await fetch(`${BASE}/api/nomenclature/check`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+    return data as import("./types").NomenclatureCheckResponse;
+  },
+
+  nomenclature: () =>
+    get<{ roles: import("./types").RoleDefinition[]; note: string }>("/api/nomenclature"),
+
+  // --- case bank (retrieval corpus) -----------------------------------------
+  caseBank: (crimeType?: string) =>
+    get<import("./types").CaseBankResponse>(
+      `/api/casebank${crimeType ? `?crime_type=${encodeURIComponent(crimeType)}` : ""}`
+    ),
+
+  searchCaseBank: (q: string, crimeType?: string) =>
+    get<import("./types").CaseBankSearchResponse>(
+      `/api/casebank?q=${encodeURIComponent(q)}` +
+        (crimeType ? `&crime_type=${encodeURIComponent(crimeType)}` : "")
+    ),
+
+  addCaseStudy: async (
+    study: Partial<import("./types").CaseStudy>
+  ): Promise<{ added: string; corpus_size: number; graph_edges_updated: number }> => {
+    const res = await fetch(`${BASE}/api/casebank`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(study),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+    return data as { added: string; corpus_size: number; graph_edges_updated: number };
+  },
+
+  // --- knowledge graph (learned artifact priors) ----------------------------
+  knowledgeGraph: (crimeType: string) =>
+    get<import("./types").KnowledgeGraphView>(
+      `/api/knowledge-graph?crime_type=${encodeURIComponent(crimeType)}`
+    ),
+
+  /** Record the examiner's confirmed outcome — what actually solved the case. */
+  recordOutcome: async (
+    id: string,
+    body: {
+      artifact_yields: Record<string, import("./types").ArtifactYield>;
+      case_number?: string;
+      examiner?: string;
+      outcome?: string;
+      lessons?: string[];
+      notes?: Record<string, string>;
+      add_to_case_bank?: boolean;
+    }
+  ): Promise<import("./types").OutcomeResponse> => {
+    const res = await fetch(`${BASE}/api/case/${id}/outcome`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+    return data as import("./types").OutcomeResponse;
   },
 
   // Case-intelligence: (re-)run the AI findings analysis over a collected case.
@@ -100,7 +177,10 @@ export const api = {
     authority?: string;
     scope?: string;
     case_description?: string;
+    case_number?: string;
     llm_provider?: string;
+    use_case_bank?: boolean;
+    learn_from_case?: boolean;
     tier1_contacts?: boolean;
     tier1_calllog?: boolean;
     tier1_sms?: boolean;

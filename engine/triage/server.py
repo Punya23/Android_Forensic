@@ -67,6 +67,41 @@ def create_app(cases_root: Path = CASES_ROOT):
 
 
     # ---------------------------------------------------------
+    # CASE-INTELLIGENCE STORES
+    #
+    # The case bank (retrieval corpus) and the knowledge graph (learned artifact
+    # priors) are shared by every case in this store, so they are loaded lazily and
+    # cached on the app rather than rebuilt per request.
+    # ---------------------------------------------------------
+
+    #: Department-local corpus. Sits beside the case store so it survives upgrades.
+    def _local_corpus_path() -> Path:
+        return cases_root / "case_studies.jsonl"
+
+
+    def _case_bank(refresh: bool = False):
+        from .intel import CaseBank
+        if refresh or "case_bank" not in state:
+            state["case_bank"] = CaseBank.load(_local_corpus_path())
+        return state["case_bank"]
+
+
+    def _knowledge_graph(root: Path, bank=None, refresh: bool = False):
+        from .intel import KnowledgeGraph, GRAPH_FILENAME
+        if refresh or "knowledge_graph" not in state:
+            state["knowledge_graph"] = KnowledgeGraph.load(
+                root / GRAPH_FILENAME,
+                bootstrap=bank if bank is not None else _case_bank(),
+            )
+        return state["knowledge_graph"]
+
+
+    def _save_graph(graph) -> None:
+        from .intel import GRAPH_FILENAME
+        graph.save(cases_root / GRAPH_FILENAME)
+
+
+    # ---------------------------------------------------------
     # META
     # ---------------------------------------------------------
 
@@ -168,6 +203,11 @@ def create_app(cases_root: Path = CASES_ROOT):
             or None
         )
 
+        # Retrieval + learned priors are on by default; a caller can ask for the
+        # pure-doctrine plan to see what the ontology alone recommends.
+        use_rag = bool(body.get("use_case_bank", True))
+        bank = _case_bank() if use_rag else None
+        graph = _knowledge_graph(cases_root, bank) if use_rag else None
 
         profile, plan = plan_case(
             description,
@@ -177,7 +217,11 @@ def create_app(cases_root: Path = CASES_ROOT):
                     "allow_tier2",
                     True
                 )
-            )
+            ),
+            case_number=str(body.get("case_number", "")).strip(),
+            bank=bank,
+            graph=graph,
+            use_rag=use_rag,
         )
 
 
@@ -185,10 +229,200 @@ def create_app(cases_root: Path = CASES_ROOT):
             {
                 "profile": profile.to_dict(),
                 "plan": plan.to_dict(),
-                "provider": provider.name
+                "provider": provider.name,
+                "case_bank_size": len(bank) if bank is not None else 0,
             }
         )
 
+
+
+    # ---------------------------------------------------------
+    # CASE BANK  (retrieval corpus)
+    # ---------------------------------------------------------
+
+    @app.get("/api/casebank")
+    def casebank_list():
+        """List the retrieval corpus. ``?q=`` runs a search instead of a full listing."""
+        bank = _case_bank()
+        query = str(request.args.get("q", "")).strip()
+        crime = str(request.args.get("crime_type", "")).strip() or None
+
+        if query:
+            hits = bank.search(query, crime_type=crime,
+                               top_k=int(request.args.get("top_k", 5)))
+            return jsonify({
+                "query": query,
+                "crime_type": crime,
+                "total": len(bank),
+                "results": [h.to_dict() for h in hits],
+            })
+
+        studies = bank.by_crime(crime) if crime else bank.all()
+        return jsonify({
+            "total": len(bank),
+            "crime_type": crime,
+            "studies": [s.to_dict() for s in studies],
+            "disclaimer": (
+                "Case studies rank artifacts for collection planning. They are not "
+                "evidence in any case and carry no precedential weight. Entries marked "
+                "'synthetic' are expert-curated teaching exemplars, not real records."
+            ),
+        })
+
+
+    @app.post("/api/casebank")
+    def casebank_add():
+        """Add a worked case to the department's local corpus."""
+        from .intel import CaseStudy
+
+        body = request.get_json(force=True) or {}
+        if not str(body.get("case_number", "")).strip():
+            return jsonify({"error": "case_number is required"}), 400
+        if not (body.get("artifacts") or []):
+            return jsonify({
+                "error": "at least one artifact outcome is required — a study with no "
+                         "artifact yields teaches the planner nothing"
+            }), 400
+
+        study = CaseStudy.from_dict(body)
+        if study.source in ("", "unspecified"):
+            study.source = "worked case (local installation)"
+
+        bank = _case_bank()
+        bank.append_to_file(study, _local_corpus_path())
+
+        # Fold it into the learned graph immediately so the next plan sees it.
+        graph = _knowledge_graph(cases_root, bank)
+        edges = graph.observe_study(study)
+        _save_graph(graph)
+
+        return jsonify({
+            "added": study.case_number,
+            "corpus_size": len(bank),
+            "graph_edges_updated": edges,
+            "study": study.to_dict(),
+        }), 201
+
+
+    # ---------------------------------------------------------
+    # KNOWLEDGE GRAPH  (learned artifact priors)
+    # ---------------------------------------------------------
+
+    @app.get("/api/knowledge-graph")
+    def knowledge_graph_view():
+        """The learned graph. ``?crime_type=`` returns that crime's artifact priors."""
+        bank = _case_bank()
+        graph = _knowledge_graph(cases_root, bank)
+        crime = str(request.args.get("crime_type", "")).strip()
+
+        if crime:
+            return jsonify({
+                "crime_type": crime,
+                "artifact_priors": graph.artifact_priors(crime),
+                "similar_crime_types": graph.similar_crime_types(crime),
+                "stats": graph.stats(),
+                "disclaimer": (
+                    "Learned priors are shrunk toward the expert ontology until a link "
+                    "is well observed, and can never remove an artifact from collection "
+                    "— only reorder it."
+                ),
+            })
+
+        return jsonify(graph.to_dict())
+
+
+    @app.post("/api/case/<case_id>/outcome")
+    def case_outcome(case_id: str):
+        """Record the examiner's confirmed outcome — which artifacts actually solved it.
+
+        This supersedes the provisional, automatically-derived feedback the pipeline
+        writes, and optionally promotes the case into the retrieval corpus so future
+        similar cases can cite it.
+        """
+        from .intel import (CaseProfile, promote_case_to_study, record_confirmed)
+
+        case = _open(cases_root, case_id)
+        body = request.get_json(force=True) or {}
+
+        yields = body.get("artifact_yields") or {}
+        if not isinstance(yields, dict) or not yields:
+            return jsonify({
+                "error": "artifact_yields is required, e.g. "
+                         '{"call_logs": "decisive", "media": "none"}'
+            }), 400
+
+        profile_dict = case.read_derived("case_profile") or {}
+        if not profile_dict:
+            return jsonify({
+                "error": "this case has no case profile — it was acquired without a "
+                         "case description, so there is no crime type to learn against"
+            }), 400
+        profile = CaseProfile(**profile_dict)
+
+        case_number = (str(body.get("case_number", "")).strip()
+                       or profile.case_number or case_id)
+        examiner = str(body.get("examiner", "")).strip()
+
+        bank = _case_bank()
+        graph = _knowledge_graph(cases_root, bank)
+        learned = record_confirmed(graph, profile.crime_type, yields,
+                                   case_number=case_number, examiner=examiner)
+        if learned.get("recorded"):
+            _save_graph(graph)
+
+        promoted = None
+        if bool(body.get("add_to_case_bank", False)):
+            study = promote_case_to_study(
+                profile, yields,
+                outcome=str(body.get("outcome", "")),
+                lessons=[str(x) for x in (body.get("lessons") or [])],
+                notes=body.get("notes") or {},
+                examiner=examiner,
+            )
+            study.case_number = case_number
+            bank.append_to_file(study, _local_corpus_path())
+            promoted = study.to_dict()
+
+        result = {
+            "case_id": case_id,
+            "learning": learned,
+            "promoted_to_case_bank": promoted,
+            "corpus_size": len(bank),
+            "graph_stats": graph.stats(),
+        }
+        case.write_derived("case_outcome", result)
+        case.log(
+            "intel.outcome",
+            f"Examiner-confirmed outcome recorded by {examiner or 'unspecified'}: "
+            + ", ".join(f"{k}={v}" for k, v in sorted(learned.get("yields", {}).items()))
+            + (f"; promoted to case bank as {case_number}" if promoted else ""),
+            tier=Tier.TIER0.value,
+        )
+        return jsonify(result)
+
+
+    @app.get("/api/nomenclature")
+    def nomenclature_glossary():
+        """The controlled forensic-role vocabulary, for the intake help panel."""
+        from .intel import glossary
+        return jsonify({
+            "roles": glossary(),
+            "note": ("'Suspect' and 'accused' are procedural statuses, not findings of "
+                     "guilt. Use 'victim' or 'deceased' for the person harmed; avoid "
+                     "'guilty' and 'innocent', which are trial outcomes."),
+        })
+
+
+    @app.post("/api/nomenclature/check")
+    def nomenclature_check():
+        """Validate a draft case description before acquisition starts."""
+        from .intel import extract_roles, validate_description
+        body = request.get_json(force=True) or {}
+        description = str(body.get("description", ""))
+        return jsonify({
+            "roles": [r.to_dict() for r in extract_roles(description)],
+            "warnings": validate_description(description),
+        })
 
 
     @app.post("/api/case/<case_id>/analyze")
@@ -474,6 +708,31 @@ def create_app(cases_root: Path = CASES_ROOT):
                     ""
                 )
                 or ""
+            ),
+
+
+            case_number=str(
+                body.get(
+                    "case_number",
+                    ""
+                )
+                or ""
+            ),
+
+
+            use_case_bank=bool(
+                body.get(
+                    "use_case_bank",
+                    True
+                )
+            ),
+
+
+            learn_from_case=bool(
+                body.get(
+                    "learn_from_case",
+                    True
+                )
             )
 
         )
@@ -844,7 +1103,23 @@ def create_app(cases_root: Path = CASES_ROOT):
             "wifi",
 
             "whatsapp_backup_messages",
-            "whatsapp_backup_media"
+            "whatsapp_backup_media",
+
+            # Dumpsys-derived Tier-1 datasets. The pipeline has been writing these
+            # since the notification/bluetooth/celltower parsers landed; they were
+            # unreachable over the API until now.
+            "notifications",
+            "bluetooth",
+            "celltower",
+
+            # Location forensics (engine/triage/forensics/).
+            "media_locations",
+            "location_places",
+            "location_anomalies",
+            "location_timeline",
+
+            "whatsapp_media",
+            "aleapp"
 
         }
 
@@ -865,6 +1140,11 @@ def create_app(cases_root: Path = CASES_ROOT):
             "ai_findings",
             "case_profile",
             "collection_plan",
+            "case_learning",
+            "case_outcome",
+
+            "location_summary",
+            "advanced",
 
             "whatsapp_backup_summary"
 
