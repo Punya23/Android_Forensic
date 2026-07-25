@@ -8,6 +8,7 @@ with the channels used (whatsapp / sms / call / telegram …).
 
 Entirely deterministic and offline — just aggregation over the parsed rows.
 """
+
 from __future__ import annotations
 
 import re
@@ -30,12 +31,17 @@ def _key(name: str, number: str = "") -> str:
     return "name:" + (name or "unknown").strip().lower()
 
 
-def build_communication_graph(*, messages: list[dict], calls: list[dict],
-                              contacts: list[dict],
-                              owner_label: str = "SUBJECT DEVICE") -> dict[str, Any]:
+def build_communication_graph(
+    *,
+    messages: list[dict],
+    calls: list[dict],
+    contacts: list[dict],
+    owner_label: str = "SUBJECT DEVICE",
+) -> dict[str, Any]:
     """Return {nodes, edges, stats}. The device owner is a hub node every interaction links
-    to (we can't always attribute direction on-device, so the graph is owner-centric)."""
-    labels: dict[str, str] = {}          # key -> display label
+    to (we can't always attribute direction on-device, so the graph is owner-centric).
+    """
+    labels: dict[str, str] = {}  # key -> display label
     node_channels: dict[str, set] = defaultdict(set)
     node_weight: dict[str, int] = defaultdict(int)
     edge_weight: dict[tuple, int] = defaultdict(int)
@@ -59,7 +65,9 @@ def build_communication_graph(*, messages: list[dict], calls: list[dict],
             return
         # Prefer a contact name if we can resolve the number.
         num = _norm_number(number)
-        display = labels.get(k) or contact_by_number.get(num) or name or number or "unknown"
+        display = (
+            labels.get(k) or contact_by_number.get(num) or name or number or "unknown"
+        )
         labels[k] = display
         node_channels[k].add(channel)
         node_weight[k] += 1
@@ -84,24 +92,45 @@ def build_communication_graph(*, messages: list[dict], calls: list[dict],
             node_weight[k] = node_weight.get(k, 0)
             labels.setdefault(k, c.get("name") or c.get("number") or "unknown")
 
-    nodes = [{
-        "id": owner_key, "label": owner_label, "type": "owner",
-        "weight": sum(node_weight.values()), "channels": ["device"],
-    }]
+    nodes = [
+        {
+            "id": owner_key,
+            "label": owner_label,
+            "type": "owner",
+            "weight": sum(node_weight.values()),
+            "channels": ["device"],
+        }
+    ]
     for k, w in sorted(node_weight.items(), key=lambda kv: -kv[1]):
-        nodes.append({
-            "id": k, "label": labels.get(k, k), "type": "contact" if k.startswith("name:") or k.startswith("num:") else "party",
-            "weight": w, "channels": sorted(node_channels.get(k, set())),
-        })
-    edges = [{
-        "source": e[0] if e[0] == owner_key else e[1],
-        "target": e[1] if e[0] == owner_key else e[0],
-        "weight": w, "channels": sorted(edge_channels.get(e, set())),
-    } for e, w in sorted(edge_weight.items(), key=lambda kv: -kv[1])]
+        nodes.append(
+            {
+                "id": k,
+                "label": labels.get(k, k),
+                "type": (
+                    "contact"
+                    if k.startswith("name:") or k.startswith("num:")
+                    else "party"
+                ),
+                "weight": w,
+                "channels": sorted(node_channels.get(k, set())),
+            }
+        )
+    edges = [
+        {
+            "source": e[0] if e[0] == owner_key else e[1],
+            "target": e[1] if e[0] == owner_key else e[0],
+            "weight": w,
+            "channels": sorted(edge_channels.get(e, set())),
+        }
+        for e, w in sorted(edge_weight.items(), key=lambda kv: -kv[1])
+    ]
 
     # Top contacts by interaction volume.
-    top = [{"label": n["label"], "weight": n["weight"], "channels": n["channels"]}
-           for n in nodes if n["type"] != "owner"][:10]
+    top = [
+        {"label": n["label"], "weight": n["weight"], "channels": n["channels"]}
+        for n in nodes
+        if n["type"] != "owner"
+    ][:10]
 
     return {
         "nodes": nodes,

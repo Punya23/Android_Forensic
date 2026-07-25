@@ -36,6 +36,7 @@ Usage example
     # After a case is complete:
     clear_cache()
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -45,7 +46,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ CACHE_24H: int = 86400
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _key_to_filename(key: str) -> str:
     """Convert an arbitrary key string to a safe cache filename."""
@@ -96,6 +98,7 @@ def _atomic_write(path: Path, text: str) -> None:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def is_cache_fresh(key: str, max_age: int = DEFAULT_MAX_AGE) -> bool:
     """Return True if the cache entry for *key* exists and is not older than *max_age* seconds.
@@ -210,6 +213,7 @@ def clear_cache(key: Optional[str] = None) -> None:
 # Task 6: Aggressive Caching (24-Hour)
 # ---------------------------------------------------------------------------
 
+
 def set(key: str, data: Any) -> None:
     """Cache data with 24-hour expiry."""
     set_cached_data(key, data)
@@ -224,7 +228,7 @@ def cleanup_expired(max_age: int = CACHE_24H) -> None:
     """Remove expired cache entries."""
     if not _CACHE_ROOT.is_dir():
         return
-        
+
     now = time.time()
     for f in _CACHE_ROOT.glob("cache_*.json"):
         try:
@@ -244,29 +248,26 @@ def get_cache_size() -> int:
     """Get total cache size in bytes."""
     if not _CACHE_ROOT.is_dir():
         return 0
-    return sum(f.stat().st_size for f in _CACHE_ROOT.glob("cache_*.json") if f.is_file())
+    return sum(
+        f.stat().st_size for f in _CACHE_ROOT.glob("cache_*.json") if f.is_file()
+    )
 
 
 def get_cache_stats(max_age: int = CACHE_24H) -> Dict[str, int]:
     """Get cache statistics."""
-    stats = {
-        "total": 0,
-        "fresh": 0,
-        "expired": 0,
-        "size_bytes": 0
-    }
-    
+    stats = {"total": 0, "fresh": 0, "expired": 0, "size_bytes": 0}
+
     if not _CACHE_ROOT.is_dir():
         return stats
-        
+
     now = time.time()
     for f in _CACHE_ROOT.glob("cache_*.json"):
         if not f.is_file():
             continue
-            
+
         stats["total"] += 1
         stats["size_bytes"] += f.stat().st_size
-        
+
         try:
             envelope = json.loads(f.read_text(encoding="utf-8"))
             saved_at = float(envelope.get("saved_at_epoch", 0))
@@ -276,5 +277,5 @@ def get_cache_stats(max_age: int = CACHE_24H) -> Dict[str, int]:
                 stats["expired"] += 1
         except Exception:
             stats["expired"] += 1
-            
+
     return stats

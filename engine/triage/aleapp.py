@@ -31,6 +31,7 @@ two reasons:
 }
 ```
 """
+
 from __future__ import annotations
 
 import csv
@@ -49,19 +50,19 @@ _MAX_ROWS_PER_ARTIFACT = 5000
 # Any other TSV files are still stored in the aleapp_artifacts dict but not
 # promoted to top-level pipeline data structures.
 PROMOTED_MODULES = {
-    "accounts_ce",           # Google/device accounts
+    "accounts_ce",  # Google/device accounts
     "accounts_de",
-    "sms",                   # SMS (if ALEAPP reaches it via a helper backup)
-    "calls",                 # Call log
-    "contacts",              # Contacts
-    "installed_apps",        # Installed application list
-    "recent_activity",       # Recent-tasks / recents
-    "chrome_downloads",      # Browser downloads
-    "chrome_history",        # Browser history
-    "gps",                   # Location history
-    "wifi_profiles",         # Wi-Fi network history
-    "bluetooth_devices",     # Paired BT devices
-    "notifications",         # Notification log (Android 11+)
+    "sms",  # SMS (if ALEAPP reaches it via a helper backup)
+    "calls",  # Call log
+    "contacts",  # Contacts
+    "installed_apps",  # Installed application list
+    "recent_activity",  # Recent-tasks / recents
+    "chrome_downloads",  # Browser downloads
+    "chrome_history",  # Browser history
+    "gps",  # Location history
+    "wifi_profiles",  # Wi-Fi network history
+    "bluetooth_devices",  # Paired BT devices
+    "notifications",  # Notification log (Android 11+)
 }
 
 
@@ -90,7 +91,9 @@ def _find_aleapp() -> Optional[str]:
     return None
 
 
-def _parse_tsv(tsv_path: Path, max_rows: int = _MAX_ROWS_PER_ARTIFACT) -> list[dict[str, Any]]:
+def _parse_tsv(
+    tsv_path: Path, max_rows: int = _MAX_ROWS_PER_ARTIFACT
+) -> list[dict[str, Any]]:
     """Parse a TSV file produced by ALEAPP into a list of row-dicts."""
     rows: list[dict[str, Any]] = []
     try:
@@ -144,6 +147,7 @@ def run_aleapp(
     Returns:
         A dict with keys ``available``, ``artifacts``, ``report_dir``, ``error``.
     """
+
     def _log(msg: str) -> None:
         if log_fn:
             log_fn(msg)
@@ -153,7 +157,9 @@ def run_aleapp(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if aleapp_path is None:
-        _log("ALEAPP not found — skipping ALEAPP stage (set ALEAPP_PATH env var to enable)")
+        _log(
+            "ALEAPP not found — skipping ALEAPP stage (set ALEAPP_PATH env var to enable)"
+        )
         return {
             "available": False,
             "artifacts": {},
@@ -162,7 +168,16 @@ def run_aleapp(
         }
 
     # Build the command.  ALEAPP CLI: aleapp.py -t fs -i <input> -o <output>
-    cmd = [sys.executable, aleapp_path, "-t", "fs", "-i", str(input_dir), "-o", str(output_dir)]
+    cmd = [
+        sys.executable,
+        aleapp_path,
+        "-t",
+        "fs",
+        "-i",
+        str(input_dir),
+        "-o",
+        str(output_dir),
+    ]
     printable = " ".join(cmd)
     _log(f"ALEAPP command: {printable}")
 
@@ -196,7 +211,9 @@ def run_aleapp(
         _log(f"ALEAPP exited {result.returncode}: {result.stderr[:200]}")
 
     artifacts = _collect_tsv_artifacts(output_dir)
-    _log(f"ALEAPP produced {len(artifacts)} artifact module(s): {', '.join(sorted(artifacts)) or '(none)'}")
+    _log(
+        f"ALEAPP produced {len(artifacts)} artifact module(s): {', '.join(sorted(artifacts)) or '(none)'}"
+    )
 
     return {
         "available": True,
@@ -226,42 +243,50 @@ def promote_aleapp_results(
 
     # SMS → messages_list (as generic Message-like dicts; the dashboard accepts both)
     for row in artifacts.get("sms", []):
-        messages_list.append({
-            "app": "sms",
-            "sender": row.get("Address", row.get("From", "")),
-            "body": row.get("Body", row.get("Message", "")),
-            "timestamp": row.get("Date", row.get("Timestamp", "")),
-            "confidence": "live",
-            "source": "aleapp",
-            "provenance": "ALEAPP sms module",
-        })
+        messages_list.append(
+            {
+                "app": "sms",
+                "sender": row.get("Address", row.get("From", "")),
+                "body": row.get("Body", row.get("Message", "")),
+                "timestamp": row.get("Date", row.get("Timestamp", "")),
+                "confidence": "live",
+                "source": "aleapp",
+                "provenance": "ALEAPP sms module",
+            }
+        )
 
     # Call log
     for row in artifacts.get("calls", []):
-        calls_list.append({
-            "name": row.get("Name", ""),
-            "number": row.get("Number", row.get("Phone", "")),
-            "type": row.get("Type", ""),
-            "duration": row.get("Duration", ""),
-            "timestamp": row.get("Date", row.get("Timestamp", "")),
-            "source": "aleapp",
-        })
+        calls_list.append(
+            {
+                "name": row.get("Name", ""),
+                "number": row.get("Number", row.get("Phone", "")),
+                "type": row.get("Type", ""),
+                "duration": row.get("Duration", ""),
+                "timestamp": row.get("Date", row.get("Timestamp", "")),
+                "source": "aleapp",
+            }
+        )
 
     # Contacts
     for row in artifacts.get("contacts", []):
-        contacts_list.append({
-            "name": row.get("Display Name", row.get("Name", "")),
-            "number": row.get("Phone", row.get("Number", "")),
-            "email": row.get("Email", ""),
-            "source": "aleapp",
-        })
+        contacts_list.append(
+            {
+                "name": row.get("Display Name", row.get("Name", "")),
+                "number": row.get("Phone", row.get("Number", "")),
+                "email": row.get("Email", ""),
+                "source": "aleapp",
+            }
+        )
 
     # Browser history → browser_list
     for row in artifacts.get("chrome_history", []):
-        browser_list.append({
-            "url": row.get("URL", row.get("url", "")),
-            "title": row.get("Title", row.get("title", "")),
-            "visit_count": row.get("Visit Count", 0),
-            "last_visit_time": row.get("Last Visit Time", ""),
-            "source": "aleapp",
-        })
+        browser_list.append(
+            {
+                "url": row.get("URL", row.get("url", "")),
+                "title": row.get("Title", row.get("title", "")),
+                "visit_count": row.get("Visit Count", 0),
+                "last_visit_time": row.get("Last Visit Time", ""),
+                "source": "aleapp",
+            }
+        )

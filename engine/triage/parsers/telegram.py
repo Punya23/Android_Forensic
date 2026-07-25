@@ -53,6 +53,7 @@ Encryption
 ``cache4.db`` is NOT encrypted by default — it is a plain SQLite file.
 No decryption step is needed.
 """
+
 from __future__ import annotations
 
 import json
@@ -79,6 +80,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configurable paths (overridable via env-var for testing)
 # ---------------------------------------------------------------------------
+
 
 class TelegramPaths:
     """Configurable device-side path constants."""
@@ -115,17 +117,29 @@ _MEDIA_PATH_RE = re.compile(
 # Each entry is (canonical_role, [substrings_that_trigger_this_role]).
 # First match wins.  A column can trigger at most one role.
 _ROLE_HINTS: list[tuple[str, list[str]]] = [
-    ("id_col",      ["_id", "rowid", "^id$", "uid", "peer_id", "from_id",
-                     "chat_id", "dialog_id", "user_id"]),
-    ("name_col",    ["name", "title", "first_name", "last_name", "display"]),
-    ("text_col",    ["message", "body", "text", "content", "msg", "caption"]),
-    ("date_col",    ["date", "time", "ts", "timestamp", "sent", "recv"]),
-    ("path_col",    ["path", "file", "media", "thumb", "url", "uri"]),
-    ("type_col",    ["type", "kind", "subtype", "media_type"]),
-    ("out_col",     ["^out$", "is_out", "outgoing", "sent_by_me"]),
-    ("blob_col",    ["data", "blob", "tl_data", "raw", "payload"]),
-    ("phone_col",   ["phone", "number", "tel"]),
-    ("username_col",["username", "handle", "login"]),
+    (
+        "id_col",
+        [
+            "_id",
+            "rowid",
+            "^id$",
+            "uid",
+            "peer_id",
+            "from_id",
+            "chat_id",
+            "dialog_id",
+            "user_id",
+        ],
+    ),
+    ("name_col", ["name", "title", "first_name", "last_name", "display"]),
+    ("text_col", ["message", "body", "text", "content", "msg", "caption"]),
+    ("date_col", ["date", "time", "ts", "timestamp", "sent", "recv"]),
+    ("path_col", ["path", "file", "media", "thumb", "url", "uri"]),
+    ("type_col", ["type", "kind", "subtype", "media_type"]),
+    ("out_col", ["^out$", "is_out", "outgoing", "sent_by_me"]),
+    ("blob_col", ["data", "blob", "tl_data", "raw", "payload"]),
+    ("phone_col", ["phone", "number", "tel"]),
+    ("username_col", ["username", "handle", "login"]),
 ]
 
 
@@ -194,9 +208,7 @@ def detect_table_schema(db_path: str | Path, table_name: str) -> TableSchema:
             return schema
         schema.table_name = real_name
 
-        cols_info = con.execute(
-            f"PRAGMA table_info('{real_name}')"
-        ).fetchall()
+        cols_info = con.execute(f"PRAGMA table_info('{real_name}')").fetchall()
         con.close()
 
         raw_cols = [r[1] for r in cols_info]
@@ -236,8 +248,10 @@ def detect_table_schema(db_path: str | Path, table_name: str) -> TableSchema:
 
         # Mark usable if we have at least an id or name/text column.
         schema.usable = bool(
-            mapping.get("id_col") or mapping.get("name_col")
-            or mapping.get("text_col") or mapping.get("path_col")
+            mapping.get("id_col")
+            or mapping.get("name_col")
+            or mapping.get("text_col")
+            or mapping.get("path_col")
         )
 
         # Label for provenance.
@@ -256,6 +270,7 @@ def detect_table_schema(db_path: str | Path, table_name: str) -> TableSchema:
 # ---------------------------------------------------------------------------
 # Backward-compatible alias — detect_telegram_schema now delegates here
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class TelegramSchema:
@@ -291,9 +306,9 @@ def detect_telegram_schema(path: str | Path) -> TelegramSchema:
     # Map generic roles back onto the legacy TelegramSchema field names.
     old_map: dict[str, Optional[str]] = {}
     m = ts.mapping
-    old_map["body"]      = m.get("text_col")
-    old_map["date"]      = m.get("date_col")
-    old_map["from_id"]   = m.get("id_col")    # best guess for sender ID
+    old_map["body"] = m.get("text_col")
+    old_map["date"] = m.get("date_col")
+    old_map["from_id"] = m.get("id_col")  # best guess for sender ID
     old_map["data_blob"] = m.get("blob_col")
 
     # Also preserve any raw column names the old code expected.
@@ -322,6 +337,7 @@ def detect_telegram_schema(path: str | Path) -> TelegramSchema:
 # User & Chat recovery
 # ---------------------------------------------------------------------------
 
+
 def _recover_table_rows(
     db_path: Path,
     table_name: str,
@@ -338,14 +354,13 @@ def _recover_table_rows(
     try:
         con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         con.row_factory = sqlite3.Row
-        rows = con.execute(
-            f"SELECT * FROM '{real_table}' LIMIT 10000"
-        ).fetchall()
+        rows = con.execute(f"SELECT * FROM '{real_table}' LIMIT 10000").fetchall()
         con.close()
 
         for row in rows:
-            rec = _row_to_generic_record(row, schema, Confidence.LIVE,
-                                         db_path.name, "live_query")
+            rec = _row_to_generic_record(
+                row, schema, Confidence.LIVE, db_path.name, "live_query"
+            )
             if rec:
                 results.append(rec)
     except sqlite3.Error as exc:
@@ -479,12 +494,21 @@ def recover_users_and_chats(db_path: str | Path) -> dict[str, Any]:
     users_schema = detect_table_schema(db_path, "users")
     chats_schema = detect_table_schema(db_path, "chats")
 
-    users = _recover_table_rows(db_path, "users", users_schema) if users_schema.usable else []
-    chats = _recover_table_rows(db_path, "chats", chats_schema) if chats_schema.usable else []
+    users = (
+        _recover_table_rows(db_path, "users", users_schema)
+        if users_schema.usable
+        else []
+    )
+    chats = (
+        _recover_table_rows(db_path, "chats", chats_schema)
+        if chats_schema.usable
+        else []
+    )
 
     log.info(
         "recover_users_and_chats: users=%d chats=%d",
-        len(users), len(chats),
+        len(users),
+        len(chats),
     )
 
     return {
@@ -495,12 +519,32 @@ def recover_users_and_chats(db_path: str | Path) -> dict[str, Any]:
         "schema_users": users_schema.to_dict(),
         "schema_chats": chats_schema.to_dict(),
         "counts": {
-            "users_live":     sum(1 for u in users if u.get("confidence") == Confidence.LIVE.value),
-            "users_recovered": sum(1 for u in users if u.get("confidence") == Confidence.RECOVERED_VERIFIED.value),
-            "users_carved":   sum(1 for u in users if u.get("confidence") == Confidence.CARVED_PARTIAL.value),
-            "chats_live":     sum(1 for c in chats if c.get("confidence") == Confidence.LIVE.value),
-            "chats_recovered": sum(1 for c in chats if c.get("confidence") == Confidence.RECOVERED_VERIFIED.value),
-            "chats_carved":   sum(1 for c in chats if c.get("confidence") == Confidence.CARVED_PARTIAL.value),
+            "users_live": sum(
+                1 for u in users if u.get("confidence") == Confidence.LIVE.value
+            ),
+            "users_recovered": sum(
+                1
+                for u in users
+                if u.get("confidence") == Confidence.RECOVERED_VERIFIED.value
+            ),
+            "users_carved": sum(
+                1
+                for u in users
+                if u.get("confidence") == Confidence.CARVED_PARTIAL.value
+            ),
+            "chats_live": sum(
+                1 for c in chats if c.get("confidence") == Confidence.LIVE.value
+            ),
+            "chats_recovered": sum(
+                1
+                for c in chats
+                if c.get("confidence") == Confidence.RECOVERED_VERIFIED.value
+            ),
+            "chats_carved": sum(
+                1
+                for c in chats
+                if c.get("confidence") == Confidence.CARVED_PARTIAL.value
+            ),
         },
     }
 
@@ -508,6 +552,7 @@ def recover_users_and_chats(db_path: str | Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Media blob path extractor (heuristic — no hardcoded TL tag numbers)
 # ---------------------------------------------------------------------------
+
 
 def extract_media_paths_from_blob(blob: bytes | bytearray | None) -> list[str]:
     """Extract candidate local file paths from a Telegram TL-encoded BLOB.
@@ -549,7 +594,7 @@ def extract_media_paths_from_blob(blob: bytes | bytearray | None) -> list[str]:
             if i + length > n:
                 i += 1
                 continue
-            candidate = data[i: i + length]
+            candidate = data[i : i + length]
             i += length
             # Align to 4-byte boundary (TL padding).
             pad = (4 - ((length + 1) % 4)) % 4
@@ -558,12 +603,12 @@ def extract_media_paths_from_blob(blob: bytes | bytearray | None) -> list[str]:
             # 3-byte LE length follows.
             if i + 4 > n:
                 break
-            length = int.from_bytes(data[i + 1: i + 4], "little")
+            length = int.from_bytes(data[i + 1 : i + 4], "little")
             i += 4
             if length < 4 or i + length > n:
                 i += 1
                 continue
-            candidate = data[i: i + length]
+            candidate = data[i : i + length]
             i += length
             pad = (4 - (length % 4)) % 4
             i += pad
@@ -578,11 +623,13 @@ def extract_media_paths_from_blob(blob: bytes | bytearray | None) -> list[str]:
             continue
 
         # Must look like a relative path.
-        if (4 <= len(s) <= 200
-                and "/" in s
-                and "." in s
-                and not s.startswith("http")
-                and _MEDIA_PATH_RE.match(s)):
+        if (
+            4 <= len(s) <= 200
+            and "/" in s
+            and "." in s
+            and not s.startswith("http")
+            and _MEDIA_PATH_RE.match(s)
+        ):
             paths.append(s)
 
     # Fallback: raw regex scan over the whole BLOB interpreted as latin-1.
@@ -591,9 +638,7 @@ def extract_media_paths_from_blob(blob: bytes | bytearray | None) -> list[str]:
             text = data.decode("latin-1", errors="replace")
             for m in _MEDIA_PATH_RE.finditer(text):
                 s = m.group(0)
-                if (4 <= len(s) <= 200
-                        and "." in s
-                        and not s.startswith("http")):
+                if 4 <= len(s) <= 200 and "." in s and not s.startswith("http"):
                     paths.append(s)
         except Exception:
             pass
@@ -693,7 +738,7 @@ def build_conversations(
             conversations[chat_id] = {
                 "chat_id": chat_id,
                 "title": chat_index.get(chat_id, f"Chat {chat_id}"),
-                "participants": [],         # filled below
+                "participants": [],  # filled below
                 "_participant_ids": set(),  # temporary, removed later
                 "last_message_ts": None,
                 "message_count": 0,
@@ -712,29 +757,31 @@ def build_conversations(
         # Track unique participants.
         if sender_id and sender_id not in conv["_participant_ids"]:
             conv["_participant_ids"].add(sender_id)
-            conv["participants"].append({
-                "id": sender_id,
-                "name": sender_name,
-                "confidence": user_index.get(sender_id + "__conf", "unknown"),
-            })
+            conv["participants"].append(
+                {
+                    "id": sender_id,
+                    "name": sender_name,
+                    "confidence": user_index.get(sender_id + "__conf", "unknown"),
+                }
+            )
 
-        conv["messages"].append({
-            "body":             msg.get("body", ""),
-            "sender_name":      sender_name,
-            "sender_id":        sender_id,
-            "timestamp":        ts,
-            "confidence":       msg.get("confidence", Confidence.LIVE.value),
-            "media_artifact_id": msg.get("media_artifact_id"),
-            "carve_method":     msg.get("carve_method", ""),
-            "provenance":       msg.get("provenance", ""),
-        })
+        conv["messages"].append(
+            {
+                "body": msg.get("body", ""),
+                "sender_name": sender_name,
+                "sender_id": sender_id,
+                "timestamp": ts,
+                "confidence": msg.get("confidence", Confidence.LIVE.value),
+                "media_artifact_id": msg.get("media_artifact_id"),
+                "carve_method": msg.get("carve_method", ""),
+                "provenance": msg.get("provenance", ""),
+            }
+        )
         conv["message_count"] += 1
 
     # Sort messages within each conversation by timestamp.
     for conv in conversations.values():
-        conv["messages"].sort(
-            key=lambda m: m.get("timestamp") or "0000"
-        )
+        conv["messages"].sort(key=lambda m: m.get("timestamp") or "0000")
         conv.pop("_participant_ids", None)  # remove internal tracking set
 
     return conversations
@@ -743,6 +790,7 @@ def build_conversations(
 # ---------------------------------------------------------------------------
 # BLOB string extractor (TL-encoded content fallback for message bodies)
 # ---------------------------------------------------------------------------
+
 
 def _extract_strings_from_blob(blob: bytes) -> str:
     """Extract printable UTF-8 strings from a Telegram TL-encoded BLOB (body fallback)."""
@@ -776,6 +824,7 @@ def _extract_strings_from_blob(blob: bytes) -> str:
 # Row-to-message mapping helpers (for recover_telegram_messages)
 # ---------------------------------------------------------------------------
 
+
 def _epoch_to_iso(val: Any) -> Optional[str]:
     if val is None:
         return None
@@ -785,9 +834,7 @@ def _epoch_to_iso(val: Any) -> Optional[str]:
             return None
         if n > 1e12:
             n //= 1000
-        return datetime.fromtimestamp(n, tz=timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        return datetime.fromtimestamp(n, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     except (ValueError, TypeError, OSError):
         return None
 
@@ -839,7 +886,9 @@ def _map_carved_row_to_body(values: list[Any], schema: TelegramSchema) -> str:
     return " ".join(parts)
 
 
-def _map_carved_row_to_timestamp(values: list[Any], schema: TelegramSchema) -> Optional[str]:
+def _map_carved_row_to_timestamp(
+    values: list[Any], schema: TelegramSchema
+) -> Optional[str]:
     date_col = schema.date_col()
     if date_col and date_col in schema.raw_columns:
         try:
@@ -930,20 +979,22 @@ def _read_live_telegram_rows(
                         break
                 except (KeyError, IndexError):
                     pass
-            results.append({
-                "body":        body,
-                "sender":      sender,
-                "timestamp":   ts,
-                "chat_id":     chat_id,
-                "confidence":  Confidence.LIVE.value,
-                "source_file": db_path.name,
-                "page":        None,
-                "offset":      None,
-                "carve_method": "live_query",
-                "provenance":  f"live table '{msg_table}'",
-                "warnings":    [],
-                "media_artifact_id": None,
-            })
+            results.append(
+                {
+                    "body": body,
+                    "sender": sender,
+                    "timestamp": ts,
+                    "chat_id": chat_id,
+                    "confidence": Confidence.LIVE.value,
+                    "source_file": db_path.name,
+                    "page": None,
+                    "offset": None,
+                    "carve_method": "live_query",
+                    "provenance": f"live table '{msg_table}'",
+                    "warnings": [],
+                    "media_artifact_id": None,
+                }
+            )
     except sqlite3.Error as exc:
         log.warning("_read_live_telegram_rows: %s", exc)
     return results
@@ -969,17 +1020,17 @@ def _carved_row_to_dict(
     else:
         carve_method = "carve"
     return {
-        "body":        body,
-        "sender":      sender,
-        "timestamp":   ts,
-        "chat_id":     None,
-        "confidence":  row.confidence.value,
+        "body": body,
+        "sender": sender,
+        "timestamp": ts,
+        "chat_id": None,
+        "confidence": row.confidence.value,
         "source_file": row.source_file or source_name,
-        "page":        row.page,
-        "offset":      row.offset,
+        "page": row.page,
+        "offset": row.offset,
         "carve_method": carve_method,
-        "provenance":  prov,
-        "warnings":    list(row.warnings),
+        "provenance": prov,
+        "warnings": list(row.warnings),
         "media_artifact_id": None,
     }
 
@@ -987,6 +1038,7 @@ def _carved_row_to_dict(
 # ---------------------------------------------------------------------------
 # Main public recovery API
 # ---------------------------------------------------------------------------
+
 
 def recover_telegram_messages(
     db_path: str | Path,
@@ -1026,7 +1078,9 @@ def recover_telegram_messages(
     schema = detect_telegram_schema(db_path)
     log.info(
         "Telegram schema: %s, %d cols, usable=%s",
-        schema.version_label, schema.col_count, schema.usable,
+        schema.version_label,
+        schema.col_count,
+        schema.usable,
     )
 
     messages: list[dict[str, Any]] = []
@@ -1069,20 +1123,22 @@ def recover_telegram_messages(
         )
         if not body:
             continue
-        messages.append({
-            "body":        body,
-            "sender":      "<recovered>",
-            "timestamp":   None,
-            "chat_id":     None,
-            "confidence":  Confidence.CARVED_PARTIAL.value,
-            "source_file": sq_row.source_file,
-            "page":        None,
-            "offset":      sq_row.offset,
-            "carve_method": "sqbrite",
-            "provenance":  sq_row.provenance,
-            "warnings":    list(sq_row.warnings),
-            "media_artifact_id": None,
-        })
+        messages.append(
+            {
+                "body": body,
+                "sender": "<recovered>",
+                "timestamp": None,
+                "chat_id": None,
+                "confidence": Confidence.CARVED_PARTIAL.value,
+                "source_file": sq_row.source_file,
+                "page": None,
+                "offset": sq_row.offset,
+                "carve_method": "sqbrite",
+                "provenance": sq_row.provenance,
+                "warnings": list(sq_row.warnings),
+                "media_artifact_id": None,
+            }
+        )
 
     # Rowid gap detection.
     if msg_table:
@@ -1092,27 +1148,29 @@ def recover_telegram_messages(
             log.warning("detect_rowid_gaps: %s", exc)
             gaps = []
         for gap in gaps:
-            messages.append({
-                "body":        "",
-                "sender":      "<gap>",
-                "timestamp":   None,
-                "chat_id":     None,
-                "confidence":  Confidence.DELETION_DETECTED.value,
-                "source_file": db_path.name,
-                "page":        None,
-                "offset":      None,
-                "carve_method": "gap_analysis",
-                "provenance":  (
-                    f"rowid gap after {gap['after_rowid']} — "
-                    f"{gap['missing']} row(s) deleted, no content recoverable"
-                ),
-                "warnings":    [
-                    "Rowid gap proves deletion occurred; no message content "
-                    "was recovered. Content may have been overwritten."
-                ],
-                "gap_detail":  gap,
-                "media_artifact_id": None,
-            })
+            messages.append(
+                {
+                    "body": "",
+                    "sender": "<gap>",
+                    "timestamp": None,
+                    "chat_id": None,
+                    "confidence": Confidence.DELETION_DETECTED.value,
+                    "source_file": db_path.name,
+                    "page": None,
+                    "offset": None,
+                    "carve_method": "gap_analysis",
+                    "provenance": (
+                        f"rowid gap after {gap['after_rowid']} — "
+                        f"{gap['missing']} row(s) deleted, no content recoverable"
+                    ),
+                    "warnings": [
+                        "Rowid gap proves deletion occurred; no message content "
+                        "was recovered. Content may have been overwritten."
+                    ],
+                    "gap_detail": gap,
+                    "media_artifact_id": None,
+                }
+            )
 
     # Counts.
     counts: dict[str, int] = dict(_zero_counts)
@@ -1132,14 +1190,14 @@ def recover_telegram_messages(
         "available": True,
         "error": None,
         "schema": {
-            "raw_columns":   schema.raw_columns,
-            "mapping":       schema.mapping,
-            "col_count":     schema.col_count,
+            "raw_columns": schema.raw_columns,
+            "mapping": schema.mapping,
+            "col_count": schema.col_count,
             "version_label": schema.version_label,
-            "usable":        schema.usable,
+            "usable": schema.usable,
         },
         "messages": messages,
-        "counts":   counts,
+        "counts": counts,
     }
 
 
@@ -1151,13 +1209,13 @@ def export_recovered_messages_json(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     export = {
-        "tool":           "eRakshak Android Triage — Telegram Recovery",
+        "tool": "eRakshak Android Triage — Telegram Recovery",
         "schema_version": result.get("schema", {}).get("version_label", "unknown"),
-        "available":      result.get("available", False),
-        "error":          result.get("error"),
-        "counts":         result.get("counts", {}),
-        "schema":         result.get("schema", {}),
-        "messages":       result.get("messages", []),
+        "available": result.get("available", False),
+        "error": result.get("error"),
+        "counts": result.get("counts", {}),
+        "schema": result.get("schema", {}),
+        "messages": result.get("messages", []),
     }
     output_path.write_text(
         json.dumps(export, indent=2, ensure_ascii=False, default=str),
@@ -1170,6 +1228,7 @@ def export_recovered_messages_json(
 # ---------------------------------------------------------------------------
 # Legacy live-only parser (kept for Tier-0 pipeline compatibility)
 # ---------------------------------------------------------------------------
+
 
 def parse_telegram_db(path: str | Path, max_rows: int = 5000) -> list[Message]:
     """Parse live Telegram messages from cache4.db.
@@ -1222,15 +1281,17 @@ def parse_telegram_db(path: str | Path, max_rows: int = 5000) -> list[Message]:
                     ts = _epoch_to_iso(row[date_col])
                 except (KeyError, IndexError):
                     pass
-            messages.append(Message(
-                app="telegram",
-                sender=sender,
-                body=body,
-                timestamp=ts,
-                confidence=Confidence.LIVE,
-                source_file=path.name,
-                provenance=f"live table '{msg_table}'",
-            ))
+            messages.append(
+                Message(
+                    app="telegram",
+                    sender=sender,
+                    body=body,
+                    timestamp=ts,
+                    confidence=Confidence.LIVE,
+                    source_file=path.name,
+                    provenance=f"live table '{msg_table}'",
+                )
+            )
     except sqlite3.Error as exc:
         log.warning("parse_telegram_db: %s", exc)
 

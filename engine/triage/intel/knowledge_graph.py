@@ -25,6 +25,7 @@ The graph never removes an artifact from collection — it only reorders priorit
 flips the *recommended* state of expensive/root pulls. Cheap artifacts stay unconditional
 (see the prioritise-never-exclude rule in :mod:`.planner`).
 """
+
 from __future__ import annotations
 
 import json
@@ -96,10 +97,14 @@ class Edge:
 
     def to_dict(self) -> dict:
         return {
-            "crime_type": self.crime_type, "artifact": self.artifact,
-            "alpha": round(self.alpha, 4), "beta": round(self.beta, 4),
-            "observations": self.observations, "decisive": self.decisive,
-            "supporting": self.supporting, "none": self.none,
+            "crime_type": self.crime_type,
+            "artifact": self.artifact,
+            "alpha": round(self.alpha, 4),
+            "beta": round(self.beta, 4),
+            "observations": self.observations,
+            "decisive": self.decisive,
+            "supporting": self.supporting,
+            "none": self.none,
             "posterior": round(self.posterior, 3),
             "strength": round(self.strength, 3),
             "cases": self.cases[-25:],
@@ -131,8 +136,14 @@ class KnowledgeGraph:
         self._seen_cases: set[str] = set()
 
     # --- learning ---------------------------------------------------------
-    def observe_case(self, crime_type: str, artifact_yields: dict[str, str], *,
-                     case_number: str = "", weight: float = 1.0) -> int:
+    def observe_case(
+        self,
+        crime_type: str,
+        artifact_yields: dict[str, str],
+        *,
+        case_number: str = "",
+        weight: float = 1.0,
+    ) -> int:
         """Record one solved/worked case. Returns the number of edges updated.
 
         *artifact_yields* maps artifact name to ``decisive`` / ``supporting`` / ``none``.
@@ -151,8 +162,9 @@ class KnowledgeGraph:
             y = str(yield_).strip().lower()
             if y not in YIELD_WEIGHT:
                 y = "none"
-            edge = self._edges.setdefault((crime_type, artifact),
-                                          Edge(crime_type=crime_type, artifact=artifact))
+            edge = self._edges.setdefault(
+                (crime_type, artifact), Edge(crime_type=crime_type, artifact=artifact)
+            )
             edge.observe(y, case_number=case_number, weight=weight)
             updated += 1
             if y == "decisive":
@@ -160,7 +172,7 @@ class KnowledgeGraph:
 
         # Artifact co-occurrence: which sources tend to break a case together.
         for i, a in enumerate(sorted(decisive_here)):
-            for b in sorted(decisive_here)[i + 1:]:
+            for b in sorted(decisive_here)[i + 1 :]:
                 key = (a, b)
                 self._cooccurrence[key] = self._cooccurrence.get(key, 0) + 1
 
@@ -175,14 +187,17 @@ class KnowledgeGraph:
         for study in bank.all():
             yields = {a.artifact: a.yield_ for a in study.artifacts}
             if yields:
-                learned += self.observe_case(study.crime_type, yields,
-                                             case_number=study.case_number)
+                learned += self.observe_case(
+                    study.crime_type, yields, case_number=study.case_number
+                )
         return learned
 
     def observe_study(self, study: CaseStudy) -> int:
-        return self.observe_case(study.crime_type,
-                                 {a.artifact: a.yield_ for a in study.artifacts},
-                                 case_number=study.case_number)
+        return self.observe_case(
+            study.crime_type,
+            {a.artifact: a.yield_ for a in study.artifacts},
+            case_number=study.case_number,
+        )
 
     # --- querying ---------------------------------------------------------
     def edge(self, crime_type: str, artifact: str) -> Optional[Edge]:
@@ -200,9 +215,14 @@ class KnowledgeGraph:
             doctrine = _ontology_prior(crime_type, artifact)
             if edge is None:
                 out[artifact] = {
-                    "artifact": artifact, "posterior": None, "strength": 0.0,
-                    "observations": 0, "doctrine": round(doctrine, 3),
-                    "blended": round(doctrine, 3), "decisive": 0, "none": 0,
+                    "artifact": artifact,
+                    "posterior": None,
+                    "strength": 0.0,
+                    "observations": 0,
+                    "doctrine": round(doctrine, 3),
+                    "blended": round(doctrine, 3),
+                    "decisive": 0,
+                    "none": 0,
                     "source": "doctrine",
                 }
                 continue
@@ -244,30 +264,42 @@ class KnowledgeGraph:
         if not mine:
             return []
         scored: list[dict] = []
-        others = {ct for (ct, _), edge in self._edges.items()
-                  if ct != crime_type and edge.observations > 0}
+        others = {
+            ct
+            for (ct, _), edge in self._edges.items()
+            if ct != crime_type and edge.observations > 0
+        }
         for other in others:
             theirs = self._profile_vector(other)
             sim = _cosine(mine, theirs)
             if sim > 0:
                 shared = sorted(
-                    (a for a in mine if a in theirs
-                     and mine[a] >= 0.6 and theirs[a] >= 0.6),
+                    (
+                        a
+                        for a in mine
+                        if a in theirs and mine[a] >= 0.6 and theirs[a] >= 0.6
+                    ),
                     key=lambda a: -(mine[a] + theirs[a]),
                 )
-                scored.append({
-                    "crime_type": other,
-                    "label": CRIME_ONTOLOGY.get(other, CRIME_ONTOLOGY["general"]).label,
-                    "similarity": round(sim, 3),
-                    "shared_decisive_artifacts": shared[:5],
-                })
+                scored.append(
+                    {
+                        "crime_type": other,
+                        "label": CRIME_ONTOLOGY.get(
+                            other, CRIME_ONTOLOGY["general"]
+                        ).label,
+                        "similarity": round(sim, 3),
+                        "shared_decisive_artifacts": shared[:5],
+                    }
+                )
         scored.sort(key=lambda d: -d["similarity"])
         return scored[:top_k]
 
     def _profile_vector(self, crime_type: str) -> dict[str, float]:
-        return {artifact: edge.posterior
-                for (ct, artifact), edge in self._edges.items()
-                if ct == crime_type and edge.observations > 0}
+        return {
+            artifact: edge.posterior
+            for (ct, artifact), edge in self._edges.items()
+            if ct == crime_type and edge.observations > 0
+        }
 
     def co_occurring(self, artifact: str, top_k: int = 3) -> list[dict]:
         """Artifacts that were decisive alongside *artifact* in the same cases."""
@@ -298,8 +330,10 @@ class KnowledgeGraph:
             "case_count": self._case_count,
             "seen_cases": sorted(self._seen_cases),
             "edges": [e.to_dict() for e in self._edges.values()],
-            "cooccurrence": [{"a": a, "b": b, "cases": c}
-                             for (a, b), c in sorted(self._cooccurrence.items())],
+            "cooccurrence": [
+                {"a": a, "b": b, "cases": c}
+                for (a, b), c in sorted(self._cooccurrence.items())
+            ],
             "stats": self.stats(),
         }
 
@@ -307,11 +341,11 @@ class KnowledgeGraph:
     @classmethod
     def from_dict(cls, d: dict) -> "KnowledgeGraph":
         kg = cls()
-        for raw in (d.get("edges") or []):
+        for raw in d.get("edges") or []:
             edge = Edge.from_dict(raw)
             if edge.crime_type and edge.artifact:
                 kg._edges[(edge.crime_type, edge.artifact)] = edge
-        for raw in (d.get("cooccurrence") or []):
+        for raw in d.get("cooccurrence") or []:
             a, b, c = raw.get("a"), raw.get("b"), int(raw.get("cases", 0))
             if a and b:
                 kg._cooccurrence[(a, b)] = c
@@ -320,7 +354,9 @@ class KnowledgeGraph:
         return kg
 
     @classmethod
-    def load(cls, path: Path, *, bootstrap: Optional[CaseBank] = None) -> "KnowledgeGraph":
+    def load(
+        cls, path: Path, *, bootstrap: Optional[CaseBank] = None
+    ) -> "KnowledgeGraph":
         """Load a persisted graph, or build a fresh one seeded from *bootstrap*.
 
         A corrupt or unreadable graph file is treated as absent rather than fatal —
@@ -331,7 +367,7 @@ class KnowledgeGraph:
             try:
                 kg = cls.from_dict(json.loads(path.read_text(encoding="utf-8")))
                 if bootstrap is not None:
-                    kg.bootstrap_from_casebank(bootstrap)   # idempotent by case number
+                    kg.bootstrap_from_casebank(bootstrap)  # idempotent by case number
                 return kg
             except (json.JSONDecodeError, OSError, TypeError, ValueError):
                 pass
@@ -345,7 +381,7 @@ class KnowledgeGraph:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
-        tmp.replace(path)   # atomic-ish: never leave a half-written graph behind
+        tmp.replace(path)  # atomic-ish: never leave a half-written graph behind
 
 
 def _cosine(a: dict[str, float], b: dict[str, float]) -> float:

@@ -3,6 +3,7 @@
 Everything the acquisition/recovery/parsing layers produce is one of these dataclasses,
 and everything serialises to plain JSON for the case folder and the dashboard API.
 """
+
 from __future__ import annotations
 
 import time
@@ -44,12 +45,12 @@ class AuditEvent(Serialisable):
     """One line in the append-only audit log."""
 
     timestamp: str
-    action: str                      # e.g. "adb.pull", "pm.grant", "hash.compute"
-    detail: str                      # human-readable summary
+    action: str  # e.g. "adb.pull", "pm.grant", "hash.compute"
+    detail: str  # human-readable summary
     examiner: str = ""
-    command: str = ""                # exact shell command issued, if any
-    result: str = "ok"               # "ok" | "error" | "skipped"
-    alters_device: bool = False      # True if this action changed device state
+    command: str = ""  # exact shell command issued, if any
+    result: str = "ok"  # "ok" | "error" | "skipped"
+    alters_device: bool = False  # True if this action changed device state
     tier: Optional[str] = None
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -59,16 +60,16 @@ class ArtifactRecord(Serialisable):
     """A single pulled file recorded in the hash manifest."""
 
     artifact_id: str
-    source_path: str                 # path on the device
-    stored_path: str                 # relative path inside the case folder
+    source_path: str  # path on the device
+    stored_path: str  # relative path inside the case folder
     size_bytes: int
     sha256: str
     md5: str
     tier: Tier
-    method: str                      # "adb pull", "helper-apk", "mock", ...
+    method: str  # "adb pull", "helper-apk", "mock", ...
     extracted_at: str
-    category: str = "other"          # media/document/database/app-export/...
-    app: Optional[str] = None        # whatsapp/telegram/... if attributable
+    category: str = "other"  # media/document/database/app-export/...
+    app: Optional[str] = None  # whatsapp/telegram/... if attributable
     flags: list[str] = field(default_factory=list)  # e.g. ["trashed", "carved-source"]
 
 
@@ -78,11 +79,11 @@ class Message(Serialisable):
     app: str
     sender: str
     body: str
-    timestamp: Optional[str] = None      # ISO-8601 if parseable
-    direction: str = "unknown"           # incoming/outgoing/unknown
+    timestamp: Optional[str] = None  # ISO-8601 if parseable
+    direction: str = "unknown"  # incoming/outgoing/unknown
     confidence: Confidence = Confidence.LIVE
     source_file: str = ""
-    provenance: str = ""                 # e.g. "wal frame 12", "freelist page 4"
+    provenance: str = ""  # e.g. "wal frame 12", "freelist page 4"
     flags: list[str] = field(default_factory=list)
 
 
@@ -99,7 +100,7 @@ class Contact(Serialisable):
 class CallRecord(Serialisable):
     number: str
     name: str = ""
-    call_type: str = "unknown"           # incoming/outgoing/missed
+    call_type: str = "unknown"  # incoming/outgoing/missed
     timestamp: Optional[str] = None
     duration_s: Optional[int] = None
     confidence: Confidence = Confidence.LIVE
@@ -110,7 +111,7 @@ class CallRecord(Serialisable):
 class LocationPoint(Serialisable):
     latitude: float
     longitude: float
-    source: str                          # "exif" | "dumpsys" | app name
+    source: str  # "exif" | "dumpsys" | app name
     timestamp: Optional[str] = None
     label: str = ""
     source_file: str = ""
@@ -120,7 +121,7 @@ class LocationPoint(Serialisable):
 class MediaItem(Serialisable):
     artifact_id: str
     stored_path: str
-    kind: str                            # image/video/audio/document
+    kind: str  # image/video/audio/document
     size_bytes: int
     app: Optional[str] = None
     trashed: bool = False
@@ -141,9 +142,11 @@ class InstalledApp(Serialisable):
     last_update: Optional[str] = None
     installer: str = ""
     is_system: bool = False
-    category: str = "other"       # messaging/social/crypto/dating/browser/anti_forensic/cloud/other
+    category: str = (
+        "other"  # messaging/social/crypto/dating/browser/anti_forensic/cloud/other
+    )
     friendly_name: Optional[str] = None
-    notable: bool = False         # app of investigative interest
+    notable: bool = False  # app of investigative interest
     dangerous_granted: list[str] = field(default_factory=list)
     permission_count: int = 0
     source_file: str = ""
@@ -196,7 +199,7 @@ class MediaInventoryItem(Serialisable):
     """
 
     media_id: int
-    kind: str                     # image/video/audio/download
+    kind: str  # image/video/audio/download
     display_name: str = ""
     mime_type: str = ""
     size_bytes: int = 0
@@ -225,17 +228,17 @@ class MediaInventoryItem(Serialisable):
 class Flag(Serialisable):
     """A keyword / known-hash hit surfaced for analyst awareness."""
 
-    kind: str                            # "keyword" | "known-hash"
+    kind: str  # "keyword" | "known-hash"
     term: str
     context: str
-    location: str                        # where it was found (file / message id)
-    severity: str = "info"               # info/warn/critical
+    location: str  # where it was found (file / message id)
+    severity: str = "info"  # info/warn/critical
 
 
 @dataclass
 class TimelineEvent(Serialisable):
     timestamp: str
-    kind: str                            # message/call/media/location
+    kind: str  # message/call/media/location
     summary: str
     confidence: Confidence = Confidence.LIVE
     ref: str = ""
@@ -255,13 +258,14 @@ class WifiNetwork(Serialisable):
 
     ssid: str
     password: str
-    security: str = ""                   # WPA/WPA2/WEP/OPEN/…
+    security: str = ""  # WPA/WPA2/WEP/OPEN/…
     timestamp: Optional[str] = None
     confidence: Confidence = Confidence.LIVE
     source_file: str = ""
 
 
 # --- WhatsApp backup recovery -----------------------------------------------
+
 
 @dataclass
 class WhatsAppBackupMessage(Serialisable):
@@ -271,16 +275,16 @@ class WhatsAppBackupMessage(Serialisable):
     recovered via freelist, WAL, or unallocated-space carving.
     """
 
-    backup_file: str                     # source .crypt* filename (e.g. msgstore-2024-01-01.1.db.crypt14)
-    chat_id: str                         # key_remote_jid / chat identifier
-    sender: str                          # JID (phone@s.whatsapp.net) or "me"
-    body: str                            # text content of the message
-    timestamp: Optional[str] = None      # ISO-8601 converted from epoch-ms
-    media_type: str = ""                 # image/video/audio/document/…
-    media_path: str = ""                 # relative path stored in the DB (may not exist on device)
+    backup_file: str  # source .crypt* filename (e.g. msgstore-2024-01-01.1.db.crypt14)
+    chat_id: str  # key_remote_jid / chat identifier
+    sender: str  # JID (phone@s.whatsapp.net) or "me"
+    body: str  # text content of the message
+    timestamp: Optional[str] = None  # ISO-8601 converted from epoch-ms
+    media_type: str = ""  # image/video/audio/document/…
+    media_path: str = ""  # relative path stored in the DB (may not exist on device)
     confidence: Confidence = Confidence.LIVE
-    source_file: str = ""               # decrypted SQLite filename
-    provenance: str = ""                 # e.g. "freelist page 4", "WAL frame 12"
+    source_file: str = ""  # decrypted SQLite filename
+    provenance: str = ""  # e.g. "freelist page 4", "WAL frame 12"
     flags: list[str] = field(default_factory=list)
 
 
@@ -293,10 +297,10 @@ class WhatsAppBackupMedia(Serialisable):
     folder rather than its original location.
     """
 
-    artifact_id: str                     # ArtifactRecord.artifact_id in the case manifest
-    backup_message_id: str = ""          # the chat_id + timestamp key of the parent message
-    file_name: str = ""                  # basename of the media file
-    file_path_on_device: str = ""        # full path where the file was found on the device
+    artifact_id: str  # ArtifactRecord.artifact_id in the case manifest
+    backup_message_id: str = ""  # the chat_id + timestamp key of the parent message
+    file_name: str = ""  # basename of the media file
+    file_path_on_device: str = ""  # full path where the file was found on the device
     size_bytes: int = 0
     sha256: str = ""
-    recovered: bool = False              # True if pulled from a .trashed-* location
+    recovered: bool = False  # True if pulled from a .trashed-* location

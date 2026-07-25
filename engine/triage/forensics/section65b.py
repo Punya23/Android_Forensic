@@ -1,12 +1,16 @@
 """Automated Section 65B Certificate generation."""
+
 from typing import Dict, Any
 import datetime
 
-def generate_65b_certificate(case_meta: Dict[str, Any], examiner_name: str, designation: str) -> str:
+
+def generate_65b_certificate(
+    case_meta: Dict[str, Any], examiner_name: str, designation: str
+) -> str:
     """Generate a Section 65B (Indian Evidence Act) certificate."""
     date = datetime.date.today().strftime("%d-%B-%Y")
     device_model = case_meta.get("device", {}).get("model", "Unknown Device")
-    
+
     cert = f"""
     <h2>CERTIFICATE UNDER SECTION 65B OF THE INDIAN EVIDENCE ACT, 1872</h2>
     <p>I, <strong>{examiner_name}</strong>, working as <strong>{designation}</strong>, hereby certify that:</p>

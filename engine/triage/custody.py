@@ -9,6 +9,7 @@ Design principles (NIST SP 800-101r1 / SWGDE-aligned):
   * We never compute a whole-device hash (NIST §3.4: live devices make it irreproducible).
   * Nothing here ever claims 'read-only' — device-altering actions are flagged as such.
 """
+
 from __future__ import annotations
 
 import json
@@ -51,13 +52,15 @@ class CaseMeta:
 
     case_id: str
     examiner: str
-    legal_authority: str = ""          # warrant / consent / exigency reference
-    scope_note: str = ""               # minimisation: what we were authorised to look at
+    legal_authority: str = ""  # warrant / consent / exigency reference
+    scope_note: str = ""  # minimisation: what we were authorised to look at
     created_at: str = field(default_factory=now_iso)
     tool_name: str = TOOL_NAME
     tool_version: str = __version__
     device: DeviceInfo = field(default_factory=DeviceInfo)
-    pre_state: dict[str, Any] = field(default_factory=dict)  # locked?, battery, time-skew...
+    pre_state: dict[str, Any] = field(
+        default_factory=dict
+    )  # locked?, battery, time-skew...
     custody_transfers: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -102,27 +105,37 @@ class Case:
         case._save_meta()
         case._manifest_path.write_text("[]")
         case._audit_path.touch()
-        case.audit(AuditEvent(
-            timestamp=now_iso(),
-            action="case.create",
-            detail=f"Case {meta.case_id} opened by {meta.examiner}",
-            examiner=meta.examiner,
-        ))
+        case.audit(
+            AuditEvent(
+                timestamp=now_iso(),
+                action="case.create",
+                detail=f"Case {meta.case_id} opened by {meta.examiner}",
+                examiner=meta.examiner,
+            )
+        )
         return case
 
     @classmethod
     def open(cls, case_root: Path) -> "Case":
         case_root = Path(case_root)
         meta_raw = json.loads((case_root / "case.json").read_text())
-        dev = DeviceInfo(**{k: v for k, v in meta_raw.pop("device", {}).items()
-                            if k in DeviceInfo.__dataclass_fields__})
-        meta = CaseMeta(**{k: v for k, v in meta_raw.items()
-                           if k in CaseMeta.__dataclass_fields__})
+        dev = DeviceInfo(
+            **{
+                k: v
+                for k, v in meta_raw.pop("device", {}).items()
+                if k in DeviceInfo.__dataclass_fields__
+            }
+        )
+        meta = CaseMeta(
+            **{k: v for k, v in meta_raw.items() if k in CaseMeta.__dataclass_fields__}
+        )
         meta.device = dev
         case = cls(case_root, meta)
         if case._manifest_path.exists():
-            case._manifest = [ArtifactRecord(**_coerce_artifact(r))
-                              for r in json.loads(case._manifest_path.read_text())]
+            case._manifest = [
+                ArtifactRecord(**_coerce_artifact(r))
+                for r in json.loads(case._manifest_path.read_text())
+            ]
         return case
 
     # -- meta ----------------------------------------------------------------
@@ -147,26 +160,53 @@ class Case:
                 fh.write(json.dumps(event.to_dict()) + "\n")
                 fh.flush()
 
-    def log(self, action: str, detail: str, *, command: str = "",
-            result: str = "ok", alters_device: bool = False,
-            tier: Optional[str] = None, **extra: Any) -> None:
+    def log(
+        self,
+        action: str,
+        detail: str,
+        *,
+        command: str = "",
+        result: str = "ok",
+        alters_device: bool = False,
+        tier: Optional[str] = None,
+        **extra: Any,
+    ) -> None:
         """Convenience wrapper to record an audit event."""
-        self.audit(AuditEvent(
-            timestamp=now_iso(), action=action, detail=detail, command=command,
-            result=result, alters_device=alters_device, tier=tier, extra=extra,
-        ))
+        self.audit(
+            AuditEvent(
+                timestamp=now_iso(),
+                action=action,
+                detail=detail,
+                command=command,
+                result=result,
+                alters_device=alters_device,
+                tier=tier,
+                extra=extra,
+            )
+        )
 
     def read_audit(self) -> list[dict[str, Any]]:
         if not self._audit_path.exists():
             return []
-        return [json.loads(line) for line in self._audit_path.read_text().splitlines()
-                if line.strip()]
+        return [
+            json.loads(line)
+            for line in self._audit_path.read_text().splitlines()
+            if line.strip()
+        ]
 
     # -- artifacts / manifest ------------------------------------------------
-    def ingest_file(self, src: Path, *, source_path: str, tier: Any, method: str,
-                    category: str = "other", app: Optional[str] = None,
-                    flags: Optional[list[str]] = None,
-                    move: bool = False) -> ArtifactRecord:
+    def ingest_file(
+        self,
+        src: Path,
+        *,
+        source_path: str,
+        tier: Any,
+        method: str,
+        category: str = "other",
+        app: Optional[str] = None,
+        flags: Optional[list[str]] = None,
+        move: bool = False,
+    ) -> ArtifactRecord:
         """Copy (or move) a pulled file into the case folder, hash it, and record it.
 
         `source_path` is the path the file had on the device (for the manifest);
@@ -198,15 +238,19 @@ class Case:
         with self._lock:
             self._manifest.append(rec)
             self._flush_manifest()
-        self.log("artifact.ingest",
-                 f"{source_path} -> {rec.stored_path} ({rec.size_bytes} B)",
-                 tier=str(getattr(tier, "value", tier)),
-                 sha256=rec.sha256, artifact_id=rec.artifact_id)
+        self.log(
+            "artifact.ingest",
+            f"{source_path} -> {rec.stored_path} ({rec.size_bytes} B)",
+            tier=str(getattr(tier, "value", tier)),
+            sha256=rec.sha256,
+            artifact_id=rec.artifact_id,
+        )
         return rec
 
     def _flush_manifest(self) -> None:
         self._manifest_path.write_text(
-            json.dumps([r.to_dict() for r in self._manifest], indent=2))
+            json.dumps([r.to_dict() for r in self._manifest], indent=2)
+        )
 
     @property
     def manifest(self) -> list[ArtifactRecord]:
@@ -220,13 +264,21 @@ class Case:
         p = self._tags_path()
         return json.loads(p.read_text()) if p.exists() else []
 
-    def add_tag(self, *, ref: str, kind: str, label: str, note: str = "",
-                by: str = "") -> dict[str, Any]:
+    def add_tag(
+        self, *, ref: str, kind: str, label: str, note: str = "", by: str = ""
+    ) -> dict[str, Any]:
         """Bookmark an artifact/row of interest (on-scene tagging). `ref` is a stable
         reference the UI supplies (e.g. 'message:42', 'media:a00003', 'recovered:7')."""
         tags = self.read_tags()
-        tag = {"id": f"t{len(tags):04d}", "ref": ref, "kind": kind, "label": label,
-               "note": note, "by": by or self.meta.examiner, "at": now_iso()}
+        tag = {
+            "id": f"t{len(tags):04d}",
+            "ref": ref,
+            "kind": kind,
+            "label": label,
+            "note": note,
+            "by": by or self.meta.examiner,
+            "at": now_iso(),
+        }
         tags.append(tag)
         self._tags_path().write_text(json.dumps(tags, indent=2))
         self.log("tag.add", f"tagged {ref} as '{label}'", ref=ref, kind=kind)
@@ -245,9 +297,14 @@ class Case:
     def write_derived(self, name: str, data: Any) -> Path:
         """Persist a parsed dataset (list of dataclasses or dicts) as JSON."""
         path = self.derived_dir / f"{name}.json"
-        payload = [d.to_dict() if hasattr(d, "to_dict") else d for d in data] \
-            if isinstance(data, list) else data
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        payload = (
+            [d.to_dict() if hasattr(d, "to_dict") else d for d in data]
+            if isinstance(data, list)
+            else data
+        )
+        path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
         return path
 
     def read_derived(self, name: str) -> Any:
@@ -273,14 +330,18 @@ class Case:
 def _safe_rel(device_path: str) -> Path:
     """Turn an absolute device path into a safe relative path inside the case folder,
     preventing path-traversal via '..' segments in a hostile filename."""
-    parts = [p for p in device_path.replace("\\", "/").split("/")
-             if p and p not in (".", "..")]
+    parts = [
+        p
+        for p in device_path.replace("\\", "/").split("/")
+        if p and p not in (".", "..")
+    ]
     return Path(*parts) if parts else Path("unnamed")
 
 
 def _coerce_artifact(rec: dict[str, Any]) -> dict[str, Any]:
     """Coerce a manifest dict back into ArtifactRecord kwargs (tier str -> Tier)."""
     from .config import Tier
+
     out = dict(rec)
     if isinstance(out.get("tier"), str):
         out["tier"] = Tier(out["tier"])

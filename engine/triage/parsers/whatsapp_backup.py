@@ -18,17 +18,15 @@ All actions are intended to be called from ``pipeline._run_tier2_whatsapp_backup
 — nothing in this module touches the device directly; it only parses locally-staged
 files and returns typed data.
 """
+
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 import shutil
 import sqlite3
-import struct
 import subprocess
-import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -80,13 +78,15 @@ WA_MEDIA_ROOT_LEGACY = "/sdcard/WhatsApp/Media"
 # Data structures
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class BackupInfo:
     """Metadata about a discovered backup file."""
-    device_path: str          # full path on the device
-    filename: str             # basename
-    crypt_version: str        # e.g. "crypt15"
-    date_str: str             # "2024-12-31" or "current" for undated
+
+    device_path: str  # full path on the device
+    filename: str  # basename
+    crypt_version: str  # e.g. "crypt15"
+    date_str: str  # "2024-12-31" or "current" for undated
     size_bytes: int = 0
 
     @property
@@ -98,13 +98,16 @@ class BackupInfo:
 # 1. Backup discovery
 # ---------------------------------------------------------------------------
 
+
 def discover_backups(source: "RealDeviceSource") -> list[BackupInfo]:
     """Scan both backup roots and return a list of :class:`BackupInfo` sorted newest-first."""
     found: list[BackupInfo] = []
 
     for root in BACKUP_ROOTS:
         # `find` returns one path per line; missing dirs print nothing.
-        out = source.adb.shell(f"find '{root}' -maxdepth 1 -type f -name 'msgstore*.db.crypt*' 2>/dev/null")
+        out = source.adb.shell(
+            f"find '{root}' -maxdepth 1 -type f -name 'msgstore*.db.crypt*' 2>/dev/null"
+        )
         if not out.ok:
             continue
         for line in (out.stdout or "").splitlines():
@@ -125,13 +128,15 @@ def discover_backups(source: "RealDeviceSource") -> list[BackupInfo]:
             except ValueError:
                 size_bytes = 0
 
-            found.append(BackupInfo(
-                device_path=line,
-                filename=fname,
-                crypt_version=crypt_ver,
-                date_str=date_str,
-                size_bytes=size_bytes,
-            ))
+            found.append(
+                BackupInfo(
+                    device_path=line,
+                    filename=fname,
+                    crypt_version=crypt_ver,
+                    date_str=date_str,
+                    size_bytes=size_bytes,
+                )
+            )
 
     # Sort: current first, then by date descending.
     def _sort_key(b: BackupInfo) -> str:
@@ -151,6 +156,7 @@ def discover_backups(source: "RealDeviceSource") -> list[BackupInfo]:
 # ---------------------------------------------------------------------------
 # 2. Key extraction
 # ---------------------------------------------------------------------------
+
 
 def extract_key(
     source: "RealDeviceSource",
@@ -213,7 +219,8 @@ def _parse_crypt15_key(raw: bytes) -> Optional[bytes]:
     bytes as the raw key (heuristic that works on most builds).
     """
     try:
-        from google.protobuf import descriptor_pool, descriptor_pb2
+        pass
+
         # Field 2 in KeyData is the key material (bytes type).
         # Decode with raw proto parsing to avoid needing a compiled descriptor.
         pos = 0
@@ -232,7 +239,7 @@ def _parse_crypt15_key(raw: bytes) -> Optional[bytes]:
                     if not (b & 0x80):
                         break
                     shift += 7
-                key_bytes = raw[pos: pos + size]
+                key_bytes = raw[pos : pos + size]
                 if len(key_bytes) == 32:
                     return key_bytes
                 pos += size
@@ -265,6 +272,7 @@ def _parse_crypt15_key(raw: bytes) -> Optional[bytes]:
 # 3. Decryption
 # ---------------------------------------------------------------------------
 
+
 def decrypt_backup(
     crypt_path: Path,
     key_raw: bytes,
@@ -296,9 +304,12 @@ def decrypt_backup(
             aes_key = None
 
     if not aes_key or len(aes_key) != 32:
-        case.log("tier2.whatsapp_backup.decrypt",
-                 "could not extract 32-byte AES key from key file",
-                 result="error", tier=Tier.TIER2.value)
+        case.log(
+            "tier2.whatsapp_backup.decrypt",
+            "could not extract 32-byte AES key from key file",
+            result="error",
+            tier=Tier.TIER2.value,
+        )
         return False
 
     # -- Try external tool first --------------------------------------------
@@ -306,9 +317,12 @@ def decrypt_backup(
         if verify_sqlite_header(out_path):
             return True
         out_path.unlink(missing_ok=True)
-        case.log("tier2.whatsapp_backup.decrypt",
-                 "external decrypter output failed SQLite header check; trying fallback",
-                 result="error", tier=Tier.TIER2.value)
+        case.log(
+            "tier2.whatsapp_backup.decrypt",
+            "external decrypter output failed SQLite header check; trying fallback",
+            result="error",
+            tier=Tier.TIER2.value,
+        )
 
     # -- Pure-Python fallback (crypt12/14 only) ------------------------------
     if crypt_version in ("crypt12", "crypt14"):
@@ -317,9 +331,12 @@ def decrypt_backup(
                 return True
             out_path.unlink(missing_ok=True)
 
-    case.log("tier2.whatsapp_backup.decrypt",
-             f"all decryption paths failed for {crypt_path.name}",
-             result="error", tier=Tier.TIER2.value)
+    case.log(
+        "tier2.whatsapp_backup.decrypt",
+        f"all decryption paths failed for {crypt_path.name}",
+        result="error",
+        tier=Tier.TIER2.value,
+    )
     return False
 
 
@@ -341,7 +358,9 @@ def _try_external_decrypter(
             try:
                 result = subprocess.run(
                     [tool, str(crypt_path), str(out_path), "--hex-key", hex_key],
-                    capture_output=True, text=True, timeout=60,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
                 )
                 case.log(
                     "tier2.whatsapp_backup.decrypt_ext",
@@ -352,8 +371,12 @@ def _try_external_decrypter(
                 )
                 return result.returncode == 0
             except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
-                case.log("tier2.whatsapp_backup.decrypt_ext",
-                         f"{tool} failed: {exc}", result="error", tier=Tier.TIER2.value)
+                case.log(
+                    "tier2.whatsapp_backup.decrypt_ext",
+                    f"{tool} failed: {exc}",
+                    result="error",
+                    tier=Tier.TIER2.value,
+                )
     return False
 
 
@@ -375,17 +398,20 @@ def _decrypt_aes_cbc(
         try:
             from Cryptodome.Cipher import AES  # pycryptodome3
         except ImportError:
-            case.log("tier2.whatsapp_backup.decrypt_py",
-                     "pycryptodome not installed; pure-Python fallback skipped",
-                     result="skipped", tier=Tier.TIER2.value)
+            case.log(
+                "tier2.whatsapp_backup.decrypt_py",
+                "pycryptodome not installed; pure-Python fallback skipped",
+                result="skipped",
+                tier=Tier.TIER2.value,
+            )
             return False
 
     try:
         data = crypt_path.read_bytes()
         # Skip the 67-byte header, extract 16-byte IV, then decrypt.
         header_len = 67
-        iv = data[header_len: header_len + 16]
-        ciphertext = data[header_len + 16:]
+        iv = data[header_len : header_len + 16]
+        ciphertext = data[header_len + 16 :]
         cipher = AES.new(aes_key, AES.MODE_CBC, iv)
         plaintext = cipher.decrypt(ciphertext)
         # Strip PKCS7 padding.
@@ -393,13 +419,19 @@ def _decrypt_aes_cbc(
         if 1 <= pad_len <= 16:
             plaintext = plaintext[:-pad_len]
         out_path.write_bytes(plaintext)
-        case.log("tier2.whatsapp_backup.decrypt_py",
-                 f"pure-Python AES-CBC decryption of {crypt_path.name} OK",
-                 tier=Tier.TIER2.value)
+        case.log(
+            "tier2.whatsapp_backup.decrypt_py",
+            f"pure-Python AES-CBC decryption of {crypt_path.name} OK",
+            tier=Tier.TIER2.value,
+        )
         return True
     except Exception as exc:
-        case.log("tier2.whatsapp_backup.decrypt_py",
-                 f"AES-CBC error: {exc}", result="error", tier=Tier.TIER2.value)
+        case.log(
+            "tier2.whatsapp_backup.decrypt_py",
+            f"AES-CBC error: {exc}",
+            result="error",
+            tier=Tier.TIER2.value,
+        )
         return False
 
 
@@ -418,9 +450,19 @@ def verify_sqlite_header(db_path: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 _MEDIA_TYPE_MAP: dict[int, str] = {
-    0: "", 1: "image", 2: "audio", 3: "video", 4: "vcard",
-    5: "location", 6: "system", 7: "document", 8: "sticker",
-    13: "gif", 14: "liveLocation", 15: "template", 20: "hsm",
+    0: "",
+    1: "image",
+    2: "audio",
+    3: "video",
+    4: "vcard",
+    5: "location",
+    6: "system",
+    7: "document",
+    8: "sticker",
+    13: "gif",
+    14: "liveLocation",
+    15: "template",
+    20: "hsm",
 }
 
 
@@ -465,9 +507,10 @@ def recover_messages_from_db(
         con.row_factory = sqlite3.Row
 
         # Detect table name (WhatsApp changed it across versions).
-        tables = {r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )}
+        tables = {
+            r[0]
+            for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
         msg_table = "message" if "message" in tables else "messages"
 
         if msg_table in tables:
@@ -487,28 +530,45 @@ def recover_messages_from_db(
                 body = _col(row, "data", "text_data", "body", default="")
                 if not body:
                     body = ""
-                chat_id = str(_col(row, "key_remote_jid", "chat_id", "jid", default="") or "")
+                chat_id = str(
+                    _col(row, "key_remote_jid", "chat_id", "jid", default="") or ""
+                )
                 from_me = _col(row, "key_from_me", "from_me", default=0)
                 ts_raw = _col(row, "timestamp", "date", "sent_timestamp")
                 media_type_raw = _col(row, "media_type", "message_type", default=0)
-                media_path = str(_col(row, "media_wa_type", "media_path",
-                                      "media_url", "file_path", default="") or "")
+                media_path = str(
+                    _col(
+                        row,
+                        "media_wa_type",
+                        "media_path",
+                        "media_url",
+                        "file_path",
+                        default="",
+                    )
+                    or ""
+                )
 
-                sender = "me" if from_me else (chat_id.split("@")[0] if chat_id else "<unknown>")
+                sender = (
+                    "me"
+                    if from_me
+                    else (chat_id.split("@")[0] if chat_id else "<unknown>")
+                )
                 media_type_str = _MEDIA_TYPE_MAP.get(int(media_type_raw or 0), "")
 
-                results.append(WhatsAppBackupMessage(
-                    backup_file=backup_filename,
-                    chat_id=chat_id,
-                    sender=sender,
-                    body=str(body),
-                    timestamp=_epoch_ms_to_iso(ts_raw),
-                    media_type=media_type_str,
-                    media_path=media_path,
-                    confidence=Confidence.LIVE,
-                    source_file=db_path.name,
-                    provenance=f"live row in {msg_table}",
-                ))
+                results.append(
+                    WhatsAppBackupMessage(
+                        backup_file=backup_filename,
+                        chat_id=chat_id,
+                        sender=sender,
+                        body=str(body),
+                        timestamp=_epoch_ms_to_iso(ts_raw),
+                        media_type=media_type_str,
+                        media_path=media_path,
+                        confidence=Confidence.LIVE,
+                        source_file=db_path.name,
+                        provenance=f"live row in {msg_table}",
+                    )
+                )
         con.close()
     except sqlite3.Error as exc:
         pass  # live query failed; still attempt recovery
@@ -518,9 +578,12 @@ def recover_messages_from_db(
         schema_hint: dict[str, Any] = {}
         try:
             con2 = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            tables2 = {r[0] for r in con2.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )}
+            tables2 = {
+                r[0]
+                for r in con2.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
             msg_table2 = "message" if "message" in tables2 else "messages"
             if msg_table2 in tables2:
                 rows2 = con2.execute(f"PRAGMA table_info('{msg_table2}')").fetchall()
@@ -537,16 +600,18 @@ def recover_messages_from_db(
             vals = cr.values
             # Heuristic: look for the body in the first non-trivial string.
             body = next((v for v in vals if isinstance(v, str) and len(v) >= 2), "")
-            results.append(WhatsAppBackupMessage(
-                backup_file=backup_filename,
-                chat_id="<recovered>",
-                sender="<recovered>",
-                body=body,
-                confidence=cr.confidence,
-                source_file=db_path.name,
-                provenance=cr.provenance,
-                flags=["deleted"] + cr.warnings,
-            ))
+            results.append(
+                WhatsAppBackupMessage(
+                    backup_file=backup_filename,
+                    chat_id="<recovered>",
+                    sender="<recovered>",
+                    body=body,
+                    confidence=cr.confidence,
+                    source_file=db_path.name,
+                    provenance=cr.provenance,
+                    flags=["deleted"] + cr.warnings,
+                )
+            )
     except Exception:
         pass
 
@@ -556,41 +621,47 @@ def recover_messages_from_db(
         for er in extra:
             vals = er.values
             body = next((v for v in vals if isinstance(v, str) and len(v) >= 2), "")
-            results.append(WhatsAppBackupMessage(
-                backup_file=backup_filename,
-                chat_id="<carved>",
-                sender="<carved>",
-                body=body,
-                confidence=er.confidence,
-                source_file=db_path.name,
-                provenance=er.provenance,
-                flags=["deleted", "sqbrite"],
-            ))
+            results.append(
+                WhatsAppBackupMessage(
+                    backup_file=backup_filename,
+                    chat_id="<carved>",
+                    sender="<carved>",
+                    body=body,
+                    confidence=er.confidence,
+                    source_file=db_path.name,
+                    provenance=er.provenance,
+                    flags=["deleted", "sqbrite"],
+                )
+            )
     except Exception:
         pass
 
     # -- Rowid-gap detection (DELETION_DETECTED) -----------------------------
     try:
         con3 = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        tables3 = {r[0] for r in con3.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )}
+        tables3 = {
+            r[0]
+            for r in con3.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
         con3.close()
         from ..recovery import detect_rowid_gaps
+
         for tbl in ("message", "messages"):
             if tbl in tables3:
                 gaps = detect_rowid_gaps(db_path, tbl)
                 for gap in gaps:
-                    results.append(WhatsAppBackupMessage(
-                        backup_file=backup_filename,
-                        chat_id="<gap>",
-                        sender="<gap>",
-                        body="",
-                        confidence=Confidence.DELETION_DETECTED,
-                        source_file=db_path.name,
-                        provenance=f"rowid gap {gap} in {tbl}",
-                        flags=["deletion-detected"],
-                    ))
+                    results.append(
+                        WhatsAppBackupMessage(
+                            backup_file=backup_filename,
+                            chat_id="<gap>",
+                            sender="<gap>",
+                            body="",
+                            confidence=Confidence.DELETION_DETECTED,
+                            source_file=db_path.name,
+                            provenance=f"rowid gap {gap} in {tbl}",
+                            flags=["deletion-detected"],
+                        )
+                    )
     except Exception:
         pass
 
@@ -600,6 +671,7 @@ def recover_messages_from_db(
 # ---------------------------------------------------------------------------
 # 5. Media file recovery
 # ---------------------------------------------------------------------------
+
 
 def recover_media_files(
     source: "RealDeviceSource",
@@ -666,7 +738,7 @@ def recover_media_files(
         local_file = staging / f"wa_backup_media_{counter}_{fname_safe}"
         staging_remote = f"{STAGE_BASE}_media_{counter}_{fname_safe}"
 
-        cp = source.adb.shell(f'su -c "cp \'{found_path}\' \'{staging_remote}\'"')
+        cp = source.adb.shell(f"su -c \"cp '{found_path}' '{staging_remote}'\"")
         if not cp.ok:
             # Try direct pull without su (Tier-0 path is world-readable).
             pull = source.adb.pull(found_path, local_file)
@@ -690,15 +762,17 @@ def recover_media_files(
         stored = case.root / rec.stored_path
 
         sha256 = rec.sha256
-        media_records.append(WhatsAppBackupMedia(
-            artifact_id=rec.artifact_id,
-            backup_message_id=f"{msg.chat_id}:{msg.timestamp or ''}",
-            file_name=rel.rsplit("/", 1)[-1],
-            file_path_on_device=found_path,
-            size_bytes=rec.size_bytes,
-            sha256=sha256,
-            recovered=is_trashed,
-        ))
+        media_records.append(
+            WhatsAppBackupMedia(
+                artifact_id=rec.artifact_id,
+                backup_message_id=f"{msg.chat_id}:{msg.timestamp or ''}",
+                file_name=rel.rsplit("/", 1)[-1],
+                file_path_on_device=found_path,
+                size_bytes=rec.size_bytes,
+                sha256=sha256,
+                recovered=is_trashed,
+            )
+        )
         counter += 1
 
     return media_records
@@ -708,18 +782,22 @@ def recover_media_files(
 # 6. Public summary helper
 # ---------------------------------------------------------------------------
 
+
 def backup_recovery_summary(
     messages: list[WhatsAppBackupMessage],
     media: list[WhatsAppBackupMedia],
 ) -> dict[str, Any]:
     """Return a per-file stats dict suitable for JSON serialisation."""
-    from collections import Counter, defaultdict
+    from collections import defaultdict
+
     per_file: dict[str, dict[str, int]] = defaultdict(
         lambda: {"live": 0, "recovered": 0, "carved": 0, "deletion": 0, "total": 0}
     )
     for m in messages:
         f = per_file[m.backup_file]
-        conf_key = m.confidence.value if hasattr(m.confidence, "value") else str(m.confidence)
+        conf_key = (
+            m.confidence.value if hasattr(m.confidence, "value") else str(m.confidence)
+        )
         # Map to short names.
         short = {
             "live": "live",
@@ -734,9 +812,25 @@ def backup_recovery_summary(
         "totals": {
             "messages": len(messages),
             "media": len(media),
-            "live": sum(1 for m in messages if str(getattr(m.confidence, "value", m.confidence)) == "live"),
-            "recovered": sum(1 for m in messages if str(getattr(m.confidence, "value", m.confidence)) == "recovered"),
-            "carved": sum(1 for m in messages if str(getattr(m.confidence, "value", m.confidence)) == "carved"),
-            "deletion": sum(1 for m in messages if str(getattr(m.confidence, "value", m.confidence)) == "deletion"),
+            "live": sum(
+                1
+                for m in messages
+                if str(getattr(m.confidence, "value", m.confidence)) == "live"
+            ),
+            "recovered": sum(
+                1
+                for m in messages
+                if str(getattr(m.confidence, "value", m.confidence)) == "recovered"
+            ),
+            "carved": sum(
+                1
+                for m in messages
+                if str(getattr(m.confidence, "value", m.confidence)) == "carved"
+            ),
+            "deletion": sum(
+                1
+                for m in messages
+                if str(getattr(m.confidence, "value", m.confidence)) == "deletion"
+            ),
         },
     }

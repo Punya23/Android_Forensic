@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import calendar
 import html
-import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional

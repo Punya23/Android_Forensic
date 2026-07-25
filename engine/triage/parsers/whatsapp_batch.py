@@ -31,7 +31,6 @@ library is absent the module still loads and gracefully marks the item as
 
 from __future__ import annotations
 
-import struct
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -57,16 +56,17 @@ _CRYPT_VERSIONS: dict[int, str] = {
 #   [0..3]   = 0x57 0x41 0x00 0x0F  ("WA\x00\x0f") or protobuf header
 #   Actual format is a Google protobuf envelope; we only need to locate the IV
 #   and key offsets, which differ per version.
-_CRYPT15_MAGIC       = b"\x57\x41\x00\x0f"  # WA\x00\x0f
-_CRYPT14_IV_OFFSET   = 51
-_CRYPT14_IV_LEN      = 16
+_CRYPT15_MAGIC = b"\x57\x41\x00\x0f"  # WA\x00\x0f
+_CRYPT14_IV_OFFSET = 51
+_CRYPT14_IV_LEN = 16
 _CRYPT14_DATA_OFFSET = 67
-_CRYPT15_IV_LEN      = 16
+_CRYPT15_IV_LEN = 16
 
 
 # ---------------------------------------------------------------------------
 # Encrypted backup helpers
 # ---------------------------------------------------------------------------
+
 
 def _detect_crypt_version(path: Path) -> Optional[int]:
     """Return the crypt version (15/14/12) or ``None`` if not a crypt file."""
@@ -87,7 +87,7 @@ def _read_key_file(key_path: Path) -> Optional[bytes]:
         if len(data) == 32:
             return data
         if len(data) >= 158:
-            return data[126:158]        # protobuf-encoded legacy key file
+            return data[126:158]  # protobuf-encoded legacy key file
         return None
     except OSError:
         return None
@@ -124,12 +124,12 @@ def _decrypt_crypt15(crypt_path: Path, aes_key: bytes) -> Optional[bytes]:
             for iv_start in (3, 51, 67):
                 if iv_start + _CRYPT15_IV_LEN > len(raw):
                     continue
-                iv           = raw[iv_start : iv_start + _CRYPT15_IV_LEN]
-                data_start   = iv_start + _CRYPT15_IV_LEN
-                ciphertext   = raw[data_start:-16]   # last 16 bytes = auth tag
-                auth_tag     = raw[-16:]
+                iv = raw[iv_start : iv_start + _CRYPT15_IV_LEN]
+                data_start = iv_start + _CRYPT15_IV_LEN
+                ciphertext = raw[data_start:-16]  # last 16 bytes = auth tag
+                auth_tag = raw[-16:]
                 try:
-                    cipher    = AES.new(aes_key, AES.MODE_GCM, nonce=iv)
+                    cipher = AES.new(aes_key, AES.MODE_GCM, nonce=iv)
                     plaintext = cipher.decrypt_and_verify(ciphertext, auth_tag)
                     if plaintext[:16] == b"SQLite format 3\x00":
                         return plaintext
@@ -138,10 +138,10 @@ def _decrypt_crypt15(crypt_path: Path, aes_key: bytes) -> Optional[bytes]:
             return None
 
         # ---- crypt14 / crypt12 (CBC) ----
-        iv         = raw[_CRYPT14_IV_OFFSET : _CRYPT14_IV_OFFSET + _CRYPT14_IV_LEN]
+        iv = raw[_CRYPT14_IV_OFFSET : _CRYPT14_IV_OFFSET + _CRYPT14_IV_LEN]
         ciphertext = raw[_CRYPT14_DATA_OFFSET:]
-        cipher     = AES.new(aes_key, AES.MODE_CBC, iv=iv)
-        plaintext  = cipher.decrypt(ciphertext)
+        cipher = AES.new(aes_key, AES.MODE_CBC, iv=iv)
+        plaintext = cipher.decrypt(ciphertext)
         # PKCS#7 un-pad
         pad = plaintext[-1]
         if 1 <= pad <= 16:
@@ -207,6 +207,7 @@ def _decrypt_and_parse(
 # Single-file dispatcher
 # ---------------------------------------------------------------------------
 
+
 def _parse_single(
     path: Path,
     key_path: Optional[Path] = None,
@@ -236,6 +237,7 @@ def _parse_single(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def parse_whatsapp_batch(
     paths: List[Path],
@@ -272,10 +274,7 @@ def parse_whatsapp_batch(
     all_messages: List[Message] = []
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(_parse_single, p, key_path): p
-            for p in paths
-        }
+        futures = {executor.submit(_parse_single, p, key_path): p for p in paths}
         for future in as_completed(futures):
             try:
                 msgs = future.result(timeout=30)
@@ -361,9 +360,9 @@ def get_batch_stats(messages: List[Message]) -> Dict[str, Any]:
         Any list of :class:`~engine.triage.models.Message` objects.
     """
     by_confidence: Dict[str, int] = defaultdict(int)
-    by_direction:  Dict[str, int] = defaultdict(int)
+    by_direction: Dict[str, int] = defaultdict(int)
     earliest: Optional[str] = None
-    latest:   Optional[str] = None
+    latest: Optional[str] = None
 
     for msg in messages:
         by_confidence[msg.confidence.value] += 1
@@ -377,8 +376,8 @@ def get_batch_stats(messages: List[Message]) -> Dict[str, Any]:
                 latest = ts
 
     return {
-        "total":          len(messages),
-        "by_confidence":  dict(by_confidence),
-        "by_direction":   dict(by_direction),
-        "date_range":     {"start": earliest, "end": latest},
+        "total": len(messages),
+        "by_confidence": dict(by_confidence),
+        "by_direction": dict(by_direction),
+        "date_range": {"start": earliest, "end": latest},
     }

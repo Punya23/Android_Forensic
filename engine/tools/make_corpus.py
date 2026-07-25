@@ -17,13 +17,13 @@ Everything is synthetic and self-contained — no real personal data. This is wh
 team build and demo the full pipeline with no phone, and it doubles as the ground-truth
 corpus for measuring recovery/false-positive rates.
 """
+
 from __future__ import annotations
 
 import json
 import sqlite3
 import struct
 import sys
-import zlib
 from pathlib import Path
 
 # --- a tiny valid JPEG with a GPS EXIF block (built by hand, no deps) --------
@@ -32,6 +32,7 @@ from pathlib import Path
 
 def _exif_app1(lat: float, lon: float, dt: str = "2026:07:06 21:45:12") -> bytes:
     """Build a minimal EXIF APP1 segment containing GPSLatitude/Longitude + DateTime."""
+
     def rational(num: int, den: int) -> bytes:
         return struct.pack(">II", num, den)
 
@@ -90,18 +91,18 @@ def _exif_app1(lat: float, lon: float, dt: str = "2026:07:06 21:45:12") -> bytes
 
     # IFD0
     ifd0 = struct.pack(">H", ifd0_count)
-    ifd0 += entry(0x0132, 2, len(dt_bytes), dt_off)          # DateTime ASCII
-    ifd0 += entry(0x8825, 4, 1, gps_ifd_offset)              # GPS IFD pointer
-    ifd0 += struct.pack(">I", 0)                             # next IFD = 0
+    ifd0 += entry(0x0132, 2, len(dt_bytes), dt_off)  # DateTime ASCII
+    ifd0 += entry(0x8825, 4, 1, gps_ifd_offset)  # GPS IFD pointer
+    ifd0 += struct.pack(">I", 0)  # next IFD = 0
 
     # GPS IFD
     gps = struct.pack(">H", gps_count)
-    gps += entry_inline(0x0001, 2, 2, lat_ref)               # GPSLatitudeRef
-    gps += entry(0x0002, 5, 3, lat_off)                      # GPSLatitude (3 rationals)
-    gps += entry_inline(0x0003, 2, 2, lon_ref)               # GPSLongitudeRef
-    gps += entry(0x0004, 5, 3, lon_off)                      # GPSLongitude
-    gps += entry_inline(0x0005, 1, 1, b"\x00")               # GPSAltitudeRef
-    gps += entry(0x0007, 5, 3, lat_off)                      # GPSTimeStamp (reuse; filler)
+    gps += entry_inline(0x0001, 2, 2, lat_ref)  # GPSLatitudeRef
+    gps += entry(0x0002, 5, 3, lat_off)  # GPSLatitude (3 rationals)
+    gps += entry_inline(0x0003, 2, 2, lon_ref)  # GPSLongitudeRef
+    gps += entry(0x0004, 5, 3, lon_off)  # GPSLongitude
+    gps += entry_inline(0x0005, 1, 1, b"\x00")  # GPSAltitudeRef
+    gps += entry(0x0007, 5, 3, lat_off)  # GPSTimeStamp (reuse; filler)
     gps += struct.pack(">I", 0)
 
     payload = tiff + ifd0 + gps + bytes(data)
@@ -144,28 +145,55 @@ def _build_messages_db(path: Path, deleted_ids: list[int], bulk: bool = False) -
     if path.exists():
         path.unlink()
     con = sqlite3.connect(path)
-    con.execute("CREATE TABLE messages (_id INTEGER PRIMARY KEY, chat TEXT, "
-                "sender TEXT, body TEXT, timestamp INTEGER)")
+    con.execute(
+        "CREATE TABLE messages (_id INTEGER PRIMARY KEY, chat TEXT, "
+        "sender TEXT, body TEXT, timestamp INTEGER)"
+    )
     rows = [
         ("docks-crew", "Rahul", "Are we still on for tonight?", 1751826004000),
-        ("docks-crew", "Imran", "Bring the package to the docks at midnight", 1751826039000),
-        ("docks-crew", "Rahul", "The cash transfer to account 4471 is done", 1751826072000),
+        (
+            "docks-crew",
+            "Imran",
+            "Bring the package to the docks at midnight",
+            1751826039000,
+        ),
+        (
+            "docks-crew",
+            "Rahul",
+            "The cash transfer to account 4471 is done",
+            1751826072000,
+        ),
         ("docks-crew", "Imran", "Delete this chat after you read it", 1751826170000),
-        ("docks-crew", "Rahul", "Meeting location changed to warehouse 9", 1751826211000),
+        (
+            "docks-crew",
+            "Rahul",
+            "Meeting location changed to warehouse 9",
+            1751826211000,
+        ),
         ("docks-crew", "Imran", "I have the weapon ready if needed", 1751826247000),
         ("docks-crew", "Rahul", "No violence just the delivery", 1751826320000),
     ]
     if bulk:
         for i in range(400):
-            rows.append((f"grp{i%5}", f"user{i%9}",
-                         f"routine message {i} regarding shipment {i%17}",
-                         1751800000000 + i * 1000))
+            rows.append(
+                (
+                    f"grp{i%5}",
+                    f"user{i%9}",
+                    f"routine message {i} regarding shipment {i%17}",
+                    1751800000000 + i * 1000,
+                )
+            )
     for r in rows:
-        con.execute("INSERT INTO messages(chat,sender,body,timestamp) VALUES (?,?,?,?)", r)
+        con.execute(
+            "INSERT INTO messages(chat,sender,body,timestamp) VALUES (?,?,?,?)", r
+        )
     con.commit()
     if deleted_ids:
-        con.execute(f"DELETE FROM messages WHERE _id IN "
-                    f"({','.join('?' * len(deleted_ids))})", deleted_ids)
+        con.execute(
+            f"DELETE FROM messages WHERE _id IN "
+            f"({','.join('?' * len(deleted_ids))})",
+            deleted_ids,
+        )
         con.commit()
     con.close()
 
@@ -182,9 +210,27 @@ def _contacts_json() -> list[dict]:
 def _calllog_json() -> list[dict]:
     base = 1751826000000
     return [
-        {"number": "+91 98200 44711", "name": "Imran K", "type": 2, "date": base + 100000, "duration": 154},
-        {"number": "+91 99300 55822", "name": "Rahul Verma", "type": 1, "date": base + 500000, "duration": 42},
-        {"number": "+91 90000 09090", "name": "", "type": 3, "date": base + 900000, "duration": 0},
+        {
+            "number": "+91 98200 44711",
+            "name": "Imran K",
+            "type": 2,
+            "date": base + 100000,
+            "duration": 154,
+        },
+        {
+            "number": "+91 99300 55822",
+            "name": "Rahul Verma",
+            "type": 1,
+            "date": base + 500000,
+            "duration": 42,
+        },
+        {
+            "number": "+91 90000 09090",
+            "name": "",
+            "type": 3,
+            "date": base + 900000,
+            "duration": 0,
+        },
     ]
 
 
@@ -198,10 +244,17 @@ def _build_telegram_db(path: Path) -> None:
     if path.exists():
         path.unlink()
     con = sqlite3.connect(path)
-    con.execute("CREATE TABLE messages (mid INTEGER PRIMARY KEY, dialog TEXT, "
-                "sender TEXT, body TEXT, date INTEGER)")
+    con.execute(
+        "CREATE TABLE messages (mid INTEGER PRIMARY KEY, dialog TEXT, "
+        "sender TEXT, body TEXT, date INTEGER)"
+    )
     rows = [
-        ("secret-9", "Imran", "Switch to Telegram, WhatsApp is compromised", 1751826400),
+        (
+            "secret-9",
+            "Imran",
+            "Switch to Telegram, WhatsApp is compromised",
+            1751826400,
+        ),
         ("secret-9", "Rahul", "Ok. New drop point is pier 4 warehouse", 1751826460),
         ("secret-9", "Imran", "Payment of 5 lakh moved via hawala today", 1751826520),
         ("secret-9", "Rahul", "Delete everything before the raid", 1751826580),
@@ -227,19 +280,29 @@ def _build_instagram_db(path: Path) -> None:
         path.unlink()
     con = sqlite3.connect(path)
     con.execute("CREATE TABLE threads (thread_id TEXT, thread_title TEXT)")
-    con.execute("CREATE TABLE messages (_id INTEGER PRIMARY KEY, thread_id_published TEXT, "
-                "user_id TEXT, text TEXT, timestamp INTEGER)")
+    con.execute(
+        "CREATE TABLE messages (_id INTEGER PRIMARY KEY, thread_id_published TEXT, "
+        "user_id TEXT, text TEXT, timestamp INTEGER)"
+    )
     con.execute("INSERT INTO threads VALUES ('t_9931', 'imran_k')")
     base = 1751826000000000  # epoch microseconds
     rows = [
         ("t_9931", "778812", "moving the goods through the new route", base),
         ("t_9931", "119020", "understood, keep it off whatsapp", base + 60_000_000),
-        ("t_9931", "778812", "cash is in account 4471, delete this", base + 120_000_000),
+        (
+            "t_9931",
+            "778812",
+            "cash is in account 4471, delete this",
+            base + 120_000_000,
+        ),
         ("t_9931", "119020", "the passport and fake id are ready", base + 180_000_000),
     ]
     for r in rows:
-        con.execute("INSERT INTO messages(thread_id_published,user_id,text,timestamp) "
-                    "VALUES (?,?,?,?)", r)
+        con.execute(
+            "INSERT INTO messages(thread_id_published,user_id,text,timestamp) "
+            "VALUES (?,?,?,?)",
+            r,
+        )
     con.commit()
     con.execute("DELETE FROM messages WHERE _id IN (3, 4)")  # deleted incriminating DMs
     con.commit()
@@ -257,19 +320,38 @@ def _build_snapchat_dbs(arroyo_path: Path, main_path: Path) -> None:
     if arroyo_path.exists():
         arroyo_path.unlink()
     con = sqlite3.connect(arroyo_path)
-    con.execute("CREATE TABLE conversation_message (_id INTEGER PRIMARY KEY, "
-                "client_conversation_id TEXT, server_message_id INTEGER, message_content BLOB, "
-                "creation_timestamp INTEGER, content_type INTEGER, sender_id TEXT)")
+    con.execute(
+        "CREATE TABLE conversation_message (_id INTEGER PRIMARY KEY, "
+        "client_conversation_id TEXT, server_message_id INTEGER, message_content BLOB, "
+        "creation_timestamp INTEGER, content_type INTEGER, sender_id TEXT)"
+    )
     base = 1751826000000  # epoch ms
     msgs = [
         ("conv_a", 1, _pb_text("the drop is at pier 4 tonight"), base, 1, "u_100"),
-        ("conv_a", 2, _pb_text("payment moved via hawala, no trace"), base + 60000, 1, "u_200"),
-        ("conv_a", 3, _pb_text("burn the sim and delete everything"), base + 120000, 1, "u_100"),
+        (
+            "conv_a",
+            2,
+            _pb_text("payment moved via hawala, no trace"),
+            base + 60000,
+            1,
+            "u_200",
+        ),
+        (
+            "conv_a",
+            3,
+            _pb_text("burn the sim and delete everything"),
+            base + 120000,
+            1,
+            "u_100",
+        ),
     ]
     for m in msgs:
-        con.execute("INSERT INTO conversation_message(client_conversation_id,server_message_id,"
-                    "message_content,creation_timestamp,content_type,sender_id) "
-                    "VALUES (?,?,?,?,?,?)", m)
+        con.execute(
+            "INSERT INTO conversation_message(client_conversation_id,server_message_id,"
+            "message_content,creation_timestamp,content_type,sender_id) "
+            "VALUES (?,?,?,?,?,?)",
+            m,
+        )
     con.commit()
     con.execute("DELETE FROM conversation_message WHERE _id = 3")  # ephemeral, deleted
     con.commit()
@@ -290,69 +372,194 @@ def _media_inventory_json() -> list[dict]:
     base_s = 1751800000  # epoch seconds
     base_ms = base_s * 1000
     return [
-        {"kind": "image", "id": 1001, "display_name": "IMG_20260706_2145.jpg",
-         "mime_type": "image/jpeg", "size": 2_845_112, "date_added": base_s,
-         "date_modified": base_s, "date_taken": base_ms, "width": 4032, "height": 3024,
-         "duration": 0, "bucket": "Camera", "owner_package": "com.android.camera",
-         "relative_path": "DCIM/Camera/", "data_path": "/storage/emulated/0/DCIM/Camera/IMG_20260706_2145.jpg",
-         "is_trashed": False, "is_favorite": True, "is_pending": False,
-         "gps_lat": 19.0759, "gps_lon": 72.8776},
-        {"kind": "image", "id": 1002, "display_name": "IMG-20260706-WA0007.jpg",
-         "mime_type": "image/jpeg", "size": 128_442, "date_added": base_s + 3600,
-         "date_modified": base_s + 3600, "date_taken": base_ms + 3600000, "width": 1600,
-         "height": 1200, "duration": 0, "bucket": "WhatsApp Images",
-         "owner_package": "com.whatsapp", "relative_path": "Pictures/WhatsApp/",
-         "data_path": "/storage/emulated/0/Pictures/WhatsApp/IMG-20260706-WA0007.jpg",
-         "is_trashed": False, "is_favorite": False, "is_pending": False},
-        {"kind": "image", "id": 1003, "display_name": "evidence_photo.jpg",
-         "mime_type": "image/jpeg", "size": 3_112_004, "date_added": base_s + 7200,
-         "date_modified": base_s + 7200, "date_taken": base_ms + 7200000, "width": 4032,
-         "height": 3024, "duration": 0, "bucket": "Camera", "owner_package": "com.android.camera",
-         "relative_path": "DCIM/Camera/", "data_path": "/storage/emulated/0/DCIM/Camera/evidence_photo.jpg",
-         "is_trashed": True, "is_favorite": False, "is_pending": False,
-         "gps_lat": 18.9220, "gps_lon": 72.8347},
-        {"kind": "video", "id": 2001, "display_name": "VID_20260706_2200.mp4",
-         "mime_type": "video/mp4", "size": 41_882_100, "date_added": base_s + 9000,
-         "date_modified": base_s + 9000, "date_taken": base_ms + 9000000, "width": 1920,
-         "height": 1080, "duration": 34000, "bucket": "Camera",
-         "owner_package": "com.android.camera", "relative_path": "DCIM/Camera/",
-         "data_path": "/storage/emulated/0/DCIM/Camera/VID_20260706_2200.mp4",
-         "is_trashed": False, "is_favorite": False, "is_pending": False},
-        {"kind": "audio", "id": 3001, "display_name": "PTT-20260706-WA0002.opus",
-         "mime_type": "audio/ogg", "size": 88_210, "date_added": base_s + 12000,
-         "date_modified": base_s + 12000, "date_taken": 0, "width": 0, "height": 0,
-         "duration": 12000, "bucket": "WhatsApp Voice Notes", "owner_package": "com.whatsapp",
-         "relative_path": "Pictures/WhatsApp/Media/WhatsApp Voice Notes/",
-         "data_path": "/storage/emulated/0/.../PTT-20260706-WA0002.opus",
-         "is_trashed": False, "is_favorite": False, "is_pending": False},
+        {
+            "kind": "image",
+            "id": 1001,
+            "display_name": "IMG_20260706_2145.jpg",
+            "mime_type": "image/jpeg",
+            "size": 2_845_112,
+            "date_added": base_s,
+            "date_modified": base_s,
+            "date_taken": base_ms,
+            "width": 4032,
+            "height": 3024,
+            "duration": 0,
+            "bucket": "Camera",
+            "owner_package": "com.android.camera",
+            "relative_path": "DCIM/Camera/",
+            "data_path": "/storage/emulated/0/DCIM/Camera/IMG_20260706_2145.jpg",
+            "is_trashed": False,
+            "is_favorite": True,
+            "is_pending": False,
+            "gps_lat": 19.0759,
+            "gps_lon": 72.8776,
+        },
+        {
+            "kind": "image",
+            "id": 1002,
+            "display_name": "IMG-20260706-WA0007.jpg",
+            "mime_type": "image/jpeg",
+            "size": 128_442,
+            "date_added": base_s + 3600,
+            "date_modified": base_s + 3600,
+            "date_taken": base_ms + 3600000,
+            "width": 1600,
+            "height": 1200,
+            "duration": 0,
+            "bucket": "WhatsApp Images",
+            "owner_package": "com.whatsapp",
+            "relative_path": "Pictures/WhatsApp/",
+            "data_path": "/storage/emulated/0/Pictures/WhatsApp/IMG-20260706-WA0007.jpg",
+            "is_trashed": False,
+            "is_favorite": False,
+            "is_pending": False,
+        },
+        {
+            "kind": "image",
+            "id": 1003,
+            "display_name": "evidence_photo.jpg",
+            "mime_type": "image/jpeg",
+            "size": 3_112_004,
+            "date_added": base_s + 7200,
+            "date_modified": base_s + 7200,
+            "date_taken": base_ms + 7200000,
+            "width": 4032,
+            "height": 3024,
+            "duration": 0,
+            "bucket": "Camera",
+            "owner_package": "com.android.camera",
+            "relative_path": "DCIM/Camera/",
+            "data_path": "/storage/emulated/0/DCIM/Camera/evidence_photo.jpg",
+            "is_trashed": True,
+            "is_favorite": False,
+            "is_pending": False,
+            "gps_lat": 18.9220,
+            "gps_lon": 72.8347,
+        },
+        {
+            "kind": "video",
+            "id": 2001,
+            "display_name": "VID_20260706_2200.mp4",
+            "mime_type": "video/mp4",
+            "size": 41_882_100,
+            "date_added": base_s + 9000,
+            "date_modified": base_s + 9000,
+            "date_taken": base_ms + 9000000,
+            "width": 1920,
+            "height": 1080,
+            "duration": 34000,
+            "bucket": "Camera",
+            "owner_package": "com.android.camera",
+            "relative_path": "DCIM/Camera/",
+            "data_path": "/storage/emulated/0/DCIM/Camera/VID_20260706_2200.mp4",
+            "is_trashed": False,
+            "is_favorite": False,
+            "is_pending": False,
+        },
+        {
+            "kind": "audio",
+            "id": 3001,
+            "display_name": "PTT-20260706-WA0002.opus",
+            "mime_type": "audio/ogg",
+            "size": 88_210,
+            "date_added": base_s + 12000,
+            "date_modified": base_s + 12000,
+            "date_taken": 0,
+            "width": 0,
+            "height": 0,
+            "duration": 12000,
+            "bucket": "WhatsApp Voice Notes",
+            "owner_package": "com.whatsapp",
+            "relative_path": "Pictures/WhatsApp/Media/WhatsApp Voice Notes/",
+            "data_path": "/storage/emulated/0/.../PTT-20260706-WA0002.opus",
+            "is_trashed": False,
+            "is_favorite": False,
+            "is_pending": False,
+        },
     ]
 
 
 def _apps_json() -> list[dict]:
     """Synthetic installed-app inventory: messaging apps, a crypto wallet, and a vault app."""
     base = 1740000000000  # ms
+
     def app(pkg, label, cat, notable, ver="1.0", danger=None, system=False):
-        return {"package": pkg, "label": label, "version_name": ver, "version_code": 100,
-                "first_install": base, "last_update": base + 5_000_000,
-                "installer": "com.android.vending", "is_system": system, "category": cat,
-                "friendly_name": label if notable else None, "notable": notable,
-                "requested_permissions": (danger or []),
-                "granted_permissions": (danger or [])}
+        return {
+            "package": pkg,
+            "label": label,
+            "version_name": ver,
+            "version_code": 100,
+            "first_install": base,
+            "last_update": base + 5_000_000,
+            "installer": "com.android.vending",
+            "is_system": system,
+            "category": cat,
+            "friendly_name": label if notable else None,
+            "notable": notable,
+            "requested_permissions": (danger or []),
+            "granted_permissions": (danger or []),
+        }
+
     return [
-        app("com.whatsapp", "WhatsApp", "messaging", True, "2.24.1",
-            ["android.permission.READ_CONTACTS", "android.permission.CAMERA", "android.permission.RECORD_AUDIO"]),
-        app("org.telegram.messenger", "Telegram", "messaging", True, "10.9.0",
-            ["android.permission.READ_CONTACTS", "android.permission.ACCESS_FINE_LOCATION"]),
-        app("com.instagram.android", "Instagram", "messaging", True, "312.0",
-            ["android.permission.CAMERA", "android.permission.READ_MEDIA_IMAGES"]),
-        app("com.snapchat.android", "Snapchat", "messaging", True, "12.60",
-            ["android.permission.CAMERA", "android.permission.ACCESS_FINE_LOCATION"]),
-        app("com.calculator.vault.hider", "Calculator Vault", "anti_forensic", True, "3.2",
-            ["android.permission.READ_EXTERNAL_STORAGE", "android.permission.CAMERA"]),
+        app(
+            "com.whatsapp",
+            "WhatsApp",
+            "messaging",
+            True,
+            "2.24.1",
+            [
+                "android.permission.READ_CONTACTS",
+                "android.permission.CAMERA",
+                "android.permission.RECORD_AUDIO",
+            ],
+        ),
+        app(
+            "org.telegram.messenger",
+            "Telegram",
+            "messaging",
+            True,
+            "10.9.0",
+            [
+                "android.permission.READ_CONTACTS",
+                "android.permission.ACCESS_FINE_LOCATION",
+            ],
+        ),
+        app(
+            "com.instagram.android",
+            "Instagram",
+            "messaging",
+            True,
+            "312.0",
+            ["android.permission.CAMERA", "android.permission.READ_MEDIA_IMAGES"],
+        ),
+        app(
+            "com.snapchat.android",
+            "Snapchat",
+            "messaging",
+            True,
+            "12.60",
+            ["android.permission.CAMERA", "android.permission.ACCESS_FINE_LOCATION"],
+        ),
+        app(
+            "com.calculator.vault.hider",
+            "Calculator Vault",
+            "anti_forensic",
+            True,
+            "3.2",
+            ["android.permission.READ_EXTERNAL_STORAGE", "android.permission.CAMERA"],
+        ),
         app("io.metamask", "MetaMask", "crypto", True, "7.10", []),
         app("com.android.chrome", "Chrome", "browser", True, "126.0", []),
         app("com.android.settings", "Settings", "other", False, "14", [], system=True),
-        app("com.google.android.gms", "Google Play services", "other", False, "24.0", [], system=True),
+        app(
+            "com.google.android.gms",
+            "Google Play services",
+            "other",
+            False,
+            "24.0",
+            [],
+            system=True,
+        ),
     ]
 
 
@@ -368,12 +575,26 @@ def _accounts_json() -> list[dict]:
 def _calendar_json() -> list[dict]:
     base = 1751900000000  # ms
     return [
-        {"title": "Meet at warehouse 9", "dtstart": base, "dtend": base + 3600000,
-         "location": "Warehouse 9, Dockyard Rd", "description": "bring the package",
-         "organizer": "imran", "calendar": "Personal", "all_day": False},
-        {"title": "Pickup — pier 4", "dtstart": base + 86400000, "dtend": base + 86400000 + 1800000,
-         "location": "Pier 4", "description": "", "organizer": "", "calendar": "Personal",
-         "all_day": False},
+        {
+            "title": "Meet at warehouse 9",
+            "dtstart": base,
+            "dtend": base + 3600000,
+            "location": "Warehouse 9, Dockyard Rd",
+            "description": "bring the package",
+            "organizer": "imran",
+            "calendar": "Personal",
+            "all_day": False,
+        },
+        {
+            "title": "Pickup — pier 4",
+            "dtstart": base + 86400000,
+            "dtend": base + 86400000 + 1800000,
+            "location": "Pier 4",
+            "description": "",
+            "organizer": "",
+            "calendar": "Personal",
+            "all_day": False,
+        },
     ]
 
 
@@ -381,20 +602,56 @@ def _usage_json() -> list[dict]:
     now = 1751999000000  # ms
     return [
         {"package": "com.whatsapp", "total_foreground_ms": 5_400_000, "last_used": now},
-        {"package": "org.telegram.messenger", "total_foreground_ms": 3_600_000, "last_used": now - 100000},
-        {"package": "com.snapchat.android", "total_foreground_ms": 1_200_000, "last_used": now - 500000},
-        {"package": "com.calculator.vault.hider", "total_foreground_ms": 900_000, "last_used": now - 200000},
-        {"package": "io.metamask", "total_foreground_ms": 600_000, "last_used": now - 900000},
+        {
+            "package": "org.telegram.messenger",
+            "total_foreground_ms": 3_600_000,
+            "last_used": now - 100000,
+        },
+        {
+            "package": "com.snapchat.android",
+            "total_foreground_ms": 1_200_000,
+            "last_used": now - 500000,
+        },
+        {
+            "package": "com.calculator.vault.hider",
+            "total_foreground_ms": 900_000,
+            "last_used": now - 200000,
+        },
+        {
+            "package": "io.metamask",
+            "total_foreground_ms": 600_000,
+            "last_used": now - 900000,
+        },
     ]
 
 
 def _sms_json() -> list[dict]:
     base = 1751826000000
     return [
-        {"address": "+91 98200 44711", "body": "Bank OTP is 448192 do not share", "type": 1, "date": base + 10000},
-        {"address": "VM-HDFCBK", "body": "Rs 500000 debited from a/c XX4471 via NEFT", "type": 1, "date": base + 60000},
-        {"address": "+91 99300 55822", "body": "reached the docks waiting", "type": 1, "date": base + 120000},
-        {"address": "+91 99300 55822", "body": "coming in 5", "type": 2, "date": base + 130000},
+        {
+            "address": "+91 98200 44711",
+            "body": "Bank OTP is 448192 do not share",
+            "type": 1,
+            "date": base + 10000,
+        },
+        {
+            "address": "VM-HDFCBK",
+            "body": "Rs 500000 debited from a/c XX4471 via NEFT",
+            "type": 1,
+            "date": base + 60000,
+        },
+        {
+            "address": "+91 99300 55822",
+            "body": "reached the docks waiting",
+            "type": 1,
+            "date": base + 120000,
+        },
+        {
+            "address": "+91 99300 55822",
+            "body": "coming in 5",
+            "type": 2,
+            "date": base + 130000,
+        },
     ]
 
 
@@ -403,19 +660,44 @@ def _build_browser_history(path: Path) -> None:
     if path.exists():
         path.unlink()
     con = sqlite3.connect(path)
-    con.execute("CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, "
-                "visit_count INTEGER, last_visit_time INTEGER)")
+    con.execute(
+        "CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, "
+        "visit_count INTEGER, last_visit_time INTEGER)"
+    )
     # WebKit epoch: microseconds since 1601-01-01. 13800000000000000 ~ 2038; use realistic 2026.
     base = 13_360_000_000_000_000
     urls = [
-        ("https://www.google.com/search?q=how+to+wipe+android+phone", "how to wipe android - Google", 4, base + 1_000_000_000),
-        ("https://coinmarketcap.com/currencies/monero/", "Monero price", 7, base + 2_000_000_000),
+        (
+            "https://www.google.com/search?q=how+to+wipe+android+phone",
+            "how to wipe android - Google",
+            4,
+            base + 1_000_000_000,
+        ),
+        (
+            "https://coinmarketcap.com/currencies/monero/",
+            "Monero price",
+            7,
+            base + 2_000_000_000,
+        ),
         ("https://protonmail.com/login", "Proton Mail login", 12, base + 3_000_000_000),
-        ("https://www.google.com/search?q=untraceable+sim+card", "untraceable sim - Google", 3, base + 4_000_000_000),
-        ("https://en.wikipedia.org/wiki/Hawala", "Hawala - Wikipedia", 2, base + 5_000_000_000),
+        (
+            "https://www.google.com/search?q=untraceable+sim+card",
+            "untraceable sim - Google",
+            3,
+            base + 4_000_000_000,
+        ),
+        (
+            "https://en.wikipedia.org/wiki/Hawala",
+            "Hawala - Wikipedia",
+            2,
+            base + 5_000_000_000,
+        ),
     ]
     for u in urls:
-        con.execute("INSERT INTO urls(url,title,visit_count,last_visit_time) VALUES (?,?,?,?)", u)
+        con.execute(
+            "INSERT INTO urls(url,title,visit_count,last_visit_time) VALUES (?,?,?,?)",
+            u,
+        )
     con.commit()
     con.execute("DELETE FROM urls WHERE id IN (1, 4)")  # cleared search history
     con.commit()
@@ -427,14 +709,22 @@ def _screenshot_png() -> bytes:
     # A tiny solid-colour PNG built by hand (64x64, dark). Valid minimal PNG.
     import struct as _s
     import zlib as _z
+
     w = h = 64
     raw = bytearray()
     for y in range(h):
         raw.append(0)  # filter type 0
         for x in range(w):
             raw += bytes((22, 26, 31))  # RGB matching the app panel colour
+
     def chunk(typ: bytes, data: bytes) -> bytes:
-        return _s.pack(">I", len(data)) + typ + data + _s.pack(">I", _z.crc32(typ + data) & 0xffffffff)
+        return (
+            _s.pack(">I", len(data))
+            + typ
+            + data
+            + _s.pack(">I", _z.crc32(typ + data) & 0xFFFFFFFF)
+        )
+
     sig = b"\x89PNG\r\n\x1a\n"
     ihdr = _s.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
     idat = _z.compress(bytes(raw))
@@ -464,23 +754,39 @@ def build(dest: Path) -> None:
         d.mkdir(parents=True, exist_ok=True)
 
     # GPS-tagged photos (Mumbai dockside coordinates for the narrative)
-    (dcim / "IMG_20260706_2145.jpg").write_bytes(_minimal_jpeg_with_gps(19.0759, 72.8776))
-    (dcim / "IMG_20260706_2150.jpg").write_bytes(_minimal_jpeg_with_gps(19.0654, 72.8412))
+    (dcim / "IMG_20260706_2145.jpg").write_bytes(
+        _minimal_jpeg_with_gps(19.0759, 72.8776)
+    )
+    (dcim / "IMG_20260706_2150.jpg").write_bytes(
+        _minimal_jpeg_with_gps(19.0654, 72.8412)
+    )
     # A recently-deleted photo in the MediaStore trash (.trashed-<epoch>-name)
     (dcim / ".trashed-1751900000-IMG_evidence.jpg").write_bytes(
-        _minimal_jpeg_with_gps(18.9220, 72.8347))
+        _minimal_jpeg_with_gps(18.9220, 72.8347)
+    )
     # WhatsApp media (already-decrypted, non-root reachable)
-    (wa_media / "IMG-20260706-WA0007.jpg").write_bytes(_minimal_jpeg_with_gps(19.0760, 72.8779))
+    (wa_media / "IMG-20260706-WA0007.jpg").write_bytes(
+        _minimal_jpeg_with_gps(19.0760, 72.8779)
+    )
     # Telegram cached media (only present because 'Save to Gallery' was on)
-    (tg_media / "photo_2026-07-06_21-10-33.jpg").write_bytes(_minimal_jpeg_with_gps(19.07, 72.88))
+    (tg_media / "photo_2026-07-06_21-10-33.jpg").write_bytes(
+        _minimal_jpeg_with_gps(19.07, 72.88)
+    )
 
     # WhatsApp export text
-    (downloads / "WhatsApp Chat with docks-crew.txt").write_text(_WA_CHAT, encoding="utf-8")
+    (downloads / "WhatsApp Chat with docks-crew.txt").write_text(
+        _WA_CHAT, encoding="utf-8"
+    )
 
     # SQLite DBs with deleted rows
-    _build_messages_db(wa_db_dir / "msgstore.db", deleted_ids=[3, 4, 6])   # in-page freeblock
-    _build_messages_db(sdcard / "Download" / "chatcache.db",
-                       deleted_ids=list(range(20, 260)), bulk=True)          # freelist case
+    _build_messages_db(
+        wa_db_dir / "msgstore.db", deleted_ids=[3, 4, 6]
+    )  # in-page freeblock
+    _build_messages_db(
+        sdcard / "Download" / "chatcache.db",
+        deleted_ids=list(range(20, 260)),
+        bulk=True,
+    )  # freelist case
 
     # Telegram-style store (multi-app deleted recovery) — placed in shared storage for demo
     tg_db_dir = sdcard / "Android/media/org.telegram.messenger/Telegram"
@@ -495,7 +801,9 @@ def build(dest: Path) -> None:
     (downloads / "sms.json").write_text(json.dumps(_sms_json(), indent=2))
 
     # Expanded Tier-1 Collector outputs (media inventory, apps, accounts, calendar, usage)
-    (downloads / "media_inventory.json").write_text(json.dumps(_media_inventory_json(), indent=2))
+    (downloads / "media_inventory.json").write_text(
+        json.dumps(_media_inventory_json(), indent=2)
+    )
     (downloads / "apps.json").write_text(json.dumps(_apps_json(), indent=2))
     (downloads / "accounts.json").write_text(json.dumps(_accounts_json(), indent=2))
     (downloads / "calendar.json").write_text(json.dumps(_calendar_json(), indent=2))
@@ -512,20 +820,34 @@ def build(dest: Path) -> None:
     (shell / "screenshot.png").write_bytes(_screenshot_png())
 
     # Device intake + pre-state
-    (dest / "_device.json").write_text(json.dumps({
-        "device": {
-            "manufacturer": "Samsung", "brand": "samsung", "model": "SM-G991B (Galaxy S21)",
-            "product": "o1sxxx", "android_version": "14", "sdk": "34",
-            "build_id": "UP1A.231005.007", "serial": "R58N90ABCDE",
-            "imei": "35-901234-567890-1", "carrier": "Airtel", "rooted": False,
-        },
-        "pre_state": {
-            "screen_locked": False, "battery_level": 76,
-            "device_time": "2026-07-06T22:03:44+0530",
-            "time_skew_seconds": 3, "root_available": False,
-            "note": "MOCK DEVICE — synthetic fixtures for development/demo, not a real seizure",
-        },
-    }, indent=2))
+    (dest / "_device.json").write_text(
+        json.dumps(
+            {
+                "device": {
+                    "manufacturer": "Samsung",
+                    "brand": "samsung",
+                    "model": "SM-G991B (Galaxy S21)",
+                    "product": "o1sxxx",
+                    "android_version": "14",
+                    "sdk": "34",
+                    "build_id": "UP1A.231005.007",
+                    "serial": "R58N90ABCDE",
+                    "imei": "35-901234-567890-1",
+                    "carrier": "Airtel",
+                    "rooted": False,
+                },
+                "pre_state": {
+                    "screen_locked": False,
+                    "battery_level": 76,
+                    "device_time": "2026-07-06T22:03:44+0530",
+                    "time_skew_seconds": 3,
+                    "root_available": False,
+                    "note": "MOCK DEVICE — synthetic fixtures for development/demo, not a real seizure",
+                },
+            },
+            indent=2,
+        )
+    )
 
     print(f"Corpus written to {dest}")
     print("  - WhatsApp export + 4 SQLite DBs with deleted rows (msgstore, chatcache,")

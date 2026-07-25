@@ -11,6 +11,7 @@ Examples::
     # List connected devices
     python -m triage.cli devices
 """
+
 from __future__ import annotations
 
 import argparse
@@ -47,8 +48,10 @@ def cmd_acquire(args) -> int:
     else:
         adb = Adb(serial=args.serial)
         if not adb.available:
-            print("ERROR: adb binary not found; use --mock for a hardware-free run.",
-                  file=sys.stderr)
+            print(
+                "ERROR: adb binary not found; use --mock for a hardware-free run.",
+                file=sys.stderr,
+            )
             return 2
         source = RealDeviceSource(adb)
 
@@ -59,28 +62,29 @@ def cmd_acquire(args) -> int:
     # --overwrite: delete the existing case folder so the run is fresh
     if getattr(args, "overwrite", False):
         import shutil as _shutil
+
         existing = Path(args.out) / args.case
         if existing.exists():
             _shutil.rmtree(existing)
             print(f"[overwrite] removed existing case: {existing}")
 
     cfg = PipelineConfig(
-    case_id=args.case,
-    examiner=args.examiner,
-    legal_authority=args.authority,
-    scope_note=args.scope,
-    cases_root=Path(args.out),
-    known_hashes=known,
-    tier1_contacts=args.tier1_contacts,
-    tier1_calllog=args.tier1_calllog,
-    tier1_sms=args.tier1_sms,
-    tier2_telegram=args.tier2_telegram,
-    case_description=getattr(args, "case_description", "") or "",
-    case_number=getattr(args, "case_number", "") or "",
-    llm_provider=getattr(args, "llm", "") or "",
-    use_case_bank=not getattr(args, "no_case_bank", False),
-    learn_from_case=not getattr(args, "no_learn", False),
-)
+        case_id=args.case,
+        examiner=args.examiner,
+        legal_authority=args.authority,
+        scope_note=args.scope,
+        cases_root=Path(args.out),
+        known_hashes=known,
+        tier1_contacts=args.tier1_contacts,
+        tier1_calllog=args.tier1_calllog,
+        tier1_sms=args.tier1_sms,
+        tier2_telegram=args.tier2_telegram,
+        case_description=getattr(args, "case_description", "") or "",
+        case_number=getattr(args, "case_number", "") or "",
+        llm_provider=getattr(args, "llm", "") or "",
+        use_case_bank=not getattr(args, "no_case_bank", False),
+        learn_from_case=not getattr(args, "no_learn", False),
+    )
     summary = run_acquisition(source, cfg, progress=_progress)
     print(json.dumps(summary["counts"], indent=2))
     print(f"\nCase folder: {summary['case_dir']}")
@@ -89,43 +93,78 @@ def cmd_acquire(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="triage", description="eRakshak Android triage engine")
+    p = argparse.ArgumentParser(
+        prog="triage", description="eRakshak Android triage engine"
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("devices", help="list connected ADB devices")
 
     a = sub.add_parser("acquire", help="run a full triage acquisition")
-    a.add_argument("--mock", help="path to a mock-device fixtures dir (no phone needed)")
+    a.add_argument(
+        "--mock", help="path to a mock-device fixtures dir (no phone needed)"
+    )
     a.add_argument("--serial", help="ADB serial of a real device")
     a.add_argument("--case", required=True, help="case ID")
     a.add_argument("--examiner", required=True, help="examiner name")
     a.add_argument("--authority", default="", help="legal authority reference")
     a.add_argument("--scope", default="", help="scope / minimisation note")
     a.add_argument("--out", default="cases", help="cases root directory")
-    a.add_argument("--overwrite", action="store_true",
-               help="delete and re-create the case folder if it already exists")
+    a.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="delete and re-create the case folder if it already exists",
+    )
     a.add_argument("--known-hashes", help="JSON file: {sha256: label} known-hash set")
-    a.add_argument("--tier1-contacts", action="store_true",
-               help="Run Tier-1 helper to collect contacts")
-    a.add_argument("--tier1-calllog", action="store_true",
-               help="Run Tier-1 helper to collect call log")
-    a.add_argument("--tier1-sms", action="store_true",
-               help="Run Tier-1 helper to collect SMS")
-    a.add_argument("--tier2-telegram", action="store_true",
-               help="Root-required: pull cache4.db and run Telegram deep recovery")
-    a.add_argument("--case-description", dest="case_description", default="",
-               help="Plain-language case brief → targeted collection plan + AI leads")
-    a.add_argument("--case-number", dest="case_number", default="",
-               help="FIR / crime number, recorded on the case profile and used when "
-                    "learning from this case's outcome")
-    a.add_argument("--llm", default="",
-               help="LLM provider for the intelligence layer: heuristic|ollama|anthropic")
-    a.add_argument("--no-case-bank", dest="no_case_bank", action="store_true",
-               help="Plan from the expert ontology alone: skip prior-case retrieval and "
-                    "the learned knowledge graph")
-    a.add_argument("--no-learn", dest="no_learn", action="store_true",
-               help="Do not feed this run's outcome back into the knowledge graph")
-
+    a.add_argument(
+        "--tier1-contacts",
+        action="store_true",
+        help="Run Tier-1 helper to collect contacts",
+    )
+    a.add_argument(
+        "--tier1-calllog",
+        action="store_true",
+        help="Run Tier-1 helper to collect call log",
+    )
+    a.add_argument(
+        "--tier1-sms", action="store_true", help="Run Tier-1 helper to collect SMS"
+    )
+    a.add_argument(
+        "--tier2-telegram",
+        action="store_true",
+        help="Root-required: pull cache4.db and run Telegram deep recovery",
+    )
+    a.add_argument(
+        "--case-description",
+        dest="case_description",
+        default="",
+        help="Plain-language case brief → targeted collection plan + AI leads",
+    )
+    a.add_argument(
+        "--case-number",
+        dest="case_number",
+        default="",
+        help="FIR / crime number, recorded on the case profile and used when "
+        "learning from this case's outcome",
+    )
+    a.add_argument(
+        "--llm",
+        default="",
+        help="LLM provider for the intelligence layer: heuristic|ollama|anthropic",
+    )
+    a.add_argument(
+        "--no-case-bank",
+        dest="no_case_bank",
+        action="store_true",
+        help="Plan from the expert ontology alone: skip prior-case retrieval and "
+        "the learned knowledge graph",
+    )
+    a.add_argument(
+        "--no-learn",
+        dest="no_learn",
+        action="store_true",
+        help="Do not feed this run's outcome back into the knowledge graph",
+    )
 
     args = p.parse_args(argv)
     if args.cmd == "devices":

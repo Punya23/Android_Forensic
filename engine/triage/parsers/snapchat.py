@@ -19,6 +19,7 @@ length-delimited (wire-type-2) fields that are valid, mostly-printable UTF-8 —
 open-source Snapchat parsers use. Sender id and timestamp are taken from the SQLite columns
 (reliable), not the blob.
 """
+
 from __future__ import annotations
 
 import os
@@ -33,8 +34,10 @@ from ..config import Confidence
 from . import appchat
 
 APP_LABEL = "snapchat"
-_NOROOT = ("Snapchat chat databases (arroyo.db / main.db) live in app-private storage and "
-           "require root / a full-filesystem image; adb backup is disabled for Snapchat.")
+_NOROOT = (
+    "Snapchat chat databases (arroyo.db / main.db) live in app-private storage and "
+    "require root / a full-filesystem image; adb backup is disabled for Snapchat."
+)
 
 # arroyo.db conversation_message: content_type == 1 is a text message; other ints are media/snap/status.
 CONTENT_TYPE_TEXT = 1
@@ -55,6 +58,7 @@ class SnapchatPaths:
 
 # --- schema-less protobuf string extraction --------------------------------
 
+
 def _read_varint(b: bytes, i: int) -> tuple[Optional[int], int]:
     shift = 0
     result = 0
@@ -73,12 +77,17 @@ def _read_varint(b: bytes, i: int) -> tuple[Optional[int], int]:
 def _mostly_printable(s: str) -> bool:
     if not s:
         return False
-    printable = sum(1 for c in s if c == "\n" or c == "\t" or 32 <= ord(c) < 0x110000 and c.isprintable())
+    printable = sum(
+        1
+        for c in s
+        if c == "\n" or c == "\t" or 32 <= ord(c) < 0x110000 and c.isprintable()
+    )
     return printable / len(s) >= 0.8
 
 
-def decode_protobuf_strings(blob: bytes | bytearray | None, depth: int = 0,
-                            max_depth: int = 6) -> list[str]:
+def decode_protobuf_strings(
+    blob: bytes | bytearray | None, depth: int = 0, max_depth: int = 6
+) -> list[str]:
     """Extract candidate UTF-8 strings from a protobuf blob without a schema.
 
     Walks wire-type-2 (length-delimited) fields: if a chunk is valid, mostly-printable UTF-8 it
@@ -95,17 +104,17 @@ def decode_protobuf_strings(blob: bytes | bytearray | None, depth: int = 0,
         if tag is None:
             break
         wt = tag & 0x07
-        if wt == 0:            # varint
+        if wt == 0:  # varint
             _, i = _read_varint(b, i)
-        elif wt == 1:          # 64-bit
+        elif wt == 1:  # 64-bit
             i += 8
-        elif wt == 5:          # 32-bit
+        elif wt == 5:  # 32-bit
             i += 4
-        elif wt == 2:          # length-delimited
+        elif wt == 2:  # length-delimited
             ln, i = _read_varint(b, i)
             if ln is None or ln < 0 or i + ln > n:
                 break
-            chunk = b[i:i + ln]
+            chunk = b[i : i + ln]
             i += ln
             decoded = None
             try:
@@ -118,7 +127,7 @@ def decode_protobuf_strings(blob: bytes | bytearray | None, depth: int = 0,
                 out.append(decoded)
             else:
                 out.extend(decode_protobuf_strings(chunk, depth + 1, max_depth))
-        else:                  # unknown / group — bail
+        else:  # unknown / group — bail
             break
     return out
 
@@ -138,6 +147,7 @@ def _text_from_content(blob: Any) -> str:
 
 # --- timestamps ------------------------------------------------------------
 
+
 def _ms_to_iso(val: Any) -> Optional[str]:
     try:
         n = float(val)
@@ -145,7 +155,7 @@ def _ms_to_iso(val: Any) -> Optional[str]:
         return None
     if n <= 0:
         return None
-    if n > 1e11:       # milliseconds
+    if n > 1e11:  # milliseconds
         n /= 1e3
     try:
         return datetime.fromtimestamp(n, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -154,6 +164,7 @@ def _ms_to_iso(val: Any) -> Optional[str]:
 
 
 # --- identity (main.db Friend) ---------------------------------------------
+
 
 def recover_snapchat_friends(main_db: str | Path) -> list[dict[str, Any]]:
     """user_id → username/displayName from main.db Friend (best-effort)."""
@@ -164,21 +175,41 @@ def recover_snapchat_friends(main_db: str | Path) -> list[dict[str, Any]]:
     try:
         con = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
         con.row_factory = sqlite3.Row
-        tbl = next((r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND lower(name)='friend'")), None)
+        tbl = next(
+            (
+                r[0]
+                for r in con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND lower(name)='friend'"
+                )
+            ),
+            None,
+        )
         if tbl:
             cols = [r[1] for r in con.execute(f"PRAGMA table_info('{tbl}')")]
-            id_c = next((c for c in cols if c.lower() in ("userid", "user_id", "id")), None)
+            id_c = next(
+                (c for c in cols if c.lower() in ("userid", "user_id", "id")), None
+            )
             un_c = next((c for c in cols if c.lower() == "username"), None)
-            dn_c = next((c for c in cols if c.lower() in ("displayname", "display_name")), None)
+            dn_c = next(
+                (c for c in cols if c.lower() in ("displayname", "display_name")), None
+            )
             if id_c:
                 for r in con.execute(f'SELECT * FROM "{tbl}"').fetchall():
                     uid = str(r[id_c]) if r[id_c] is not None else ""
                     if not uid:
                         continue
-                    name = (r[un_c] if un_c and r[un_c] else None) or \
-                           (r[dn_c] if dn_c and r[dn_c] else None) or uid
-                    users.append({"id": uid, "name": str(name), "confidence": Confidence.LIVE.value})
+                    name = (
+                        (r[un_c] if un_c and r[un_c] else None)
+                        or (r[dn_c] if dn_c and r[dn_c] else None)
+                        or uid
+                    )
+                    users.append(
+                        {
+                            "id": uid,
+                            "name": str(name),
+                            "confidence": Confidence.LIVE.value,
+                        }
+                    )
         con.close()
     except sqlite3.Error:
         return users
@@ -187,9 +218,12 @@ def recover_snapchat_friends(main_db: str | Path) -> list[dict[str, Any]]:
 
 # --- main recovery ---------------------------------------------------------
 
-def recover_snapchat_messages(arroyo_db: str | Path,
-                              main_db: str | Path | None = None,
-                              max_live_rows: int = 10_000) -> dict[str, Any]:
+
+def recover_snapchat_messages(
+    arroyo_db: str | Path,
+    main_db: str | Path | None = None,
+    max_live_rows: int = 10_000,
+) -> dict[str, Any]:
     """Recover Snapchat chat messages (live + deleted) from arroyo.db (or legacy main.db)."""
     a_path = Path(arroyo_db)
     if not a_path.exists():
@@ -206,14 +240,26 @@ def recover_snapchat_messages(arroyo_db: str | Path,
     try:
         con = sqlite3.connect(f"file:{a_path}?mode=ro", uri=True)
         con.row_factory = sqlite3.Row
-        have = next((r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND "
-            "lower(name)='conversation_message'")), None)
+        have = next(
+            (
+                r[0]
+                for r in con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND "
+                    "lower(name)='conversation_message'"
+                )
+            ),
+            None,
+        )
         if not have:
             con.close()
-            return {"available": True, "error": "no conversation_message table (unknown Snapchat era)",
-                    "app": APP_LABEL, "messages": [], "users": users,
-                    "counts": dict(appchat.ZERO_COUNTS)}
+            return {
+                "available": True,
+                "error": "no conversation_message table (unknown Snapchat era)",
+                "app": APP_LABEL,
+                "messages": [],
+                "users": users,
+                "counts": dict(appchat.ZERO_COUNTS),
+            }
         cols = [r[1] for r in con.execute(f"PRAGMA table_info('{table}')")]
 
         def col(*names: str) -> Optional[str]:
@@ -229,7 +275,9 @@ def recover_snapchat_messages(arroyo_db: str | Path,
         c_sender = col("sender_id", "senderid")
         c_conv = col("client_conversation_id", "conversation_id")
         sel = ", ".join(f'"{c}"' for c in cols)
-        for r in con.execute(f'SELECT {sel} FROM "{table}" LIMIT {int(max_live_rows)}').fetchall():
+        for r in con.execute(
+            f'SELECT {sel} FROM "{table}" LIMIT {int(max_live_rows)}'
+        ).fetchall():
             d = {c: r[c] for c in cols}
             ctype = d.get(c_type) if c_type else None
             content = d.get(c_content) if c_content else None
@@ -240,17 +288,28 @@ def recover_snapchat_messages(arroyo_db: str | Path,
             if not body:
                 continue
             sid = str(d.get(c_sender) or "") if c_sender else ""
-            messages.append(appchat.msg(
-                body=body, sender=sid or "<unknown>",
-                sender_name=uidx.get(sid, sid or "<unknown>"),
-                timestamp=_ms_to_iso(d.get(c_ts)) if c_ts else None,
-                chat_id=str(d.get(c_conv) or "") or None if c_conv else None,
-                confidence=Confidence.LIVE.value, source_file=a_path.name,
-                provenance=f"live row in {table} (content_type={ctype})"))
+            messages.append(
+                appchat.msg(
+                    body=body,
+                    sender=sid or "<unknown>",
+                    sender_name=uidx.get(sid, sid or "<unknown>"),
+                    timestamp=_ms_to_iso(d.get(c_ts)) if c_ts else None,
+                    chat_id=str(d.get(c_conv) or "") or None if c_conv else None,
+                    confidence=Confidence.LIVE.value,
+                    source_file=a_path.name,
+                    provenance=f"live row in {table} (content_type={ctype})",
+                )
+            )
         con.close()
     except sqlite3.Error as exc:
-        return {"available": True, "error": f"sqlite error: {exc}", "app": APP_LABEL,
-                "messages": [], "users": users, "counts": dict(appchat.ZERO_COUNTS)}
+        return {
+            "available": True,
+            "error": f"sqlite error: {exc}",
+            "app": APP_LABEL,
+            "messages": [],
+            "users": users,
+            "counts": dict(appchat.ZERO_COUNTS),
+        }
 
     # Deleted-row + gap recovery. Carved blobs may arrive as raw bytes → protobuf-decode them;
     # otherwise fall back to the most message-like string in the row.
@@ -262,12 +321,16 @@ def recover_snapchat_messages(arroyo_db: str | Path,
                     return t
         return appchat.best_content(vals)
 
-    messages.extend(appchat.carve_and_gaps(
-        a_path, table, body_of=body_of, source_name=a_path.name))
+    messages.extend(
+        appchat.carve_and_gaps(a_path, table, body_of=body_of, source_name=a_path.name)
+    )
 
     return {
-        "available": True, "error": None, "app": APP_LABEL,
-        "messages": messages, "users": users,
+        "available": True,
+        "error": None,
+        "app": APP_LABEL,
+        "messages": messages,
+        "users": users,
         "schema": {"table": table, "columns": cols},
         "counts": appchat.count_by_confidence(messages),
     }
@@ -282,8 +345,15 @@ def _recover_legacy_main(main_db: Path, max_live_rows: int) -> dict[str, Any]:
     try:
         con = sqlite3.connect(f"file:{main_db}?mode=ro", uri=True)
         con.row_factory = sqlite3.Row
-        have = next((r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND lower(name)='message'")), None)
+        have = next(
+            (
+                r[0]
+                for r in con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND lower(name)='message'"
+                )
+            ),
+            None,
+        )
         if not have:
             con.close()
             return appchat.unavailable(APP_LABEL, _NOROOT)
@@ -293,26 +363,49 @@ def _recover_legacy_main(main_db: Path, max_live_rows: int) -> dict[str, Any]:
         c_content = low.get("content")
         c_ts = low.get("timestamp")
         c_sender = low.get("senderid") or low.get("sender_id")
-        for r in con.execute(f'SELECT * FROM "{table}" LIMIT {int(max_live_rows)}').fetchall():
+        for r in con.execute(
+            f'SELECT * FROM "{table}" LIMIT {int(max_live_rows)}'
+        ).fetchall():
             body = _text_from_content(r[c_content]) if c_content else ""
             if not body:
                 continue
             sid = str(r[c_sender]) if c_sender and r[c_sender] is not None else ""
-            messages.append(appchat.msg(
-                body=body, sender=sid or "<unknown>", sender_name=uidx.get(sid, sid or "<unknown>"),
-                timestamp=_ms_to_iso(r[c_ts]) if c_ts else None,
-                confidence=Confidence.LIVE.value, source_file=main_db.name,
-                provenance=f"live row in legacy {table}"))
+            messages.append(
+                appchat.msg(
+                    body=body,
+                    sender=sid or "<unknown>",
+                    sender_name=uidx.get(sid, sid or "<unknown>"),
+                    timestamp=_ms_to_iso(r[c_ts]) if c_ts else None,
+                    confidence=Confidence.LIVE.value,
+                    source_file=main_db.name,
+                    provenance=f"live row in legacy {table}",
+                )
+            )
         con.close()
     except sqlite3.Error as exc:
-        return {"available": True, "error": f"sqlite error: {exc}", "app": APP_LABEL,
-                "messages": [], "users": users, "counts": dict(appchat.ZERO_COUNTS)}
+        return {
+            "available": True,
+            "error": f"sqlite error: {exc}",
+            "app": APP_LABEL,
+            "messages": [],
+            "users": users,
+            "counts": dict(appchat.ZERO_COUNTS),
+        }
 
-    messages.extend(appchat.carve_and_gaps(
-        main_db, table, body_of=_legacy_body, source_name=main_db.name))
-    return {"available": True, "error": None, "app": APP_LABEL, "messages": messages,
-            "users": users, "schema": {"table": table, "era": "legacy_main"},
-            "counts": appchat.count_by_confidence(messages)}
+    messages.extend(
+        appchat.carve_and_gaps(
+            main_db, table, body_of=_legacy_body, source_name=main_db.name
+        )
+    )
+    return {
+        "available": True,
+        "error": None,
+        "app": APP_LABEL,
+        "messages": messages,
+        "users": users,
+        "schema": {"table": table, "era": "legacy_main"},
+        "counts": appchat.count_by_confidence(messages),
+    }
 
 
 def _legacy_body(vals: list) -> str:
@@ -326,16 +419,24 @@ def _legacy_body(vals: list) -> str:
 
 # --- "My Data" export ingest (non-root, user-initiated) --------------------
 
+
 def _export_ts(val: Any) -> Optional[str]:
     """Parse a Snapchat export timestamp (e.g. '2021-01-01 12:00:00 UTC') to ISO-8601."""
     if not val:
         return None
     raw = str(val).strip()
-    for fmt in ("%Y-%m-%d %H:%M:%S %Z", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%SZ",
-                "%Y-%m-%dT%H:%M:%S"):
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S %Z",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S",
+    ):
         try:
-            return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ")
+            return (
+                datetime.strptime(raw, fmt)
+                .replace(tzinfo=timezone.utc)
+                .strftime("%Y-%m-%dT%H:%M:%SZ")
+            )
         except ValueError:
             continue
     return _ms_to_iso(raw) if raw.isdigit() else None
@@ -361,11 +462,18 @@ def parse_snapchat_export(path: str | Path) -> dict[str, Any]:
             return
         sender = str(m.get("From") or m.get("from") or "<unknown>")
         conv = str(m.get("Conversation Title") or section or sender)
-        messages.append(appchat.msg(
-            body=str(body), sender=sender, sender_name=sender,
-            timestamp=_export_ts(m.get("Created") or m.get("created")),
-            chat_id=conv, confidence=Confidence.LIVE.value,
-            source_file="snapchat_export", provenance="My Data export"))
+        messages.append(
+            appchat.msg(
+                body=str(body),
+                sender=sender,
+                sender_name=sender,
+                timestamp=_export_ts(m.get("Created") or m.get("created")),
+                chat_id=conv,
+                confidence=Confidence.LIVE.value,
+                source_file="snapchat_export",
+                provenance="My Data export",
+            )
+        )
 
     def _handle(obj: Any) -> None:
         if isinstance(obj, dict):
@@ -393,9 +501,20 @@ def parse_snapchat_export(path: str | Path) -> dict[str, Any]:
         elif p.is_file() and p.suffix.lower() == ".json":
             _handle(json.loads(p.read_text(encoding="utf-8", errors="replace")))
     except Exception as exc:
-        return {"available": False, "error": f"export parse error: {exc}", "app": APP_LABEL,
-                "messages": [], "counts": dict(appchat.ZERO_COUNTS)}
+        return {
+            "available": False,
+            "error": f"export parse error: {exc}",
+            "app": APP_LABEL,
+            "messages": [],
+            "counts": dict(appchat.ZERO_COUNTS),
+        }
 
-    return {"available": True, "error": None, "app": APP_LABEL, "messages": messages,
-            "users": [], "schema": {"source": "mydata_export"},
-            "counts": appchat.count_by_confidence(messages)}
+    return {
+        "available": True,
+        "error": None,
+        "app": APP_LABEL,
+        "messages": messages,
+        "users": [],
+        "schema": {"source": "mydata_export"},
+        "counts": appchat.count_by_confidence(messages),
+    }

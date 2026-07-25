@@ -13,6 +13,7 @@ Every row parsed this way is labelled with the app inferred from the file path s
 dashboard can attribute it, and rows are marked LIVE (they came from the live table via the
 sqlite engine).
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -24,7 +25,17 @@ from ..models import Message
 
 # Column-name candidates (lowercased) we treat as each logical field.
 _TEXT_COLS = ["body", "text", "message", "content", "msg", "data_text", "snippet"]
-_SENDER_COLS = ["sender", "from", "author", "uid", "user_id", "from_id", "address", "sender_name", "handle"]
+_SENDER_COLS = [
+    "sender",
+    "from",
+    "author",
+    "uid",
+    "user_id",
+    "from_id",
+    "address",
+    "sender_name",
+    "handle",
+]
 _TIME_COLS = ["timestamp", "date", "ts", "time", "date_sent", "created_at", "sent"]
 
 
@@ -63,6 +74,7 @@ def _to_iso(value) -> Optional[str]:
         return s if "-" in s else None
     # Heuristic: seconds vs milliseconds since epoch.
     from datetime import datetime, timezone
+
     if n > 1e12:
         n //= 1000
     if n < 1e8 or n > 4e9:
@@ -81,8 +93,12 @@ def parse_app_db(path: str | Path, max_rows: int = 5000) -> list[Message]:
     try:
         con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         con.row_factory = sqlite3.Row
-        tables = [r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+        tables = [
+            r[0]
+            for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        ]
     except sqlite3.Error:
         return []
 
@@ -100,7 +116,8 @@ def parse_app_db(path: str | Path, max_rows: int = 5000) -> list[Message]:
         col_sql = ", ".join('"' + c + '"' for c in select_cols)
         try:
             rows = con.execute(
-                f"SELECT {col_sql} FROM '{table}' LIMIT {int(max_rows)}").fetchall()
+                f"SELECT {col_sql} FROM '{table}' LIMIT {int(max_rows)}"
+            ).fetchall()
         except sqlite3.Error:
             continue
         for r in rows:
@@ -111,14 +128,20 @@ def parse_app_db(path: str | Path, max_rows: int = 5000) -> list[Message]:
             body = str(body).strip()
             if not body:
                 continue
-            messages.append(Message(
-                app=app,
-                sender=str(r[sender_col]) if sender_col and r[sender_col] is not None else "(unknown)",
-                body=body,
-                timestamp=_to_iso(r[time_col]) if time_col else None,
-                confidence=Confidence.LIVE,
-                source_file=path.name,
-                provenance=f"live table '{table}'",
-            ))
+            messages.append(
+                Message(
+                    app=app,
+                    sender=(
+                        str(r[sender_col])
+                        if sender_col and r[sender_col] is not None
+                        else "(unknown)"
+                    ),
+                    body=body,
+                    timestamp=_to_iso(r[time_col]) if time_col else None,
+                    confidence=Confidence.LIVE,
+                    source_file=path.name,
+                    provenance=f"live table '{table}'",
+                )
+            )
     con.close()
     return messages

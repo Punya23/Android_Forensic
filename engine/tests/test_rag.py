@@ -10,6 +10,7 @@ The properties these lock down are the ones that keep the feature honest:
     * a fresh installation with no corpus and no history behaves exactly like the
       pure expert ontology.
 """
+
 import sys
 from pathlib import Path
 
@@ -74,15 +75,21 @@ def test_roles_use_canonical_forensic_terms():
 
 
 def test_explicit_role_statement_beats_verb_inference():
-    roles = {r.name: r.role for r in
-             extract_roles("Ravi murdered Anil. Ravi is the complainant.")}
+    roles = {
+        r.name: r.role
+        for r in extract_roles("Ravi murdered Anil. Ravi is the complainant.")
+    }
     # The explicit statement wins over "Ravi murdered".
     assert roles["Ravi"] == "complainant"
 
 
 def test_sentence_initial_role_word_is_matched():
-    roles = {r.name: r.role for r in
-             extract_roles("Complainant Meera reported that accused Vivek cheated her.")}
+    roles = {
+        r.name: r.role
+        for r in extract_roles(
+            "Complainant Meera reported that accused Vivek cheated her."
+        )
+    }
     assert roles["Meera"] == "complainant"
     assert roles["Vivek"] == "accused"
 
@@ -92,14 +99,17 @@ def test_missing_person_is_its_own_role():
     assert roles["Neha"] == "missing_person"
 
 
-@pytest.mark.parametrize("word,expected", [
-    ("prime suspect", "suspect"),
-    ("accomplice", "co_accused"),
-    ("prosecutrix", "victim"),
-    ("proclaimed offender", "absconder"),
-    ("panch", "panch_witness"),
-    ("nonsense-word", "third_party"),
-])
+@pytest.mark.parametrize(
+    "word,expected",
+    [
+        ("prime suspect", "suspect"),
+        ("accomplice", "co_accused"),
+        ("prosecutrix", "victim"),
+        ("proclaimed offender", "absconder"),
+        ("panch", "panch_witness"),
+        ("nonsense-word", "third_party"),
+    ],
+)
 def test_role_aliases_normalise(word, expected):
     assert normalise_role(word) == expected
 
@@ -162,9 +172,11 @@ def test_empty_bank_returns_no_precedents():
 
 def test_malformed_corpus_line_is_skipped(tmp_path):
     path = tmp_path / "corpus.jsonl"
-    path.write_text('{"case_number": "OK-1", "crime_type": "theft"}\n'
-                    'not json at all\n'
-                    '{"case_number": "OK-2", "crime_type": "theft"}\n')
+    path.write_text(
+        '{"case_number": "OK-1", "crime_type": "theft"}\n'
+        "not json at all\n"
+        '{"case_number": "OK-2", "crime_type": "theft"}\n'
+    )
     bank = CaseBank()
     assert bank.load_file(path) == 2
 
@@ -172,9 +184,12 @@ def test_malformed_corpus_line_is_skipped(tmp_path):
 def test_append_to_file_round_trips(tmp_path):
     path = tmp_path / "local.jsonl"
     bank = CaseBank()
-    study = CaseStudy(case_number="LOCAL-1", crime_type="theft",
-                      description="bike theft",
-                      artifacts=[ArtifactOutcome("locations", "decisive")])
+    study = CaseStudy(
+        case_number="LOCAL-1",
+        crime_type="theft",
+        description="bike theft",
+        artifacts=[ArtifactOutcome("locations", "decisive")],
+    )
     bank.append_to_file(study, path)
     assert CaseBank(studies=[]).load_file(path) == 1
     assert bank.get("LOCAL-1").decisive_artifacts() == ["locations"]
@@ -218,14 +233,15 @@ def test_graph_round_trips_through_disk(tmp_path, graph):
     graph.save(path)
     reloaded = KnowledgeGraph.load(path)
     assert reloaded.stats()["distinct_cases"] == graph.stats()["distinct_cases"]
-    assert (reloaded.blended_prior("murder", "call_logs")
-            == pytest.approx(graph.blended_prior("murder", "call_logs")))
+    assert reloaded.blended_prior("murder", "call_logs") == pytest.approx(
+        graph.blended_prior("murder", "call_logs")
+    )
 
 
 def test_corrupt_graph_file_does_not_raise(tmp_path):
     path = tmp_path / "kg.json"
     path.write_text("{ this is not json")
-    kg = KnowledgeGraph.load(path)          # must degrade, not explode
+    kg = KnowledgeGraph.load(path)  # must degrade, not explode
     assert kg.stats()["distinct_cases"] == 0
 
 
@@ -238,8 +254,9 @@ def test_similar_crime_types_are_derived_from_shared_artifacts(graph):
 
 def test_cooccurrence_records_artifacts_that_break_cases_together():
     kg = KnowledgeGraph()
-    kg.observe_case("theft", {"locations": "decisive", "call_logs": "decisive"},
-                    case_number="C1")
+    kg.observe_case(
+        "theft", {"locations": "decisive", "call_logs": "decisive"}, case_number="C1"
+    )
     partners = [c["artifact"] for c in kg.co_occurring("locations")]
     assert "call_logs" in partners
 
@@ -258,16 +275,24 @@ def test_rag_never_drops_a_cheap_artifact(bank, graph):
     """Prioritise-never-exclude survives retrieval and learning."""
     # Teach the graph, hard, that every cheap artifact is worthless for murder.
     for i in range(60):
-        graph.observe_case("murder",
-                           {"call_logs": "none", "sms": "none", "contacts": "none",
-                            "browser": "none", "locations": "none", "usage": "none"},
-                           case_number=f"NEG-{i}")
+        graph.observe_case(
+            "murder",
+            {
+                "call_logs": "none",
+                "sms": "none",
+                "contacts": "none",
+                "browser": "none",
+                "locations": "none",
+                "usage": "none",
+            },
+            case_number=f"NEG-{i}",
+        )
     _, plan = plan_case(MURDER_BRIEF, bank=bank, graph=graph)
     cheap = [a for a in plan.artifacts if a.cost == "cheap"]
     assert cheap, "expected cheap artifacts in the plan"
-    assert all(a.collect for a in cheap), (
-        "a cheap artifact was dropped — evidence can only be collected once"
-    )
+    assert all(
+        a.collect for a in cheap
+    ), "a cheap artifact was dropped — evidence can only be collected once"
 
 
 def test_promotion_needs_less_evidence_than_demotion(bank, graph):
@@ -277,8 +302,9 @@ def test_promotion_needs_less_evidence_than_demotion(bank, graph):
     # Same amount of one-sided evidence, in opposite directions, on two artifacts
     # that both start at the doctrinal 'medium' band for murder.
     for i in range(12):
-        graph.observe_case("murder", {"media": "decisive", "calendar": "none"},
-                           case_number=f"ASYM-{i}")
+        graph.observe_case(
+            "murder", {"media": "decisive", "calendar": "none"}, case_number=f"ASYM-{i}"
+        )
 
     hits, evidence = retrieve_precedents(profile, bank)
     plan = build_plan(profile, precedents=hits, artifact_evidence=evidence, graph=graph)
@@ -303,13 +329,19 @@ def test_thin_demotion_evidence_keeps_the_doctrinal_ranking():
 
 
 def test_sustained_evidence_can_eventually_promote_an_expensive_pull(bank, graph):
-    before = next(a for a in plan_case(MURDER_BRIEF, bank=bank, graph=graph)[1].artifacts
-                  if a.artifact == "media")
-    assert before.collect is False          # doctrine: media is opt-in for homicide
+    before = next(
+        a
+        for a in plan_case(MURDER_BRIEF, bank=bank, graph=graph)[1].artifacts
+        if a.artifact == "media"
+    )
+    assert before.collect is False  # doctrine: media is opt-in for homicide
     for i in range(25):
         graph.observe_case("murder", {"media": "decisive"}, case_number=f"MED-{i}")
-    after = next(a for a in plan_case(MURDER_BRIEF, bank=bank, graph=graph)[1].artifacts
-                 if a.artifact == "media")
+    after = next(
+        a
+        for a in plan_case(MURDER_BRIEF, bank=bank, graph=graph)[1].artifacts
+        if a.artifact == "media"
+    )
     assert after.fused_score > before.fused_score
     assert after.collect is True
 
@@ -323,7 +355,9 @@ def test_plan_cites_its_evidence(bank, graph):
     assert any("not evidence in this case" in n for n in plan.notes)
 
 
-def test_recommendations_surface_skipped_artifacts_that_solved_similar_cases(bank, graph):
+def test_recommendations_surface_skipped_artifacts_that_solved_similar_cases(
+    bank, graph
+):
     _, plan = plan_case(MURDER_BRIEF, bank=bank, graph=graph)
     skipped = {a.artifact for a in plan.artifacts if not a.collect}
     for rec in plan.recommendations:
@@ -342,8 +376,9 @@ def test_plan_reports_estimated_savings(bank, graph):
 
 
 def test_case_number_flows_into_the_profile(bank, graph):
-    profile, _ = plan_case(MURDER_BRIEF, case_number="FIR-2026/114",
-                           bank=bank, graph=graph)
+    profile, _ = plan_case(
+        MURDER_BRIEF, case_number="FIR-2026/114", bank=bank, graph=graph
+    )
     assert profile.case_number == "FIR-2026/114"
 
 
@@ -359,11 +394,13 @@ def test_uncollected_artifacts_are_not_graded_as_failures():
 
 
 def test_yields_grade_by_lead_score():
-    bundle = {"findings": [
-        {"source_type": "message", "score": 9.0},      # decisive
-        {"source_type": "call", "score": 3.0},         # supporting
-        {"source_type": "browser", "score": 0.2},      # none
-    ]}
+    bundle = {
+        "findings": [
+            {"source_type": "message", "score": 9.0},  # decisive
+            {"source_type": "call", "score": 3.0},  # supporting
+            {"source_type": "browser", "score": 0.2},  # none
+        ]
+    }
     yields = derive_artifact_yields(bundle, None)
     assert yields["sms"] == "decisive"
     assert yields["call_logs"] == "supporting"
@@ -371,8 +408,9 @@ def test_yields_grade_by_lead_score():
 
 
 def test_critical_severity_counts_as_decisive():
-    bundle = {"findings": [{"source_type": "recovered", "score": 0.1,
-                            "severity": "critical"}]}
+    bundle = {
+        "findings": [{"source_type": "recovered", "score": 0.1, "severity": "critical"}]
+    }
     assert derive_artifact_yields(bundle, None)["deleted"] == "decisive"
 
 
@@ -386,8 +424,9 @@ def test_provisional_feedback_is_weight_limited():
     # One provisional case must move the prior less than one confirmed case.
     kg2 = KnowledgeGraph()
     record_confirmed(kg2, "murder", {"call_logs": "decisive"}, case_number="FIR-1")
-    assert (kg.blended_prior("murder", "call_logs")
-            < kg2.blended_prior("murder", "call_logs"))
+    assert kg.blended_prior("murder", "call_logs") < kg2.blended_prior(
+        "murder", "call_logs"
+    )
 
 
 def test_replaying_the_same_case_does_not_inflate_counts():
@@ -399,14 +438,19 @@ def test_replaying_the_same_case_does_not_inflate_counts():
 
 def test_confirmed_outcome_rejects_invalid_yields():
     kg = KnowledgeGraph()
-    assert record_confirmed(kg, "murder", {"call_logs": "banana"},
-                            case_number="X")["recorded"] is False
+    assert (
+        record_confirmed(kg, "murder", {"call_logs": "banana"}, case_number="X")[
+            "recorded"
+        ]
+        is False
+    )
 
 
 def test_promote_case_to_study_records_local_provenance():
     profile = extract_profile(MURDER_BRIEF, case_number="FIR-2026/114")
-    study = promote_case_to_study(profile, {"call_logs": "decisive"},
-                                  outcome="charge-sheeted", examiner="SI Rao")
+    study = promote_case_to_study(
+        profile, {"call_logs": "decisive"}, outcome="charge-sheeted", examiner="SI Rao"
+    )
     assert study.case_number == "FIR-2026/114"
     assert study.decisive_artifacts() == ["call_logs"]
     assert "synthetic" not in study.source.lower()
@@ -418,14 +462,20 @@ def test_feedback_round_trip_changes_the_next_plan(bank, tmp_path):
     """The whole point: what one case learned must reach the next case's plan."""
     path = tmp_path / "kg.json"
     kg = KnowledgeGraph.load(path, bootstrap=bank)
-    baseline = next(a for a in plan_case(MURDER_BRIEF, bank=bank, graph=kg)[1].artifacts
-                    if a.artifact == "media").fused_score
+    baseline = next(
+        a
+        for a in plan_case(MURDER_BRIEF, bank=bank, graph=kg)[1].artifacts
+        if a.artifact == "media"
+    ).fused_score
 
     for i in range(20):
         record_confirmed(kg, "murder", {"media": "decisive"}, case_number=f"FIR-{i}")
     kg.save(path)
 
     reloaded = KnowledgeGraph.load(path)
-    after = next(a for a in plan_case(MURDER_BRIEF, bank=bank, graph=reloaded)[1].artifacts
-                 if a.artifact == "media").fused_score
+    after = next(
+        a
+        for a in plan_case(MURDER_BRIEF, bank=bank, graph=reloaded)[1].artifacts
+        if a.artifact == "media"
+    ).fused_score
     assert after > baseline

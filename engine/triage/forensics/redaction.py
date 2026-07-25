@@ -1,13 +1,15 @@
 """Automated Redaction Module."""
+
 import re
 from typing import List, Dict
 
 # Basic PII patterns
 PII_PATTERNS = {
-    "phone": re.compile(r'\b(?:\+?91|0)?[6789]\d{9}\b'),
-    "email": re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'),
-    "aadhar": re.compile(r'\b\d{4}\s\d{4}\s\d{4}\b')
+    "phone": re.compile(r"\b(?:\+?91|0)?[6789]\d{9}\b"),
+    "email": re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"),
+    "aadhar": re.compile(r"\b\d{4}\s\d{4}\s\d{4}\b"),
 }
+
 
 def redact_text(text: str) -> str:
     """Redact PII from text."""
@@ -16,6 +18,7 @@ def redact_text(text: str) -> str:
     for pii_type, pattern in PII_PATTERNS.items():
         text = pattern.sub(f"[REDACTED {pii_type.upper()}]", text)
     return text
+
 
 def redact_evidence_list(evidence_list: List[Dict]) -> List[Dict]:
     """Redact PII from a list of evidence dictionaries."""

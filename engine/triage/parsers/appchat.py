@@ -13,6 +13,7 @@ All of these apps keep their real chat store in app-private storage, so the pars
 produce data on a rooted device / full-filesystem image / synthetic corpus; otherwise they
 return a standardised ``available: False`` dict (never raise).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,8 +24,20 @@ from ..config import Confidence
 MIN_STR_LEN = 3
 
 # Words that betray a leaked SQLite schema / DDL fragment rather than real message content.
-_SCHEMA_WORDS = ("create", "table", "integer", "primary key", "text", "blob", "not null",
-                 "autoincrement", "index", "varchar", "references", "sqlite_")
+_SCHEMA_WORDS = (
+    "create",
+    "table",
+    "integer",
+    "primary key",
+    "text",
+    "blob",
+    "not null",
+    "autoincrement",
+    "index",
+    "varchar",
+    "references",
+    "sqlite_",
+)
 
 
 _IDENTIFIER = __import__("re").compile(r"[A-Za-z0-9_]+")
@@ -71,24 +84,46 @@ def best_content(values: list) -> str:
 
 # The confidence buckets every app recovery reports.
 ZERO_COUNTS: dict[str, int] = {
-    "live": 0, "recovered_verified": 0, "carved_partial": 0,
-    "deletion_detected": 0, "total": 0,
+    "live": 0,
+    "recovered_verified": 0,
+    "carved_partial": 0,
+    "deletion_detected": 0,
+    "total": 0,
 }
 
 
-def msg(*, body: str, sender: str = "<unknown>", sender_name: Optional[str] = None,
-        timestamp: Optional[str] = None, chat_id: Optional[str] = None,
-        confidence: str = Confidence.LIVE.value, source_file: str = "",
-        provenance: str = "", carve_method: str = "", page: Optional[int] = None,
-        offset: Optional[int] = None, warnings: Optional[list] = None,
-        media_artifact_id: Optional[str] = None, **extra: Any) -> dict[str, Any]:
+def msg(
+    *,
+    body: str,
+    sender: str = "<unknown>",
+    sender_name: Optional[str] = None,
+    timestamp: Optional[str] = None,
+    chat_id: Optional[str] = None,
+    confidence: str = Confidence.LIVE.value,
+    source_file: str = "",
+    provenance: str = "",
+    carve_method: str = "",
+    page: Optional[int] = None,
+    offset: Optional[int] = None,
+    warnings: Optional[list] = None,
+    media_artifact_id: Optional[str] = None,
+    **extra: Any,
+) -> dict[str, Any]:
     """Build a normalised message dict (all standard keys present)."""
     d = {
-        "body": body, "sender": sender, "sender_name": sender_name or sender,
-        "timestamp": timestamp, "chat_id": chat_id, "confidence": confidence,
-        "source_file": source_file, "provenance": provenance,
-        "carve_method": carve_method, "page": page, "offset": offset,
-        "warnings": warnings or [], "media_artifact_id": media_artifact_id,
+        "body": body,
+        "sender": sender,
+        "sender_name": sender_name or sender,
+        "timestamp": timestamp,
+        "chat_id": chat_id,
+        "confidence": confidence,
+        "source_file": source_file,
+        "provenance": provenance,
+        "carve_method": carve_method,
+        "page": page,
+        "offset": offset,
+        "warnings": warnings or [],
+        "media_artifact_id": media_artifact_id,
     }
     d.update(extra)
     return d
@@ -96,8 +131,13 @@ def msg(*, body: str, sender: str = "<unknown>", sender_name: Optional[str] = No
 
 def unavailable(app_label: str, reason: str) -> dict[str, Any]:
     """Standardised 'not reachable' result (e.g. non-root device)."""
-    return {"available": False, "error": reason, "app": app_label,
-            "messages": [], "counts": dict(ZERO_COUNTS)}
+    return {
+        "available": False,
+        "error": reason,
+        "app": app_label,
+        "messages": [],
+        "counts": dict(ZERO_COUNTS),
+    }
 
 
 def count_by_confidence(messages: list[dict]) -> dict[str, int]:
@@ -121,7 +161,9 @@ def _conf_value(c: Any) -> str:
 
 
 def carve_and_gaps(
-    db_path: str | Path, table: str, *,
+    db_path: str | Path,
+    table: str,
+    *,
     body_of: Callable[[list], str],
     sender_of: Optional[Callable[[list], str]] = None,
     ts_of: Optional[Callable[[list], Optional[str]]] = None,
@@ -150,15 +192,21 @@ def carve_and_gaps(
         body = body_of(row.values)
         if not looks_like_message(body):
             continue
-        out.append(msg(
-            body=body,
-            sender=(sender_of(row.values) if sender_of else "<recovered>"),
-            timestamp=(ts_of(row.values) if ts_of else None),
-            chat_id=(chat_of(row.values) if chat_of else None),
-            confidence=_conf_value(row.confidence),
-            source_file=src, provenance=row.provenance,
-            carve_method="freelist/freeblock",
-            page=row.page, offset=row.offset, warnings=list(row.warnings)))
+        out.append(
+            msg(
+                body=body,
+                sender=(sender_of(row.values) if sender_of else "<recovered>"),
+                timestamp=(ts_of(row.values) if ts_of else None),
+                chat_id=(chat_of(row.values) if chat_of else None),
+                confidence=_conf_value(row.confidence),
+                source_file=src,
+                provenance=row.provenance,
+                carve_method="freelist/freeblock",
+                page=row.page,
+                offset=row.offset,
+                warnings=list(row.warnings),
+            )
+        )
 
     if use_sqbrite:
         try:
@@ -169,23 +217,40 @@ def carve_and_gaps(
             body = best_content(list(sq.values))
             if not looks_like_message(body):
                 continue
-            out.append(msg(
-                body=body, confidence=Confidence.CARVED_PARTIAL.value,
-                source_file=sq.source_file, provenance=sq.provenance,
-                carve_method="sqbrite", offset=sq.offset, warnings=list(sq.warnings)))
+            out.append(
+                msg(
+                    body=body,
+                    confidence=Confidence.CARVED_PARTIAL.value,
+                    source_file=sq.source_file,
+                    provenance=sq.provenance,
+                    carve_method="sqbrite",
+                    offset=sq.offset,
+                    warnings=list(sq.warnings),
+                )
+            )
 
     try:
         gaps = detect_rowid_gaps(db_path, table)
     except Exception:
         gaps = []
     for gap in gaps:
-        out.append(msg(
-            body="", sender="<gap>", confidence=Confidence.DELETION_DETECTED.value,
-            source_file=src, carve_method="gap_analysis",
-            provenance=(f"rowid gap after {gap['after_rowid']} — "
-                        f"{gap['missing']} row(s) deleted, no content recoverable"),
-            warnings=["Rowid gap proves deletion occurred; no message content recovered."],
-            gap_detail=gap))
+        out.append(
+            msg(
+                body="",
+                sender="<gap>",
+                confidence=Confidence.DELETION_DETECTED.value,
+                source_file=src,
+                carve_method="gap_analysis",
+                provenance=(
+                    f"rowid gap after {gap['after_rowid']} — "
+                    f"{gap['missing']} row(s) deleted, no content recoverable"
+                ),
+                warnings=[
+                    "Rowid gap proves deletion occurred; no message content recovered."
+                ],
+                gap_detail=gap,
+            )
+        )
     return out
 
 
@@ -213,9 +278,13 @@ def thread_conversations(
         c = conv.get(cid)
         if c is None:
             c = conv[cid] = {
-                "chat_id": cid, "title": titles.get(cid, f"Chat {cid}"),
-                "participants": [], "_pids": set(),
-                "last_message_ts": None, "message_count": 0, "messages": [],
+                "chat_id": cid,
+                "title": titles.get(cid, f"Chat {cid}"),
+                "participants": [],
+                "_pids": set(),
+                "last_message_ts": None,
+                "message_count": 0,
+                "messages": [],
             }
         sid = str(m.get("sender") or "<unknown>")
         sname = m.get("sender_name") or idx.get(sid, sid)
@@ -225,12 +294,18 @@ def thread_conversations(
         if sid and sid not in c["_pids"]:
             c["_pids"].add(sid)
             c["participants"].append({"id": sid, "name": sname})
-        c["messages"].append({
-            "body": m.get("body", ""), "sender_name": sname, "sender_id": sid,
-            "timestamp": ts, "confidence": m.get("confidence", Confidence.LIVE.value),
-            "media_artifact_id": m.get("media_artifact_id"),
-            "carve_method": m.get("carve_method", ""), "provenance": m.get("provenance", ""),
-        })
+        c["messages"].append(
+            {
+                "body": m.get("body", ""),
+                "sender_name": sname,
+                "sender_id": sid,
+                "timestamp": ts,
+                "confidence": m.get("confidence", Confidence.LIVE.value),
+                "media_artifact_id": m.get("media_artifact_id"),
+                "carve_method": m.get("carve_method", ""),
+                "provenance": m.get("provenance", ""),
+            }
+        )
         c["message_count"] += 1
 
     for c in conv.values():

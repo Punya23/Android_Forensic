@@ -39,6 +39,7 @@ Public API
     Connect read-only, JOIN the tables, return typed Message objects with
     ``confidence=Confidence.LIVE`` and full provenance strings.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -56,20 +57,27 @@ _BROADCAST_JID = "status@broadcast"
 
 # Column sets we need from each table (will be intersected with the live schema).
 _MSG_WANT = {
-    "_id", "key_remote_jid", "sender_jid", "timestamp",
-    "data", "status", "media_url", "mime_type",
+    "_id",
+    "key_remote_jid",
+    "sender_jid",
+    "timestamp",
+    "data",
+    "status",
+    "media_url",
+    "mime_type",
 }
 _CONTACT_WANT = {"jid", "display_name", "is_self"}
-_CHAT_WANT     = {"jid", "subject"}
+_CHAT_WANT = {"jid", "subject"}
 
 # Alternative table names seen in some WhatsApp builds.
-_CHAT_ALIASES  = ("chat", "chat_list")
-_MSG_ALIASES   = ("message", "messages")
+_CHAT_ALIASES = ("chat", "chat_list")
+_MSG_ALIASES = ("message", "messages")
 
 
 # ---------------------------------------------------------------------------
 # Schema introspection
 # ---------------------------------------------------------------------------
+
 
 def _table_columns(con: sqlite3.Connection, table: str) -> set[str]:
     """Return the column names present in *table*, or empty set if table absent."""
@@ -84,7 +92,8 @@ def _find_table(con: sqlite3.Connection, aliases: tuple[str, ...]) -> Optional[s
     """Return the first alias that exists in the database, or None."""
     try:
         existing = {
-            r[0] for r in con.execute(
+            r[0]
+            for r in con.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }
@@ -102,23 +111,24 @@ def _infer_schema(con: sqlite3.Connection) -> dict[str, Any]:
     chat_table = _find_table(con, _CHAT_ALIASES)
     contact_table = "wa_contacts" if _table_columns(con, "wa_contacts") else None
 
-    msg_cols     = _table_columns(con, msg_table)     if msg_table     else set()
-    chat_cols    = _table_columns(con, chat_table)    if chat_table    else set()
+    msg_cols = _table_columns(con, msg_table) if msg_table else set()
+    chat_cols = _table_columns(con, chat_table) if chat_table else set()
     contact_cols = _table_columns(con, contact_table) if contact_table else set()
 
     return {
-        "msg_table":      msg_table,
-        "chat_table":     chat_table,
-        "contact_table":  contact_table,
-        "msg_cols":       msg_cols     & _MSG_WANT,
-        "chat_cols":      chat_cols    & _CHAT_WANT,
-        "contact_cols":   contact_cols & _CONTACT_WANT,
+        "msg_table": msg_table,
+        "chat_table": chat_table,
+        "contact_table": contact_table,
+        "msg_cols": msg_cols & _MSG_WANT,
+        "chat_cols": chat_cols & _CHAT_WANT,
+        "contact_cols": contact_cols & _CONTACT_WANT,
     }
 
 
 # ---------------------------------------------------------------------------
 # Own-JID detection
 # ---------------------------------------------------------------------------
+
 
 def _detect_own_jid(con: sqlite3.Connection) -> Optional[str]:
     """Best-effort detection of the device owner's JID.
@@ -152,6 +162,7 @@ def _detect_own_jid(con: sqlite3.Connection) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Formatting helpers
 # ---------------------------------------------------------------------------
+
 
 def _jid_to_phone(jid: Optional[str]) -> Optional[str]:
     """Extract phone number from 'phone@s.whatsapp.net' or return None."""
@@ -226,6 +237,7 @@ def _determine_direction(
 # Query builder
 # ---------------------------------------------------------------------------
 
+
 def _build_query(schema: dict[str, Any]) -> Optional[str]:
     """Build a SELECT … LEFT JOIN query tailored to the discovered schema.
 
@@ -235,19 +247,21 @@ def _build_query(schema: dict[str, Any]) -> Optional[str]:
     if not msg_t:
         return None
 
-    chat_t    = schema["chat_table"]
+    chat_t = schema["chat_table"]
     contact_t = schema["contact_table"]
-    msg_cols  = schema["msg_cols"]
+    msg_cols = schema["msg_cols"]
 
     # Core columns — mandatory
     sel = [f"m._id"]
-    sel.append("m.key_remote_jid" if "key_remote_jid" in msg_cols else "NULL AS key_remote_jid")
-    sel.append("m.sender_jid"     if "sender_jid"     in msg_cols else "NULL AS sender_jid")
-    sel.append("m.timestamp"      if "timestamp"      in msg_cols else "NULL AS timestamp")
-    sel.append("m.data"           if "data"           in msg_cols else "NULL AS data")
-    sel.append("m.status"         if "status"         in msg_cols else "NULL AS status")
-    sel.append("m.media_url"      if "media_url"      in msg_cols else "NULL AS media_url")
-    sel.append("m.mime_type"      if "mime_type"      in msg_cols else "NULL AS mime_type")
+    sel.append(
+        "m.key_remote_jid" if "key_remote_jid" in msg_cols else "NULL AS key_remote_jid"
+    )
+    sel.append("m.sender_jid" if "sender_jid" in msg_cols else "NULL AS sender_jid")
+    sel.append("m.timestamp" if "timestamp" in msg_cols else "NULL AS timestamp")
+    sel.append("m.data" if "data" in msg_cols else "NULL AS data")
+    sel.append("m.status" if "status" in msg_cols else "NULL AS status")
+    sel.append("m.media_url" if "media_url" in msg_cols else "NULL AS media_url")
+    sel.append("m.mime_type" if "mime_type" in msg_cols else "NULL AS mime_type")
 
     # wa_contacts join
     if contact_t and "display_name" in schema["contact_cols"]:
@@ -280,6 +294,7 @@ def _build_query(schema: dict[str, Any]) -> Optional[str]:
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def parse_whatsapp_db(db_path: str | Path) -> list[Message]:
     """Parse live messages from a WhatsApp ``msgstore.db`` file.
 
@@ -311,9 +326,9 @@ def parse_whatsapp_db(db_path: str | Path) -> list[Message]:
         return []
 
     try:
-        schema  = _infer_schema(con)
+        schema = _infer_schema(con)
         own_jid = _detect_own_jid(con)
-        query   = _build_query(schema)
+        query = _build_query(schema)
 
         if not query:
             return []
@@ -325,19 +340,19 @@ def parse_whatsapp_db(db_path: str | Path) -> list[Message]:
 
         for row in cur:
             try:
-                _id          = row["_id"]
-                key_remote   = row["key_remote_jid"]
-                sender_jid   = row["sender_jid"]
+                _id = row["_id"]
+                key_remote = row["key_remote_jid"]
+                sender_jid = row["sender_jid"]
                 timestamp_ms = row["timestamp"]
-                body_text    = row["data"] or ""
-                media_url    = row["media_url"]
-                mime_type    = row["mime_type"]
+                body_text = row["data"] or ""
+                media_url = row["media_url"]
+                mime_type = row["mime_type"]
                 display_name = row["display_name"]
                 chat_subject = row["chat_subject"]
 
-                sender   = _format_sender(display_name, sender_jid or key_remote)
+                sender = _format_sender(display_name, sender_jid or key_remote)
                 direction = _determine_direction(key_remote, sender_jid, own_jid)
-                ts        = _ms_to_iso(timestamp_ms)
+                ts = _ms_to_iso(timestamp_ms)
 
                 # Build body: prefer text; fall back to media description.
                 if not body_text and media_url:
@@ -357,17 +372,19 @@ def parse_whatsapp_db(db_path: str | Path) -> list[Message]:
                 if _id is not None:
                     provenance += f" (row {_id})"
 
-                messages.append(Message(
-                    app="whatsapp",
-                    sender=sender,
-                    body=body_text,
-                    timestamp=ts,
-                    direction=direction,
-                    confidence=Confidence.LIVE,
-                    source_file=db_path.name,
-                    provenance=provenance,
-                    flags=flags,
-                ))
+                messages.append(
+                    Message(
+                        app="whatsapp",
+                        sender=sender,
+                        body=body_text,
+                        timestamp=ts,
+                        direction=direction,
+                        confidence=Confidence.LIVE,
+                        source_file=db_path.name,
+                        provenance=provenance,
+                        flags=flags,
+                    )
+                )
             except Exception:
                 # Corrupt or unexpected row — skip, never crash.
                 continue

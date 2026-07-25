@@ -25,6 +25,7 @@ Parse warnings (malformed lines, encoding errors, etc.) are appended to the modu
 ``parse_warnings`` list **and** to each affected ``Message.flags`` so the analyst sees
 them in the dashboard.
 """
+
 from __future__ import annotations
 
 import io
@@ -48,12 +49,18 @@ _DASH = re.compile(
 )
 
 _TS_FORMATS = [
-    "%d/%m/%Y, %H:%M:%S", "%d/%m/%Y, %H:%M",
-    "%m/%d/%Y, %H:%M:%S", "%m/%d/%Y, %H:%M",
-    "%d/%m/%y, %H:%M:%S", "%d/%m/%y, %H:%M",
-    "%d.%m.%Y, %H:%M:%S", "%d.%m.%Y, %H:%M",
-    "%d/%m/%Y, %I:%M:%S %p", "%d/%m/%Y, %I:%M %p",
-    "%m/%d/%y, %I:%M %p", "%m/%d/%y, %I:%M:%S %p",
+    "%d/%m/%Y, %H:%M:%S",
+    "%d/%m/%Y, %H:%M",
+    "%m/%d/%Y, %H:%M:%S",
+    "%m/%d/%Y, %H:%M",
+    "%d/%m/%y, %H:%M:%S",
+    "%d/%m/%y, %H:%M",
+    "%d.%m.%Y, %H:%M:%S",
+    "%d.%m.%Y, %H:%M",
+    "%d/%m/%Y, %I:%M:%S %p",
+    "%d/%m/%Y, %I:%M %p",
+    "%m/%d/%y, %I:%M %p",
+    "%m/%d/%y, %I:%M:%S %p",
 ]
 
 # Unicode direction/control markers WhatsApp injects
@@ -71,6 +78,7 @@ parse_warnings: List[str] = []
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _clean_line(line: str) -> str:
     """Strip WhatsApp-injected Unicode control characters and normalise spaces."""
@@ -112,7 +120,7 @@ def _split_sender(rest: str) -> tuple[Optional[str], str]:
     if len(candidate) > _MAX_SENDER_LEN or "\n" in candidate:
         return None, rest
 
-    body = rest[idx + 2:]
+    body = rest[idx + 2 :]
     return candidate.strip(), body
 
 
@@ -127,6 +135,7 @@ def _match_line(line: str) -> Optional[tuple[str, str]]:
 # ---------------------------------------------------------------------------
 # Core generator
 # ---------------------------------------------------------------------------
+
 
 def stream_whatsapp_export(
     path: str | Path,
@@ -212,6 +221,7 @@ def stream_whatsapp_export(
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def parse_whatsapp_export(
     path: str | Path,
     owner_hint: str = "",
@@ -228,6 +238,7 @@ def parse_whatsapp_export(
 # ---------------------------------------------------------------------------
 # File I/O helpers
 # ---------------------------------------------------------------------------
+
 
 def _iter_lines(path: Path) -> Iterator[str]:
     """Yield lines from a plain .txt file or the .txt inside a .zip, line by line.
@@ -253,9 +264,7 @@ def _iter_zip_lines(path: Path) -> Iterator[str]:
     """Yield lines from the .txt file inside a WhatsApp export .zip."""
     try:
         with zipfile.ZipFile(path) as zf:
-            name = next(
-                (n for n in zf.namelist() if n.endswith(".txt")), None
-            )
+            name = next((n for n in zf.namelist() if n.endswith(".txt")), None)
             if not name:
                 parse_warnings.append(f"No .txt found inside {path.name}")
                 return

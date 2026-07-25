@@ -19,6 +19,7 @@ Tests that only check structural properties (gap detection, live-row reads,
 corrupt-DB resilience) continue to use :func:`_make_db` (DELETE journal mode) because
 they do not depend on content recovery from the WAL.
 """
+
 import sqlite3
 import time
 from pathlib import Path
@@ -26,12 +27,19 @@ from pathlib import Path
 import pytest
 
 from triage.config import Confidence
-from triage.recovery import recover_deleted_rows, detect_rowid_gaps, read_live_rows, map_columns_to_whatsapp, CarvedRow
+from triage.recovery import (
+    recover_deleted_rows,
+    detect_rowid_gaps,
+    read_live_rows,
+    map_columns_to_whatsapp,
+    CarvedRow,
+)
 
 
 # ---------------------------------------------------------------------------
 # Timing utility — reports wall-clock extraction time for every test
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _report_timing(request, capsys):
@@ -53,6 +61,7 @@ def _report_timing(request, capsys):
 # DB helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_db(path: Path, rows, delete_ids):
     """Create a SQLite DB in the default (DELETE) journal mode.
 
@@ -60,14 +69,18 @@ def _make_db(path: Path, rows, delete_ids):
     corrupt-DB handling) and do *not* require WAL-based content recovery.
     """
     con = sqlite3.connect(path)
-    con.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, "
-                "body TEXT, ts INTEGER)")
+    con.execute(
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, "
+        "body TEXT, ts INTEGER)"
+    )
     for r in rows:
         con.execute("INSERT INTO messages(sender,body,ts) VALUES (?,?,?)", r)
     con.commit()
     if delete_ids:
-        con.execute(f"DELETE FROM messages WHERE id IN "
-                    f"({','.join('?'*len(delete_ids))})", delete_ids)
+        con.execute(
+            f"DELETE FROM messages WHERE id IN " f"({','.join('?'*len(delete_ids))})",
+            delete_ids,
+        )
         con.commit()
     con.close()
 
@@ -83,14 +96,18 @@ def _make_wal_db(path: Path, rows, delete_ids) -> sqlite3.Connection:
     con = sqlite3.connect(path)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA wal_autocheckpoint=0")
-    con.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, "
-                "body TEXT, ts INTEGER)")
+    con.execute(
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, "
+        "body TEXT, ts INTEGER)"
+    )
     for r in rows:
         con.execute("INSERT INTO messages(sender,body,ts) VALUES (?,?,?)", r)
     con.commit()
     if delete_ids:
-        con.execute(f"DELETE FROM messages WHERE id IN "
-                    f"({','.join('?'*len(delete_ids))})", delete_ids)
+        con.execute(
+            f"DELETE FROM messages WHERE id IN " f"({','.join('?'*len(delete_ids))})",
+            delete_ids,
+        )
         con.commit()
     return con  # caller closes after assertions
 
@@ -99,10 +116,20 @@ def _make_wal_db(path: Path, rows, delete_ids) -> sqlite3.Connection:
 # Existing tests (preserved for regression)
 # ===========================================================================
 
+
 def test_rowid_gap_detection(tmp_path):
     db = tmp_path / "m.db"
-    _make_db(db, [("a", "one", 1), ("b", "two", 2), ("c", "three", 3),
-                  ("d", "four", 4), ("e", "five", 5)], delete_ids=[3, 4])
+    _make_db(
+        db,
+        [
+            ("a", "one", 1),
+            ("b", "two", 2),
+            ("c", "three", 3),
+            ("d", "four", 4),
+            ("e", "five", 5),
+        ],
+        delete_ids=[3, 4],
+    )
     gaps = detect_rowid_gaps(db, "messages")
     assert gaps == [{"after_rowid": 2, "before_rowid": 5, "missing": 2}]
 
@@ -124,27 +151,36 @@ def test_inpage_freeblock_text_recovery(tmp_path):
     engine extracts those images as RECOVERED_VERIFIED rows.
     """
     db = tmp_path / "m.db"
-    con = _make_wal_db(db, [
-        ("Rahul", "meet at the docks midnight", 1),
-        ("Priya", "bring the package tonight", 2),
-        ("X", "transfer done to account 4471 secretly", 3),
-        ("Y", "SECRET meeting warehouse nine", 4),
-        ("Z", "harmless normal message", 5),
-    ], delete_ids=[3, 4])
+    con = _make_wal_db(
+        db,
+        [
+            ("Rahul", "meet at the docks midnight", 1),
+            ("Priya", "bring the package tonight", 2),
+            ("X", "transfer done to account 4471 secretly", 3),
+            ("Y", "SECRET meeting warehouse nine", 4),
+            ("Z", "harmless normal message", 5),
+        ],
+        delete_ids=[3, 4],
+    )
     try:
         rows = recover_deleted_rows(db, "messages")
         text = " ".join(str(v) for r in rows for v in r.values if isinstance(v, str))
         assert "4471" in text, f"Expected '4471' in recovered text; got: {text[:200]}"
-        assert "warehouse" in text.lower(), (
-            f"Expected 'warehouse' in recovered text; got: {text[:200]}"
-        )
+        assert (
+            "warehouse" in text.lower()
+        ), f"Expected 'warehouse' in recovered text; got: {text[:200]}"
         # WAL-recovered rows for our target data should be cleanly parsed (VERIFIED).
         verified_text = " ".join(
-            str(v) for r in rows if r.confidence == Confidence.RECOVERED_VERIFIED
-            for v in r.values if isinstance(v, str)
+            str(v)
+            for r in rows
+            if r.confidence == Confidence.RECOVERED_VERIFIED
+            for v in r.values
+            if isinstance(v, str)
         )
         assert "4471" in verified_text, "Target '4471' not found in VERIFIED rows"
-        assert "warehouse" in verified_text.lower(), "Target 'warehouse' not found in VERIFIED rows"
+        assert (
+            "warehouse" in verified_text.lower()
+        ), "Target 'warehouse' not found in VERIFIED rows"
     finally:
         con.close()
 
@@ -156,23 +192,27 @@ def test_freelist_structured_recovery(tmp_path):
     yield at least one RECOVERED_VERIFIED row containing the original message text.
     """
     db = tmp_path / "big.db"
-    big_rows = [(f"u{i%5}", f"message body number {i} topic {i%7}", 1000 + i)
-                for i in range(400)]
+    big_rows = [
+        (f"u{i%5}", f"message body number {i} topic {i%7}", 1000 + i)
+        for i in range(400)
+    ]
     con = _make_wal_db(db, big_rows, delete_ids=list(range(40, 320)))
     try:
         recovered = recover_deleted_rows(db, "messages")
-        verified = [r for r in recovered if r.confidence == Confidence.RECOVERED_VERIFIED]
-        assert len(verified) > 0, (
-            f"Expected RECOVERED_VERIFIED rows from WAL; total recovered={len(recovered)}"
-        )
+        verified = [
+            r for r in recovered if r.confidence == Confidence.RECOVERED_VERIFIED
+        ]
+        assert (
+            len(verified) > 0
+        ), f"Expected RECOVERED_VERIFIED rows from WAL; total recovered={len(recovered)}"
         # At least one verified row must contain the deleted message text.
         sample = verified[0]
-        assert any("message body number" in str(v) for v in sample.values), (
-            f"Expected 'message body number' in values; got {sample.values}"
-        )
-        assert "freelist" in sample.provenance or "wal" in sample.provenance, (
-            f"Unexpected provenance: {sample.provenance}"
-        )
+        assert any(
+            "message body number" in str(v) for v in sample.values
+        ), f"Expected 'message body number' in values; got {sample.values}"
+        assert (
+            "freelist" in sample.provenance or "wal" in sample.provenance
+        ), f"Unexpected provenance: {sample.provenance}"
     finally:
         con.close()
 
@@ -188,10 +228,14 @@ def test_wal_recovery(tmp_path):
     db = tmp_path / "wal.db"
     con = sqlite3.connect(db)
     con.execute("PRAGMA journal_mode=WAL")
-    con.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, body TEXT, ts INTEGER)")
+    con.execute(
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, body TEXT, ts INTEGER)"
+    )
     for i in range(50):
-        con.execute("INSERT INTO messages(sender,body,ts) VALUES (?,?,?)",
-                    (f"u{i}", f"walmessage content {i}", i))
+        con.execute(
+            "INSERT INTO messages(sender,body,ts) VALUES (?,?,?)",
+            (f"u{i}", f"walmessage content {i}", i),
+        )
     con.commit()
     con.execute("DELETE FROM messages WHERE id > 25")
     con.commit()
@@ -206,14 +250,19 @@ def test_wal_recovery(tmp_path):
 # New tests — Task 3a: schema_hint parameter
 # ===========================================================================
 
+
 def test_schema_hint_col_count_respected(tmp_path):
     """When schema_hint col_count is provided it overrides schema introspection."""
     db = tmp_path / "m.db"
-    _make_db(db, [
-        ("alice", "alpha message here", 100),
-        ("bob",   "beta message here",  200),
-        ("carol", "gamma message here", 300),
-    ], delete_ids=[1, 2])
+    _make_db(
+        db,
+        [
+            ("alice", "alpha message here", 100),
+            ("bob", "beta message here", 200),
+            ("carol", "gamma message here", 300),
+        ],
+        delete_ids=[1, 2],
+    )
     # Our table has 4 columns (id, sender, body, ts).
     hint = {"col_count": 4, "columns": ["id", "sender", "body", "ts"]}
     rows = recover_deleted_rows(db, table="messages", schema_hint=hint)
@@ -222,12 +271,15 @@ def test_schema_hint_col_count_respected(tmp_path):
     # Any RECOVERED_VERIFIED row must have exactly 4 column values
     for r in rows:
         if r.confidence == Confidence.RECOVERED_VERIFIED:
-            assert len(r.values) == 4, f"Expected 4 cols, got {len(r.values)}: {r.values}"
+            assert (
+                len(r.values) == 4
+            ), f"Expected 4 cols, got {len(r.values)}: {r.values}"
 
 
 def test_schema_hint_registers_column_names(tmp_path):
     """schema_hint columns are stored in rows_meta_colnames for the pipeline."""
     from triage.recovery import rows_meta_colnames
+
     db = tmp_path / "m.db"
     _make_db(db, [("x", "body text here", 1)], delete_ids=[])
     hint = {"col_count": 4, "columns": ["id", "sender", "body", "ts"]}
@@ -241,13 +293,14 @@ def test_schema_hint_none_backward_compatible(tmp_path):
     """Calling recover_deleted_rows without schema_hint behaves identically to before."""
     db = tmp_path / "m.db"
     _make_db(db, [("a", "something here", 1), ("b", "more here", 2)], delete_ids=[1])
-    rows = recover_deleted_rows(db)   # no schema_hint, no table
+    rows = recover_deleted_rows(db)  # no schema_hint, no table
     assert isinstance(rows, list)
 
 
 # ===========================================================================
 # New tests — Task 3b: text carve prefix anchoring
 # ===========================================================================
+
 
 def test_text_carve_prefix_anchoring(tmp_path):
     """WAL recovery surfaces deleted rows; field-prefix stripping removes column-name bleed.
@@ -261,11 +314,19 @@ def test_text_carve_prefix_anchoring(tmp_path):
     con = sqlite3.connect(db)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA wal_autocheckpoint=0")
-    con.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, body TEXT, ts INTEGER)")
+    con.execute(
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, body TEXT, ts INTEGER)"
+    )
     # Row 1 will be deleted; rows 2 & 3 stay live.
-    con.execute("INSERT INTO messages VALUES (1, 'Alice', 'secret payload anchored', 100)")
-    con.execute("INSERT INTO messages VALUES (2, 'Bob', 'another keep alive message', 200)")
-    con.execute("INSERT INTO messages VALUES (3, 'Carol', 'third message stays live', 300)")
+    con.execute(
+        "INSERT INTO messages VALUES (1, 'Alice', 'secret payload anchored', 100)"
+    )
+    con.execute(
+        "INSERT INTO messages VALUES (2, 'Bob', 'another keep alive message', 200)"
+    )
+    con.execute(
+        "INSERT INTO messages VALUES (3, 'Carol', 'third message stays live', 300)"
+    )
     con.commit()
     con.execute("DELETE FROM messages WHERE id = 1")
     con.commit()
@@ -276,9 +337,9 @@ def test_text_carve_prefix_anchoring(tmp_path):
             str(v) for r in rows for v in r.values if isinstance(v, str)
         )
         # The payload text must appear in the recovered output.
-        assert "secret payload anchored" in all_text or "payload" in all_text, (
-            f"Expected 'payload' in recovered text; got: {all_text[:300]}"
-        )
+        assert (
+            "secret payload anchored" in all_text or "payload" in all_text
+        ), f"Expected 'payload' in recovered text; got: {all_text[:300]}"
     finally:
         con.close()
 
@@ -286,27 +347,36 @@ def test_text_carve_prefix_anchoring(tmp_path):
 def test_text_carve_warning_content(tmp_path):
     """CARVED_PARTIAL rows from freeblock/unallocated must carry the honesty warning."""
     db = tmp_path / "m.db"
-    _make_db(db, [
-        ("Alice", "message one for carving", 1),
-        ("Bob",   "message two for carving", 2),
-        ("Carol", "message three for carving", 3),
-    ], delete_ids=[1, 2])
+    _make_db(
+        db,
+        [
+            ("Alice", "message one for carving", 1),
+            ("Bob", "message two for carving", 2),
+            ("Carol", "message three for carving", 3),
+        ],
+        delete_ids=[1, 2],
+    )
     rows = recover_deleted_rows(db, "messages")
     carved = [r for r in rows if r.confidence == Confidence.CARVED_PARTIAL]
     for r in carved:
         assert r.warnings, f"CARVED_PARTIAL row has no warnings: {r}"
         warning_text = " ".join(r.warnings)
-        assert "unallocated space" in warning_text or "record structure" in warning_text, \
-            f"Expected honesty warning, got: {r.warnings}"
+        assert (
+            "unallocated space" in warning_text or "record structure" in warning_text
+        ), f"Expected honesty warning, got: {r.warnings}"
 
 
 def test_text_carve_provenance_format(tmp_path):
     """Provenance strings must follow the 'kind page N@off (text carve)' format."""
     db = tmp_path / "m.db"
-    _make_db(db, [
-        ("u1", "carved provenance test message", 1),
-        ("u2", "second row also useful here", 2),
-    ], delete_ids=[1])
+    _make_db(
+        db,
+        [
+            ("u1", "carved provenance test message", 1),
+            ("u2", "second row also useful here", 2),
+        ],
+        delete_ids=[1],
+    )
     rows = recover_deleted_rows(db, "messages")
     carved = [r for r in rows if r.confidence == Confidence.CARVED_PARTIAL]
     for r in carved:
@@ -319,6 +389,7 @@ def test_text_carve_provenance_format(tmp_path):
 # New tests — Task 3c: map_columns_to_whatsapp helper
 # ===========================================================================
 
+
 def test_map_columns_basic():
     """map_columns_to_whatsapp maps positional values to named keys.
 
@@ -328,14 +399,14 @@ def test_map_columns_basic():
     """
     row = CarvedRow(
         values=[
-            "1",                            # _id
-            "919876@s.whatsapp.net",        # key_remote_jid
-            0,                              # key_from_me
-            "key_abc",                      # key_id
-            0,                              # status
-            0,                              # needs_push
-            "hello world",                  # data  ← index 6
-            1751826000000,                  # timestamp
+            "1",  # _id
+            "919876@s.whatsapp.net",  # key_remote_jid
+            0,  # key_from_me
+            "key_abc",  # key_id
+            0,  # status
+            0,  # needs_push
+            "hello world",  # data  ← index 6
+            1751826000000,  # timestamp
         ],
         confidence=Confidence.CARVED_PARTIAL,
         source_file="msgstore.db",
@@ -370,7 +441,9 @@ def test_map_columns_short_values():
         source_file="msgstore.db",
         provenance="freeblock page 1@0",
     )
-    mapped = map_columns_to_whatsapp(row, columns=["_id", "key_remote_jid", "data", "timestamp"])
+    mapped = map_columns_to_whatsapp(
+        row, columns=["_id", "key_remote_jid", "data", "timestamp"]
+    )
     assert mapped["_id"] == "1"
     assert mapped["key_remote_jid"] is None
     assert mapped["data"] is None
@@ -379,6 +452,7 @@ def test_map_columns_short_values():
 # ===========================================================================
 # New tests — Task 3d: WhatsApp msgstore-style schema recovery
 # ===========================================================================
+
 
 def _make_wa_msgstore_wal(path: Path) -> sqlite3.Connection:
     """Create a synthetic WhatsApp-schema msgstore.db in WAL mode.
@@ -390,6 +464,7 @@ def _make_wa_msgstore_wal(path: Path) -> sqlite3.Connection:
     test data stays valid regardless of when the test suite is run.
     """
     import time as _time
+
     # Compute a base timestamp close to the current time, rounded to a nice boundary.
     base_ts_ms = int(_time.time()) * 1000 - 3600_000  # 1 hour ago, in ms
     con = sqlite3.connect(path)
@@ -409,10 +484,25 @@ def _make_wa_msgstore_wal(path: Path) -> sqlite3.Connection:
             "needs_push, data, timestamp, media_url, media_mime_type, media_wa_type, "
             "media_size, media_name, media_caption, media_hash, media_duration, sender_jid) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (i + 1, f"91987654{i:04d}@s.whatsapp.net", i % 2, f"key{i}",
-             0, 0, f"msgstore message body number {i}", base_ts_ms + i * 60000,
-             None, None, 0, 0, None, None, None, 0,
-             f"91987654{i:04d}@s.whatsapp.net" if i % 2 == 0 else None),
+            (
+                i + 1,
+                f"91987654{i:04d}@s.whatsapp.net",
+                i % 2,
+                f"key{i}",
+                0,
+                0,
+                f"msgstore message body number {i}",
+                base_ts_ms + i * 60000,
+                None,
+                None,
+                0,
+                0,
+                None,
+                None,
+                None,
+                0,
+                f"91987654{i:04d}@s.whatsapp.net" if i % 2 == 0 else None,
+            ),
         )
     con.commit()
     # Delete some rows to trigger WAL-based recovery.
@@ -440,9 +530,9 @@ def test_whatsapp_msgstore_recovery_with_schema_hint(tmp_path):
         # Verified rows should have the correct number of columns.
         verified = [r for r in rows if r.confidence == Confidence.RECOVERED_VERIFIED]
         for r in verified:
-            assert len(r.values) == len(cols), (
-                f"Column count mismatch: expected {len(cols)}, got {len(r.values)}"
-            )
+            assert len(r.values) == len(
+                cols
+            ), f"Column count mismatch: expected {len(cols)}, got {len(r.values)}"
 
         # At least some rows should carry the deleted message text.
         all_text = " ".join(

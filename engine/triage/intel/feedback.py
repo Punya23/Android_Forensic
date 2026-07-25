@@ -21,9 +21,10 @@ The tool must never learn that an artifact is worthless merely because *this* ru
 heuristics scored it low. That is why automatic feedback is weight-limited and why an
 artifact that was never collected is recorded as *unobserved*, not as a failure.
 """
+
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from .casebank import CaseStudy, ArtifactOutcome
 from .knowledge_graph import KnowledgeGraph
@@ -76,8 +77,9 @@ def _artifact_for(finding: dict) -> Optional[str]:
     return SOURCE_TO_ARTIFACT.get(app)
 
 
-def derive_artifact_yields(findings_bundle: dict,
-                           plan: Optional[CollectionPlan] = None) -> dict[str, str]:
+def derive_artifact_yields(
+    findings_bundle: dict, plan: Optional[CollectionPlan] = None
+) -> dict[str, str]:
     """Grade each collected artifact from the analysis output.
 
     Returns ``{artifact: "decisive" | "supporting" | "none"}``.
@@ -118,16 +120,22 @@ def derive_artifact_yields(findings_bundle: dict,
     # Anything that produced findings but wasn't in the plan still counts.
     for artifact, score in best.items():
         if artifact not in yields:
-            yields[artifact] = ("decisive" if score >= _DECISIVE_SCORE
-                                else "supporting" if score >= _SUPPORTING_SCORE
-                                else "none")
+            yields[artifact] = (
+                "decisive"
+                if score >= _DECISIVE_SCORE
+                else "supporting" if score >= _SUPPORTING_SCORE else "none"
+            )
     return yields
 
 
-def record_provisional(graph: KnowledgeGraph, profile: CaseProfile,
-                       findings_bundle: dict,
-                       plan: Optional[CollectionPlan] = None,
-                       *, case_id: str = "") -> dict:
+def record_provisional(
+    graph: KnowledgeGraph,
+    profile: CaseProfile,
+    findings_bundle: dict,
+    plan: Optional[CollectionPlan] = None,
+    *,
+    case_id: str = "",
+) -> dict:
     """Record automatic, unreviewed feedback from one completed run.
 
     Returns a summary describing exactly what was learned, so the audit log and the
@@ -136,11 +144,17 @@ def record_provisional(graph: KnowledgeGraph, profile: CaseProfile,
     yields = derive_artifact_yields(findings_bundle, plan)
     case_number = profile.case_number or case_id
     if not yields or not case_number:
-        return {"recorded": False, "reason": "no gradeable artifacts or no case number",
-                "yields": yields}
-    updated = graph.observe_case(profile.crime_type, yields,
-                                 case_number=f"provisional:{case_number}",
-                                 weight=PROVISIONAL_WEIGHT)
+        return {
+            "recorded": False,
+            "reason": "no gradeable artifacts or no case number",
+            "yields": yields,
+        }
+    updated = graph.observe_case(
+        profile.crime_type,
+        yields,
+        case_number=f"provisional:{case_number}",
+        weight=PROVISIONAL_WEIGHT,
+    )
     return {
         "recorded": bool(updated),
         "grade": "provisional",
@@ -149,21 +163,32 @@ def record_provisional(graph: KnowledgeGraph, profile: CaseProfile,
         "crime_type": profile.crime_type,
         "edges_updated": updated,
         "yields": yields,
-        "note": ("Automatically derived from lead scores, not an examiner's finding. "
-                 "Recorded at reduced weight and superseded by a confirmed outcome."),
+        "note": (
+            "Automatically derived from lead scores, not an examiner's finding. "
+            "Recorded at reduced weight and superseded by a confirmed outcome."
+        ),
     }
 
 
-def record_confirmed(graph: KnowledgeGraph, crime_type: str,
-                     artifact_yields: dict[str, str], *,
-                     case_number: str, examiner: str = "") -> dict:
+def record_confirmed(
+    graph: KnowledgeGraph,
+    crime_type: str,
+    artifact_yields: dict[str, str],
+    *,
+    case_number: str,
+    examiner: str = "",
+) -> dict:
     """Record an examiner-confirmed outcome at full weight."""
-    cleaned = {str(k): str(v).lower() for k, v in (artifact_yields or {}).items()
-               if str(v).lower() in {"decisive", "supporting", "none"}}
+    cleaned = {
+        str(k): str(v).lower()
+        for k, v in (artifact_yields or {}).items()
+        if str(v).lower() in {"decisive", "supporting", "none"}
+    }
     if not cleaned or not case_number:
         return {"recorded": False, "reason": "no valid yields or no case number"}
-    updated = graph.observe_case(crime_type, cleaned,
-                                 case_number=f"confirmed:{case_number}", weight=1.0)
+    updated = graph.observe_case(
+        crime_type, cleaned, case_number=f"confirmed:{case_number}", weight=1.0
+    )
     return {
         "recorded": bool(updated),
         "grade": "confirmed",
@@ -176,10 +201,15 @@ def record_confirmed(graph: KnowledgeGraph, crime_type: str,
     }
 
 
-def promote_case_to_study(profile: CaseProfile, artifact_yields: dict[str, str],
-                          *, outcome: str = "", lessons: Optional[list[str]] = None,
-                          notes: Optional[dict[str, str]] = None,
-                          examiner: str = "") -> CaseStudy:
+def promote_case_to_study(
+    profile: CaseProfile,
+    artifact_yields: dict[str, str],
+    *,
+    outcome: str = "",
+    lessons: Optional[list[str]] = None,
+    notes: Optional[dict[str, str]] = None,
+    examiner: str = "",
+) -> CaseStudy:
     """Turn a worked case into a :class:`~.casebank.CaseStudy` for future retrieval.
 
     The resulting study's ``source`` records that it is a real worked case from this
@@ -196,10 +226,15 @@ def promote_case_to_study(profile: CaseProfile, artifact_yields: dict[str, str],
         crime_type=profile.crime_type,
         description=profile.description,
         roles=roles,
-        artifacts=[ArtifactOutcome(artifact=a, yield_=y, note=notes.get(a, ""))
-                   for a, y in (artifact_yields or {}).items()],
+        artifacts=[
+            ArtifactOutcome(artifact=a, yield_=y, note=notes.get(a, ""))
+            for a, y in (artifact_yields or {}).items()
+        ],
         outcome=outcome,
         lessons=list(lessons or []),
-        source=(f"worked case, confirmed by {examiner}" if examiner
-                else "worked case (local installation)"),
+        source=(
+            f"worked case, confirmed by {examiner}"
+            if examiner
+            else "worked case (local installation)"
+        ),
     )

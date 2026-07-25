@@ -28,10 +28,11 @@ Honesty rules baked in:
   * The 30-day window is Android's default; some OEMs change it, so the estimated deletion
     time is labelled an estimate and the exact ``date_expires`` is always shown alongside.
 """
+
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -97,9 +98,20 @@ def _days_until_purge(expires_epoch: Optional[int], now_epoch: int) -> Optional[
 class _TrashRecord:
     """One trashed/pending media item, fused from DB and/or filesystem evidence."""
 
-    __slots__ = ("original_name", "state", "kind", "owner_app", "size_bytes",
-                 "expires_epoch", "media_id", "artifact_id", "stored_path", "sha256",
-                 "sources", "gps")
+    __slots__ = (
+        "original_name",
+        "state",
+        "kind",
+        "owner_app",
+        "size_bytes",
+        "expires_epoch",
+        "media_id",
+        "artifact_id",
+        "stored_path",
+        "sha256",
+        "sources",
+        "gps",
+    )
 
     def __init__(self, original_name: str, state: str) -> None:
         self.original_name = original_name
@@ -122,25 +134,37 @@ class _TrashRecord:
     def to_dict(self, now_epoch: int) -> dict:
         # We hold the bytes → RECOVERED_VERIFIED. We only know from the DB that it was
         # deleted → DELETION_DETECTED. These are deliberately different confidence classes.
-        confidence = (Confidence.RECOVERED_VERIFIED.value if self.file_recoverable
-                      else Confidence.DELETION_DETECTED.value)
+        confidence = (
+            Confidence.RECOVERED_VERIFIED.value
+            if self.file_recoverable
+            else Confidence.DELETION_DETECTED.value
+        )
         expires_iso = _epoch_to_iso(self.expires_epoch)
         deleted_iso = _deletion_estimate(self.expires_epoch)
         if self.file_recoverable:
-            note = ("Trashed file recovered intact from shared storage — no root, no "
-                    "carving. Content is byte-for-byte the deleted original.")
+            note = (
+                "Trashed file recovered intact from shared storage — no root, no "
+                "carving. Content is byte-for-byte the deleted original."
+            )
         elif self.state == "pending":
-            note = ("MediaStore row is in the 'pending' state — an interrupted or "
-                    "in-progress write, not a user deletion.")
+            note = (
+                "MediaStore row is in the 'pending' state — an interrupted or "
+                "in-progress write, not a user deletion."
+            )
         else:
-            note = ("MediaStore records this item as trashed but the file was not "
-                    "recovered (already purged, or not in the pulled scope). Deletion is "
-                    "proven; content is not available.")
-        src = ("both" if len(self.sources) > 1
-               else next(iter(self.sources)) if self.sources else "unknown")
+            note = (
+                "MediaStore records this item as trashed but the file was not "
+                "recovered (already purged, or not in the pulled scope). Deletion is "
+                "proven; content is not available."
+            )
+        src = (
+            "both"
+            if len(self.sources) > 1
+            else next(iter(self.sources)) if self.sources else "unknown"
+        )
         return {
             "original_name": self.original_name,
-            "state": self.state,                 # trashed | pending
+            "state": self.state,  # trashed | pending
             "kind": self.kind,
             "owner_app": self.owner_app,
             "size_bytes": self.size_bytes,
@@ -156,7 +180,7 @@ class _TrashRecord:
             "days_until_auto_purge": _days_until_purge(self.expires_epoch, now_epoch),
             "gps": self.gps,
             "confidence": confidence,
-            "source": src,                       # mediastore | filesystem | both
+            "source": src,  # mediastore | filesystem | both
             "note": note,
             "provenance": (
                 f"MediaStore trash ({src}); deletion time estimated as date_expires − "
@@ -166,9 +190,12 @@ class _TrashRecord:
         }
 
 
-def analyze_mediastore_trash(media_inventory: Iterable[Any],
-                             manifest: Iterable[Any],
-                             *, now: Optional[datetime] = None) -> dict:
+def analyze_mediastore_trash(
+    media_inventory: Iterable[Any],
+    manifest: Iterable[Any],
+    *,
+    now: Optional[datetime] = None,
+) -> dict:
     """Fuse the MediaStore catalogue and the filesystem into a trash report.
 
     Parameters
@@ -237,9 +264,16 @@ def analyze_mediastore_trash(media_inventory: Iterable[Any],
 
     items = [r.to_dict(now_epoch) for r in records.values()]
     # Recovered files first, then by soonest auto-purge (most urgent to act on).
-    items.sort(key=lambda d: (not d["file_recoverable"],
-                              d["days_until_auto_purge"]
-                              if d["days_until_auto_purge"] is not None else 1e9))
+    items.sort(
+        key=lambda d: (
+            not d["file_recoverable"],
+            (
+                d["days_until_auto_purge"]
+                if d["days_until_auto_purge"] is not None
+                else 1e9
+            ),
+        )
+    )
 
     return {"items": items, "summary": _summarise(items)}
 
@@ -248,9 +282,13 @@ def _summarise(items: list[dict]) -> dict:
     trashed = [i for i in items if i["state"] == "trashed"]
     pending = [i for i in items if i["state"] == "pending"]
     recoverable = [i for i in items if i["file_recoverable"]]
-    expiring = [i for i in trashed
-                if i["days_until_auto_purge"] is not None
-                and 0 <= i["days_until_auto_purge"] <= 3 and i["file_recoverable"]]
+    expiring = [
+        i
+        for i in trashed
+        if i["days_until_auto_purge"] is not None
+        and 0 <= i["days_until_auto_purge"] <= 3
+        and i["file_recoverable"]
+    ]
     return {
         "total": len(items),
         "trashed": len(trashed),

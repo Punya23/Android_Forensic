@@ -7,6 +7,7 @@ in the first 60 s, and videos only after the high-value data is secured.
 
 Nothing here raises: all public functions are pure and stateless.
 """
+
 from __future__ import annotations
 
 from pathlib import PurePosixPath
@@ -17,24 +18,57 @@ from typing import Dict, List
 # ---------------------------------------------------------------------------
 
 #: Critical forensic artefacts — always pull first.
-_HIGH_EXTS = frozenset({
-    ".db", ".sqlite", ".sqlite3",
-    ".json", ".xml",
-    ".txt",
-})
+_HIGH_EXTS = frozenset(
+    {
+        ".db",
+        ".sqlite",
+        ".sqlite3",
+        ".json",
+        ".xml",
+        ".txt",
+    }
+)
 
 #: Medium-value artefacts — pull after databases.
-_MEDIUM_EXTS = frozenset({
-    ".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp", ".gif",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".vcf",
-    ".zip", ".gz", ".tar",
-})
+_MEDIUM_EXTS = frozenset(
+    {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".heic",
+        ".bmp",
+        ".gif",
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".vcf",
+        ".zip",
+        ".gz",
+        ".tar",
+    }
+)
 
 #: Low-value large files — defer until time budget allows.
-_LOW_EXTS = frozenset({
-    ".mp4", ".avi", ".mkv", ".mov", ".3gp", ".ts", ".webm",
-    ".mp3", ".aac", ".ogg", ".m4a", ".flac", ".wav",
-})
+_LOW_EXTS = frozenset(
+    {
+        ".mp4",
+        ".avi",
+        ".mkv",
+        ".mov",
+        ".3gp",
+        ".ts",
+        ".webm",
+        ".mp3",
+        ".aac",
+        ".ogg",
+        ".m4a",
+        ".flac",
+        ".wav",
+    }
+)
 
 # Path substrings that boost a file's score regardless of extension.
 _HIGH_VALUE_PATHS = (
@@ -58,6 +92,7 @@ _MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def get_file_priority(file_path: str) -> int:
     """Return a priority score for *file_path* in the range [0, 100].
@@ -170,8 +205,8 @@ def get_time_budget() -> Dict[str, int]:
         Mapping of stage name → budget in seconds.
     """
     return {
-        "system":        30,   # device info, properties, settings
-        "communication": 60,   # SMS, call log, contacts, messaging DBs
-        "app_data":     120,   # all other app databases and exports
-        "media":          0,   # 0 = remaining time (no fixed cap)
+        "system": 30,  # device info, properties, settings
+        "communication": 60,  # SMS, call log, contacts, messaging DBs
+        "app_data": 120,  # all other app databases and exports
+        "media": 0,  # 0 = remaining time (no fixed cap)
     }

@@ -1,4 +1,5 @@
 """Artifact parsers — turn pulled files into typed rows for the dashboard."""
+
 from .exif import (
     extract_gps,
     extract_datetime,

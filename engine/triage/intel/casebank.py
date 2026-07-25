@@ -16,6 +16,7 @@ investigative doctrine, not real case records. Anything the department adds late
 carries its own provenance. Retrieval results always surface ``source`` so a report can
 never imply that a synthetic exemplar is a real precedent.
 """
+
 from __future__ import annotations
 
 import json
@@ -37,7 +38,8 @@ YIELD_WEIGHT: dict[str, float] = {
     "none": 0.0,
 }
 
-_STOPWORDS = frozenset("""
+_STOPWORDS = frozenset(
+    """
 a an the and or but if then than that this these those of in on at to for from with
 without by as is are was were be been being it its his her their our your my he she
 they them we you i who whom which what when where how not no nor so such only own same
@@ -45,7 +47,8 @@ too very can will just do does did doing have has had having would could should 
 might must about after before during over under again further once here there all any
 both each few more most other some case accused suspect victim device phone mobile
 handset police officer report investigation
-""".split())
+""".split()
+)
 
 
 def _tokenize(text: str) -> list[str]:
@@ -69,7 +72,7 @@ class ArtifactOutcome:
     """What one artifact class contributed to one solved case."""
 
     artifact: str
-    yield_: str = "none"          # decisive | supporting | none
+    yield_: str = "none"  # decisive | supporting | none
     note: str = ""
 
     @property
@@ -129,9 +132,13 @@ class CaseStudy:
             title=str(d.get("title", "")),
             crime_type=str(d.get("crime_type", "general")).strip().lower(),
             description=str(d.get("description", "")),
-            roles={str(k): [str(v) for v in (vs or [])]
-                   for k, vs in (d.get("roles") or {}).items()},
-            artifacts=[ArtifactOutcome.from_dict(a) for a in (d.get("artifacts") or [])],
+            roles={
+                str(k): [str(v) for v in (vs or [])]
+                for k, vs in (d.get("roles") or {}).items()
+            },
+            artifacts=[
+                ArtifactOutcome.from_dict(a) for a in (d.get("artifacts") or [])
+            ],
             outcome=str(d.get("outcome", "")),
             lessons=[str(x) for x in (d.get("lessons") or [])],
             source=str(d.get("source", "unspecified")),
@@ -243,8 +250,9 @@ class CaseBank:
 
     # --- BM25 index -------------------------------------------------------
     def _build_index(self) -> None:
-        self._docs = {cn: _tokenize(s.searchable_text())
-                      for cn, s in self._studies.items()}
+        self._docs = {
+            cn: _tokenize(s.searchable_text()) for cn, s in self._studies.items()
+        }
         self._df = {}
         for tokens in self._docs.values():
             for term in set(tokens):
@@ -253,8 +261,13 @@ class CaseBank:
         self._avg_len = (sum(lengths) / len(lengths)) if lengths else 0.0
         self._index_dirty = False
 
-    def _bm25(self, query_tokens: list[str], case_number: str,
-              k1: float = 1.5, b: float = 0.75) -> tuple[float, list[str]]:
+    def _bm25(
+        self,
+        query_tokens: list[str],
+        case_number: str,
+        k1: float = 1.5,
+        b: float = 0.75,
+    ) -> tuple[float, list[str]]:
         doc = self._docs.get(case_number, [])
         if not doc:
             return 0.0, []
@@ -272,16 +285,24 @@ class CaseBank:
             df = self._df.get(term, 0)
             # BM25 IDF with the +1 smoothing that keeps it non-negative.
             idf = math.log(1 + (n_docs - df + 0.5) / (df + 0.5))
-            denom = f + k1 * (1 - b + b * (doc_len / self._avg_len if self._avg_len else 1))
+            denom = f + k1 * (
+                1 - b + b * (doc_len / self._avg_len if self._avg_len else 1)
+            )
             score += idf * (f * (k1 + 1)) / denom
             matched.append(term)
         matched.sort(key=lambda t: -self._df.get(t, 0))
         return score, matched
 
     # --- retrieval --------------------------------------------------------
-    def search(self, query: str, *, crime_type: Optional[str] = None,
-               roles: Optional[dict[str, list[str]]] = None,
-               top_k: int = 5, min_score: float = 0.0) -> list[RetrievedCase]:
+    def search(
+        self,
+        query: str,
+        *,
+        crime_type: Optional[str] = None,
+        roles: Optional[dict[str, list[str]]] = None,
+        top_k: int = 5,
+        min_score: float = 0.0,
+    ) -> list[RetrievedCase]:
         """Retrieve the studies most similar to *query*.
 
         Scoring = normalised BM25 over the narrative, plus a crime-type boost and a
@@ -306,21 +327,28 @@ class CaseBank:
         hits: list[RetrievedCase] = []
         for cn, lex, matched in raw:
             study = self._studies[cn]
-            norm = lex / peak                     # 0..1
+            norm = lex / peak  # 0..1
             crime_match = bool(crime_type) and study.crime_type == crime_type
             score = norm
             if crime_match:
                 # Same crime type is the strongest single signal available offline.
                 score += 0.6
             elif crime_type and study.crime_type != "general":
-                score -= 0.1                       # mild penalty for a different crime
+                score -= 0.1  # mild penalty for a different crime
             if query_roles:
                 shared = query_roles & set(study.roles.keys())
                 score += 0.15 * (len(shared) / max(len(query_roles), 1))
             if score <= min_score:
                 continue
-            hits.append(RetrievedCase(study=study, score=score, lexical=norm,
-                                      crime_match=crime_match, matched_terms=matched))
+            hits.append(
+                RetrievedCase(
+                    study=study,
+                    score=score,
+                    lexical=norm,
+                    crime_match=crime_match,
+                    matched_terms=matched,
+                )
+            )
         hits.sort(key=lambda h: (-h.score, h.study.case_number))
         return hits[:top_k]
 
@@ -338,10 +366,18 @@ class CaseBank:
         for hit in hits:
             w = max(hit.score, 0.0)
             for outcome in hit.study.artifacts:
-                slot = agg.setdefault(outcome.artifact, {
-                    "artifact": outcome.artifact, "decisive": 0, "supporting": 0,
-                    "none": 0, "cases": [], "notes": [], "_weighted": 0.0,
-                })
+                slot = agg.setdefault(
+                    outcome.artifact,
+                    {
+                        "artifact": outcome.artifact,
+                        "decisive": 0,
+                        "supporting": 0,
+                        "none": 0,
+                        "cases": [],
+                        "notes": [],
+                        "_weighted": 0.0,
+                    },
+                )
                 key = outcome.yield_ if outcome.yield_ in YIELD_WEIGHT else "none"
                 slot[key] += 1
                 slot["_weighted"] += w * outcome.weight

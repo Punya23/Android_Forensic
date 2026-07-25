@@ -16,6 +16,7 @@ Both files live in ``/data/misc/wifi/`` and require **root access** to read.
 This module only parses locally-staged copies; pulling from the device is the
 pipeline's responsibility.
 """
+
 from __future__ import annotations
 
 import re
@@ -34,10 +35,8 @@ from ..config import Confidence
 # wpa_supplicant.conf parser (Android ≤ 8)
 # ---------------------------------------------------------------------------
 
-_NETWORK_BLOCK_RE = re.compile(
-    r"network\s*=\s*\{([^}]*)\}", re.DOTALL
-)
-_KV_RE = re.compile(r'^\s*(\w+)\s*=\s*(.+?)\s*$', re.MULTILINE)
+_NETWORK_BLOCK_RE = re.compile(r"network\s*=\s*\{([^}]*)\}", re.DOTALL)
+_KV_RE = re.compile(r"^\s*(\w+)\s*=\s*(.+?)\s*$", re.MULTILINE)
 
 
 def _unquote(value: str) -> str:
@@ -87,13 +86,15 @@ def parse_wpa_supplicant_conf(path: Path) -> list[WifiNetwork]:
         else:
             security = key_mgmt
 
-        networks.append(WifiNetwork(
-            ssid=ssid,
-            password=password,
-            security=security,
-            confidence=Confidence.LIVE,
-            source_file=path.name,
-        ))
+        networks.append(
+            WifiNetwork(
+                ssid=ssid,
+                password=password,
+                security=security,
+                confidence=Confidence.LIVE,
+                source_file=path.name,
+            )
+        )
 
     return networks
 
@@ -101,6 +102,7 @@ def parse_wpa_supplicant_conf(path: Path) -> list[WifiNetwork]:
 # ---------------------------------------------------------------------------
 # WifiConfigStore.xml parser (Android ≥ 9)
 # ---------------------------------------------------------------------------
+
 
 def parse_wifi_config_store_xml(path: Path) -> list[WifiNetwork]:
     """Parse ``WifiConfigStore.xml`` and return a list of :class:`WifiNetwork`.
@@ -182,13 +184,15 @@ def parse_wifi_config_store_xml(path: Path) -> list[WifiNetwork]:
         else:
             security = key_mgmt_raw
 
-        networks.append(WifiNetwork(
-            ssid=ssid,
-            password=password,
-            security=security,
-            confidence=Confidence.LIVE,
-            source_file=path.name,
-        ))
+        networks.append(
+            WifiNetwork(
+                ssid=ssid,
+                password=password,
+                security=security,
+                confidence=Confidence.LIVE,
+                source_file=path.name,
+            )
+        )
 
     return networks
 
@@ -196,6 +200,7 @@ def parse_wifi_config_store_xml(path: Path) -> list[WifiNetwork]:
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
+
 
 def parse_wifi_config(path: Path) -> list[WifiNetwork]:
     """Auto-detect Wi-Fi config format and parse accordingly.

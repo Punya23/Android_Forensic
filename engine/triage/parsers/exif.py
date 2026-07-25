@@ -12,17 +12,18 @@ Enhanced functions (Task 1):
     extract_software        -- software name (WhatsApp, Telegram, Camera, …)
     extract_all_gps_data    -- raw GPS tag dictionary for validation
 """
+
 from __future__ import annotations
 
-import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from ..config import IMAGE_EXTS
 
 try:
     from PIL import Image, ExifTags
+
     _HAVE_PIL = True
 except Exception:  # pragma: no cover
     _HAVE_PIL = False
@@ -34,16 +35,16 @@ except Exception:  # pragma: no cover
 
 # Known software strings that indicate the photo was shared via a messaging app.
 _SOFTWARE_APP_MAP: list[tuple[str, str]] = [
-    ("whatsapp",  "WhatsApp"),
-    ("telegram",  "Telegram"),
+    ("whatsapp", "WhatsApp"),
+    ("telegram", "Telegram"),
     ("instagram", "Instagram"),
-    ("snapchat",  "Snapchat"),
-    ("signal",    "Signal"),
+    ("snapchat", "Snapchat"),
+    ("signal", "Signal"),
 ]
 
 # EXIF DateTimeOriginal / DateTime formats to try during parsing.
 _EXIF_DT_FORMATS: list[str] = [
-    "%Y:%m:%d %H:%M:%S",   # canonical EXIF
+    "%Y:%m:%d %H:%M:%S",  # canonical EXIF
     "%Y-%m-%d %H:%M:%S",
     "%Y/%m/%d %H:%M:%S",
     "%d/%m/%Y %H:%M:%S",
@@ -53,6 +54,7 @@ _EXIF_DT_FORMATS: list[str] = [
 # ---------------------------------------------------------------------------
 # Helpers (private)
 # ---------------------------------------------------------------------------
+
 
 def is_image(path: str | Path) -> bool:
     return Path(path).suffix.lower() in IMAGE_EXTS
@@ -128,6 +130,7 @@ def _parse_exif_datetime(raw: str) -> Optional[str]:
 # Public API — original functions (preserved for backward compatibility)
 # ---------------------------------------------------------------------------
 
+
 def extract_gps(path: str | Path) -> Optional[dict[str, float]]:
     """Return {\"lat\": .., \"lon\": ..} from an image's EXIF GPS block, or None."""
     if not _HAVE_PIL or not is_image(path):
@@ -166,6 +169,7 @@ def extract_datetime(path: str | Path) -> Optional[str]:
 # Public API — enhanced functions (Task 1)
 # ---------------------------------------------------------------------------
 
+
 def extract_gps_enhanced(path: str | Path) -> Dict[str, Any]:
     """Extract enhanced GPS data from a photo.
 
@@ -182,15 +186,15 @@ def extract_gps_enhanced(path: str | Path) -> Dict[str, Any]:
         all_gps_data   -- raw GPS tag dict or {}
     """
     result: Dict[str, Any] = {
-        "gps":          None,
-        "altitude":     None,
-        "timestamp":    None,
+        "gps": None,
+        "altitude": None,
+        "timestamp": None,
         "device_model": None,
-        "device_make":  None,
-        "image_width":  None,
+        "device_make": None,
+        "image_width": None,
         "image_height": None,
-        "orientation":  None,
-        "software":     None,
+        "orientation": None,
+        "software": None,
         "all_gps_data": {},
     }
     if not _HAVE_PIL or not is_image(path):
@@ -204,8 +208,12 @@ def extract_gps_enhanced(path: str | Path) -> Dict[str, Any]:
 
         # --- GPS coordinates -------------------------------------------------
         if named_gps:
-            lat = _dms_to_deg(named_gps.get("GPSLatitude"), named_gps.get("GPSLatitudeRef", "N"))
-            lon = _dms_to_deg(named_gps.get("GPSLongitude"), named_gps.get("GPSLongitudeRef", "E"))
+            lat = _dms_to_deg(
+                named_gps.get("GPSLatitude"), named_gps.get("GPSLatitudeRef", "N")
+            )
+            lon = _dms_to_deg(
+                named_gps.get("GPSLongitude"), named_gps.get("GPSLongitudeRef", "E")
+            )
             if lat is not None and lon is not None:
                 result["gps"] = {"lat": lat, "lon": lon}
 
@@ -215,7 +223,7 @@ def extract_gps_enhanced(path: str | Path) -> Dict[str, Any]:
                 try:
                     alt = _ratio_to_float(raw_alt)
                     ref = named_gps.get("GPSAltitudeRef", 0)
-                    if ref == 1:   # below sea level
+                    if ref == 1:  # below sea level
                         alt = -alt
                     result["altitude"] = round(alt, 2)
                 except Exception:

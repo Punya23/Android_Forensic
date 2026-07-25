@@ -21,6 +21,7 @@ The LLM is pluggable (heuristic / local Ollama / Anthropic) so sensitive evidenc
 on-device; retrieval and the graph are pure Python and need no network at all. See
 [[erakshak-project]] for the honesty model this layer is built to respect.
 """
+
 from __future__ import annotations
 
 from .analysis import Finding, analyze_case, analyze_derived

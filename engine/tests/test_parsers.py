@@ -1,4 +1,5 @@
 """Tests for the artifact parsers."""
+
 import json
 import sqlite3
 from pathlib import Path
@@ -17,13 +18,16 @@ from triage.config import Confidence
 # Existing tests (preserved for regression)
 # ===========================================================================
 
+
 def test_whatsapp_bracket_format(tmp_path):
     p = tmp_path / "chat.txt"
     p.write_text(
         "[06/07/2026, 21:00:04] Rahul: Are we still on?\n"
         "[06/07/2026, 21:00:39] Imran: Yes, bring it.\n"
         "continuation line of the same message\n"
-        "[06/07/2026, 21:01:12] Rahul: Done.\n", encoding="utf-8")
+        "[06/07/2026, 21:01:12] Rahul: Done.\n",
+        encoding="utf-8",
+    )
     msgs = parse_whatsapp_export(p)
     assert len(msgs) == 3
     assert msgs[0].sender == "Rahul"
@@ -35,7 +39,9 @@ def test_whatsapp_dash_format(tmp_path):
     p = tmp_path / "chat.txt"
     p.write_text(
         "06/07/2026, 21:00 - Rahul: Hello there\n"
-        "06/07/2026, 21:01 - Imran: Reply here\n", encoding="utf-8")
+        "06/07/2026, 21:01 - Imran: Reply here\n",
+        encoding="utf-8",
+    )
     msgs = parse_whatsapp_export(p)
     assert len(msgs) == 2
     assert msgs[1].sender == "Imran"
@@ -43,8 +49,11 @@ def test_whatsapp_dash_format(tmp_path):
 
 def test_whatsapp_system_line(tmp_path):
     p = tmp_path / "chat.txt"
-    p.write_text("[06/07/2026, 20:59:11] Messages are end-to-end encrypted.\n"
-                 "[06/07/2026, 21:00:04] Rahul: hi\n", encoding="utf-8")
+    p.write_text(
+        "[06/07/2026, 20:59:11] Messages are end-to-end encrypted.\n"
+        "[06/07/2026, 21:00:04] Rahul: hi\n",
+        encoding="utf-8",
+    )
     msgs = parse_whatsapp_export(p)
     assert msgs[0].sender == "<system>"
     assert msgs[1].sender == "Rahul"
@@ -52,11 +61,15 @@ def test_whatsapp_system_line(tmp_path):
 
 def test_contacts_parser(tmp_path):
     p = tmp_path / "contacts.json"
-    p.write_text(json.dumps([
-        {"name": "A", "number": "111"},
-        {"display_name": "B", "phone": "222", "email": "b@x.com"},
-        {"garbage": True},
-    ]))
+    p.write_text(
+        json.dumps(
+            [
+                {"name": "A", "number": "111"},
+                {"display_name": "B", "phone": "222", "email": "b@x.com"},
+                {"garbage": True},
+            ]
+        )
+    )
     contacts = parse_contacts_json(p)
     assert len(contacts) == 2
     assert contacts[1].email == "b@x.com"
@@ -64,10 +77,14 @@ def test_contacts_parser(tmp_path):
 
 def test_calllog_parser(tmp_path):
     p = tmp_path / "calllog.json"
-    p.write_text(json.dumps([
-        {"number": "111", "type": 2, "date": 1751826000000, "duration": 30},
-        {"number": "222", "type": 3, "date": 1751826100000, "duration": 0},
-    ]))
+    p.write_text(
+        json.dumps(
+            [
+                {"number": "111", "type": 2, "date": 1751826000000, "duration": 30},
+                {"number": "222", "type": 3, "date": 1751826100000, "duration": 0},
+            ]
+        )
+    )
     calls = parse_calllog_json(p)
     assert calls[0].call_type == "outgoing"
     assert calls[1].call_type == "missed"
@@ -78,9 +95,11 @@ def test_calllog_parser(tmp_path):
 # New tests — Task 1: Streaming parser & edge-case robustness
 # ===========================================================================
 
+
 def test_whatsapp_streaming_returns_iterator(tmp_path):
     """stream_whatsapp_export must be a lazy generator, not a list."""
     import types
+
     p = tmp_path / "chat.txt"
     p.write_text("[06/07/2026, 10:00:00] Alice: hello\n", encoding="utf-8")
     gen = stream_whatsapp_export(p)
@@ -93,7 +112,9 @@ def test_whatsapp_streaming_large_file(tmp_path):
     lines = []
     for i in range(1000):
         h, m, s = i // 3600 % 24, i // 60 % 60, i % 60
-        lines.append(f"[06/07/2026, {h:02d}:{m:02d}:{s:02d}] User{i % 5}: Message number {i}\n")
+        lines.append(
+            f"[06/07/2026, {h:02d}:{m:02d}:{s:02d}] User{i % 5}: Message number {i}\n"
+        )
     p.write_text("".join(lines), encoding="utf-8")
     # Use the streaming API — nothing should accumulate in memory beyond one message.
     count = sum(1 for _ in stream_whatsapp_export(p))
@@ -157,8 +178,7 @@ def test_whatsapp_owner_hint_direction(tmp_path):
     """owner_hint correctly labels outgoing messages."""
     p = tmp_path / "chat.txt"
     p.write_text(
-        "[06/07/2026, 10:00:00] Alice: hi\n"
-        "[06/07/2026, 10:01:00] Bob: hello back\n",
+        "[06/07/2026, 10:00:00] Alice: hi\n" "[06/07/2026, 10:01:00] Bob: hello back\n",
         encoding="utf-8",
     )
     msgs = parse_whatsapp_export(p, owner_hint="Alice")
@@ -170,8 +190,7 @@ def test_whatsapp_all_messages_have_provenance(tmp_path):
     """Every message yielded by the parser must carry a provenance string."""
     p = tmp_path / "chat.txt"
     p.write_text(
-        "[06/07/2026, 10:00:00] Alice: msg1\n"
-        "[06/07/2026, 10:01:00] Bob: msg2\n",
+        "[06/07/2026, 10:00:00] Alice: msg1\n" "[06/07/2026, 10:01:00] Bob: msg2\n",
         encoding="utf-8",
     )
     msgs = parse_whatsapp_export(p)
@@ -184,8 +203,15 @@ def test_whatsapp_all_messages_have_provenance(tmp_path):
 # New tests — Task 2: WhatsApp DB parser
 # ===========================================================================
 
-def _make_msgstore(path: Path, *, include_contacts=True, include_chat=True,
-                    group_jid=False, own_jid="910000000001@s.whatsapp.net") -> None:
+
+def _make_msgstore(
+    path: Path,
+    *,
+    include_contacts=True,
+    include_chat=True,
+    group_jid=False,
+    own_jid="910000000001@s.whatsapp.net",
+) -> None:
     """Build a minimal synthetic msgstore.db for testing."""
     con = sqlite3.connect(path)
     con.execute(
@@ -199,8 +225,10 @@ def _make_msgstore(path: Path, *, include_contacts=True, include_chat=True,
             "CREATE TABLE wa_contacts (jid TEXT PRIMARY KEY, display_name TEXT, is_self INTEGER DEFAULT 0)"
         )
         con.execute("INSERT INTO wa_contacts VALUES (?, ?, 1)", (own_jid, "Me"))
-        con.execute("INSERT INTO wa_contacts VALUES (?, ?, 0)",
-                    ("919876543210@s.whatsapp.net", "Rahul"))
+        con.execute(
+            "INSERT INTO wa_contacts VALUES (?, ?, 0)",
+            ("919876543210@s.whatsapp.net", "Rahul"),
+        )
     if include_chat:
         con.execute("CREATE TABLE chat (jid TEXT PRIMARY KEY, subject TEXT)")
         if group_jid:
@@ -211,13 +239,13 @@ def _make_msgstore(path: Path, *, include_contacts=True, include_chat=True,
     con.execute(
         "INSERT INTO message(_id, key_remote_jid, sender_jid, status, timestamp, data) "
         "VALUES (1, ?, '919876543210@s.whatsapp.net', 0, 1751826000000, 'Meet at docks')",
-        (remote,)
+        (remote,),
     )
     # Message 2: outgoing text
     con.execute(
         "INSERT INTO message(_id, key_remote_jid, sender_jid, status, timestamp, data) "
         "VALUES (2, ?, ?, 1, 1751826060000, 'On my way')",
-        (remote, own_jid)
+        (remote, own_jid),
     )
     # Message 3: media message (no text body)
     con.execute(
@@ -225,7 +253,7 @@ def _make_msgstore(path: Path, *, include_contacts=True, include_chat=True,
         "data, media_url, mime_type) "
         "VALUES (3, ?, '919876543210@s.whatsapp.net', 0, 1751826120000, NULL, "
         "'https://example.com/img.jpg', 'image/jpeg')",
-        (remote,)
+        (remote,),
     )
     con.commit()
     con.close()
@@ -292,7 +320,9 @@ def test_whatsapp_db_missing_columns_graceful(tmp_path):
         "CREATE TABLE message (_id INTEGER PRIMARY KEY, key_remote_jid TEXT, "
         "timestamp INTEGER, data TEXT)"
     )
-    con.execute("INSERT INTO message VALUES (1, '919876543210@s.whatsapp.net', 1751826000000, 'hello')")
+    con.execute(
+        "INSERT INTO message VALUES (1, '919876543210@s.whatsapp.net', 1751826000000, 'hello')"
+    )
     con.commit()
     con.close()
     msgs = parse_whatsapp_db(db)
@@ -387,6 +417,7 @@ def _make_telegram_real_db(path: Path, rows=None, delete_ids=None) -> None:
 
 # --- Task 4a: schema detection -----------------------------------------------
 
+
 def test_telegram_schema_detection_mock_schema(tmp_path):
     """detect_telegram_schema correctly identifies the mock (body/sender) layout."""
     db = tmp_path / "cache4.db"
@@ -395,20 +426,28 @@ def test_telegram_schema_detection_mock_schema(tmp_path):
     assert schema.usable, "Schema should be usable"
     assert schema.mapping.get("body") == "body"
     assert schema.mapping.get("date") == "date"
-    assert "synthetic" in schema.version_label or "mock" in schema.version_label \
+    assert (
+        "synthetic" in schema.version_label
+        or "mock" in schema.version_label
         or "dynamic" in schema.version_label
+    )
 
 
 def test_telegram_schema_detection_real_v2_schema(tmp_path):
     """detect_telegram_schema correctly identifies real Telegram v2 (from_id/message) layout."""
     db = tmp_path / "cache4.db"
-    _make_telegram_real_db(db, rows=[(1, 12345, 67890, 1_700_000_000, "test message", 0)])
+    _make_telegram_real_db(
+        db, rows=[(1, 12345, 67890, 1_700_000_000, "test message", 0)]
+    )
     schema = detect_telegram_schema(db)
     assert schema.usable, "Schema should be usable"
     assert schema.mapping.get("body") == "message"
     assert schema.mapping.get("from_id") == "from_id"
-    assert "v2" in schema.version_label or "from_id" in schema.version_label \
+    assert (
+        "v2" in schema.version_label
+        or "from_id" in schema.version_label
         or "dynamic" in schema.version_label
+    )
 
 
 def test_telegram_schema_detection_missing_file(tmp_path):
@@ -420,13 +459,17 @@ def test_telegram_schema_detection_missing_file(tmp_path):
 
 # --- Task 4b: live parse ------------------------------------------------------
 
+
 def test_telegram_live_parse_synthetic_schema(tmp_path):
     """parse_telegram_db correctly parses live rows with the mock schema."""
     db = tmp_path / "cache4.db"
-    _make_telegram_mock_db(db, rows=[
-        ("Alice", "meet at the docks", 1_700_000_000),
-        ("Bob",   "bring the package", 1_700_000_060),
-    ])
+    _make_telegram_mock_db(
+        db,
+        rows=[
+            ("Alice", "meet at the docks", 1_700_000_000),
+            ("Bob", "bring the package", 1_700_000_060),
+        ],
+    )
     msgs = parse_telegram_db(db)
     assert len(msgs) == 2
     bodies = {m.body for m in msgs}
@@ -441,10 +484,13 @@ def test_telegram_live_parse_synthetic_schema(tmp_path):
 def test_telegram_live_parse_real_schema(tmp_path):
     """parse_telegram_db correctly parses live rows with the real Telegram v2 schema."""
     db = tmp_path / "cache4.db"
-    _make_telegram_real_db(db, rows=[
-        (1, 11111, 22222, 1_700_000_000, "secret payload real schema", 0),
-        (2, 33333, 22222, 1_700_000_060, "another real message", 1),
-    ])
+    _make_telegram_real_db(
+        db,
+        rows=[
+            (1, 11111, 22222, 1_700_000_000, "secret payload real schema", 0),
+            (2, 33333, 22222, 1_700_000_060, "another real message", 1),
+        ],
+    )
     msgs = parse_telegram_db(db)
     assert len(msgs) >= 2
     bodies_joined = " ".join(m.body for m in msgs)
@@ -454,15 +500,20 @@ def test_telegram_live_parse_real_schema(tmp_path):
 
 # --- Task 4c: deleted-row recovery -------------------------------------------
 
+
 def test_telegram_recovery_deleted_rows(tmp_path):
     """recover_telegram_messages recovers deleted Telegram messages (mock schema)."""
     db = tmp_path / "cache4.db"
-    _make_telegram_mock_db(db, rows=[
-        ("Rahul", "transfer done account 4471 secretly", 1_700_000_100),
-        ("Priya", "warehouse nine tonight", 1_700_000_200),
-        ("Ali",   "this one stays live", 1_700_000_300),
-        ("Rani",  "also stays live", 1_700_000_400),
-    ], delete_ids=[1, 2])
+    _make_telegram_mock_db(
+        db,
+        rows=[
+            ("Rahul", "transfer done account 4471 secretly", 1_700_000_100),
+            ("Priya", "warehouse nine tonight", 1_700_000_200),
+            ("Ali", "this one stays live", 1_700_000_300),
+            ("Rani", "also stays live", 1_700_000_400),
+        ],
+        delete_ids=[1, 2],
+    )
 
     result = recover_telegram_messages(db)
 
@@ -487,18 +538,24 @@ def test_telegram_recovery_deleted_rows(tmp_path):
 def test_telegram_recovery_contains_live_rows(tmp_path):
     """recover_telegram_messages includes live rows with LIVE confidence."""
     db = tmp_path / "cache4.db"
-    _make_telegram_mock_db(db, rows=[
-        ("Alice", "live message alpha", 1_700_000_000),
-        ("Bob",   "live message beta",  1_700_000_060),
-    ])
+    _make_telegram_mock_db(
+        db,
+        rows=[
+            ("Alice", "live message alpha", 1_700_000_000),
+            ("Bob", "live message beta", 1_700_000_060),
+        ],
+    )
     result = recover_telegram_messages(db)
-    live_msgs = [m for m in result["messages"] if m["confidence"] == Confidence.LIVE.value]
+    live_msgs = [
+        m for m in result["messages"] if m["confidence"] == Confidence.LIVE.value
+    ]
     assert len(live_msgs) == 2
     bodies = {m["body"] for m in live_msgs}
     assert "live message alpha" in bodies
 
 
 # --- Task 4d: no-root fallback -----------------------------------------------
+
 
 def test_telegram_no_root_fallback(tmp_path):
     """recover_telegram_messages on a missing file returns the standard error dict."""
@@ -512,13 +569,17 @@ def test_telegram_no_root_fallback(tmp_path):
 
 # --- Task 4e: JSON export ----------------------------------------------------
 
+
 def test_telegram_export_json(tmp_path):
     """export_recovered_messages_json writes valid JSON with required provenance keys."""
     db = tmp_path / "cache4.db"
-    _make_telegram_mock_db(db, rows=[
-        ("Alice", "exportable message one", 1_700_000_000),
-        ("Bob",   "exportable message two", 1_700_000_060),
-    ])
+    _make_telegram_mock_db(
+        db,
+        rows=[
+            ("Alice", "exportable message one", 1_700_000_000),
+            ("Bob", "exportable message two", 1_700_000_060),
+        ],
+    )
     result = recover_telegram_messages(db)
     out_path = tmp_path / "tg_export.json"
     returned = export_recovered_messages_json(result, out_path)
@@ -539,8 +600,14 @@ def test_telegram_export_json(tmp_path):
     assert isinstance(data["messages"], list)
 
     # Each message must carry the required provenance fields.
-    required_keys = {"body", "sender", "confidence", "source_file",
-                     "carve_method", "provenance"}
+    required_keys = {
+        "body",
+        "sender",
+        "confidence",
+        "source_file",
+        "carve_method",
+        "provenance",
+    }
     for msg in data["messages"]:
         missing = required_keys - msg.keys()
         assert not missing, f"Message missing keys {missing}: {msg}"
@@ -548,12 +615,15 @@ def test_telegram_export_json(tmp_path):
 
 # --- Task 4f: confidence badges ----------------------------------------------
 
+
 def test_telegram_confidence_badges(tmp_path):
     """Recovered rows carry correct confidence values; no carve has LIVE confidence."""
     db = tmp_path / "cache4.db"
     # Use a large enough dataset to force freelist pages.
-    rows = [(f"user{i}", f"message payload number {i} keyword{i}", 1_700_000_000 + i)
-            for i in range(200)]
+    rows = [
+        (f"user{i}", f"message payload number {i} keyword{i}", 1_700_000_000 + i)
+        for i in range(200)
+    ]
     _make_telegram_mock_db(db, rows=rows, delete_ids=list(range(10, 160)))
 
     result = recover_telegram_messages(db)
@@ -562,56 +632,89 @@ def test_telegram_confidence_badges(tmp_path):
 
     valid_confidences = {c.value for c in Confidence}
     for msg in msgs:
-        assert msg["confidence"] in valid_confidences, \
-            f"Invalid confidence: {msg['confidence']}"
+        assert (
+            msg["confidence"] in valid_confidences
+        ), f"Invalid confidence: {msg['confidence']}"
 
     # Carved rows must NOT have LIVE confidence.
-    carved = [m for m in msgs if "freeblock" in m.get("carve_method", "")
-              or "unallocated" in m.get("carve_method", "")
-              or m["confidence"] == Confidence.CARVED_PARTIAL.value]
+    carved = [
+        m
+        for m in msgs
+        if "freeblock" in m.get("carve_method", "")
+        or "unallocated" in m.get("carve_method", "")
+        or m["confidence"] == Confidence.CARVED_PARTIAL.value
+    ]
     for m in carved:
-        assert m["confidence"] != Confidence.LIVE.value, \
-            f"Carved row incorrectly labelled LIVE: {m}"
+        assert (
+            m["confidence"] != Confidence.LIVE.value
+        ), f"Carved row incorrectly labelled LIVE: {m}"
 
 
 # --- Task 4g: rowid gap detection -------------------------------------------
 
+
 def test_telegram_rowid_gap_detection(tmp_path):
     """DELETION_DETECTED entries are emitted for rowid gaps in the messages table."""
     db = tmp_path / "cache4.db"
-    _make_telegram_mock_db(db, rows=[
-        ("a", "first",  1),
-        ("b", "second", 2),
-        ("c", "third",  3),
-        ("d", "fourth", 4),
-        ("e", "fifth",  5),
-    ], delete_ids=[2, 3, 4])  # creates a gap: rowids 1 → 5
+    _make_telegram_mock_db(
+        db,
+        rows=[
+            ("a", "first", 1),
+            ("b", "second", 2),
+            ("c", "third", 3),
+            ("d", "fourth", 4),
+            ("e", "fifth", 5),
+        ],
+        delete_ids=[2, 3, 4],
+    )  # creates a gap: rowids 1 → 5
 
     result = recover_telegram_messages(db)
-    gaps = [m for m in result["messages"]
-            if m["confidence"] == Confidence.DELETION_DETECTED.value]
-    assert len(gaps) >= 1, "Expected at least one DELETION_DETECTED entry for the rowid gap"
+    gaps = [
+        m
+        for m in result["messages"]
+        if m["confidence"] == Confidence.DELETION_DETECTED.value
+    ]
+    assert (
+        len(gaps) >= 1
+    ), "Expected at least one DELETION_DETECTED entry for the rowid gap"
     # The gap entry must carry an honest provenance string.
     for gap in gaps:
-        assert "rowid" in gap["provenance"].lower() or "gap" in gap["provenance"].lower()
+        assert (
+            "rowid" in gap["provenance"].lower() or "gap" in gap["provenance"].lower()
+        )
 
 
 # --- Task 4h: recover_telegram_messages counts dict --------------------------
 
+
 def test_telegram_counts_dict_structure(tmp_path):
     """recover_telegram_messages returns a counts dict with all expected keys."""
     db = tmp_path / "cache4.db"
-    _make_telegram_mock_db(db, rows=[
-        ("Alice", "message one stays", 1_700_000_000),
-        ("Bob",   "message two stays", 1_700_000_060),
-    ])
+    _make_telegram_mock_db(
+        db,
+        rows=[
+            ("Alice", "message one stays", 1_700_000_000),
+            ("Bob", "message two stays", 1_700_000_060),
+        ],
+    )
     result = recover_telegram_messages(db)
     counts = result["counts"]
-    for key in ("live", "recovered_verified", "carved_partial", "deletion_detected", "total"):
+    for key in (
+        "live",
+        "recovered_verified",
+        "carved_partial",
+        "deletion_detected",
+        "total",
+    ):
         assert key in counts, f"counts dict missing key: {key}"
     assert counts["live"] == 2
-    assert counts["total"] == counts["live"] + counts["recovered_verified"] + \
-                               counts["carved_partial"] + counts["deletion_detected"]
+    assert (
+        counts["total"]
+        == counts["live"]
+        + counts["recovered_verified"]
+        + counts["carved_partial"]
+        + counts["deletion_detected"]
+    )
 
 
 # ===========================================================================
@@ -654,31 +757,43 @@ def _make_chats_db(path: Path) -> None:
 
 # --- 5a: generic schema detection, standard column order ---
 
+
 def test_detect_table_schema_users_default_order(tmp_path):
     """detect_table_schema correctly classifies users table with typical columns."""
     db = tmp_path / "u.db"
-    _make_users_db(db, ["uid", "first_name", "last_name", "phone"], [
-        ("1", "Alice", "Smith", "+91999"),
-    ])
+    _make_users_db(
+        db,
+        ["uid", "first_name", "last_name", "phone"],
+        [
+            ("1", "Alice", "Smith", "+91999"),
+        ],
+    )
     schema = detect_table_schema(db, "users")
     assert schema.usable, "Schema should be usable"
     assert schema.col_count == 4
     # 'first_name' or 'last_name' should match name_col.
-    assert schema.mapping.get("name_col") in ("first_name", "last_name"), \
-        f"name_col not found: {schema.mapping}"
+    assert schema.mapping.get("name_col") in (
+        "first_name",
+        "last_name",
+    ), f"name_col not found: {schema.mapping}"
     # 'phone' should match phone_col.
     assert schema.mapping.get("phone_col") == "phone"
 
 
 # --- 5b: shuffled column order, same heuristics apply ---
 
+
 def test_detect_table_schema_users_shuffled_order(tmp_path):
     """detect_table_schema works regardless of column declaration order."""
     db = tmp_path / "u2.db"
     # Intentionally weird order.
-    _make_users_db(db, ["phone", "last_name", "uid", "first_name"], [
-        ("+91999", "Smith", "1", "Alice"),
-    ])
+    _make_users_db(
+        db,
+        ["phone", "last_name", "uid", "first_name"],
+        [
+            ("+91999", "Smith", "1", "Alice"),
+        ],
+    )
     schema = detect_table_schema(db, "users")
     assert schema.usable
     # The id role should pick up 'uid'.
@@ -687,6 +802,7 @@ def test_detect_table_schema_users_shuffled_order(tmp_path):
 
 
 # --- 5c: chats table dynamic detection ---
+
 
 def test_detect_table_schema_chats_dynamic(tmp_path):
     """detect_table_schema correctly classifies a chats table."""
@@ -701,6 +817,7 @@ def test_detect_table_schema_chats_dynamic(tmp_path):
 
 # --- 5d: unknown table returns unusable schema ---
 
+
 def test_detect_table_schema_unknown_table(tmp_path):
     """detect_table_schema returns usable=False for a table that doesn't exist."""
     db = tmp_path / "x.db"
@@ -711,6 +828,7 @@ def test_detect_table_schema_unknown_table(tmp_path):
 
 
 # --- 5e: recover_users_and_chats live rows ---
+
 
 def test_recover_users_and_chats_live(tmp_path):
     """recover_users_and_chats returns live rows from both tables."""
@@ -727,6 +845,7 @@ def test_recover_users_and_chats_live(tmp_path):
 
 # --- 5f: recover_users_and_chats no-file fallback ---
 
+
 def test_recover_users_and_chats_deleted(tmp_path):
     """recover_users_and_chats returns error dict when file is missing (no-root path)."""
     result = recover_users_and_chats(tmp_path / "missing.db")
@@ -737,6 +856,7 @@ def test_recover_users_and_chats_deleted(tmp_path):
 
 
 # --- 5g: media blob parsing — path extraction ---
+
 
 def _make_tl_blob(path: str) -> bytes:
     """Encode a single TL-style length-prefixed string (no padding for simplicity)."""
@@ -756,11 +876,14 @@ def test_extract_media_paths_from_blob_real_pattern(tmp_path):
 def test_extract_media_paths_from_blob_multiple(tmp_path):
     """extract_media_paths_from_blob finds multiple paths."""
     # Build a blob with two paths concatenated.
-    blob = _make_tl_blob("cache/thumb_12345.jpg") + b"\x00\x00" + _make_tl_blob("3/2.mp4")
+    blob = (
+        _make_tl_blob("cache/thumb_12345.jpg") + b"\x00\x00" + _make_tl_blob("3/2.mp4")
+    )
     paths = extract_media_paths_from_blob(blob)
     # At least one of the two paths should be found.
-    assert any("jpg" in p or "mp4" in p for p in paths), \
-        f"Expected at least one media path, got: {paths}"
+    assert any(
+        "jpg" in p or "mp4" in p for p in paths
+    ), f"Expected at least one media path, got: {paths}"
 
 
 def test_extract_media_paths_from_blob_empty():
@@ -771,15 +894,40 @@ def test_extract_media_paths_from_blob_empty():
 
 # --- 5h: conversation threading ---
 
+
 def test_build_conversations_groups_by_chat():
     """build_conversations groups messages by chat_id into separate conversations."""
     messages = [
-        {"body": "hi",  "sender": "1", "chat_id": "100", "timestamp": "2024-01-01T00:00:00Z",
-         "confidence": "live", "carve_method": "", "provenance": "", "media_artifact_id": None},
-        {"body": "bye", "sender": "2", "chat_id": "200", "timestamp": "2024-01-01T00:01:00Z",
-         "confidence": "live", "carve_method": "", "provenance": "", "media_artifact_id": None},
-        {"body": "ok",  "sender": "1", "chat_id": "100", "timestamp": "2024-01-01T00:02:00Z",
-         "confidence": "live", "carve_method": "", "provenance": "", "media_artifact_id": None},
+        {
+            "body": "hi",
+            "sender": "1",
+            "chat_id": "100",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "confidence": "live",
+            "carve_method": "",
+            "provenance": "",
+            "media_artifact_id": None,
+        },
+        {
+            "body": "bye",
+            "sender": "2",
+            "chat_id": "200",
+            "timestamp": "2024-01-01T00:01:00Z",
+            "confidence": "live",
+            "carve_method": "",
+            "provenance": "",
+            "media_artifact_id": None,
+        },
+        {
+            "body": "ok",
+            "sender": "1",
+            "chat_id": "100",
+            "timestamp": "2024-01-01T00:02:00Z",
+            "confidence": "live",
+            "carve_method": "",
+            "provenance": "",
+            "media_artifact_id": None,
+        },
     ]
     convs = build_conversations(messages, users=[], chats=[])
     assert "100" in convs
@@ -791,63 +939,84 @@ def test_build_conversations_groups_by_chat():
 def test_build_conversations_resolves_sender_name():
     """build_conversations resolves sender IDs to display names from the users list."""
     messages = [
-        {"body": "hello", "sender": "42", "chat_id": "99", "timestamp": None,
-         "confidence": "live", "carve_method": "", "provenance": "", "media_artifact_id": None},
+        {
+            "body": "hello",
+            "sender": "42",
+            "chat_id": "99",
+            "timestamp": None,
+            "confidence": "live",
+            "carve_method": "",
+            "provenance": "",
+            "media_artifact_id": None,
+        },
     ]
     users = [{"_id": "42", "_name": "Alice Smith", "confidence": "live"}]
     convs = build_conversations(messages, users=users, chats=[])
     msg = convs["99"]["messages"][0]
-    assert msg["sender_name"] == "Alice Smith", \
-        f"Expected 'Alice Smith', got '{msg['sender_name']}'"
+    assert (
+        msg["sender_name"] == "Alice Smith"
+    ), f"Expected 'Alice Smith', got '{msg['sender_name']}'"
 
 
 def test_build_conversations_title_from_chat():
     """build_conversations uses the chats list to set the conversation title."""
     messages = [
-        {"body": "test", "sender": "1", "chat_id": "77", "timestamp": None,
-         "confidence": "live", "carve_method": "", "provenance": "", "media_artifact_id": None},
+        {
+            "body": "test",
+            "sender": "1",
+            "chat_id": "77",
+            "timestamp": None,
+            "confidence": "live",
+            "carve_method": "",
+            "provenance": "",
+            "media_artifact_id": None,
+        },
     ]
     chats = [{"_id": "77", "_name": "Forensic Team", "confidence": "live"}]
     convs = build_conversations(messages, users=[], chats=chats)
-    assert convs["77"]["title"] == "Forensic Team", \
-        f"Expected 'Forensic Team', got '{convs['77']['title']}'"
+    assert (
+        convs["77"]["title"] == "Forensic Team"
+    ), f"Expected 'Forensic Team', got '{convs['77']['title']}'"
 
 
 # --- 5i: timeline includes telegram events ---
+
 
 def test_timeline_includes_telegram_events():
     """build_timeline emits telegram_message events when telegram_messages are passed."""
     tg_msgs = [
         {
-            "body":       "deleted secret message",
-            "sender":     "123",
-            "timestamp":  "2024-06-01T10:00:00Z",
+            "body": "deleted secret message",
+            "sender": "123",
+            "timestamp": "2024-06-01T10:00:00Z",
             "confidence": Confidence.CARVED_PARTIAL.value,
             "source_file": "cache4.db",
         },
         {
-            "body":       "live message",
-            "sender":     "456",
-            "timestamp":  "2024-06-01T11:00:00Z",
+            "body": "live message",
+            "sender": "456",
+            "timestamp": "2024-06-01T11:00:00Z",
             "confidence": Confidence.LIVE.value,
             "source_file": "cache4.db",
         },
     ]
     tg_media = [
         {
-            "rel_path":          "4/1.jpg",
-            "artifact_id":       "ART-001",
+            "rel_path": "4/1.jpg",
+            "artifact_id": "ART-001",
             "parent_message_ts": "2024-06-01T10:30:00Z",
-            "confidence":        Confidence.CARVED_PARTIAL.value,
+            "confidence": Confidence.CARVED_PARTIAL.value,
         },
     ]
     timeline = build_timeline(telegram_messages=tg_msgs, telegram_media=tg_media)
 
     kinds = {ev["kind"] for ev in timeline}
-    assert "telegram_message" in kinds, \
-        f"Expected 'telegram_message' in timeline kinds: {kinds}"
-    assert "telegram_media" in kinds, \
-        f"Expected 'telegram_media' in timeline kinds: {kinds}"
+    assert (
+        "telegram_message" in kinds
+    ), f"Expected 'telegram_message' in timeline kinds: {kinds}"
+    assert (
+        "telegram_media" in kinds
+    ), f"Expected 'telegram_media' in timeline kinds: {kinds}"
 
     # Timeline must be sorted by timestamp.
     ts_list = [ev["timestamp"] for ev in timeline if ev["timestamp"]]
@@ -855,7 +1024,8 @@ def test_timeline_includes_telegram_events():
 
     # Confidence must be preserved.
     carved_ev = next(
-        ev for ev in timeline
+        ev
+        for ev in timeline
         if ev["kind"] == "telegram_message" and "deleted" in ev["summary"]
     )
     assert carved_ev["confidence"] == Confidence.CARVED_PARTIAL.value
@@ -1084,6 +1254,7 @@ def test_source_file_set(tmp_path):
 def test_confidence_live(tmp_path):
     """All parsed networks carry LIVE confidence (read from OS storage, not carved)."""
     from triage.config import Confidence
+
     p = tmp_path / "WifiConfigStore.xml"
     p.write_text(_XML_TYPICAL, encoding="utf-8")
     nets = parse_wifi_config(p)
@@ -1093,6 +1264,7 @@ def test_confidence_live(tmp_path):
 def test_serialisable(tmp_path):
     """WifiNetwork.to_dict() produces a JSON-serialisable dict with expected keys."""
     import json as _json
+
     p = tmp_path / "WifiConfigStore.xml"
     p.write_text(_XML_TYPICAL, encoding="utf-8")
     net = parse_wifi_config(p)[0]
@@ -1101,4 +1273,6 @@ def test_serialisable(tmp_path):
     raw = _json.dumps(d)
     assert "HomeNetwork" in raw
     # Must contain all expected keys.
-    assert {"ssid", "password", "security", "confidence", "source_file"} <= set(d.keys())
+    assert {"ssid", "password", "security", "confidence", "source_file"} <= set(
+        d.keys()
+    )

@@ -34,6 +34,7 @@ Usage example
     # On success:
     clear_checkpoint(case_dir)
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -54,6 +55,7 @@ _INTEGRITY_KEY = "_integrity_sha256"
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _checkpoint_path(case_dir: Path) -> Path:
     return case_dir / _CHECKPOINT_FILENAME
@@ -84,6 +86,7 @@ def _atomic_write(path: Path, text: str) -> None:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def checkpoint_exists(case_dir: Path) -> bool:
     """Return True if a checkpoint file exists for *case_dir*.
@@ -159,7 +162,9 @@ def load_checkpoint(case_dir: Path) -> Dict[str, Any]:
     stored_digest = envelope.get(_INTEGRITY_KEY, "")
     data_json = json.dumps(
         envelope.get("data", {}),
-        default=str, ensure_ascii=False, sort_keys=True,
+        default=str,
+        ensure_ascii=False,
+        sort_keys=True,
     )
     computed = _compute_digest(data_json)
     if stored_digest != computed:
@@ -170,7 +175,8 @@ def load_checkpoint(case_dir: Path) -> Dict[str, Any]:
 
     logger.debug(
         "Checkpoint loaded: stage=%s saved_at=%s",
-        envelope.get("stage"), envelope.get("saved_at"),
+        envelope.get("stage"),
+        envelope.get("saved_at"),
     )
     return envelope
 
@@ -196,6 +202,7 @@ def clear_checkpoint(case_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 # Auto-save helper
 # ---------------------------------------------------------------------------
+
 
 class _AutoSaveThread(threading.Thread):
     """Background daemon thread that calls *save_fn* every *interval* seconds."""

@@ -20,6 +20,9 @@ from typing import Any, Callable, Dict, List, Optional
 
 import asyncio
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 from .priority import get_priority_files, should_pull_file
 from .metrics import (
@@ -31,11 +34,7 @@ from .metrics import (
     display_speed_metrics,
 )
 from .checkpoint import (
-    checkpoint_exists,
-    load_checkpoint,
-    save_checkpoint,
     clear_checkpoint,
-    start_autosave,
     stop_autosave,
 )
 
@@ -57,7 +56,7 @@ from .flagging import (
     scan_known_hashes,
     scan_messages,
 )
-from .models import LocationPoint, MediaItem, now_iso
+from .models import LocationPoint, MediaItem
 from .parsers import (
     extract_gps,
     parse_app_db,
@@ -75,11 +74,8 @@ from .parsers import (
     parse_whatsapp_db,
     parse_whatsapp_export,
     parse_notification_history,
-    get_notification_history,
     parse_bluetooth_history,
-    get_bluetooth_history,
     parse_celltower_history,
-    get_celltower_history,
 )
 from .parsers.exif import extract_datetime
 from .parsers.collector import (
@@ -99,16 +95,14 @@ from .recovery import (
     recover_deleted_rows,
     detect_rowid_gaps,
     sqbrite_cross_check,
-    map_columns_to_whatsapp,
-    rows_meta_colnames,
 )
 from .report import generate_report
 from .timeline import build_timeline
 
 # NEW: E2E recovery and advanced analysis
-from .parsers.whatsapp_e2e import recover_e2e_messages, simulate_e2e_decryption_workflow
+from .parsers.whatsapp_e2e import recover_e2e_messages
 from .parsers.media import parse_whatsapp_media_folder, get_whatsapp_media_summary
-from .advanced import AdvancedForensicFeatures, run_advanced_analysis
+from .advanced import run_advanced_analysis
 
 # NEW: Location analysis (clustering, place ID, movement, anomaly, summary)
 from .forensics import (
@@ -1093,6 +1087,7 @@ def run_acquisition(
     # actually pulled → recovered files + defensible deletion timestamps (non-root).
     try:
         from .forensics import analyze_mediastore_trash
+
         trash = analyze_mediastore_trash(media_inventory, case.manifest)
         case.write_derived("mediastore_trash", trash)
         ts = trash["summary"]
@@ -1105,8 +1100,12 @@ def run_acquisition(
                 tier=Tier.TIER0.value,
             )
     except Exception as exc:  # trash analysis must never abort a run
-        case.log("forensics.mediastore_trash", f"trash analysis error: {exc}",
-                 result="error", tier=Tier.TIER0.value)
+        case.log(
+            "forensics.mediastore_trash",
+            f"trash analysis error: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
     case.write_derived("wifi", wifi_networks)  # Wi-Fi credentials (Tier 2)
     case.write_derived(
         "whatsapp_backup_messages", wa_backup_messages
@@ -1781,20 +1780,26 @@ def _pull_and_process_file(
     return _process_pulled_file(pulled, rec, stored, device_path, case)
 
 
-def _colocate_sqlite_sidecars(device_path: str, stored: Path,
-                              source: AcquisitionSource, case: Any) -> None:
+def _colocate_sqlite_sidecars(
+    device_path: str, stored: Path, source: AcquisitionSource, case: Any
+) -> None:
     """Pull a DB's -wal/-shm/-journal next to *stored* under the exact SQLite names."""
     name = Path(device_path).name.lower()
-    if not (name.endswith((".db", ".sqlite", ".sqlite3")) or name == "history"
-            or any(k in name for k in ("msgstore", "cache4", "mmssms"))):
+    if not (
+        name.endswith((".db", ".sqlite", ".sqlite3"))
+        or name == "history"
+        or any(k in name for k in ("msgstore", "cache4", "mmssms"))
+    ):
         return
     for suf in _SQLITE_SIDECAR_SUFFIXES:
         try:
             if source.pull_to_path(device_path + suf, Path(str(stored) + suf)):
-                case.log("adb.pull.sidecar",
-                         f"co-located {Path(device_path).name}{suf} with its DB — "
-                         f"WAL-resident (newest + deleted) rows are now recoverable",
-                         tier=Tier.TIER0.value)
+                case.log(
+                    "adb.pull.sidecar",
+                    f"co-located {Path(device_path).name}{suf} with its DB — "
+                    f"WAL-resident (newest + deleted) rows are now recoverable",
+                    tier=Tier.TIER0.value,
+                )
         except Exception:
             continue
 
@@ -2073,7 +2078,7 @@ def _recovered_as_messages(recovered_rows: list[dict]) -> list:
 
         if source_app == "whatsapp" or "msgstore" in source_file.lower():
             # Attempt rich WhatsApp column mapping.
-            from .recovery import map_columns_to_whatsapp, rows_meta_colnames, CarvedRow
+            from .recovery import map_columns_to_whatsapp, rows_meta_colnames
 
             # Reconstruct a lightweight CarvedRow-like object for the helper.
             class _FakeRow:
@@ -2222,8 +2227,15 @@ def _collect_gaps(db_artifacts: list[tuple[Path, Any]]) -> dict[str, Any]:
 _SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 
 
-def _su_pull_sqlite(source: "RealDeviceSource", remote_db: str, staging_remote: str,
-                    local_db: "Path", case: "Case", tier: "Tier", label: str) -> bool:
+def _su_pull_sqlite(
+    source: "RealDeviceSource",
+    remote_db: str,
+    staging_remote: str,
+    local_db: "Path",
+    case: "Case",
+    tier: "Tier",
+    label: str,
+) -> bool:
     """Root-copy a SQLite DB *and its -wal/-shm/-journal sidecars* off the device.
 
     The primary DB is copied via ``su -c cp`` (a byte copy — it does NOT checkpoint the
@@ -2232,22 +2244,32 @@ def _su_pull_sqlite(source: "RealDeviceSource", remote_db: str, staging_remote: 
     and the WAL carver expect (``<local_db>-wal`` etc.). A missing sidecar is normal and
     never an error. Returns ``True`` iff the primary DB was pulled.
     """
+
     def _one(r_src: str, r_stage: str, l_dst: "Path", tag: str, required: bool) -> bool:
         cp = source.adb.shell(f'su -c "cp {r_src} {r_stage}"')
         if not cp.ok:
             if required:
-                case.log(f"{label}.cp", f"su cp failed: {r_src} ({cp.stderr[:160]})",
-                         command=f"adb shell su -c 'cp {r_src} {r_stage}'",
-                         result="error", alters_device=False, tier=tier.value)
+                case.log(
+                    f"{label}.cp",
+                    f"su cp failed: {r_src} ({cp.stderr[:160]})",
+                    command=f"adb shell su -c 'cp {r_src} {r_stage}'",
+                    result="error",
+                    alters_device=False,
+                    tier=tier.value,
+                )
             return False
         pull = source.adb.pull(r_stage, l_dst)
         ok = pull.ok and l_dst.exists()
         # Sidecars are logged only when present, so their absence is not noise.
         if ok or required:
-            case.log(f"{label}.pull", f"{tag}: {r_src}",
-                     command=f"adb pull {r_stage}",
-                     result="ok" if ok else "error",
-                     alters_device=False, tier=tier.value)
+            case.log(
+                f"{label}.pull",
+                f"{tag}: {r_src}",
+                command=f"adb pull {r_stage}",
+                result="ok" if ok else "error",
+                alters_device=False,
+                tier=tier.value,
+            )
         # Best-effort tidy of the staging copy we created on shared storage.
         source.adb.shell(f'su -c "rm -f {r_stage}"')
         return ok
@@ -2256,14 +2278,22 @@ def _su_pull_sqlite(source: "RealDeviceSource", remote_db: str, staging_remote: 
         return False
     pulled = []
     for suf in _SQLITE_SIDECAR_SUFFIXES:
-        if _one(remote_db + suf, staging_remote + suf,
-                Path(str(local_db) + suf), f"sidecar {suf}", required=False):
+        if _one(
+            remote_db + suf,
+            staging_remote + suf,
+            Path(str(local_db) + suf),
+            f"sidecar {suf}",
+            required=False,
+        ):
             pulled.append(suf)
     if pulled:
-        case.log(f"{label}.sidecars",
-                 f"Recovered WAL/journal sidecars {pulled} alongside {local_db.name} — "
-                 f"newest and superseded rows are now carvable.",
-                 alters_device=False, tier=tier.value)
+        case.log(
+            f"{label}.sidecars",
+            f"Recovered WAL/journal sidecars {pulled} alongside {local_db.name} — "
+            f"newest and superseded rows are now carvable.",
+            alters_device=False,
+            tier=tier.value,
+        )
     return True
 
 
@@ -2303,8 +2333,9 @@ def _run_tier2_telegram(
     # is the highest-yield deleted-message surface it has — losing the WAL would throw it
     # away. The carver reads <local_db>-wal, which now lands beside the DB.
     local_db = staging / "tg_cache4.db"
-    if not _su_pull_sqlite(source, REMOTE_DB, REMOTE_STAGING, local_db,
-                           case, Tier.TIER2, "tier2.telegram"):
+    if not _su_pull_sqlite(
+        source, REMOTE_DB, REMOTE_STAGING, local_db, case, Tier.TIER2, "tier2.telegram"
+    ):
         case.log(
             "tier2.telegram",
             "su cp / adb pull of cache4.db failed (device may not be rooted or "
@@ -2360,7 +2391,6 @@ def _run_tier2_telegram(
     # 5. Fold messages into the pipeline.
     from .config import Confidence as _Conf
     from .models import Message as _Msg
-    from datetime import datetime as _dt, timezone as _tz
 
     for msg_dict in result.get("messages", []):
         body = msg_dict.get("body", "").strip()
@@ -2503,12 +2533,16 @@ def _run_tier2_instagram(
 
     # direct.db + its WAL/journal sidecars (Instagram bundles its own SQLite).
     local_db = staging / "direct.db"
-    if not _su_pull_sqlite(source, remote_db, stage_db, local_db,
-                           case, Tier.TIER2, "tier2.instagram"):
-        case.log("tier2.instagram",
-                 "su cp / adb pull of direct.db failed (device may not be rooted or "
-                 "IG not installed)",
-                 result="error", tier=Tier.TIER2.value)
+    if not _su_pull_sqlite(
+        source, remote_db, stage_db, local_db, case, Tier.TIER2, "tier2.instagram"
+    ):
+        case.log(
+            "tier2.instagram",
+            "su cp / adb pull of direct.db failed (device may not be rooted or "
+            "IG not installed)",
+            result="error",
+            tier=Tier.TIER2.value,
+        )
         return {}
 
     # Best-effort: pull shared_prefs for user_id → username identity.
@@ -2557,18 +2591,35 @@ def _run_tier2_snapchat(
 
     # arroyo.db (messages) + WAL/journal sidecars — the deleted-Snap surface.
     local_arroyo = staging / "arroyo.db"
-    if not _su_pull_sqlite(source, remote_arroyo, stage_arroyo, local_arroyo,
-                           case, Tier.TIER2, "tier2.snapchat"):
-        case.log("tier2.snapchat",
-                 "su cp / adb pull of arroyo.db failed (device may not be rooted or "
-                 "Snapchat not installed)",
-                 result="error", tier=Tier.TIER2.value)
+    if not _su_pull_sqlite(
+        source,
+        remote_arroyo,
+        stage_arroyo,
+        local_arroyo,
+        case,
+        Tier.TIER2,
+        "tier2.snapchat",
+    ):
+        case.log(
+            "tier2.snapchat",
+            "su cp / adb pull of arroyo.db failed (device may not be rooted or "
+            "Snapchat not installed)",
+            result="error",
+            tier=Tier.TIER2.value,
+        )
         return {}
 
     # main.db (identity) + sidecars — best-effort.
     local_main = staging / "main.db"
-    _su_pull_sqlite(source, remote_main, stage_main, local_main,
-                    case, Tier.TIER2, "tier2.snapchat.main")
+    _su_pull_sqlite(
+        source,
+        remote_main,
+        stage_main,
+        local_main,
+        case,
+        Tier.TIER2,
+        "tier2.snapchat.main",
+    )
 
     rec = case.ingest_file(
         local_arroyo,
@@ -3846,7 +3897,6 @@ def _display_hash_realtime(file_path: str, sha256: str, md5: str, size: int) -> 
 def _emit_hash_progress(file_path: str, sha256: str, md5: str, size: int) -> None:
     """Emit hash progress event for real-time display."""
     # In a real UI this would emit a signal or socket event
-    pass
 
 
 def _update_hash_progress(current: int, total: int) -> None:
@@ -3865,7 +3915,7 @@ def _initialize_hashing() -> None:
     # Reset any existing alerts or continuous state
     logger.info("Initializing hash integrity and alerting system...")
     try:
-        from .forensics.continuous_hash import ContinuousHashVerifier
+        pass
 
         # The verifier instance could be attached to a class or global state
         # depending on pipeline architecture.
