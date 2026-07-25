@@ -45,6 +45,92 @@ def _badge(label: str, colors: tuple[str, str]) -> str:
     )
 
 
+def _geotagged_section(locations: list) -> str:
+    """Generate the Geotagged Images HTML section for the forensic report.
+
+    Args:
+        locations: List of LocationPoint dicts from derived/locations.json.
+
+    Returns:
+        HTML string with a table listing all geotagged images, sorted by
+        timestamp descending, capped at 500 rows.
+    """
+    # Filter to image/MediaStore points only (skip raw dumpsys last-known-fix
+    # entries that have no associated photo).
+    photo_locs = [
+        loc for loc in locations
+        if isinstance(loc, dict) and loc.get("source") != "dumpsys"
+    ]
+    if not photo_locs:
+        return ""
+
+    # Sort most-recent first; null timestamps go to the bottom.
+    def _sort_key(loc: dict) -> str:
+        return loc.get("timestamp") or ""
+
+    sorted_locs = sorted(photo_locs, key=_sort_key, reverse=True)[:500]
+
+    rows = ""
+    for loc in sorted_locs:
+        # Derive a display filename from source_file (relative stored path).
+        sf = loc.get("source_file") or loc.get("label") or "—"
+        filename = sf.split("/")[-1].split("\\")[-1] if sf else "—"
+        ts = _esc(loc.get("timestamp") or "—")
+        lat = loc.get("latitude")
+        lon = loc.get("longitude")
+        lat_str = f"{lat:.6f}" if isinstance(lat, (int, float)) else "—"
+        lon_str = f"{lon:.6f}" if isinstance(lon, (int, float)) else "—"
+        source = _esc(loc.get("source") or "—")
+        # Coordinates link to OpenStreetMap for court-printable reports.
+        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+            coords_cell = (
+                f'<a href="https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=15/{lat}/{lon}" '
+                f'style="font-family:monospace;color:#2258a8">'
+                f"{lat_str}, {lon_str}</a>"
+            )
+        else:
+            coords_cell = f'<span style="font-family:monospace">{lat_str}, {lon_str}</span>'
+
+        rows += (
+            f"<tr>"
+            f"<td>{_esc(filename)}</td>"
+            f'<td style="font-family:monospace;font-size:11px">{ts}</td>'
+            f"<td>{coords_cell}</td>"
+            f'<td style="font-size:11px;color:#666">{source}</td>'
+            f"</tr>"
+        )
+
+    total = len(photo_locs)
+    shown = len(sorted_locs)
+    cap_note = (
+        f" Showing {shown} of {total} (most recent first)."
+        if total > shown
+        else ""
+    )
+
+    return f"""
+<h2>Geotagged Images</h2>
+<p class="note">
+  <strong>Forensic disclaimer:</strong> Locations are derived from photo EXIF
+  metadata (GPS tags embedded when the photo was taken). They do <em>not</em>
+  represent real-time location tracking. Not all images carry EXIF GPS data —
+  the device owner may have disabled location tagging, or GPS data may have been
+  stripped when photos were shared via messaging applications. Coordinates should
+  be independently verified before reliance in legal proceedings. This section
+  covers only photos acquired during this triage session.{_esc(cap_note)}
+</p>
+<table>
+  <tr>
+    <th>Filename</th>
+    <th>Timestamp (EXIF)</th>
+    <th>Coordinates</th>
+    <th>Source</th>
+  </tr>
+  {rows}
+</table>
+"""
+
+
 def generate_report(case_dir: str | Path) -> Path:
     """Render report.html inside a case folder from its persisted JSON artifacts."""
     from .custody import Case  # local import to avoid a cycle
@@ -415,6 +501,12 @@ def generate_report(case_dir: str | Path) -> Path:
                 f'<td>{_esc(f["context"])}</td><td>{_esc(f["location"])}</td></tr>'
             )
         parts.append("</table>")
+
+    # --- Geotagged Images (EXIF GPS from photos) ---
+    if locations:
+        geo_html = _geotagged_section(locations)
+        if geo_html:
+            parts.append(geo_html)
 
     # Recovered / deleted data with confidence
     if recovered:
