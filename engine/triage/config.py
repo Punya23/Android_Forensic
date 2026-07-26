@@ -20,6 +20,13 @@ class Tier(str, Enum):
     TIER2 = "tier2"  # root required: raw app-private DBs (advanced / lab mode)
 
 
+# --- Battery-aware acquisition -----------------------------------------------
+# How often the live BatteryMonitor re-polls the device during a run (seconds).
+# Kept here, not in pipeline.py, so it can be tuned per-deployment like every
+# other acquisition constant in this file.
+BATTERY_POLL_INTERVAL_S: float = 20.0
+
+
 # --- Recovery confidence tiers ----------------------------------------------
 class Confidence(str, Enum):
     """Provenance/confidence of a data row. Never render carved data with the same

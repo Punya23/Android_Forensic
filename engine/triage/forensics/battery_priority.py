@@ -55,6 +55,30 @@ def prioritize_artifacts(battery_level: int, artifacts: List[Dict]) -> List[Dict
     return extract_queue
 
 
+def should_pull_category(file_category: str, battery_level: int) -> bool:
+    """Decide whether a Tier-0 file should be pulled at the given battery level.
+
+    ``file_category`` is whatever ``pipeline._categorise()`` returns for a device
+    path ("database", "image", "video", "audio", "app-export", "document",
+    "other") -- a different, file-type-level taxonomy than the artifact-level
+    categories above ("messages", "locations", "media", ...). This maps the two
+    onto the same CRITICAL/HIGH/MEDIUM/LOW battery bands so pre-pull gating and
+    the post-hoc ``generate_battery_report`` stay consistent with each other:
+
+        database, app-export  -> CRITICAL (holds messages/contacts/calls)  -> always
+        document               -> MEDIUM                                   -> >30%
+        image, video, audio    -> LOW (bulk of storage, most expendable)   -> >50%
+        other (unrecognised)   -> LOW                                      -> >50%
+    """
+    if file_category in ("database", "app-export"):
+        return True
+    if file_category == "document":
+        return battery_level > 30
+    if file_category in ("image", "video", "audio"):
+        return battery_level > 50
+    return battery_level > 50
+
+
 def generate_battery_report(battery_level: int, all_artifacts: List[Dict]) -> str:
     """Generate HTML battery report."""
     extracted = prioritize_artifacts(battery_level, all_artifacts)
