@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
-from engine.triage.forensics.hash_verification import verify_all_hashes
+from .hash_verification import artifact_sha256, load_manifest, verify_all_hashes
 
 logger = logging.getLogger(__name__)
 
@@ -60,15 +60,9 @@ def get_recommendations(case_dir: Path) -> List[str]:
 def generate_detailed_manifest(case_dir: Path) -> str:
     """Generate detailed manifest HTML table."""
     try:
-        import json
-
-        manifest_path = case_dir / "manifest.json"
-        if not manifest_path.exists():
+        artifacts = load_manifest(case_dir)
+        if not (case_dir / "manifest.json").exists():
             return "<p class='muted'>No manifest found.</p>"
-
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            artifacts = data.get("artifacts", [])
 
         if not artifacts:
             return "<p class='muted'>Manifest is empty.</p>"
@@ -79,8 +73,8 @@ def generate_detailed_manifest(case_dir: Path) -> str:
 
         for art in artifacts:
             path = art.get("path") or art.get("stored_path", "unknown")
-            sha256 = art.get("sha256_hash", "-")
-            md5 = art.get("md5_hash", "-")
+            sha256 = artifact_sha256(art) or "-"
+            md5 = art.get("md5") or art.get("md5_hash") or "-"
             size = art.get("size_bytes", 0)
 
             html.append(

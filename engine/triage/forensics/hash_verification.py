@@ -18,7 +18,15 @@ logger = logging.getLogger(__name__)
 
 
 def load_manifest(case_dir: Path) -> List[Dict]:
-    """Load manifest.json from case directory."""
+    """Load the hash manifest as a list of artifact records.
+
+    ``custody.Case`` writes ``manifest.json`` as a top-level JSON *list* — one
+    dict per artifact whose keys mirror ``models.ArtifactRecord`` (``stored_path``,
+    ``sha256``, ``md5``, ``extracted_at``, ...). Some defensive callers may wrap it
+    as ``{"artifacts": [...]}``; accept both so verification never silently reads
+    zero files. Returning the wrong shape here means the integrity check becomes a
+    no-op, so this loader is deliberately tolerant.
+    """
     manifest_path = case_dir / "manifest.json"
     if not manifest_path.exists():
         return []
@@ -26,10 +34,18 @@ def load_manifest(case_dir: Path) -> List[Dict]:
     try:
         with open(manifest_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return data.get("artifacts", [])
     except Exception as exc:
         logger.error("Failed to load manifest %s: %s", manifest_path, exc)
         return []
+
+    if isinstance(data, dict):
+        data = data.get("artifacts", [])
+    return data if isinstance(data, list) else []
+
+
+def artifact_sha256(artifact: Dict) -> str:
+    """SHA-256 of a manifest record, tolerating the legacy ``sha256_hash`` key."""
+    return artifact.get("sha256") or artifact.get("sha256_hash") or ""
 
 
 def verify_single_file(file_path: Path, expected_hash: str) -> bool:
@@ -63,7 +79,7 @@ def verify_all_hashes(case_dir: Path) -> Dict[str, Any]:
 
     for artifact in artifacts:
         rel_path = artifact.get("stored_path")
-        expected_hash = artifact.get("sha256_hash")
+        expected_hash = artifact_sha256(artifact)
 
         if not rel_path or not expected_hash:
             continue

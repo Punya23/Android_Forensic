@@ -6,10 +6,11 @@ identifying files that are new, missing, identical, or modified (different hash)
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List
+
+from .hash_verification import artifact_sha256, load_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -18,28 +19,16 @@ def load_case_hashes(case_dir: Path) -> Dict[str, str]:
     """Load hashes from a case's manifest.json.
 
     Returns:
-        Dict mapping sha256 to original file path (or stored path if preferred,
-        but typically we map by path to compare hashes, or by hash to find dupes).
-        For comparison, we'll map path -> sha256 to detect modifications.
+        Dict mapping each artifact's device path (or stored path) to its SHA-256,
+        so two acquisitions can be diffed for new/missing/modified files.
     """
-    manifest_path = case_dir / "manifest.json"
-    if not manifest_path.exists():
-        return {}
-
-    hash_map = {}
-    try:
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            artifacts = data.get("artifacts", [])
-            for artifact in artifacts:
-                # We use the original path as the key to detect modifications to the same file
-                path = artifact.get("path") or artifact.get("stored_path")
-                sha256 = artifact.get("sha256_hash")
-                if path and sha256:
-                    hash_map[path] = sha256
-    except Exception as exc:
-        logger.error("Failed to load hashes from %s: %s", case_dir, exc)
-
+    hash_map: Dict[str, str] = {}
+    for artifact in load_manifest(case_dir):
+        # We use the original path as the key to detect modifications to the same file
+        path = artifact.get("path") or artifact.get("stored_path")
+        sha256 = artifact_sha256(artifact)
+        if path and sha256:
+            hash_map[path] = sha256
     return hash_map
 
 

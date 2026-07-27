@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict
 
-from engine.triage.forensics.hash_verification import verify_all_hashes
+from .hash_verification import verify_all_hashes
 
 logger = logging.getLogger(__name__)
 

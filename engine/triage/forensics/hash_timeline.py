@@ -6,56 +6,63 @@ how long the hashing took, presenting the data in an HTML timeline chart.
 
 from __future__ import annotations
 
-import json
 import logging
-import math
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
+
+from .hash_verification import artifact_sha256, load_manifest
 
 logger = logging.getLogger(__name__)
 
 
-def get_hash_timeline(case_dir: Path) -> List[Dict[str, Any]]:
-    """Get timeline of when files were hashed.
+def _extracted_epoch(artifact: Dict[str, Any], fallback: float) -> float:
+    """Real acquisition time from the manifest's ``extracted_at`` ISO string.
 
-    In a real implementation, this would parse detailed audit logs or metrics.
-    For demonstration, we mock elapsed time based on file size if not available.
+    Uses the recorded extraction timestamp rather than a fabricated sequential
+    value; falls back to ``fallback`` only when the field is missing/unparseable.
     """
-    manifest_path = case_dir / "manifest.json"
-    if not manifest_path.exists():
-        return []
+    raw = artifact.get("extracted_at")
+    if isinstance(raw, str) and raw:
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    return fallback
 
-    timeline = []
-    try:
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            artifacts = data.get("artifacts", [])
 
-            for idx, artifact in enumerate(artifacts):
-                path = artifact.get("path") or artifact.get("stored_path", "unknown")
-                sha256 = artifact.get("sha256_hash", "")
-                size = artifact.get("size_bytes", 0)
+def get_hash_timeline(case_dir: Path) -> List[Dict[str, Any]]:
+    """Timeline of when files were hashed, keyed on the manifest's real
+    ``extracted_at`` timestamps.
 
-                # Mock a timestamp and elapsed time if they aren't in the manifest
-                # Typically these would be tracked via ContinuousHashVerifier or pipeline telemetry
-                ts = artifact.get("timestamp", 1700000000 + idx)
-                # Estimate: 100 MB/s hashing speed = 0.01 seconds per MB
-                elapsed = artifact.get(
-                    "hash_duration_s", max(0.001, size / (100 * 1024 * 1024))
-                )
+    Per-file hashing *duration* is not recorded in the manifest, so ``time_elapsed``
+    remains a size-based estimate (labeled as such); the timestamp itself is the
+    genuine acquisition time, not a placeholder.
+    """
+    timeline: List[Dict[str, Any]] = []
+    for idx, artifact in enumerate(load_manifest(case_dir)):
+        path = artifact.get("path") or artifact.get("stored_path", "unknown")
+        sha256 = artifact_sha256(artifact)
+        size = artifact.get("size_bytes", 0)
 
-                if sha256:
-                    timeline.append(
-                        {
-                            "timestamp": ts,
-                            "file": path,
-                            "hash": sha256,
-                            "size": size,
-                            "time_elapsed": elapsed,
-                        }
-                    )
-    except Exception as exc:
-        logger.error("Failed to load hash timeline from %s: %s", case_dir, exc)
+        ts = _extracted_epoch(artifact, fallback=1700000000 + idx)
+        # Estimate: 100 MB/s hashing speed = 0.01 seconds per MB (duration is not
+        # tracked per-file, so this is an estimate, not a measured value).
+        elapsed = artifact.get(
+            "hash_duration_s", max(0.001, size / (100 * 1024 * 1024))
+        )
+
+        if sha256:
+            timeline.append(
+                {
+                    "timestamp": ts,
+                    "file": path,
+                    "hash": sha256,
+                    "size": size,
+                    "time_elapsed": elapsed,
+                    "time_elapsed_estimated": "hash_duration_s" not in artifact,
+                }
+            )
 
     # Sort chronologically
     return sorted(timeline, key=lambda x: x["timestamp"])

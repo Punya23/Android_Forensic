@@ -12,6 +12,7 @@ a failure in one artifact is logged and the run continues.
 from __future__ import annotations
 
 import concurrent.futures
+import logging
 import tempfile
 import threading
 from dataclasses import dataclass, field
@@ -20,6 +21,10 @@ from typing import Any, Callable, Dict, List, Optional
 
 import asyncio
 import time
+
+# Module logger. Several hash-integrity helpers reference `logger`; without this it
+# was an undefined name that would raise NameError the moment any of them ran.
+logger = logging.getLogger(__name__)
 
 from .priority import get_priority_files, should_pull_file
 from .metrics import (
@@ -1428,10 +1433,20 @@ def _process_pulled_file(
     Dict
         Collected data: media_items, locations, app_messages, etc.
     """
-    if hasattr(rec, "sha256_hash") and rec.sha256_hash:
-        _display_hash_realtime(
-            dev_path, rec.sha256_hash, getattr(rec, "md5_hash", ""), rec.size_bytes
-        )
+    # ArtifactRecord stores the digest under `sha256`/`md5` (not `*_hash`); the old
+    # attribute names never existed, so this display never fired. The display is
+    # purely cosmetic — never let it abort acquisition and lose evidence.
+    _rec_sha = getattr(rec, "sha256", "") or getattr(rec, "sha256_hash", "")
+    if _rec_sha:
+        try:
+            _display_hash_realtime(
+                dev_path,
+                _rec_sha,
+                getattr(rec, "md5", "") or getattr(rec, "md5_hash", ""),
+                rec.size_bytes,
+            )
+        except Exception as exc:  # pragma: no cover - display must never be fatal
+            logger.debug("hash display failed (non-fatal): %s", exc)
 
     result: Dict[str, List] = {
         "size_bytes": rec.size_bytes,

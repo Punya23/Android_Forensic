@@ -126,11 +126,16 @@ def generate_report(case_dir: str | Path) -> Path:
         </div>"""
         )
 
-    # Hash Verification Section
+    # Hash Verification Section — never silently omit; a missing integrity result
+    # must be visible, not swallowed.
     try:
         parts.append(_generate_hash_verification_section(Path(case_dir)))
-    except Exception:
-        pass
+    except Exception as exc:  # pragma: no cover - defensive
+        parts.append(
+            "<h2>Evidence Integrity (SHA-256 re-verification)</h2>"
+            f'<p class="note" style="color:#a5322f">Integrity verification could not be '
+            f"run: {_esc(exc)}. Do not treat this as a pass.</p>"
+        )
 
     # Case-intelligence: profile + AI leads (only if a case brief was provided)
     if isinstance(case_profile, dict) and case_profile.get("crime_type"):
@@ -563,6 +568,65 @@ def _fmt_val(v: Any) -> str:
     if isinstance(v, dict) and "__blob__" in v:
         return f'<blob {v.get("len",0)}B>'
     return str(v)
+
+
+def _generate_hash_verification_section(case_dir: Path) -> str:
+    """Recompute every stored artifact's SHA-256 and render the integrity verdict.
+
+    This is the examiner-facing proof that the case folder has not been altered since
+    acquisition. It re-hashes each file in the manifest and compares against the value
+    recorded at extraction time. A blank/absent section previously hid a broken check
+    (the manifest was never read); this now renders INTACT / TAMPERED / NOT-VERIFIED
+    explicitly so the report never implies integrity it did not test.
+    """
+    from .forensics.hash_verification import verify_all_hashes
+
+    v = verify_all_hashes(case_dir)
+    total = int(v.get("total_files", 0))
+    verified = int(v.get("verified", 0))
+    failed = int(v.get("failed", 0))
+    status = v.get("integrity_status", "UNKNOWN")
+    failed_files = v.get("failed_files", []) or []
+
+    _STATUS = {
+        "INTACT": ("VERIFIED — INTACT", ("#1c7d3f", "#e4f4ea")),
+        "TAMPERED": ("MISMATCH — TAMPERED / CORRUPTED", ("#a5322f", "#f6dedd")),
+        "UNKNOWN": ("NOT VERIFIED", ("#666", "#eee")),
+        "ERROR": ("VERIFICATION ERROR", ("#a5322f", "#f6dedd")),
+    }
+    label, colors = _STATUS.get(status, _STATUS["UNKNOWN"])
+
+    parts = ["<h2>Evidence Integrity (SHA-256 re-verification)</h2>"]
+    parts.append(f"<p>{_badge(label, colors)}</p>")
+
+    if total == 0:
+        parts.append(
+            '<p class="note">No hashed artifacts were found in the manifest to verify. '
+            "Integrity could not be confirmed for this case — this is not a pass.</p>"
+        )
+        return "\n".join(parts)
+
+    parts.append(
+        f'<p class="note">{_esc(verified)} of {_esc(total)} artifact(s) re-hashed and '
+        f"matched their manifest SHA-256; <b>{_esc(failed)}</b> mismatch(es). Hashes were "
+        "recorded at extraction time and recomputed now over the stored files.</p>"
+    )
+    if failed_files:
+        parts.append(
+            "<table><tr><th>File</th><th>Expected SHA-256 (at acquisition)</th></tr>"
+        )
+        for f in failed_files[:200]:
+            parts.append(
+                f'<tr><td>{_esc(f.get("path"))}</td>'
+                f'<td class="mono">{_esc(f.get("expected"))}</td></tr>'
+            )
+        parts.append("</table>")
+        parts.append(
+            '<p class="note" style="color:#a5322f"><b>A mismatch means a stored file no '
+            "longer hashes to the value recorded at acquisition.</b> Treat the affected "
+            "artifacts as compromised and investigate before relying on them.</p>"
+        )
+    return "\n".join(parts)
 
 
 def _mediastore_trash_section(trash: dict) -> str:
