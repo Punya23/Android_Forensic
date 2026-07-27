@@ -57,9 +57,7 @@ WhatsApp binary key file (protobuf KeyEnvelope):
 from __future__ import annotations
 
 import hashlib
-import io
 import re
-import sqlite3
 import struct
 import tempfile
 import zlib
@@ -100,7 +98,7 @@ WAL_MAGIC_BE: bytes = b"\x37\x7f\x06\x83"
 WAL_MAGIC_LE: bytes = b"\x37\x7f\x06\x82"
 
 # WAL frame & file header sizes — fixed by the SQLite WAL specification.
-WAL_FILE_HDR_SIZE: int  = 32
+WAL_FILE_HDR_SIZE: int = 32
 WAL_FRAME_HDR_SIZE: int = 24
 
 # --- crypt15 format constants (AES-256-GCM + protobuf header) ---------------
@@ -110,10 +108,10 @@ CRYPT15_MAGIC: bytes = b"\x00\x01\x00"
 
 # Protobuf field numbers inside the crypt15 BackupEncryptionSpec message.
 # These are part of the published WhatsApp Backup protobuf schema.
-CRYPT15_PROTO_FIELD_IV:         int = 3   # bytes  — 12-byte AES-GCM nonce
-CRYPT15_PROTO_FIELD_ITERATIONS: int = 1   # varint — PBKDF2 iteration count
-CRYPT15_PROTO_FIELD_SALT:       int = 2   # bytes  — PBKDF2 salt (if password)
-CRYPT15_PROTO_FIELD_KEYSPEC:    int = 10  # bytes  — key specification sub-msg
+CRYPT15_PROTO_FIELD_IV: int = 3  # bytes  — 12-byte AES-GCM nonce
+CRYPT15_PROTO_FIELD_ITERATIONS: int = 1  # varint — PBKDF2 iteration count
+CRYPT15_PROTO_FIELD_SALT: int = 2  # bytes  — PBKDF2 salt (if password)
+CRYPT15_PROTO_FIELD_KEYSPEC: int = 10  # bytes  — key specification sub-msg
 
 # Expected AES-GCM nonce length in crypt15 (bytes).
 CRYPT15_GCM_NONCE_LEN: int = 12
@@ -130,83 +128,81 @@ CRYPT14_MAGIC_BYTE: int = 0x01
 
 # crypt14 fixed header field offsets and lengths.
 # Source: https://github.com/ElDavoo/wa-crypt-tools (MIT) header analysis.
-CRYPT14_KEY_VERSION_OFFSET: int = 1    # 2 bytes — identifies the server key
-CRYPT14_KEY_VERSION_LEN:    int = 2
-CRYPT14_SERVER_KEY_OFFSET:  int = 3    # 32 bytes — server public key ID
-CRYPT14_SERVER_KEY_LEN:     int = 32
-CRYPT14_SALT_OFFSET:        int = 35   # 32 bytes — HKDF salt
-CRYPT14_SALT_LEN:           int = 32
-CRYPT14_IV_OFFSET:          int = 67   # 16 bytes — AES-GCM IV
-CRYPT14_IV_LEN:             int = 16
-CRYPT14_DATA_OFFSET:        int = 83   # ciphertext starts here
-CRYPT14_FOOTER_LEN:         int = 10   # trailing bytes to strip (WhatsApp footer)
+CRYPT14_KEY_VERSION_OFFSET: int = 1  # 2 bytes — identifies the server key
+CRYPT14_KEY_VERSION_LEN: int = 2
+CRYPT14_SERVER_KEY_OFFSET: int = 3  # 32 bytes — server public key ID
+CRYPT14_SERVER_KEY_LEN: int = 32
+CRYPT14_SALT_OFFSET: int = 35  # 32 bytes — HKDF salt
+CRYPT14_SALT_LEN: int = 32
+CRYPT14_IV_OFFSET: int = 67  # 16 bytes — AES-GCM IV
+CRYPT14_IV_LEN: int = 16
+CRYPT14_DATA_OFFSET: int = 83  # ciphertext starts here
+CRYPT14_FOOTER_LEN: int = 10  # trailing bytes to strip (WhatsApp footer)
 
 # crypt12 uses the same header layout as crypt14.
-CRYPT12_IV_OFFSET:   int = CRYPT14_IV_OFFSET
-CRYPT12_IV_LEN:      int = CRYPT14_IV_LEN
+CRYPT12_IV_OFFSET: int = CRYPT14_IV_OFFSET
+CRYPT12_IV_LEN: int = CRYPT14_IV_LEN
 CRYPT12_DATA_OFFSET: int = CRYPT14_DATA_OFFSET
-CRYPT12_FOOTER_LEN:  int = CRYPT14_FOOTER_LEN
+CRYPT12_FOOTER_LEN: int = CRYPT14_FOOTER_LEN
 
 # --- WhatsApp binary key file (protobuf KeyEnvelope) -----------------------
 
 # Field numbers in the WhatsApp key file protobuf.
-KEY_FILE_FIELD_VERSION: int = 1   # varint — key version
-KEY_FILE_FIELD_KEY:     int = 2   # bytes  — raw 32-byte AES-256 key
-KEY_FILE_FIELD_KEY_ID:  int = 3   # bytes  — server key ID / salt (optional)
+KEY_FILE_FIELD_VERSION: int = 1  # varint — key version
+KEY_FILE_FIELD_KEY: int = 2  # bytes  — raw 32-byte AES-256 key
+KEY_FILE_FIELD_KEY_ID: int = 3  # bytes  — server key ID / salt (optional)
 
 # Expected raw AES key length (AES-256).
-AES_KEY_LEN:     int = 32
+AES_KEY_LEN: int = 32
 
 # AES-GCM authentication tag length (bytes) — fixed by the GCM spec.
 AES_GCM_TAG_LEN: int = 16
 
 # AES block size (bytes) — fixed by the AES spec.
-AES_BLOCK_SIZE:  int = 16
+AES_BLOCK_SIZE: int = 16
 
 # --- HKDF -------------------------------------------------------------------
 
 # HKDF info strings used by WhatsApp for key derivation.
 # Field values extracted from WhatsApp's obfuscated DEX; use as-is.
-HKDF_INFO_BACKUP:  bytes = b"WhatsApp Backup Keys"
+HKDF_INFO_BACKUP: bytes = b"WhatsApp Backup Keys"
 HKDF_INFO_CRYPT15: bytes = b"WhatsApp Crypt15 Keys"
 
 # HKDF / SHA-256 hash length (bytes) — fixed by the SHA-256 specification.
 HKDF_HASH_LEN: int = 32
 
 # Protobuf base-128 varint encoding constants (from the protobuf encoding spec).
-PROTO_VARINT_CONTINUE_BIT: int = 0x80   # bit 7 set → more bytes follow
-PROTO_VARINT_DATA_MASK:    int = 0x7F   # bits 0-6 carry data
-PROTO_MAX_VARINT_BITS:     int = 64     # stop decoding after 64 bits
+PROTO_VARINT_CONTINUE_BIT: int = 0x80  # bit 7 set → more bytes follow
+PROTO_VARINT_DATA_MASK: int = 0x7F  # bits 0-6 carry data
+PROTO_MAX_VARINT_BITS: int = 64  # stop decoding after 64 bits
 
 # Protobuf wire type constants (from the protobuf encoding spec §3).
-PROTO_WIRE_VARINT:    int = 0
-PROTO_WIRE_64BIT:     int = 1
+PROTO_WIRE_VARINT: int = 0
+PROTO_WIRE_64BIT: int = 1
 PROTO_WIRE_LEN_DELIM: int = 2
-PROTO_WIRE_32BIT:     int = 5
-PROTO_WIRE_FIELD_SHIFT: int = 3   # field number = tag >> PROTO_WIRE_FIELD_SHIFT
-PROTO_WIRE_TYPE_MASK:   int = 0x07  # wire type = tag & PROTO_WIRE_TYPE_MASK
+PROTO_WIRE_32BIT: int = 5
+PROTO_WIRE_FIELD_SHIFT: int = 3  # field number = tag >> PROTO_WIRE_FIELD_SHIFT
+PROTO_WIRE_TYPE_MASK: int = 0x07  # wire type = tag & PROTO_WIRE_TYPE_MASK
 
 # Scan window sizes for JID extraction from crypt file header/tail.
 HEADER_SCAN_WINDOW: int = 512
-TAIL_SCAN_WINDOW:   int = 256
+TAIL_SCAN_WINDOW: int = 256
 
 # SQLite B-tree page type codes (from SQLite file format spec §3.9).
-BTREE_LEAF_TABLE:     int = 0x0D
+BTREE_LEAF_TABLE: int = 0x0D
 BTREE_INTERIOR_TABLE: int = 0x05
-BTREE_LEAF_INDEX:     int = 0x0A
+BTREE_LEAF_INDEX: int = 0x0A
 BTREE_INTERIOR_INDEX: int = 0x02
-VALID_BTREE_PAGE_TYPES: frozenset = frozenset({
-    0x0D, 0x05, 0x0A, 0x02
-})
+VALID_BTREE_PAGE_TYPES: frozenset = frozenset({0x0D, 0x05, 0x0A, 0x02})
 
 # Byte offsets within a SQLite B-tree page header (from spec §3.9).
-BTREE_PAGE_TYPE_OFFSET:     int = 0   # 1 byte: page type
-BTREE_FREEBLOCK_PTR_OFFSET: int = 1   # 2 bytes: first freeblock offset
+BTREE_PAGE_TYPE_OFFSET: int = 0  # 1 byte: page type
+BTREE_FREEBLOCK_PTR_OFFSET: int = 1  # 2 bytes: first freeblock offset
 
 # Byte offsets within a SQLite freeblock (from spec §3.10).
-FREEBLOCK_NEXT_OFFSET: int = 0   # 2 bytes: next freeblock offset (0 = end)
-FREEBLOCK_SIZE_OFFSET: int = 2   # 2 bytes: total size of this freeblock
-FREEBLOCK_DATA_OFFSET: int = 4   # payload starts here
+FREEBLOCK_NEXT_OFFSET: int = 0  # 2 bytes: next freeblock offset (0 = end)
+FREEBLOCK_SIZE_OFFSET: int = 2  # 2 bytes: total size of this freeblock
+FREEBLOCK_DATA_OFFSET: int = 4  # payload starts here
 
 # Byte offset of the page-size field inside the SQLite file header (spec §3.3).
 SQLITE_PAGE_SIZE_HEADER_OFFSET: int = 16
@@ -248,22 +244,24 @@ SQLITE_HEADER_MAGIC: bytes = b"SQLite format 3\x00"
 # Result dataclass
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class E2EDecryptionResult:
     """Structured result from an E2E recovery attempt."""
 
-    technique:        str                        # "wal" | "freeblock" | "key_derive" | "metadata"
-    messages_found:   int = 0
-    messages:         List[Message] = field(default_factory=list)
-    metadata:         Dict[str, Any] = field(default_factory=dict)
-    success:          bool = False
-    error:            Optional[str] = None
+    technique: str  # "wal" | "freeblock" | "key_derive" | "metadata"
+    messages_found: int = 0
+    messages: List[Message] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    success: bool = False
+    error: Optional[str] = None
     provenance_notes: List[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
 # Minimal protobuf decoder (pure Python, no protobuf library required)
 # ---------------------------------------------------------------------------
+
 
 class _ProtoReader:
     """Stateful minimal protobuf reader supporting wire types 0 (varint) and
@@ -275,14 +273,14 @@ class _ProtoReader:
 
     def __init__(self, data: bytes) -> None:
         self._data = data
-        self._pos  = 0
+        self._pos = 0
 
     # -- low-level -----------------------------------------------------------
 
     def _read_varint(self) -> int:
         """Decode a base-128 varint.  Returns 0 on truncation."""
         result = 0
-        shift  = 0
+        shift = 0
         while self._pos < len(self._data):
             b = self._data[self._pos]
             self._pos += 1
@@ -320,21 +318,21 @@ class _ProtoReader:
             if tag_byte == 0:
                 break
             field_number = tag_byte >> PROTO_WIRE_FIELD_SHIFT
-            wire_type    = tag_byte &  PROTO_WIRE_TYPE_MASK
+            wire_type = tag_byte & PROTO_WIRE_TYPE_MASK
 
-            if wire_type == PROTO_WIRE_VARINT:        # varint
+            if wire_type == PROTO_WIRE_VARINT:  # varint
                 value: Any = self._read_varint()
-            elif wire_type == PROTO_WIRE_LEN_DELIM:   # length-delimited
+            elif wire_type == PROTO_WIRE_LEN_DELIM:  # length-delimited
                 length = self._read_varint()
-                value  = self._read_bytes(length)
-            elif wire_type == PROTO_WIRE_64BIT:       # 64-bit fixed — skip
+                value = self._read_bytes(length)
+            elif wire_type == PROTO_WIRE_64BIT:  # 64-bit fixed — skip
                 self._read_bytes(8)
                 continue
-            elif wire_type == PROTO_WIRE_32BIT:       # 32-bit fixed — skip
+            elif wire_type == PROTO_WIRE_32BIT:  # 32-bit fixed — skip
                 self._read_bytes(4)
                 continue
             else:
-                break                                 # unknown wire type
+                break  # unknown wire type
 
             fields.setdefault(field_number, []).append(value)
 
@@ -349,6 +347,7 @@ def _proto_decode(data: bytes) -> Dict[int, List[Any]]:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _ms_to_iso(ms: Optional[int]) -> Optional[str]:
     """Convert milliseconds-since-epoch to ISO-8601 UTC string."""
@@ -415,11 +414,11 @@ def _hkdf_sha256(
     prk = _hmac_sha256(salt, ikm)
 
     # Expand step
-    t   = b""
+    t = b""
     okm = b""
-    n   = -(-length // HKDF_HASH_LEN)  # ceil division
+    n = -(-length // HKDF_HASH_LEN)  # ceil division
     for i in range(1, n + 1):
-        t    = _hmac_sha256(prk, t + info + bytes([i]))
+        t = _hmac_sha256(prk, t + info + bytes([i]))
         okm += t
 
     return okm[:length]
@@ -428,6 +427,7 @@ def _hkdf_sha256(
 def hmac_sha256(key: bytes, data: bytes) -> bytes:
     """HMAC-SHA256 convenience wrapper."""
     import hmac as _hmac
+
     return _hmac.new(key, data, hashlib.sha256).digest()
 
 
@@ -440,6 +440,7 @@ def _try_aes_gcm_decrypt(
     """AES-256-GCM decrypt; returns plaintext or None on failure."""
     try:
         from Crypto.Cipher import AES  # type: ignore[import]
+
         cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
         return cipher.decrypt_and_verify(ciphertext, tag)
     except Exception:
@@ -450,8 +451,9 @@ def _try_aes_cbc_decrypt(key: bytes, iv: bytes, ciphertext: bytes) -> Optional[b
     """AES-256-CBC decrypt with PKCS#7 un-padding; returns plaintext or None."""
     try:
         from Crypto.Cipher import AES  # type: ignore[import]
+
         cipher = AES.new(key, AES.MODE_CBC, iv=iv)
-        pt  = cipher.decrypt(ciphertext)
+        pt = cipher.decrypt(ciphertext)
         pad = pt[-1]
         if 1 <= pad <= AES_BLOCK_SIZE:
             pt = pt[:-pad]
@@ -462,7 +464,7 @@ def _try_aes_cbc_decrypt(key: bytes, iv: bytes, ciphertext: bytes) -> Optional[b
 
 def _sqlite_magic(data: bytes) -> bool:
     """Return True if *data* starts with the SQLite3 file header magic."""
-    return data[:len(SQLITE_HEADER_MAGIC)] == SQLITE_HEADER_MAGIC
+    return data[: len(SQLITE_HEADER_MAGIC)] == SQLITE_HEADER_MAGIC
 
 
 def _maybe_decompress(data: bytes) -> bytes:
@@ -476,7 +478,7 @@ def _maybe_decompress(data: bytes) -> bytes:
         return data  # already a raw SQLite file
 
     for magic in ZLIB_MAGIC_VARIANTS:
-        if data[:len(magic)] == magic:
+        if data[: len(magic)] == magic:
             try:
                 return zlib.decompress(data)
             except zlib.error:
@@ -497,6 +499,7 @@ def _maybe_decompress(data: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 # Key file parsing (binary protobuf KeyEnvelope)
 # ---------------------------------------------------------------------------
+
 
 def parse_key_file(key_data: bytes) -> Optional[bytes]:
     """Extract the raw 32-byte AES key from a WhatsApp binary key file.
@@ -552,16 +555,18 @@ def parse_key_file(key_data: bytes) -> Optional[bytes]:
 # Crypt header parsing — dynamic, format-driven, no magic offsets
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class _CryptHeader:
     """Parsed header fields from a WhatsApp crypt backup file."""
-    version:     int           # 12, 14, or 15
-    iv:          bytes         # AES-GCM nonce / IV
-    data_start:  int           # byte offset where ciphertext begins
-    tag_start:   Optional[int] # byte offset of GCM auth tag (None = GCM appended)
-    mode:        str           # "gcm" or "cbc"
-    hkdf_salt:   Optional[bytes] = None  # HKDF or PBKDF2 salt from header
-    extra:       Dict[str, Any] = field(default_factory=dict)
+
+    version: int  # 12, 14, or 15
+    iv: bytes  # AES-GCM nonce / IV
+    data_start: int  # byte offset where ciphertext begins
+    tag_start: Optional[int]  # byte offset of GCM auth tag (None = GCM appended)
+    mode: str  # "gcm" or "cbc"
+    hkdf_salt: Optional[bytes] = None  # HKDF or PBKDF2 salt from header
+    extra: Dict[str, Any] = field(default_factory=dict)
 
 
 def _detect_crypt_version(data: bytes) -> Optional[int]:
@@ -572,7 +577,7 @@ def _detect_crypt_version(data: bytes) -> Optional[int]:
     """
     if not data:
         return None
-    if data[:len(CRYPT15_MAGIC)] == CRYPT15_MAGIC:
+    if data[: len(CRYPT15_MAGIC)] == CRYPT15_MAGIC:
         return CRYPT_VERSION_15
     if len(data) > CRYPT14_IV_OFFSET + CRYPT14_IV_LEN:
         first_byte = data[0]
@@ -630,7 +635,10 @@ def _parse_crypt15_header(data: bytes) -> Optional[_CryptHeader]:
             if isinstance(sub_bytes, bytes):
                 sub_fields = _proto_decode(sub_bytes)
                 for candidate in sub_fields.get(CRYPT15_PROTO_FIELD_IV, []):
-                    if isinstance(candidate, bytes) and len(candidate) >= CRYPT15_GCM_NONCE_LEN:
+                    if (
+                        isinstance(candidate, bytes)
+                        and len(candidate) >= CRYPT15_GCM_NONCE_LEN
+                    ):
                         iv = candidate[:CRYPT15_GCM_NONCE_LEN]
                         break
                 if iv:
@@ -643,19 +651,21 @@ def _parse_crypt15_header(data: bytes) -> Optional[_CryptHeader]:
     tag_start = len(data) - AES_GCM_TAG_LEN
 
     return _CryptHeader(
-        version    = CRYPT_VERSION_15,
-        iv         = iv,
-        data_start = data_start,
-        tag_start  = tag_start,
-        mode       = "gcm",
-        hkdf_salt  = hkdf_salt,
-        extra      = {
+        version=CRYPT_VERSION_15,
+        iv=iv,
+        data_start=data_start,
+        tag_start=tag_start,
+        mode="gcm",
+        hkdf_salt=hkdf_salt,
+        extra={
             "proto_fields": {str(k): str(v) for k, v in fields.items()},
         },
     )
 
 
-def _parse_crypt14_header(data: bytes, version: int = CRYPT_VERSION_14) -> Optional[_CryptHeader]:
+def _parse_crypt14_header(
+    data: bytes, version: int = CRYPT_VERSION_14
+) -> Optional[_CryptHeader]:
     """Parse a crypt14 (or crypt12) file header using the fixed field layout.
 
     All offsets (CRYPT14_IV_OFFSET, CRYPT14_DATA_OFFSET, etc.) are named
@@ -670,25 +680,25 @@ def _parse_crypt14_header(data: bytes, version: int = CRYPT_VERSION_14) -> Optio
         return None
 
     # Extract HKDF salt from the fixed header region.
-    salt_end  = CRYPT14_SALT_OFFSET + CRYPT14_SALT_LEN
-    hkdf_salt = data[CRYPT14_SALT_OFFSET : salt_end] if len(data) >= salt_end else None
+    salt_end = CRYPT14_SALT_OFFSET + CRYPT14_SALT_LEN
+    hkdf_salt = data[CRYPT14_SALT_OFFSET:salt_end] if len(data) >= salt_end else None
 
     # Extract IV from the fixed header region.
     iv_end = CRYPT14_IV_OFFSET + CRYPT14_IV_LEN
     if len(data) < iv_end:
         return None
-    iv = data[CRYPT14_IV_OFFSET : iv_end]
+    iv = data[CRYPT14_IV_OFFSET:iv_end]
 
     # Ciphertext starts right after the header; GCM tag is the last bytes.
     tag_start = len(data) - AES_GCM_TAG_LEN
 
     return _CryptHeader(
-        version    = CRYPT_VERSION_14,
-        iv         = iv,
-        data_start = CRYPT14_DATA_OFFSET,
-        tag_start  = tag_start,
-        mode       = "gcm",
-        hkdf_salt  = hkdf_salt,
+        version=CRYPT_VERSION_14,
+        iv=iv,
+        data_start=CRYPT14_DATA_OFFSET,
+        tag_start=tag_start,
+        mode="gcm",
+        hkdf_salt=hkdf_salt,
     )
 
 
@@ -711,6 +721,7 @@ def parse_crypt_header(data: bytes) -> Optional[_CryptHeader]:
 # ---------------------------------------------------------------------------
 # AES key preparation
 # ---------------------------------------------------------------------------
+
 
 def _prepare_aes_keys(
     key_material: bytes,
@@ -776,6 +787,7 @@ def _prepare_aes_keys(
 # Technique 1: WAL recovery
 # ---------------------------------------------------------------------------
 
+
 def _recover_from_wal(db_path: Path) -> List[Message]:
     """Recover messages from a SQLite Write-Ahead Log (WAL) file.
 
@@ -830,15 +842,17 @@ def _recover_from_wal(db_path: Path) -> List[Message]:
         # Corrupt / non-standard — fall back to JID extraction from raw WAL.
         jids = _extract_jids_from_bytes(wal_data)
         for jid in jids:
-            messages.append(Message(
-                app="whatsapp",
-                sender=jid.split("@")[0],
-                body="[WAL: JID reference only — body not recovered]",
-                confidence=Confidence.CARVED_PARTIAL,
-                source_file=wal_path.name,
-                provenance=f"WAL raw JID extraction from {wal_path.name}",
-                flags=["wal_recovery", "partial"],
-            ))
+            messages.append(
+                Message(
+                    app="whatsapp",
+                    sender=jid.split("@")[0],
+                    body="[WAL: JID reference only — body not recovered]",
+                    confidence=Confidence.CARVED_PARTIAL,
+                    source_file=wal_path.name,
+                    provenance=f"WAL raw JID extraction from {wal_path.name}",
+                    flags=["wal_recovery", "partial"],
+                )
+            )
         return messages
 
     # Collect most-recent page version from WAL frames.
@@ -846,10 +860,9 @@ def _recover_from_wal(db_path: Path) -> List[Message]:
     offset = WAL_FILE_HDR_SIZE
     while offset + WAL_FRAME_HDR_SIZE + page_size <= len(wal_data):
         frame_hdr = wal_data[offset : offset + WAL_FRAME_HDR_SIZE]
-        page_num  = struct.unpack_from(">I", frame_hdr, 0)[0]
+        page_num = struct.unpack_from(">I", frame_hdr, 0)[0]
         page_data = wal_data[
-            offset + WAL_FRAME_HDR_SIZE :
-            offset + WAL_FRAME_HDR_SIZE + page_size
+            offset + WAL_FRAME_HDR_SIZE : offset + WAL_FRAME_HDR_SIZE + page_size
         ]
         if page_num > 0:
             page_map[page_num] = page_data  # later frame wins
@@ -867,7 +880,7 @@ def _recover_from_wal(db_path: Path) -> List[Message]:
     reconstructed = bytearray(orig_data)
     for pg_num, pg_data in page_map.items():
         start = (pg_num - 1) * page_size
-        end   = start + page_size
+        end = start + page_size
         if end > len(reconstructed):
             reconstructed.extend(b"\x00" * (end - len(reconstructed)))
         reconstructed[start:end] = pg_data
@@ -887,15 +900,17 @@ def _recover_from_wal(db_path: Path) -> List[Message]:
         strings = _extract_printable(bytes(reconstructed))
         for s in strings:
             if len(s) >= MIN_BODY_LEN:
-                messages.append(Message(
-                    app="whatsapp",
-                    sender="<wal-carved>",
-                    body=s,
-                    confidence=Confidence.CARVED_PARTIAL,
-                    source_file=wal_path.name,
-                    provenance=f"WAL raw text extraction from {wal_path.name}",
-                    flags=["wal_recovery", "carved"],
-                ))
+                messages.append(
+                    Message(
+                        app="whatsapp",
+                        sender="<wal-carved>",
+                        body=s,
+                        confidence=Confidence.CARVED_PARTIAL,
+                        source_file=wal_path.name,
+                        provenance=f"WAL raw text extraction from {wal_path.name}",
+                        flags=["wal_recovery", "carved"],
+                    )
+                )
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -905,6 +920,7 @@ def _recover_from_wal(db_path: Path) -> List[Message]:
 # ---------------------------------------------------------------------------
 # Technique 2: Freeblock carving
 # ---------------------------------------------------------------------------
+
 
 def _carve_from_freeblocks(db_path: Path) -> List[Message]:
     """Carve messages from SQLite freeblock chains.
@@ -928,11 +944,15 @@ def _carve_from_freeblocks(db_path: Path) -> List[Message]:
         return []
 
     hdr_page_size = struct.unpack_from(">H", raw, SQLITE_PAGE_SIZE_HEADER_OFFSET)[0]
-    page_size = hdr_page_size if hdr_page_size in SQLITE_PAGE_SIZE_CANDIDATES else SQLITE_PAGE_SIZE_FALLBACK
+    page_size = (
+        hdr_page_size
+        if hdr_page_size in SQLITE_PAGE_SIZE_CANDIDATES
+        else SQLITE_PAGE_SIZE_FALLBACK
+    )
 
     n_pages = len(raw) // page_size
     carved_texts: List[str] = []
-    jid_refs: List[str]     = []
+    jid_refs: List[str] = []
 
     for pg in range(n_pages):
         page_data = raw[pg * page_size : (pg + 1) * page_size]
@@ -950,11 +970,19 @@ def _carve_from_freeblocks(db_path: Path) -> List[Message]:
             visited.add(fb_offset)
             if fb_offset + FREEBLOCK_DATA_OFFSET > page_size:
                 break
-            next_fb  = struct.unpack_from(">H", page_data, fb_offset + FREEBLOCK_NEXT_OFFSET)[0]  # noqa: E501
-            fb_size  = struct.unpack_from(">H", page_data, fb_offset + FREEBLOCK_SIZE_OFFSET)[0]
+            next_fb = struct.unpack_from(
+                ">H", page_data, fb_offset + FREEBLOCK_NEXT_OFFSET
+            )[
+                0
+            ]  # noqa: E501
+            fb_size = struct.unpack_from(
+                ">H", page_data, fb_offset + FREEBLOCK_SIZE_OFFSET
+            )[0]
             if fb_size < FREEBLOCK_DATA_OFFSET or fb_offset + fb_size > page_size:
                 break
-            fb_content = page_data[fb_offset + FREEBLOCK_DATA_OFFSET : fb_offset + fb_size]
+            fb_content = page_data[
+                fb_offset + FREEBLOCK_DATA_OFFSET : fb_offset + fb_size
+            ]
 
             carved_texts.extend(_extract_printable(fb_content))
             jid_refs.extend(_extract_jids_from_bytes(fb_content))
@@ -965,32 +993,36 @@ def _carve_from_freeblocks(db_path: Path) -> List[Message]:
         if text in seen_bodies:
             continue
         seen_bodies.add(text)
-        messages.append(Message(
-            app="whatsapp",
-            sender="<freeblock-carved>",
-            body=text,
-            timestamp=None,
-            confidence=Confidence.CARVED_PARTIAL,
-            source_file=db_path.name,
-            provenance=f"freeblock carving from {db_path.name}",
-            flags=["freeblock_carved"],
-        ))
+        messages.append(
+            Message(
+                app="whatsapp",
+                sender="<freeblock-carved>",
+                body=text,
+                timestamp=None,
+                confidence=Confidence.CARVED_PARTIAL,
+                source_file=db_path.name,
+                provenance=f"freeblock carving from {db_path.name}",
+                flags=["freeblock_carved"],
+            )
+        )
 
     seen_jids: set = set()
     for jid in jid_refs:
         if jid in seen_jids:
             continue
         seen_jids.add(jid)
-        messages.append(Message(
-            app="whatsapp",
-            sender=jid.split("@")[0],
-            body="[freeblock: JID reference — body not recovered]",
-            timestamp=None,
-            confidence=Confidence.DELETION_DETECTED,
-            source_file=db_path.name,
-            provenance=f"JID extracted from freeblock in {db_path.name}",
-            flags=["freeblock_carved", "jid_only"],
-        ))
+        messages.append(
+            Message(
+                app="whatsapp",
+                sender=jid.split("@")[0],
+                body="[freeblock: JID reference — body not recovered]",
+                timestamp=None,
+                confidence=Confidence.DELETION_DETECTED,
+                source_file=db_path.name,
+                provenance=f"JID extracted from freeblock in {db_path.name}",
+                flags=["freeblock_carved", "jid_only"],
+            )
+        )
 
     return messages
 
@@ -998,6 +1030,7 @@ def _carve_from_freeblocks(db_path: Path) -> List[Message]:
 # ---------------------------------------------------------------------------
 # Technique 3: Crypt decryption (format-driven, zero hard-coded offsets)
 # ---------------------------------------------------------------------------
+
 
 def _attempt_key_derivation(
     db_path: Path,
@@ -1049,9 +1082,9 @@ def _attempt_key_derivation(
         return []
 
     # --- Step 3: Extract ciphertext and tag from file using header positions ---
-    iv         = header.iv
+    iv = header.iv
     data_start = header.data_start
-    tag_start  = header.tag_start  # position of the last AES_GCM_TAG_LEN bytes
+    tag_start = header.tag_start  # position of the last AES_GCM_TAG_LEN bytes
 
     if tag_start is None:
         tag_start = len(crypt_data) - AES_GCM_TAG_LEN
@@ -1059,8 +1092,8 @@ def _attempt_key_derivation(
     if data_start >= tag_start:
         return []
 
-    ciphertext = crypt_data[data_start : tag_start]
-    auth_tag   = crypt_data[tag_start : tag_start + AES_GCM_TAG_LEN]
+    ciphertext = crypt_data[data_start:tag_start]
+    auth_tag = crypt_data[tag_start : tag_start + AES_GCM_TAG_LEN]
 
     # --- Step 4: Try each key candidate ---
     messages: List[Message] = []
@@ -1109,6 +1142,7 @@ def _attempt_key_derivation(
 # Technique 4: Metadata extraction (no key required)
 # ---------------------------------------------------------------------------
 
+
 def _extract_message_metadata(db_path: Path) -> List[Message]:
     """Extract forensic metadata from a crypt file without decrypting.
 
@@ -1132,13 +1166,13 @@ def _extract_message_metadata(db_path: Path) -> List[Message]:
     header = parse_crypt_header(crypt_data)
     if header is not None:
         # Parse the region before the ciphertext for any cleartext JIDs.
-        header_region = crypt_data[:header.data_start]
+        header_region = crypt_data[: header.data_start]
         jids = _extract_jids_from_bytes(header_region)
 
     # Fallback: scan HEADER_SCAN_WINDOW bytes from head and TAIL_SCAN_WINDOW from tail.
     if not jids:
         scan_head = crypt_data[:HEADER_SCAN_WINDOW]
-        scan_tail = crypt_data[-min(TAIL_SCAN_WINDOW, len(crypt_data)):]
+        scan_tail = crypt_data[-min(TAIL_SCAN_WINDOW, len(crypt_data)) :]
         jids = _extract_jids_from_bytes(scan_head) + _extract_jids_from_bytes(scan_tail)
 
     seen: set = set()
@@ -1146,34 +1180,38 @@ def _extract_message_metadata(db_path: Path) -> List[Message]:
         if jid in seen:
             continue
         seen.add(jid)
-        messages.append(Message(
-            app="whatsapp",
-            sender=jid.split("@")[0],
-            body="[encrypted backup: chat partner detected, content not decrypted]",
-            timestamp=None,
-            confidence=Confidence.DELETION_DETECTED,
-            source_file=db_path.name,
-            provenance=f"metadata extraction from {db_path.name} header (no key)",
-            flags=["metadata_only", "encrypted"],
-        ))
+        messages.append(
+            Message(
+                app="whatsapp",
+                sender=jid.split("@")[0],
+                body="[encrypted backup: chat partner detected, content not decrypted]",
+                timestamp=None,
+                confidence=Confidence.DELETION_DETECTED,
+                source_file=db_path.name,
+                provenance=f"metadata extraction from {db_path.name} header (no key)",
+                flags=["metadata_only", "encrypted"],
+            )
+        )
 
     # If no JIDs found but file is large enough to contain a backup, emit a stub.
     min_stub_size = len(CRYPT15_MAGIC) + AES_GCM_TAG_LEN + 1
     if not messages and len(crypt_data) > min_stub_size:
         version_tag = header.version if header else "?"
-        messages.append(Message(
-            app="whatsapp",
-            sender="<encrypted>",
-            body=(
-                f"[encrypted crypt{version_tag} backup {db_path.name}: "
-                f"{len(crypt_data):,} bytes — key required]"
-            ),
-            timestamp=None,
-            confidence=Confidence.DELETION_DETECTED,
-            source_file=db_path.name,
-            provenance=f"size-based metadata stub from {db_path.name}",
-            flags=["metadata_only", "encrypted", "no_jid_found"],
-        ))
+        messages.append(
+            Message(
+                app="whatsapp",
+                sender="<encrypted>",
+                body=(
+                    f"[encrypted crypt{version_tag} backup {db_path.name}: "
+                    f"{len(crypt_data):,} bytes — key required]"
+                ),
+                timestamp=None,
+                confidence=Confidence.DELETION_DETECTED,
+                source_file=db_path.name,
+                provenance=f"size-based metadata stub from {db_path.name}",
+                flags=["metadata_only", "encrypted", "no_jid_found"],
+            )
+        )
 
     return messages
 
@@ -1181,6 +1219,7 @@ def _extract_message_metadata(db_path: Path) -> List[Message]:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def recover_e2e_messages(
     db_path: Path,
@@ -1216,13 +1255,12 @@ def recover_e2e_messages(
     seen_bodies: set = set()
 
     runners: Dict[str, Any] = {
-        "wal":        lambda: _recover_from_wal(db_path),
-        "freeblock":  lambda: _carve_from_freeblocks(db_path),
+        "wal": lambda: _recover_from_wal(db_path),
+        "freeblock": lambda: _carve_from_freeblocks(db_path),
         "key_derive": lambda: (
-            _attempt_key_derivation(db_path, key_material)
-            if key_material else []
+            _attempt_key_derivation(db_path, key_material) if key_material else []
         ),
-        "metadata":   lambda: _extract_message_metadata(db_path),
+        "metadata": lambda: _extract_message_metadata(db_path),
     }
 
     for technique in techniques:
@@ -1249,17 +1287,17 @@ def analyze_e2e_encryption(db_path: Path) -> Dict[str, Any]:
     serialisation and inclusion in a forensic report.
     """
     result: Dict[str, Any] = {
-        "file":             db_path.name,
-        "path":             str(db_path),
-        "size_bytes":       0,
-        "crypt_version":    None,
-        "has_wal":          False,
-        "wal_size_bytes":   0,
-        "jids_in_header":   [],
-        "decryptable":      False,
-        "pycryptodome":     False,
-        "header_parsed":    False,
-        "notes":            [],
+        "file": db_path.name,
+        "path": str(db_path),
+        "size_bytes": 0,
+        "crypt_version": None,
+        "has_wal": False,
+        "wal_size_bytes": 0,
+        "jids_in_header": [],
+        "decryptable": False,
+        "pycryptodome": False,
+        "header_parsed": False,
+        "notes": [],
     }
 
     try:
@@ -1279,7 +1317,7 @@ def analyze_e2e_encryption(db_path: Path) -> Dict[str, Any]:
         if header:
             result["header_parsed"] = True
             result["jids_in_header"] = _extract_jids_from_bytes(
-                db_path.read_bytes()[:header.data_start]
+                db_path.read_bytes()[: header.data_start]
             )
             result["notes"].append(
                 f"Header parsed: crypt{header.version}, "
@@ -1294,15 +1332,16 @@ def analyze_e2e_encryption(db_path: Path) -> Dict[str, Any]:
         Path(str(db_path) + "-wal"),
     ):
         if wal_candidate.exists():
-            result["has_wal"]        = True
+            result["has_wal"] = True
             result["wal_size_bytes"] = wal_candidate.stat().st_size
             break
 
     # Check pycryptodome availability.
     try:
         from Crypto.Cipher import AES  # type: ignore[import]
+
         result["pycryptodome"] = True
-        result["decryptable"]  = True
+        result["decryptable"] = True
         result["notes"].append("pycryptodome available — key-based decryption possible")
     except ImportError:
         result["notes"].append(
@@ -1417,32 +1456,31 @@ def simulate_e2e_decryption_workflow(
                 all_messages.append(m)
 
     summary = {
-        "total_recovered":        len(all_messages),
+        "total_recovered": len(all_messages),
         "by_technique": {
-            name: res.messages_found
-            for name, res in technique_results.items()
+            name: res.messages_found for name, res in technique_results.items()
         },
         "by_confidence": {
             conf.value: sum(1 for m in all_messages if m.confidence == conf)
             for conf in Confidence
         },
-        "wal_available":          analysis["has_wal"],
-        "key_material_supplied":  key_material is not None,
+        "wal_available": analysis["has_wal"],
+        "key_material_supplied": key_material is not None,
         "pycryptodome_available": analysis["pycryptodome"],
-        "header_parsed":          analysis.get("header_parsed", False),
+        "header_parsed": analysis.get("header_parsed", False),
     }
 
     return {
-        "analysis":   analysis,
+        "analysis": analysis,
         "techniques": {
             name: {
-                "success":        res.success,
+                "success": res.success,
                 "messages_found": res.messages_found,
-                "error":          res.error,
-                "notes":          res.provenance_notes,
+                "error": res.error,
+                "notes": res.provenance_notes,
             }
             for name, res in technique_results.items()
         },
         "messages": [m.to_dict() for m in all_messages],
-        "summary":  summary,
+        "summary": summary,
     }

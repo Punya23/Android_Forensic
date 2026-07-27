@@ -1,3 +1,8 @@
+/* Leaflet map styles — must come before Tailwind to allow overrides */
+@import "leaflet/dist/leaflet.css";
+@import "leaflet.markercluster/dist/MarkerCluster.css";
+@import "leaflet.markercluster/dist/MarkerCluster.Default.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -50,4 +55,16 @@
   .td {
     @apply px-3 py-2 border-t border-line align-top;
   }
+  /* Leaflet map container — needs explicit height and z-index isolation */
+  .leaflet-container {
+    height: 100%;
+    width: 100%;
+    background: #1c2127;
+    font-family: inherit;
+    z-index: 0;
+  }
+  /* Keep Leaflet popups above sidebar (sidebar z-index is browser default ~auto) */
+  .leaflet-pane { z-index: 1; }
+  .leaflet-control { z-index: 2; }
+  .leaflet-top, .leaflet-bottom { z-index: 2; }
 }

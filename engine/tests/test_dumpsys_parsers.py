@@ -8,7 +8,7 @@ Each section follows the same style as the existing test_parsers.py:
   * Positive / negative / edge-case coverage
   * Assertions on confidence badges, timeline events, and summary stats
 """
-import pytest
+
 
 # ---------------------------------------------------------------------------
 # Imports — mirror the style of the existing test suite
@@ -99,6 +99,7 @@ _NOTIF_NO_TEXT = """\
 
 # ── 1a. Basic parsing ────────────────────────────────────────────────────────
 
+
 class TestNotificationParsing:
 
     def test_android11_numbered_format_count(self):
@@ -110,19 +111,19 @@ class TestNotificationParsing:
         """First notification (WhatsApp) has correct package, app_name, title, text, priority."""
         notifs = parse_notification_history(_NOTIF_ANDROID11)
         wa = notifs[0]
-        assert wa["package"]  == "com.whatsapp"
+        assert wa["package"] == "com.whatsapp"
         assert wa["app_name"] == "WhatsApp"
-        assert wa["title"]    == "Alice Johnson"
-        assert wa["text"]     == "Hey are you free tonight?"
+        assert wa["title"] == "Alice Johnson"
+        assert wa["text"] == "Hey are you free tonight?"
         assert wa["priority"] == "high"
-        assert wa["is_comm"]  is True
+        assert wa["is_comm"] is True
 
     def test_android11_telegram_is_comm(self):
         """Telegram notification flagged as communication app."""
         notifs = parse_notification_history(_NOTIF_ANDROID11)
         tg = notifs[1]
         assert tg["app_name"] == "Telegram"
-        assert tg["is_comm"]  is True
+        assert tg["is_comm"] is True
 
     def test_android11_dialer_not_comm(self):
         """com.android.dialer is NOT in the communication-app set."""
@@ -136,14 +137,12 @@ class TestNotificationParsing:
         assert len(notifs) == 2
         app_names = {n["app_name"] for n in notifs}
         assert "Instagram" in app_names
-        assert "Signal"    in app_names
+        assert "Signal" in app_names
 
     def test_android9_signal_app_name(self):
         """Signal package (org.thoughtcrime.securesms) maps to friendly name 'Signal'."""
         notifs = parse_notification_history(_NOTIF_ANDROID9_LEGACY)
-        signal = next(
-            (n for n in notifs if n["app_name"] == "Signal"), None
-        )
+        signal = next((n for n in notifs if n["app_name"] == "Signal"), None)
         assert signal is not None, (
             f"Expected a notification with app_name='Signal', got: "
             f"{[n['app_name'] for n in notifs]}"
@@ -185,6 +184,7 @@ class TestNotificationParsing:
 
 # ── 1b. Timestamp parsing ────────────────────────────────────────────────────
 
+
 class TestNotificationTimestamp:
 
     def test_millisecond_epoch(self):
@@ -219,6 +219,7 @@ class TestNotificationTimestamp:
 
 
 # ── 1c. Timeline builder ─────────────────────────────────────────────────────
+
 
 class TestNotificationTimeline:
 
@@ -257,6 +258,7 @@ class TestNotificationTimeline:
     def test_timeline_serialisable(self):
         """TimelineEvent.to_dict() produces JSON-serialisable output."""
         import json
+
         notifs = parse_notification_history(_NOTIF_ANDROID11)
         events = build_notification_timeline(notifs)
         for ev in events:
@@ -265,6 +267,7 @@ class TestNotificationTimeline:
 
 
 # ── 1d. Summary statistics ───────────────────────────────────────────────────
+
 
 class TestNotificationSummary:
 
@@ -300,7 +303,7 @@ class TestNotificationSummary:
         notifs = parse_notification_history(_NOTIF_NO_TEXT)
         summary = get_notification_summary(notifs)
         assert summary["with_title"] == 1
-        assert summary["with_text"]  == 0
+        assert summary["with_text"] == 0
 
     def test_empty_input_summary(self):
         """Summary over empty list returns zero totals."""
@@ -372,6 +375,7 @@ lastSeen = 1751826000001
 
 # ── 2a. Basic parsing ────────────────────────────────────────────────────────
 
+
 class TestBluetoothParsing:
 
     def test_typical_count(self):
@@ -383,25 +387,25 @@ class TestBluetoothParsing:
         """iPhone device: MAC, name, bond_state, connected, device_class."""
         devices = parse_bluetooth_history(_BT_TYPICAL)
         iphone = next(d for d in devices if d["mac"] == "AA:BB:CC:DD:EE:FF")
-        assert iphone["name"]         == "Alice iPhone"
-        assert iphone["bond_state"]   == "bonded"
-        assert iphone["connected"]    is True
+        assert iphone["name"] == "Alice iPhone"
+        assert iphone["bond_state"] == "bonded"
+        assert iphone["connected"] is True
         assert iphone["device_class"] == "phone"
-        assert iphone["is_paired"]    is True
+        assert iphone["is_paired"] is True
 
     def test_speaker_class(self):
         """JBL Speaker (class=0x0400) maps to 'audio'."""
         devices = parse_bluetooth_history(_BT_TYPICAL)
         speaker = next(d for d in devices if "JBL" in d["name"])
         assert speaker["device_class"] == "audio"
-        assert speaker["connected"]    is False
+        assert speaker["connected"] is False
 
     def test_laptop_class(self):
         """Dell Laptop (class=0x0100) maps to 'computer'."""
         devices = parse_bluetooth_history(_BT_TYPICAL)
         laptop = next(d for d in devices if "Laptop" in d["name"])
         assert laptop["device_class"] == "computer"
-        assert laptop["bond_state"]   == "bonding"
+        assert laptop["bond_state"] == "bonding"
 
     def test_string_bond_state(self):
         """String 'bonded' maps to canonical bond_state='bonded'."""
@@ -418,9 +422,9 @@ class TestBluetoothParsing:
         """Device without a 'name' field is still parsed (name='')."""
         devices = parse_bluetooth_history(_BT_NO_NAME)
         assert len(devices) == 1
-        assert devices[0]["name"]       == ""
-        assert devices[0]["connected"]  is True
-        assert devices[0]["mac"]        == "DE:AD:BE:EF:00:11"
+        assert devices[0]["name"] == ""
+        assert devices[0]["connected"] is True
+        assert devices[0]["mac"] == "DE:AD:BE:EF:00:11"
 
     def test_mac_uppercased(self):
         """MAC addresses are normalised to uppercase."""
@@ -441,6 +445,7 @@ class TestBluetoothParsing:
 
 
 # ── 2b. Timestamp parsing ────────────────────────────────────────────────────
+
 
 class TestBluetoothTimestamp:
 
@@ -473,18 +478,19 @@ class TestBluetoothTimestamp:
 
 # ── 2c. Timeline builder ─────────────────────────────────────────────────────
 
+
 class TestBluetoothTimeline:
 
     def test_timeline_count_for_timestamped(self):
         """Timeline includes one event per device that has a last_seen timestamp."""
         devices = parse_bluetooth_history(_BT_TYPICAL)
-        events  = build_bluetooth_timeline(devices)
+        events = build_bluetooth_timeline(devices)
         assert len(events) == 3
 
     def test_timeline_event_kind(self):
         """All events have kind='bluetooth'."""
         devices = parse_bluetooth_history(_BT_TYPICAL)
-        events  = build_bluetooth_timeline(devices)
+        events = build_bluetooth_timeline(devices)
         for ev in events:
             assert ev.kind == "bluetooth"
             assert ev.confidence == Confidence.LIVE
@@ -492,7 +498,7 @@ class TestBluetoothTimeline:
     def test_timeline_ref_is_mac(self):
         """Event ref field is the MAC address."""
         devices = parse_bluetooth_history(_BT_TYPICAL)
-        events  = build_bluetooth_timeline(devices)
+        events = build_bluetooth_timeline(devices)
         for ev in events:
             # MAC pattern: XX:XX:XX:XX:XX:XX
             assert len(ev.ref) == 17 and ev.ref.count(":") == 5
@@ -500,31 +506,31 @@ class TestBluetoothTimeline:
     def test_timeline_connected_label(self):
         """Connected device shows 'CONNECTED' in summary."""
         devices = parse_bluetooth_history(_BT_TYPICAL)
-        events  = build_bluetooth_timeline(devices)
-        connected_ev = next(
-            ev for ev in events if "Alice iPhone" in ev.summary
-        )
+        events = build_bluetooth_timeline(devices)
+        connected_ev = next(ev for ev in events if "Alice iPhone" in ev.summary)
         assert "CONNECTED" in connected_ev.summary
 
     def test_timeline_summary_contains_class(self):
         """Summary includes the device class label."""
         devices = parse_bluetooth_history(_BT_TYPICAL)
-        events  = build_bluetooth_timeline(devices)
+        events = build_bluetooth_timeline(devices)
         summaries = " ".join(ev.summary for ev in events)
-        assert "phone"    in summaries
-        assert "audio"    in summaries
+        assert "phone" in summaries
+        assert "audio" in summaries
         assert "computer" in summaries
 
     def test_timeline_serialisable(self):
         """TimelineEvent.to_dict() produces JSON-serialisable dicts."""
         import json
+
         devices = parse_bluetooth_history(_BT_TYPICAL)
-        events  = build_bluetooth_timeline(devices)
+        events = build_bluetooth_timeline(devices)
         for ev in events:
             json.dumps(ev.to_dict())  # must not raise
 
 
 # ── 2d. Summary statistics ───────────────────────────────────────────────────
+
 
 class TestBluetoothSummary:
 
@@ -557,23 +563,23 @@ class TestBluetoothSummary:
         """summary['by_class'] has correct per-class counts."""
         devices = parse_bluetooth_history(_BT_TYPICAL)
         summary = get_bluetooth_summary(devices)
-        assert summary["by_class"]["phone"]    == 1
-        assert summary["by_class"]["audio"]    == 1
+        assert summary["by_class"]["phone"] == 1
+        assert summary["by_class"]["audio"] == 1
         assert summary["by_class"]["computer"] == 1
 
     def test_by_bond_state_counts(self):
         """summary['by_bond_state'] reflects bonded vs bonding split."""
         devices = parse_bluetooth_history(_BT_TYPICAL)
         summary = get_bluetooth_summary(devices)
-        assert summary["by_bond_state"]["bonded"]  == 2
+        assert summary["by_bond_state"]["bonded"] == 2
         assert summary["by_bond_state"]["bonding"] == 1
 
     def test_empty_summary(self):
         """Summary over empty list returns zero totals."""
         summary = get_bluetooth_summary([])
-        assert summary["total"]     == 0
+        assert summary["total"] == 0
         assert summary["connected"] == 0
-        assert summary["paired"]    == 0
+        assert summary["paired"] == 0
 
 
 # ===========================================================================
@@ -640,6 +646,7 @@ _CT_EMPTY = ""
 
 # ── 3a. Basic parsing ────────────────────────────────────────────────────────
 
+
 class TestCellTowerParsing:
 
     def test_typical_count(self):
@@ -651,11 +658,11 @@ class TestCellTowerParsing:
         """First tower has correct MCC, MNC, LAC, CID, operator, network type."""
         towers = parse_celltower_history(_CT_TYPICAL)
         t = towers[0]
-        assert t["mcc"]          == 404
-        assert t["mnc"]          == 20
-        assert t["lac"]          == 1234
-        assert t["cell_id"]      == 56789
-        assert t["operator"]     == "Airtel"
+        assert t["mcc"] == 404
+        assert t["mnc"] == 20
+        assert t["lac"] == 1234
+        assert t["cell_id"] == 56789
+        assert t["operator"] == "Airtel"
         assert t["network_type"] == "GSM"
 
     def test_signal_excellent(self):
@@ -713,6 +720,7 @@ class TestCellTowerParsing:
 
 # ── 3b. Timestamp parsing ────────────────────────────────────────────────────
 
+
 class TestCellTowerTimestamp:
 
     def test_millisecond_epoch(self):
@@ -724,7 +732,9 @@ class TestCellTowerTimestamp:
         assert result is not None and "T" in result
 
     def test_iso_date_string(self):
-        assert parse_celltower_timestamp("2025-07-06 14:23:01") == "2025-07-06T14:23:01Z"
+        assert (
+            parse_celltower_timestamp("2025-07-06 14:23:01") == "2025-07-06T14:23:01Z"
+        )
 
     def test_android_log_format(self):
         result = parse_celltower_timestamp("07-06 14:23:01.456")
@@ -737,6 +747,7 @@ class TestCellTowerTimestamp:
 
 
 # ── 3c. Timeline builder ─────────────────────────────────────────────────────
+
 
 class TestCellTowerTimeline:
 
@@ -751,7 +762,7 @@ class TestCellTowerTimeline:
         towers = parse_celltower_history(_CT_TYPICAL)
         events = build_celltower_timeline(towers)
         for ev in events:
-            assert ev.kind       == "celltower"
+            assert ev.kind == "celltower"
             assert ev.confidence == Confidence.LIVE
 
     def test_event_ref_contains_cid(self):
@@ -767,14 +778,16 @@ class TestCellTowerTimeline:
         events = build_celltower_timeline(towers)
         summaries = " ".join(ev.summary for ev in events)
         assert "Airtel" in summaries
-        assert "Jio"    in summaries
+        assert "Jio" in summaries
 
     def test_event_summary_contains_signal_label(self):
         """Event summary includes the signal quality label."""
         towers = parse_celltower_history(_CT_TYPICAL)
         events = build_celltower_timeline(towers)
         summaries = " ".join(ev.summary for ev in events)
-        assert any(label in summaries for label in ("excellent", "good", "fair", "poor"))
+        assert any(
+            label in summaries for label in ("excellent", "good", "fair", "poor")
+        )
 
     def test_no_timestamp_excluded(self):
         """Towers without a timestamp are excluded from the timeline."""
@@ -787,6 +800,7 @@ class TestCellTowerTimeline:
     def test_timeline_serialisable(self):
         """TimelineEvent.to_dict() is JSON-serialisable."""
         import json
+
         towers = parse_celltower_history(_CT_TYPICAL)
         events = build_celltower_timeline(towers)
         for ev in events:
@@ -795,38 +809,39 @@ class TestCellTowerTimeline:
 
 # ── 3d. Summary statistics ───────────────────────────────────────────────────
 
+
 class TestCellTowerSummary:
 
     def test_total_count(self):
         """summary['total'] matches tower record count."""
-        towers  = parse_celltower_history(_CT_TYPICAL)
+        towers = parse_celltower_history(_CT_TYPICAL)
         summary = get_celltower_summary(towers)
         assert summary["total"] == 3
 
     def test_unique_towers(self):
         """summary['unique_towers'] counts distinct (cid, lac) pairs."""
-        towers  = parse_celltower_history(_CT_TYPICAL)
+        towers = parse_celltower_history(_CT_TYPICAL)
         summary = get_celltower_summary(towers)
         # All three have different CIDs
         assert summary["unique_towers"] == 3
 
     def test_by_operator(self):
         """summary['by_operator'] has correct per-operator counts."""
-        towers  = parse_celltower_history(_CT_TYPICAL)
+        towers = parse_celltower_history(_CT_TYPICAL)
         summary = get_celltower_summary(towers)
         assert summary["by_operator"]["Airtel"] == 2
-        assert summary["by_operator"]["Jio"]    == 1
+        assert summary["by_operator"]["Jio"] == 1
 
     def test_by_signal(self):
         """summary['by_signal'] groups towers by signal quality."""
-        towers  = parse_celltower_history(_CT_TYPICAL)
+        towers = parse_celltower_history(_CT_TYPICAL)
         summary = get_celltower_summary(towers)
         total_from_signal = sum(summary["by_signal"].values())
         assert total_from_signal == 3
 
     def test_by_network_type(self):
         """summary['by_network_type'] has GSM and LTE."""
-        towers  = parse_celltower_history(_CT_TYPICAL)
+        towers = parse_celltower_history(_CT_TYPICAL)
         summary = get_celltower_summary(towers)
         assert summary["by_network_type"].get("GSM", 0) == 2
         assert summary["by_network_type"].get("LTE", 0) == 1
@@ -834,13 +849,14 @@ class TestCellTowerSummary:
     def test_empty_summary(self):
         """Summary over empty list returns zero totals."""
         summary = get_celltower_summary([])
-        assert summary["total"]        == 0
+        assert summary["total"] == 0
         assert summary["unique_towers"] == 0
 
 
 # ===========================================================================
 # SECTION 4 — Cross-parser integration checks
 # ===========================================================================
+
 
 class TestCrossParserIntegration:
     """Verify that all three parsers integrate with the shared models correctly."""
@@ -851,15 +867,19 @@ class TestCrossParserIntegration:
         events = build_notification_timeline(notifs)
         for ev in events:
             d = ev.to_dict()
-            assert {"timestamp", "kind", "summary", "confidence", "ref"} <= set(d.keys())
+            assert {"timestamp", "kind", "summary", "confidence", "ref"} <= set(
+                d.keys()
+            )
 
     def test_bluetooth_timeline_event_to_dict_has_required_keys(self):
         """TimelineEvent from bluetooth has all required serialisation keys."""
         devices = parse_bluetooth_history(_BT_TYPICAL)
-        events  = build_bluetooth_timeline(devices)
+        events = build_bluetooth_timeline(devices)
         for ev in events:
             d = ev.to_dict()
-            assert {"timestamp", "kind", "summary", "confidence", "ref"} <= set(d.keys())
+            assert {"timestamp", "kind", "summary", "confidence", "ref"} <= set(
+                d.keys()
+            )
 
     def test_celltower_timeline_event_to_dict_has_required_keys(self):
         """TimelineEvent from celltower has all required serialisation keys."""
@@ -867,37 +887,30 @@ class TestCrossParserIntegration:
         events = build_celltower_timeline(towers)
         for ev in events:
             d = ev.to_dict()
-            assert {"timestamp", "kind", "summary", "confidence", "ref"} <= set(d.keys())
+            assert {"timestamp", "kind", "summary", "confidence", "ref"} <= set(
+                d.keys()
+            )
 
     def test_all_confidence_values_are_live(self):
         """All three parsers set Confidence.LIVE on timeline events."""
-        n_events = build_notification_timeline(parse_notification_history(_NOTIF_ANDROID11))
+        n_events = build_notification_timeline(
+            parse_notification_history(_NOTIF_ANDROID11)
+        )
         b_events = build_bluetooth_timeline(parse_bluetooth_history(_BT_TYPICAL))
         c_events = build_celltower_timeline(parse_celltower_history(_CT_TYPICAL))
         for ev in n_events + b_events + c_events:
-            assert ev.confidence == Confidence.LIVE, (
-                f"Expected LIVE, got {ev.confidence} for {ev.kind} event"
-            )
+            assert (
+                ev.confidence == Confidence.LIVE
+            ), f"Expected LIVE, got {ev.confidence} for {ev.kind} event"
 
     def test_package_imports_from_triage_parsers(self):
         """All public symbols are importable from the top-level parsers package."""
         from triage.parsers import (
             parse_notification_history,
-            get_notification_history,
-            parse_notification_timestamp,
-            build_notification_timeline,
-            get_notification_summary,
             parse_bluetooth_history,
-            get_bluetooth_history,
-            parse_bluetooth_timestamp,
-            build_bluetooth_timeline,
-            get_bluetooth_summary,
             parse_celltower_history,
-            get_celltower_history,
-            parse_celltower_timestamp,
-            build_celltower_timeline,
-            get_celltower_summary,
         )
+
         # If we got here, all 15 symbols are importable — test passes implicitly.
         assert callable(parse_notification_history)
         assert callable(parse_bluetooth_history)

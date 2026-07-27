@@ -18,6 +18,7 @@ fingerprint. Only rows *not* found by the primary pass are surfaced — the goal
 cross-check coverage, not duplicate inflation of the recovered-row count. All results
 are marked CARVED_PARTIAL; we never up-grade confidence here.
 """
+
 from __future__ import annotations
 
 import re
@@ -29,22 +30,25 @@ from typing import Any, Optional
 from ..config import Confidence
 
 _HEADER_MAGIC = b"SQLite format 3\x00"
-_MIN_TEXT_LEN = 3       # shorter strings are almost certainly noise
-_MIN_PRINTABLE = 0.75   # fraction of chars that must be printable
+_MIN_TEXT_LEN = 3  # shorter strings are almost certainly noise
+_MIN_PRINTABLE = 0.75  # fraction of chars that must be printable
 
 
 @dataclass
 class SqbriteRow:
     """A recovered row from the sqbrite secondary pass."""
+
     values: list[Any]
-    offset: int           # byte offset in the file where this record was found
+    offset: int  # byte offset in the file where this record was found
     source_file: str
     confidence: Confidence = Confidence.CARVED_PARTIAL
     provenance: str = "sqbrite secondary pass"
-    warnings: list[str] = field(default_factory=lambda: [
-        "sqbrite secondary-pass carve: record structure inferred from raw bytes; "
-        "field boundaries and column mapping are approximate"
-    ])
+    warnings: list[str] = field(
+        default_factory=lambda: [
+            "sqbrite secondary-pass carve: record structure inferred from raw bytes; "
+            "field boundaries and column mapping are approximate"
+        ]
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -134,10 +138,12 @@ def _has_useful_text(values: list[Any]) -> bool:
 # ---------------------------------------------------------------------------
 # Core scanner: slide a window over raw file bytes looking for record headers
 # ---------------------------------------------------------------------------
-_VARINT_BYTE = re.compile(rb"[\x01-\xff]")   # any non-null byte — varint probe anchor
+_VARINT_BYTE = re.compile(rb"[\x01-\xff]")  # any non-null byte — varint probe anchor
 
 
-def _try_parse_record_at(buf: bytes, off: int, max_cols: int = 20) -> Optional[list[Any]]:
+def _try_parse_record_at(
+    buf: bytes, off: int, max_cols: int = 20
+) -> Optional[list[Any]]:
     """Attempt to parse a SQLite record at buf[off]. Returns column values or None."""
     if off + 2 > len(buf):
         return None
@@ -161,7 +167,7 @@ def _try_parse_record_at(buf: bytes, off: int, max_cols: int = 20) -> Optional[l
             sz = _serial_size(s)
             if body + sz > len(buf):
                 return None
-            values.append(_decode_value(s, buf[body:body + sz]))
+            values.append(_decode_value(s, buf[body : body + sz]))
             body += sz
         return values
     except Exception:
@@ -211,11 +217,13 @@ def sqbrite_scan(
                 # Dedup against primary engine.
                 fp = tuple(str(v)[:40] for v in values[:2])
                 if fp not in primary_fingerprints:
-                    rows.append(SqbriteRow(
-                        values=values,
-                        offset=off,
-                        source_file=db_path.name,
-                    ))
+                    rows.append(
+                        SqbriteRow(
+                            values=values,
+                            offset=off,
+                            source_file=db_path.name,
+                        )
+                    )
                     primary_fingerprints.add(fp)
                 seen_offsets.add(off)
         off += step

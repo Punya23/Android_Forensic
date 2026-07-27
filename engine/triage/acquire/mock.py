@@ -7,6 +7,7 @@ the team develops the backend before/without hardware and how the demo has a gua
 fallback. It is clearly labelled 'mock' in the audit log so it can never be mistaken for
 a real acquisition.
 """
+
 from __future__ import annotations
 
 import json
@@ -34,7 +35,7 @@ class MockDeviceSource(AcquisitionSource):
     def _to_local(self, device_path: str) -> Path:
         rel = device_path.replace("\\", "/").lstrip("/")
         if rel.startswith("sdcard/"):
-            rel = rel[len("sdcard/"):]
+            rel = rel[len("sdcard/") :]
         return self.sdcard / rel
 
     def device_info(self) -> DeviceInfo:
@@ -54,13 +55,16 @@ class MockDeviceSource(AcquisitionSource):
         )
 
     def pre_state(self) -> dict:
-        return self._meta.get("pre_state", {
-            "screen_locked": False,
-            "battery_level": 87,
-            "device_time": "2026-07-06T10:15:00+0530",
-            "root_available": False,
-            "note": "MOCK DEVICE — synthetic fixtures, not a real acquisition",
-        })
+        return self._meta.get(
+            "pre_state",
+            {
+                "screen_locked": False,
+                "battery_level": 87,
+                "device_time": "2026-07-06T10:15:00+0530",
+                "root_available": False,
+                "note": "MOCK DEVICE — synthetic fixtures, not a real acquisition",
+            },
+        )
 
     def shell_readonly(self, cmd: str) -> str:
         # Serve canned dumpsys output if present (e.g. _shell/dumpsys_location.txt).
@@ -101,8 +105,11 @@ class MockDeviceSource(AcquisitionSource):
         local = staging_dir / "screenshot.png"
         local.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(canned, local)
-        return PulledFile(device_path="[screencap]/screenshot.png", local_path=local,
-                          flags=["screenshot"])
+        return PulledFile(
+            device_path="[screencap]/screenshot.png",
+            local_path=local,
+            flags=["screenshot"],
+        )
 
     def root_available(self) -> bool:
         return bool(self._meta.get("device", {}).get("rooted", False))

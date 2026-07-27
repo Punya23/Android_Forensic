@@ -15,7 +15,7 @@ Example::
 from __future__ import annotations
 
 import re
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -37,7 +37,7 @@ CFG_QUIET_HOURS: Tuple[int, int] = (0, 5)
 CFG_MIN_GRAPH_EDGE_WEIGHT: int = 1
 
 # Message gap (seconds) that is flagged as a "burst" end.
-CFG_BURST_GAP_SECONDS: int = 300   # 5 minutes
+CFG_BURST_GAP_SECONDS: int = 300  # 5 minutes
 
 # Minimum burst size to include in pattern output.
 CFG_MIN_BURST_SIZE: int = 3
@@ -56,7 +56,7 @@ CFG_ANOMALY_ZSCORE_THRESHOLD: float = 2.5
 
 # Communication channel "switch" — within this window (seconds) switching
 # between different senders counts as a switch event.
-CFG_CHANNEL_SWITCH_WINDOW_S: int = 600   # 10 minutes
+CFG_CHANNEL_SWITCH_WINDOW_S: int = 600  # 10 minutes
 
 # Maximum contacts to list in the "top contacts" report field.
 CFG_TOP_CONTACTS_N: int = 10
@@ -68,6 +68,7 @@ CFG_TIMELINE_BUCKET_HOURS: int = 1
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
     """Parse an ISO-8601 string to a timezone-aware datetime (UTC)."""
@@ -93,7 +94,7 @@ def _safe_std(values: List[float]) -> float:
         return 0.0
     mean = _safe_mean(values)
     variance = sum((v - mean) ** 2 for v in values) / len(values)
-    return variance ** 0.5
+    return variance**0.5
 
 
 def _hour_of(dt: datetime) -> int:
@@ -126,6 +127,7 @@ def _sorted_messages(messages: List[Message]) -> List[Message]:
 # ---------------------------------------------------------------------------
 # AdvancedForensicFeatures class
 # ---------------------------------------------------------------------------
+
 
 class AdvancedForensicFeatures:
     """Provides advanced forensic analysis beyond raw message extraction.
@@ -188,9 +190,9 @@ class AdvancedForensicFeatures:
 
         nodes = [
             {
-                "id":       name,
+                "id": name,
                 "messages": node_messages.get(name, 0),
-                "sent":     node_sent.get(name, 0),
+                "sent": node_sent.get(name, 0),
                 "received": node_received.get(name, 0),
             }
             for name in set(node_messages) | {"SUBJECT"}
@@ -203,12 +205,12 @@ class AdvancedForensicFeatures:
         )[:CFG_TOP_CONTACTS_N]
 
         return {
-            "nodes":        nodes,
-            "edges":        edges,
+            "nodes": nodes,
+            "edges": edges,
             "stats": {
-                "unique_contacts":    len(node_messages),
-                "total_edges":        len(edges),
-                "most_active":        top_contacts[0][0] if top_contacts else None,
+                "unique_contacts": len(node_messages),
+                "total_edges": len(edges),
+                "most_active": top_contacts[0][0] if top_contacts else None,
             },
             "top_contacts": [{"name": n, "messages": c} for n, c in top_contacts],
         }
@@ -246,9 +248,12 @@ class AdvancedForensicFeatures:
         sorted_msgs = _sorted_messages(messages)
         if not sorted_msgs:
             return {
-                "bursts": [], "response_times": {},
-                "hourly_distribution": {}, "daily_distribution": {},
-                "peak_hour": None, "quiet_hours_activity": 0,
+                "bursts": [],
+                "response_times": {},
+                "hourly_distribution": {},
+                "daily_distribution": {},
+                "peak_hour": None,
+                "quiet_hours_activity": 0,
             }
 
         # Burst detection.
@@ -264,22 +269,26 @@ class AdvancedForensicFeatures:
                     current_burst.append(m)
                 else:
                     if len(current_burst) >= min_burst_size:
-                        bursts.append({
-                            "start":    current_burst[0].timestamp,
-                            "end":      current_burst[-1].timestamp,
-                            "count":    len(current_burst),
-                            "senders":  list({x.sender for x in current_burst}),
-                        })
+                        bursts.append(
+                            {
+                                "start": current_burst[0].timestamp,
+                                "end": current_burst[-1].timestamp,
+                                "count": len(current_burst),
+                                "senders": list({x.sender for x in current_burst}),
+                            }
+                        )
                     current_burst = [m]
                 prev_dt = dt
 
         if len(current_burst) >= min_burst_size:
-            bursts.append({
-                "start":    current_burst[0].timestamp,
-                "end":      current_burst[-1].timestamp,
-                "count":    len(current_burst),
-                "senders":  list({x.sender for x in current_burst}),
-            })
+            bursts.append(
+                {
+                    "start": current_burst[0].timestamp,
+                    "end": current_burst[-1].timestamp,
+                    "count": len(current_burst),
+                    "senders": list({x.sender for x in current_burst}),
+                }
+            )
 
         # Response time analysis (incoming → outgoing pairs).
         fast = slow = medium = 0
@@ -319,17 +328,17 @@ class AdvancedForensicFeatures:
         peak_hour = max(hourly, key=hourly.get) if hourly else None  # type: ignore[arg-type]
 
         return {
-            "bursts":               bursts,
+            "bursts": bursts,
             "response_times": {
-                "fast":    fast,
-                "medium":  medium,
-                "slow":    slow,
-                "mean_s":  round(_safe_mean(response_times), 1),
+                "fast": fast,
+                "medium": medium,
+                "slow": slow,
+                "mean_s": round(_safe_mean(response_times), 1),
                 "samples": len(response_times),
             },
-            "hourly_distribution":  dict(hourly),
-            "daily_distribution":   dict(daily),
-            "peak_hour":            peak_hour,
+            "hourly_distribution": dict(hourly),
+            "daily_distribution": dict(daily),
+            "peak_hour": peak_hour,
             "quiet_hours_activity": quiet_activity,
         }
 
@@ -369,31 +378,35 @@ class AdvancedForensicFeatures:
             if not dt:
                 continue
             sender = _resolve_sender(m.sender, lookup)
-            events.append({
-                "timestamp": m.timestamp,
-                "sender":    sender,
-                "direction": m.direction,
-                "confidence":m.confidence.value,
-                "has_flags": bool(m.flags),
-            })
+            events.append(
+                {
+                    "timestamp": m.timestamp,
+                    "sender": sender,
+                    "direction": m.direction,
+                    "confidence": m.confidence.value,
+                    "has_flags": bool(m.flags),
+                }
+            )
             bucket_start = dt.replace(
-                minute=0, second=0, microsecond=0,
+                minute=0,
+                second=0,
+                microsecond=0,
                 hour=(dt.hour // bucket_hours) * bucket_hours,
             )
             activity_by_bucket[bucket_start.isoformat()] += 1
             dates_active.add(dt.date().isoformat())
 
         start = events[0]["timestamp"] if events else None
-        end   = events[-1]["timestamp"] if events else None
+        end = events[-1]["timestamp"] if events else None
         n_days = len(dates_active)
         avg_per_day = round(len(events) / n_days, 1) if n_days else 0.0
 
         return {
-            "events":                        events,
-            "activity_heatmap":              dict(activity_by_bucket),
-            "date_range":                    {"start": start, "end": end},
-            "total_days_active":             n_days,
-            "avg_messages_per_active_day":   avg_per_day,
+            "events": events,
+            "activity_heatmap": dict(activity_by_bucket),
+            "date_range": {"start": start, "end": end},
+            "total_days_active": n_days,
+            "avg_messages_per_active_day": avg_per_day,
         }
 
     # -----------------------------------------------------------------------
@@ -442,33 +455,42 @@ class AdvancedForensicFeatures:
             hourly_ts[h].append(m.timestamp or "")
 
             if CFG_QUIET_HOURS[0] <= h <= CFG_QUIET_HOURS[1]:
-                quiet_events.append({
-                    "timestamp": m.timestamp,
-                    "sender":    m.sender,
-                    "direction": m.direction,
-                })
+                quiet_events.append(
+                    {
+                        "timestamp": m.timestamp,
+                        "sender": m.sender,
+                        "direction": m.direction,
+                    }
+                )
 
-            if m.confidence in (Confidence.CARVED_PARTIAL, Confidence.DELETION_DETECTED):
-                confidence_downgrades.append({
-                    "timestamp":  m.timestamp,
-                    "confidence": m.confidence.value,
-                    "provenance": m.provenance,
-                })
+            if m.confidence in (
+                Confidence.CARVED_PARTIAL,
+                Confidence.DELETION_DETECTED,
+            ):
+                confidence_downgrades.append(
+                    {
+                        "timestamp": m.timestamp,
+                        "confidence": m.confidence.value,
+                        "provenance": m.provenance,
+                    }
+                )
 
         # Volume spike detection via z-score.
         counts = list(hourly.values())
         mean_v = _safe_mean([float(c) for c in counts])
-        std_v  = _safe_std([float(c) for c in counts])
+        std_v = _safe_std([float(c) for c in counts])
         volume_spikes: List[Dict[str, Any]] = []
         for h, count in hourly.items():
             z = (count - mean_v) / std_v if std_v > 0 else 0.0
             if z >= zscore_threshold:
-                volume_spikes.append({
-                    "hour":       h,
-                    "count":      count,
-                    "zscore":     round(z, 2),
-                    "timestamps": hourly_ts[h][:5],  # sample
-                })
+                volume_spikes.append(
+                    {
+                        "hour": h,
+                        "count": count,
+                        "zscore": round(z, 2),
+                        "timestamps": hourly_ts[h][:5],  # sample
+                    }
+                )
 
         # Rapid sender-switch detection.
         rapid_switches: List[Dict[str, Any]] = []
@@ -489,25 +511,27 @@ class AdvancedForensicFeatures:
             else:
                 senders = {x.sender for x in window_msgs}
                 if len(senders) > 2:
-                    rapid_switches.append({
-                        "window_start":   window_start_dt.isoformat(),
-                        "window_end":     dt.isoformat(),
-                        "unique_senders": len(senders),
-                        "message_count":  len(window_msgs),
-                        "senders":        list(senders)[:5],
-                    })
+                    rapid_switches.append(
+                        {
+                            "window_start": window_start_dt.isoformat(),
+                            "window_end": dt.isoformat(),
+                            "unique_senders": len(senders),
+                            "message_count": len(window_msgs),
+                            "senders": list(senders)[:5],
+                        }
+                    )
                 window_start_dt = dt
                 window_msgs = [m]
 
         return {
-            "volume_spikes":          volume_spikes,
-            "quiet_hours_events":     quiet_events,
-            "rapid_switches":         rapid_switches,
-            "confidence_downgrades":  confidence_downgrades,
+            "volume_spikes": volume_spikes,
+            "quiet_hours_events": quiet_events,
+            "rapid_switches": rapid_switches,
+            "confidence_downgrades": confidence_downgrades,
             "summary": {
-                "total_spikes":           len(volume_spikes),
-                "quiet_hours_total":      len(quiet_events),
-                "rapid_switch_events":    len(rapid_switches),
+                "total_spikes": len(volume_spikes),
+                "quiet_hours_total": len(quiet_events),
+                "rapid_switch_events": len(rapid_switches),
                 "confidence_downgrade_n": len(confidence_downgrades),
             },
         }
@@ -530,7 +554,6 @@ class AdvancedForensicFeatures:
             Keys: ``total``, ``by_confidence``, ``with_timestamp``,
             ``with_sender``, ``with_body_gt_n``, ``recovery_rate_estimate``.
         """
-        from ..config import Confidence
 
         by_conf: Dict[str, int] = defaultdict(int)
         with_ts = 0
@@ -550,13 +573,13 @@ class AdvancedForensicFeatures:
         completeness = round(with_body / total * 100, 1) if total else 0.0
 
         return {
-            "total":                    total,
-            "by_confidence":            dict(by_conf),
-            "with_timestamp":           with_ts,
-            "with_identified_sender":   with_sender,
-            "with_substantive_body":    with_body,
-            "body_completeness_pct":    completeness,
-            "recovery_rate_estimate":   completeness,
+            "total": total,
+            "by_confidence": dict(by_conf),
+            "with_timestamp": with_ts,
+            "with_identified_sender": with_sender,
+            "with_substantive_body": with_body,
+            "body_completeness_pct": completeness,
+            "recovery_rate_estimate": completeness,
         }
 
     # -----------------------------------------------------------------------
@@ -586,14 +609,14 @@ class AdvancedForensicFeatures:
         recovered = [m for m in messages if m.confidence.value != "live"]
 
         return {
-            "social_graph":         self.analyze_social_graph(messages, contacts),
+            "social_graph": self.analyze_social_graph(messages, contacts),
             "communication_patterns": self.detect_communication_patterns(messages),
-            "timeline":             self.analyze_timeline(messages, contacts),
-            "anomalies":            self.detect_anomalies(messages),
-            "recovery_metrics":     self.calculate_recovery_metrics(recovered),
+            "timeline": self.analyze_timeline(messages, contacts),
+            "anomalies": self.detect_anomalies(messages),
+            "recovery_metrics": self.calculate_recovery_metrics(recovered),
             "meta": {
-                "total_messages":   len(messages),
-                "live_messages":    len(live_msgs),
+                "total_messages": len(messages),
+                "live_messages": len(live_msgs),
                 "recovered_messages": len(recovered),
             },
         }
@@ -602,6 +625,7 @@ class AdvancedForensicFeatures:
 # ---------------------------------------------------------------------------
 # Module-level convenience function
 # ---------------------------------------------------------------------------
+
 
 def run_advanced_analysis(
     case_dir: Path,

@@ -3,6 +3,7 @@
 These run entirely on the heuristic (offline) provider so they need no network or model —
 the same code path a field-deployed device uses with no LLM configured.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -16,7 +17,6 @@ from triage.intel import (
     plan_case,
 )
 from triage.intel.llm import HeuristicProvider, _safe_json
-from triage.intel.ontology import CRIME_ONTOLOGY, priority_for
 
 
 # --- ontology / classification ----------------------------------------------
@@ -33,13 +33,16 @@ def test_classify_unknown_falls_back_to_general():
     assert conf == 0.0
 
 
-@pytest.mark.parametrize("text,expected", [
-    ("selling cocaine and MDMA consignment", "drug_trafficking"),
-    ("phishing scam, fake investment fraud", "financial_fraud"),
-    ("bomb blast plot, IED handler", "terrorism"),
-    ("ransom demand for the hostage", "kidnapping"),
-    ("obscene photos, POCSO case", "sexual_offence"),
-])
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("selling cocaine and MDMA consignment", "drug_trafficking"),
+        ("phishing scam, fake investment fraud", "financial_fraud"),
+        ("bomb blast plot, IED handler", "terrorism"),
+        ("ransom demand for the hostage", "kidnapping"),
+        ("obscene photos, POCSO case", "sexual_offence"),
+    ],
+)
 def test_classify_various(text, expected):
     profile, _, _ = classify_crime(text)
     assert profile.key == expected
@@ -48,8 +51,8 @@ def test_classify_various(text, expected):
 # --- profile extraction (heuristic) -----------------------------------------
 def test_extract_profile_entities_offline():
     prof = extract_profile(
-        "Laksh is a suspect in the murder of Shubham.",
-        provider=HeuristicProvider())
+        "Laksh is a suspect in the murder of Shubham.", provider=HeuristicProvider()
+    )
     assert prof.crime_type == "murder"
     assert "Laksh" in prof.suspects
     assert "Shubham" in prof.victims
@@ -82,7 +85,8 @@ def test_plan_deprioritises_expensive_but_logs_it():
 
 def test_plan_enables_relevant_tier_flags():
     _, plan = plan_case(
-        "murder of Shubham, suspect uses Telegram", provider=HeuristicProvider())
+        "murder of Shubham, suspect uses Telegram", provider=HeuristicProvider()
+    )
     ov = plan.pipeline_overrides
     # Cheap Tier-1 collection is always on; Telegram (high for murder) recommended.
     assert ov.get("tier1_calllog") and ov.get("tier1_sms")
@@ -94,8 +98,13 @@ def test_plan_respects_allow_tier2_false():
     plan = build_plan(prof, allow_tier2=False)
     assert not any(k.startswith("tier2_") for k in plan.pipeline_overrides)
     # Root pulls become opt-in and are logged, never silently dropped.
-    assert any(d["artifact"] in ("telegram", "instagram", "snapchat")
-               for d in plan.deprioritised) or True
+    assert (
+        any(
+            d["artifact"] in ("telegram", "instagram", "snapchat")
+            for d in plan.deprioritised
+        )
+        or True
+    )
 
 
 def test_plan_produces_keyword_rules_including_entities():
@@ -111,31 +120,52 @@ def test_plan_produces_keyword_rules_including_entities():
 def _derived_fixture():
     return {
         "messages": [
-            {"app": "whatsapp", "sender": "Laksh",
-             "body": "I will kill him tonight, meet at the docks",
-             "timestamp": "2026-07-01T23:00:00Z", "confidence": "live",
-             "source_file": "msgstore.db"},
-            {"app": "sms", "sender": "+91999",
-             "body": "grocery list: milk eggs bread", "confidence": "live",
-             "source_file": "sms.json"},
+            {
+                "app": "whatsapp",
+                "sender": "Laksh",
+                "body": "I will kill him tonight, meet at the docks",
+                "timestamp": "2026-07-01T23:00:00Z",
+                "confidence": "live",
+                "source_file": "msgstore.db",
+            },
+            {
+                "app": "sms",
+                "sender": "+91999",
+                "body": "grocery list: milk eggs bread",
+                "confidence": "live",
+                "source_file": "sms.json",
+            },
         ],
         "recovered": [
-            {"values": ["dispose the body, hide the weapon"], "confidence": "carved",
-             "source_file": "cache4.db"},
-            {"values": ["\x00\x01\x02\x03binaryjunk\xff\xfe"], "confidence": "carved",
-             "source_file": "cache4.db"},
+            {
+                "values": ["dispose the body, hide the weapon"],
+                "confidence": "carved",
+                "source_file": "cache4.db",
+            },
+            {
+                "values": ["\x00\x01\x02\x03binaryjunk\xff\xfe"],
+                "confidence": "carved",
+                "source_file": "cache4.db",
+            },
         ],
         "calls": [
-            {"name": "Laksh", "number": "+91888", "call_type": "outgoing",
-             "duration_s": 42, "confidence": "live", "source_file": "calllog.json"},
+            {
+                "name": "Laksh",
+                "number": "+91888",
+                "call_type": "outgoing",
+                "duration_s": 42,
+                "confidence": "live",
+                "source_file": "calllog.json",
+            },
         ],
         "browser": [],
     }
 
 
 def test_analysis_surfaces_relevant_and_ignores_noise():
-    prof = extract_profile("Laksh murdered Shubham at the docks",
-                           provider=HeuristicProvider())
+    prof = extract_profile(
+        "Laksh murdered Shubham at the docks", provider=HeuristicProvider()
+    )
     bundle = analyze_derived(_derived_fixture(), prof)
     findings = bundle["findings"]
     assert findings, "expected some leads"
@@ -167,8 +197,10 @@ def test_analysis_findings_cite_source_and_require_verification():
 def test_analysis_call_matches_named_entity():
     prof = extract_profile("Laksh is the suspect", provider=HeuristicProvider())
     bundle = analyze_derived(_derived_fixture(), prof)
-    assert any(f["category"] == "call" and "Laksh" in f["entities_matched"]
-               for f in bundle["findings"])
+    assert any(
+        f["category"] == "call" and "Laksh" in f["entities_matched"]
+        for f in bundle["findings"]
+    )
 
 
 # --- providers ---------------------------------------------------------------

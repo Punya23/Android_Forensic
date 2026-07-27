@@ -20,11 +20,10 @@ Usage::
 from __future__ import annotations
 
 import calendar
-import math
 import time
 from typing import Any, Dict, List, Optional
 
-from .gps_clustering import cluster_gps_points, get_cluster_center
+from .gps_clustering import cluster_gps_points
 
 
 # ---------------------------------------------------------------------------

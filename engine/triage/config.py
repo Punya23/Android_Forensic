@@ -4,6 +4,7 @@ These lists are intentionally data (not hard-coded logic) so they can be tuned p
 target OEM/Android version without touching the acquisition code. Paths are treated as
 *candidates* and probed dynamically — nothing here is assumed to exist.
 """
+
 from __future__ import annotations
 
 from enum import Enum
@@ -14,9 +15,16 @@ class Tier(str, Enum):
     """How invasive the acquisition action was. Every artifact carries its tier so the
     chain-of-custody report can answer 'how did you get this'."""
 
-    TIER0 = "tier0"   # zero device-state change: adb pull of shared storage, dumpsys
-    TIER1 = "tier1"   # shell-level but state-changing: helper APK + pm grant
-    TIER2 = "tier2"   # root required: raw app-private DBs (advanced / lab mode)
+    TIER0 = "tier0"  # zero device-state change: adb pull of shared storage, dumpsys
+    TIER1 = "tier1"  # shell-level but state-changing: helper APK + pm grant
+    TIER2 = "tier2"  # root required: raw app-private DBs (advanced / lab mode)
+
+
+# --- Battery-aware acquisition -----------------------------------------------
+# How often the live BatteryMonitor re-polls the device during a run (seconds).
+# Kept here, not in pipeline.py, so it can be tuned per-deployment like every
+# other acquisition constant in this file.
+BATTERY_POLL_INTERVAL_S: float = 20.0
 
 
 # --- Recovery confidence tiers ----------------------------------------------
@@ -24,10 +32,16 @@ class Confidence(str, Enum):
     """Provenance/confidence of a data row. Never render carved data with the same
     weight as live data — this enum drives the UI badge colour and the report."""
 
-    LIVE = "live"                       # normal query result
-    RECOVERED_VERIFIED = "recovered"    # intact freelist page or un-checkpointed WAL frame
-    CARVED_PARTIAL = "carved"           # signature-matched over unallocated space; may be corrupt
-    DELETION_DETECTED = "deletion"      # a rowid gap proves a deletion; no content recovered
+    LIVE = "live"  # normal query result
+    RECOVERED_VERIFIED = (
+        "recovered"  # intact freelist page or un-checkpointed WAL frame
+    )
+    CARVED_PARTIAL = (
+        "carved"  # signature-matched over unallocated space; may be corrupt
+    )
+    DELETION_DETECTED = (
+        "deletion"  # a rowid gap proves a deletion; no content recovered
+    )
 
 
 # --- Tier 0 shared-storage pull targets (probed; missing paths are skipped) ---
@@ -43,7 +57,7 @@ TIER0_PULL_ROOTS: list[str] = [
     "/sdcard/Music",
     "/sdcard/Documents",
     "/sdcard/WhatsApp",  # legacy pre-scoped-storage layout, still present on upgraded devices
-    "/sdcard/Android/media/com.whatsapp/WhatsApp",       # Media + Databases + Backups
+    "/sdcard/Android/media/com.whatsapp/WhatsApp",  # Media + Databases + Backups
     "/sdcard/Android/media/org.telegram.messenger/Telegram",
 ]
 

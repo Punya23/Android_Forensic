@@ -11,6 +11,7 @@ message tables: live rows are read and mapped, then the shared recovery engine c
 rows and detects deletion gaps. Results carry ``app = "<db>:<table>"`` provenance so they're
 clearly distinguished from dedicated-parser output.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -55,6 +56,7 @@ def _pick(cols: list[str], hints: tuple[str, ...], taken: set[str]) -> Optional[
 def _iso(val: Any) -> Optional[str]:
     """Normalise a numeric epoch (s/ms/µs) or leave an ISO-ish string as-is."""
     from datetime import datetime, timezone
+
     if val is None:
         return None
     if isinstance(val, str):
@@ -76,7 +78,9 @@ def _iso(val: Any) -> Optional[str]:
         return None
 
 
-def scan_sqlite_for_chats(db_path: str | Path, *, app_label: Optional[str] = None) -> dict[str, Any]:
+def scan_sqlite_for_chats(
+    db_path: str | Path, *, app_label: Optional[str] = None
+) -> dict[str, Any]:
     """Discover chat-like tables in one SQLite DB and extract their messages (live + deleted)."""
     p = Path(db_path)
     label = app_label or p.stem
@@ -87,8 +91,12 @@ def scan_sqlite_for_chats(db_path: str | Path, *, app_label: Optional[str] = Non
     try:
         con = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
         con.row_factory = sqlite3.Row
-        tables = [r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")][:MAX_TABLES]
+        tables = [
+            r[0]
+            for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        ][:MAX_TABLES]
     except sqlite3.Error:
         return result
 
@@ -113,17 +121,32 @@ def scan_sqlite_for_chats(db_path: str | Path, *, app_label: Optional[str] = Non
         live_count = 0
         try:
             sel = ", ".join(f'"{c}"' for c in cols)
-            for r in con.execute(f'SELECT {sel} FROM "{table}" LIMIT {MAX_LIVE_ROWS}').fetchall():
+            for r in con.execute(
+                f'SELECT {sel} FROM "{table}" LIMIT {MAX_LIVE_ROWS}'
+            ).fetchall():
                 body = r[text_c]
                 if not isinstance(body, str) or len(body.strip()) < appchat.MIN_STR_LEN:
                     continue
-                messages.append(appchat.msg(
-                    body=body.strip(),
-                    sender=str(r[sender_c]) if sender_c and r[sender_c] is not None else "<unknown>",
-                    timestamp=_iso(r[ts_c]),
-                    chat_id=str(r[thread_c]) if thread_c and r[thread_c] is not None else None,
-                    confidence=Confidence.LIVE.value, source_file=p.name,
-                    provenance=f"live row in {label}:{table}", app=f"{label}:{table}"))
+                messages.append(
+                    appchat.msg(
+                        body=body.strip(),
+                        sender=(
+                            str(r[sender_c])
+                            if sender_c and r[sender_c] is not None
+                            else "<unknown>"
+                        ),
+                        timestamp=_iso(r[ts_c]),
+                        chat_id=(
+                            str(r[thread_c])
+                            if thread_c and r[thread_c] is not None
+                            else None
+                        ),
+                        confidence=Confidence.LIVE.value,
+                        source_file=p.name,
+                        provenance=f"live row in {label}:{table}",
+                        app=f"{label}:{table}",
+                    )
+                )
                 live_count += 1
         except sqlite3.Error:
             pass
@@ -131,16 +154,26 @@ def scan_sqlite_for_chats(db_path: str | Path, *, app_label: Optional[str] = Non
         # Deleted rows + gaps. Carved-row column alignment is unreliable, so pick the most
         # message-like string in the row rather than trust a fixed column index.
         carved = appchat.carve_and_gaps(
-            p, table, body_of=appchat.best_content, source_name=p.name)
+            p, table, body_of=appchat.best_content, source_name=p.name
+        )
         for m in carved:
             m["app"] = f"{label}:{table}"
         messages.extend(carved)
 
         if live_count or carved:
-            table_reports.append({
-                "table": table, "live": live_count, "recovered": len(carved),
-                "roles": {"text": text_c, "timestamp": ts_c, "sender": sender_c, "thread": thread_c},
-            })
+            table_reports.append(
+                {
+                    "table": table,
+                    "live": live_count,
+                    "recovered": len(carved),
+                    "roles": {
+                        "text": text_c,
+                        "timestamp": ts_c,
+                        "sender": sender_c,
+                        "thread": thread_c,
+                    },
+                }
+            )
 
     con.close()
     result["available"] = bool(table_reports)

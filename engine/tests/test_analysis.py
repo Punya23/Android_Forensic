@@ -1,9 +1,9 @@
 """Tests for the analysis layer (social graph, risk verdict) and new parsers."""
+
 import json
 
 from triage.analysis import build_communication_graph, assess_risk
 from triage.parsers import parse_sms_json, parse_browser_history, parse_telegram_db
-
 
 
 def test_communication_graph_fuses_channels():
@@ -27,9 +27,24 @@ def test_communication_graph_fuses_channels():
 
 def test_risk_red_on_critical_and_known_hash():
     flags = [
-        {"severity": "critical", "kind": "keyword", "term": "weapon", "location": "wa msg"},
-        {"severity": "critical", "kind": "keyword", "term": "fake id", "location": "wa msg"},
-        {"severity": "warn", "kind": "keyword", "term": "cash", "location": "recovered carved"},
+        {
+            "severity": "critical",
+            "kind": "keyword",
+            "term": "weapon",
+            "location": "wa msg",
+        },
+        {
+            "severity": "critical",
+            "kind": "keyword",
+            "term": "fake id",
+            "location": "wa msg",
+        },
+        {
+            "severity": "warn",
+            "kind": "keyword",
+            "term": "cash",
+            "location": "recovered carved",
+        },
     ]
     recovered = [{"confidence": "carved"}] * 10
     r = assess_risk(flags=flags, recovered=recovered, counts={})
@@ -46,10 +61,24 @@ def test_risk_green_when_clean():
 
 def test_sms_parser(tmp_path):
     p = tmp_path / "sms.json"
-    p.write_text(json.dumps([
-        {"address": "+91 98200 44711", "body": "OTP 448192", "type": 1, "date": 1751826000000},
-        {"address": "VM-BANK", "body": "debited 500000", "type": 1, "date": 1751826100000},
-    ]))
+    p.write_text(
+        json.dumps(
+            [
+                {
+                    "address": "+91 98200 44711",
+                    "body": "OTP 448192",
+                    "type": 1,
+                    "date": 1751826000000,
+                },
+                {
+                    "address": "VM-BANK",
+                    "body": "debited 500000",
+                    "type": 1,
+                    "date": 1751826100000,
+                },
+            ]
+        )
+    )
     msgs = parse_sms_json(p)
     assert len(msgs) == 2
     assert msgs[0].app == "sms"
@@ -59,13 +88,19 @@ def test_sms_parser(tmp_path):
 
 def test_browser_history_parser(tmp_path):
     import sqlite3
+
     db = tmp_path / "History"
     con = sqlite3.connect(db)
-    con.execute("CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, "
-                "visit_count INTEGER, last_visit_time INTEGER)")
-    con.execute("INSERT INTO urls(url,title,visit_count,last_visit_time) VALUES (?,?,?,?)",
-                ("https://example.com", "Example", 5, 13_360_000_000_000_000))
-    con.commit(); con.close()
+    con.execute(
+        "CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, "
+        "visit_count INTEGER, last_visit_time INTEGER)"
+    )
+    con.execute(
+        "INSERT INTO urls(url,title,visit_count,last_visit_time) VALUES (?,?,?,?)",
+        ("https://example.com", "Example", 5, 13_360_000_000_000_000),
+    )
+    con.commit()
+    con.close()
     hist = parse_browser_history(db)
     assert len(hist) == 1
     assert hist[0]["url"] == "https://example.com"
@@ -74,12 +109,18 @@ def test_browser_history_parser(tmp_path):
 
 def test_telegram_parser(tmp_path):
     import sqlite3
+
     db = tmp_path / "cache4.db"
     con = sqlite3.connect(db)
-    con.execute("CREATE TABLE messages (mid INTEGER PRIMARY KEY, sender TEXT, body TEXT, date INTEGER)")
-    con.execute("INSERT INTO messages(sender,body,date) VALUES (?,?,?)",
-                ("Imran", "meet at pier 4", 1751826000))
-    con.commit(); con.close()
+    con.execute(
+        "CREATE TABLE messages (mid INTEGER PRIMARY KEY, sender TEXT, body TEXT, date INTEGER)"
+    )
+    con.execute(
+        "INSERT INTO messages(sender,body,date) VALUES (?,?,?)",
+        ("Imran", "meet at pier 4", 1751826000),
+    )
+    con.commit()
+    con.close()
     msgs = parse_telegram_db(db)
     assert len(msgs) == 1
     assert msgs[0].app == "telegram"
@@ -88,10 +129,12 @@ def test_telegram_parser(tmp_path):
 
 # --- ALEAPP wrapper tests ---------------------------------------------------
 
+
 def test_aleapp_graceful_noop(tmp_path):
     """run_aleapp returns a safe result when ALEAPP is not installed."""
     from triage.aleapp import run_aleapp
     import os
+
     # Ensure ALEAPP_PATH is not set to something real
     env_backup = os.environ.pop("ALEAPP_PATH", None)
     try:
@@ -114,7 +157,10 @@ def test_aleapp_tsv_parsing(tmp_path):
     from triage.aleapp import _parse_tsv
 
     tsv = tmp_path / "sms.tsv"
-    tsv.write_text("Address\tBody\tDate\n+91 98200 44711\tHello world\t2024-01-01 12:00\n", encoding="utf-8")
+    tsv.write_text(
+        "Address\tBody\tDate\n+91 98200 44711\tHello world\t2024-01-01 12:00\n",
+        encoding="utf-8",
+    )
     rows = _parse_tsv(tsv)
     assert len(rows) == 1
     assert rows[0]["Address"] == "+91 98200 44711"
@@ -129,9 +175,21 @@ def test_promote_aleapp_results_merges_into_lists():
         "available": True,
         "artifacts": {
             "sms": [{"Address": "+91 123", "Body": "Test SMS", "Date": "2024-01-01"}],
-            "calls": [{"Name": "Alice", "Number": "+91 999", "Type": "Incoming", "Duration": "30", "Date": "2024-01-01"}],
-            "contacts": [{"Display Name": "Bob", "Phone": "+91 888", "Email": "bob@example.com"}],
-            "chrome_history": [{"URL": "https://example.com", "Title": "Example", "Visit Count": "3"}],
+            "calls": [
+                {
+                    "Name": "Alice",
+                    "Number": "+91 999",
+                    "Type": "Incoming",
+                    "Duration": "30",
+                    "Date": "2024-01-01",
+                }
+            ],
+            "contacts": [
+                {"Display Name": "Bob", "Phone": "+91 888", "Email": "bob@example.com"}
+            ],
+            "chrome_history": [
+                {"URL": "https://example.com", "Title": "Example", "Visit Count": "3"}
+            ],
         },
     }
 
@@ -152,17 +210,22 @@ def test_promote_aleapp_noop_when_unavailable():
     messages, contacts, calls, browser = [], [], [], []
     promote_aleapp_results(
         {"available": False, "artifacts": {}},
-        messages, contacts, calls, browser,
+        messages,
+        contacts,
+        calls,
+        browser,
     )
     assert messages == [] and contacts == [] and calls == [] and browser == []
 
 
 # --- Signal parser tests ----------------------------------------------------
 
+
 def test_signal_graceful_noop_no_tool(tmp_path):
     """parse_signal_backup returns safely when signalbackup-tools is not installed."""
     import os
     from triage.parsers.signal import parse_signal_backup
+
     env_backup = os.environ.pop("SIGNALBACKUP_TOOLS_PATH", None)
     try:
         result = parse_signal_backup(
@@ -213,8 +276,14 @@ def test_signal_plaintext_db_empty_body_skipped(tmp_path):
     con.execute(
         "CREATE TABLE sms (rowid INTEGER PRIMARY KEY, body TEXT, address TEXT, date INTEGER, type INTEGER)"
     )
-    con.execute("INSERT INTO sms(body, address, date, type) VALUES (?, ?, ?, ?)", ("", "+91", 0, 1))
-    con.execute("INSERT INTO sms(body, address, date, type) VALUES (?, ?, ?, ?)", (None, "+91", 0, 2))
+    con.execute(
+        "INSERT INTO sms(body, address, date, type) VALUES (?, ?, ?, ?)",
+        ("", "+91", 0, 1),
+    )
+    con.execute(
+        "INSERT INTO sms(body, address, date, type) VALUES (?, ?, ?, ?)",
+        (None, "+91", 0, 2),
+    )
     con.commit()
     con.close()
 
@@ -223,6 +292,7 @@ def test_signal_plaintext_db_empty_body_skipped(tmp_path):
 
 
 # --- sqbrite secondary recovery tests ----------------------------------------
+
 
 def test_sqbrite_finds_residual_text(tmp_path):
     """sqbrite can extract printable text from a database with deleted content."""
@@ -265,9 +335,8 @@ def test_sqbrite_cross_check_deduplicates(tmp_path):
 def test_sqbrite_corrupt_db_does_not_crash(tmp_path):
     """sqbrite never raises on a corrupt or non-SQLite file."""
     from triage.recovery.sqbrite import sqbrite_scan
+
     bad = tmp_path / "bad.db"
     bad.write_bytes(b"\x00\xff\xfe\xfd" * 100)
     rows = sqbrite_scan(bad)
     assert isinstance(rows, list)
-
-

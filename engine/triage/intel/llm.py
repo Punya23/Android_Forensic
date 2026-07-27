@@ -20,6 +20,7 @@ A provider returns ``None`` (never raises) when it cannot answer, so callers can
 fall back to the deterministic ontology path. This keeps the honesty model intact: the
 LLM is an *assist*, never a hard dependency.
 """
+
 from __future__ import annotations
 
 import json
@@ -37,8 +38,9 @@ class LLMProvider(ABC):
     available: bool = False
 
     @abstractmethod
-    def extract_json(self, system: str, prompt: str,
-                     schema_hint: Optional[dict] = None) -> Optional[dict]:
+    def extract_json(
+        self, system: str, prompt: str, schema_hint: Optional[dict] = None
+    ) -> Optional[dict]:
         """Return a parsed JSON object, or None if the provider can't answer."""
 
     @abstractmethod
@@ -70,9 +72,15 @@ class OllamaProvider(LLMProvider):
 
     name = "ollama"
 
-    def __init__(self, host: Optional[str] = None, model: Optional[str] = None,
-                 timeout: float = 60.0) -> None:
-        self.host = (host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")).rstrip("/")
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout: float = 60.0,
+    ) -> None:
+        self.host = (
+            host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+        ).rstrip("/")
         self.model = model or os.environ.get("ERAKSHAK_LLM_MODEL", "llama3.1")
         self.timeout = timeout
         self.available = self._ping()
@@ -100,8 +108,10 @@ class OllamaProvider(LLMProvider):
         try:
             data = json.dumps(body).encode("utf-8")
             req = urllib.request.Request(
-                f"{self.host}/api/chat", data=data,
-                headers={"Content-Type": "application/json"})
+                f"{self.host}/api/chat",
+                data=data,
+                headers={"Content-Type": "application/json"},
+            )
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
             return (payload.get("message", {}) or {}).get("content")
@@ -128,8 +138,12 @@ class AnthropicProvider(LLMProvider):
     API_URL = "https://api.anthropic.com/v1/messages"
     API_VERSION = "2023-06-01"
 
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None,
-                 timeout: float = 60.0) -> None:
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout: float = 60.0,
+    ) -> None:
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         # Default to a current, capable general model; override via env.
         self.model = model or os.environ.get("ERAKSHAK_LLM_MODEL", "claude-sonnet-5")
@@ -149,12 +163,14 @@ class AnthropicProvider(LLMProvider):
         try:
             data = json.dumps(body).encode("utf-8")
             req = urllib.request.Request(
-                self.API_URL, data=data,
+                self.API_URL,
+                data=data,
                 headers={
                     "Content-Type": "application/json",
                     "x-api-key": self.api_key,
                     "anthropic-version": self.API_VERSION,
-                })
+                },
+            )
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
             blocks = payload.get("content", [])
@@ -165,8 +181,10 @@ class AnthropicProvider(LLMProvider):
     def extract_json(self, system, prompt, schema_hint=None):
         hint = ""
         if schema_hint:
-            hint = ("\n\nReturn ONLY a JSON object matching this shape (no prose, no "
-                    f"markdown fences):\n{json.dumps(schema_hint, indent=2)}")
+            hint = (
+                "\n\nReturn ONLY a JSON object matching this shape (no prose, no "
+                f"markdown fences):\n{json.dumps(schema_hint, indent=2)}"
+            )
         return _safe_json(self._messages(system, prompt + hint))
 
     def generate(self, system, prompt):
@@ -209,7 +227,7 @@ def _safe_json(raw: Optional[str]) -> Optional[dict]:
         start, end = raw.find("{"), raw.rfind("}")
         if 0 <= start < end:
             try:
-                obj = json.loads(raw[start:end + 1])
+                obj = json.loads(raw[start : end + 1])
                 return obj if isinstance(obj, dict) else None
             except Exception:
                 return None

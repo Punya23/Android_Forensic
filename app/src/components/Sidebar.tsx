@@ -47,7 +47,7 @@ const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
   { key: "accounts", label: "Accounts", icon: "🔑" },
   { key: "calendar", label: "Calendar", icon: "📅" },
   { key: "wifi", label: "Wi-Fi Passwords", icon: "📶" },
-  { key: "locations", label: "Locations", icon: "📍" },
+  { key: "locations", label: "Location Tracing", icon: "🗺" },
   { key: "browser", label: "Browser History", icon: "🌐" },
   { key: "timeline", label: "Timeline", icon: "⏱", group: "Analysis" },
   { key: "recovered", label: "Recovered / Deleted", icon: "♻" },

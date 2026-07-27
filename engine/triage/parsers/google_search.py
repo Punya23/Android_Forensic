@@ -19,6 +19,7 @@ Forensic value:
 Graceful degradation: functions return empty lists/dicts on any failure
 rather than raising exceptions, so the pipeline continues.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,8 +40,10 @@ from ..config import Confidence
 
 # Search-related URL hostnames
 _SEARCH_HOSTS: set = {
-    "www.google.com", "google.com",
-    "www.bing.com",   "bing.com",
+    "www.google.com",
+    "google.com",
+    "www.bing.com",
+    "bing.com",
     "search.yahoo.com",
     "duckduckgo.com",
     "www.yandex.com",
@@ -51,11 +54,26 @@ _QUERY_PARAMS: List[str] = ["q", "query", "search_query", "p", "text", "wd"]
 
 # Keywords that flag a search as potentially suspicious
 _SUSPICIOUS_TERMS: List[str] = [
-    "how to kill", "how to poison", "how to hack", "how to stalk",
-    "untraceable", "spy app", "hidden camera", "dark web", "assassination",
-    "bomb", "explosives", "child", "cp ", "loli",
-    "delete evidence", "wipe phone", "factory reset",
-    "buy gun", "illegal", "hitman",
+    "how to kill",
+    "how to poison",
+    "how to hack",
+    "how to stalk",
+    "untraceable",
+    "spy app",
+    "hidden camera",
+    "dark web",
+    "assassination",
+    "bomb",
+    "explosives",
+    "child",
+    "cp ",
+    "loli",
+    "delete evidence",
+    "wipe phone",
+    "factory reset",
+    "buy gun",
+    "illegal",
+    "hitman",
 ]
 
 # Chrome history DB path on /sdcard (accessible without root via Scoped Storage)
@@ -65,19 +83,16 @@ _CHROME_HISTORY_PATHS: List[str] = [
 ]
 
 # Chrome history DB internal path on device (root required)
-_CHROME_HISTORY_ROOT_PATH = (
-    "/data/data/com.android.chrome/app_chrome/Default/History"
-)
+_CHROME_HISTORY_ROOT_PATH = "/data/data/com.android.chrome/app_chrome/Default/History"
 
 # Google quick search box cache path (root required)
-_GSB_CACHE_PATH = (
-    "/data/data/com.google.android.googlequicksearchbox/cache"
-)
+_GSB_CACHE_PATH = "/data/data/com.google.android.googlequicksearchbox/cache"
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_timestamp(raw: str) -> Optional[str]:
     """Convert various timestamp formats to ISO-8601 UTC."""
@@ -102,7 +117,10 @@ def _extract_search_query(url: str) -> Optional[str]:
         parsed = urlparse(url)
         if parsed.hostname not in _SEARCH_HOSTS:
             # Still try — partial match for unusual TLDs
-            if not any(sh in (parsed.hostname or "") for sh in ("google", "bing", "yahoo", "duck")):
+            if not any(
+                sh in (parsed.hostname or "")
+                for sh in ("google", "bing", "yahoo", "duck")
+            ):
                 return None
         qs = parse_qs(parsed.query)
         for param in _QUERY_PARAMS:
@@ -126,9 +144,7 @@ def _is_suspicious(query: str) -> bool:
 _RE_ACCOUNT_LINE = re.compile(
     r"Account\s*\{name=([^,]+),\s*type=([^}]+)\}", re.IGNORECASE
 )
-_RE_ACCOUNT_ALT = re.compile(
-    r"type:\s*(\S+)\s*name:\s*(\S+)", re.IGNORECASE
-)
+_RE_ACCOUNT_ALT = re.compile(r"type:\s*(\S+)\s*name:\s*(\S+)", re.IGNORECASE)
 _RE_LAST_SYNC = re.compile(
     r"(?:lastSyncTime|last_sync_time|syncTime)\s*[=:]\s*(\d+)", re.IGNORECASE
 )
@@ -164,17 +180,19 @@ def parse_google_accounts(dumpsys_output: str) -> List[Dict[str, Any]]:
             google_count += 1
 
         # Look for last_sync near the match
-        ctx = dumpsys_output[match.start(): match.start() + 300]
+        ctx = dumpsys_output[match.start() : match.start() + 300]
         sync_m = _RE_LAST_SYNC.search(ctx)
         last_sync = _parse_timestamp(sync_m.group(1)) if sync_m else ""
 
-        accounts.append({
-            "email":        email,
-            "account_type": acct_type,
-            "last_sync":    last_sync or "",
-            "is_primary":   is_google and google_count == 1,
-            "is_google":    is_google,
-        })
+        accounts.append(
+            {
+                "email": email,
+                "account_type": acct_type,
+                "last_sync": last_sync or "",
+                "is_primary": is_google and google_count == 1,
+                "is_google": is_google,
+            }
+        )
 
     # Fallback pattern
     if not accounts:
@@ -185,13 +203,16 @@ def parse_google_accounts(dumpsys_output: str) -> List[Dict[str, Any]]:
                 continue
             seen_emails.add(email)
             is_google = "google" in acct_type.lower()
-            accounts.append({
-                "email":        email,
-                "account_type": acct_type,
-                "last_sync":    "",
-                "is_primary":   is_google and not any(a["is_primary"] for a in accounts),
-                "is_google":    is_google,
-            })
+            accounts.append(
+                {
+                    "email": email,
+                    "account_type": acct_type,
+                    "last_sync": "",
+                    "is_primary": is_google
+                    and not any(a["is_primary"] for a in accounts),
+                    "is_google": is_google,
+                }
+            )
 
     return accounts
 
@@ -210,6 +231,7 @@ def get_google_accounts(adb: Adb) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Browser search history -- Chrome SQLite DB
 # ---------------------------------------------------------------------------
+
 
 def parse_browser_search_history(history_db: Path) -> List[Dict[str, Any]]:
     """Parse Chrome's History SQLite database for search queries.
@@ -260,14 +282,16 @@ def parse_browser_search_history(history_db: Path) -> List[Dict[str, Any]]:
             else:
                 ts = ""
 
-            results.append({
-                "query":        query,
-                "url":          url,
-                "timestamp":    ts,
-                "visit_count":  row["visit_count"] or 1,
-                "is_suspicious": _is_suspicious(query),
-                "source":       "chrome_history_db",
-            })
+            results.append(
+                {
+                    "query": query,
+                    "url": url,
+                    "timestamp": ts,
+                    "visit_count": row["visit_count"] or 1,
+                    "is_suspicious": _is_suspicious(query),
+                    "source": "chrome_history_db",
+                }
+            )
         con.close()
     except Exception:
         pass
@@ -281,7 +305,7 @@ def get_browser_search_history(adb: Adb) -> List[Dict[str, Any]]:
     Attempts to find the Chrome history DB on the device's shared storage
     (accessible without root).  Returns an empty list on failure.
     """
-    import tempfile, os
+    import tempfile
 
     # Try to find the history DB by listing files
     history_paths = [
@@ -305,6 +329,7 @@ def get_browser_search_history(adb: Adb) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Google app cache parsing (root enhanced)
 # ---------------------------------------------------------------------------
+
 
 def parse_google_search_cache(cache_dir: Path) -> List[Dict[str, Any]]:
     """Parse Google app cache for search history (requires root access).
@@ -338,26 +363,32 @@ def parse_google_search_cache(cache_dir: Path) -> List[Dict[str, Any]]:
                     for row in cur.fetchall():
                         row_dict = dict(zip(cols, row))
                         query = (
-                            row_dict.get("query") or
-                            row_dict.get("search_term") or
-                            row_dict.get("text") or ""
+                            row_dict.get("query")
+                            or row_dict.get("search_term")
+                            or row_dict.get("text")
+                            or ""
                         )
                         if not query:
                             continue
                         raw_ts = (
-                            row_dict.get("timestamp") or
-                            row_dict.get("time") or
-                            row_dict.get("date") or ""
+                            row_dict.get("timestamp")
+                            or row_dict.get("time")
+                            or row_dict.get("date")
+                            or ""
                         )
                         ts = _parse_timestamp(str(raw_ts)) or ""
-                        clicked = row_dict.get("url") or row_dict.get("clicked_url") or ""
-                        results.append({
-                            "query":         query,
-                            "timestamp":     ts,
-                            "clicked_url":   clicked,
-                            "source":        "google_cache",
-                            "is_suspicious": _is_suspicious(str(query)),
-                        })
+                        clicked = (
+                            row_dict.get("url") or row_dict.get("clicked_url") or ""
+                        )
+                        results.append(
+                            {
+                                "query": query,
+                                "timestamp": ts,
+                                "clicked_url": clicked,
+                                "source": "google_cache",
+                                "is_suspicious": _is_suspicious(str(query)),
+                            }
+                        )
                 except sqlite3.OperationalError:
                     continue
             con.close()
@@ -373,14 +404,16 @@ def parse_google_search_cache(cache_dir: Path) -> List[Dict[str, Any]]:
                 for item in data:
                     if isinstance(item, dict) and "query" in item:
                         query = str(item["query"])
-                        ts    = _parse_timestamp(str(item.get("timestamp", ""))) or ""
-                        results.append({
-                            "query":         query,
-                            "timestamp":     ts,
-                            "clicked_url":   item.get("url", ""),
-                            "source":        "google_cache_json",
-                            "is_suspicious": _is_suspicious(query),
-                        })
+                        ts = _parse_timestamp(str(item.get("timestamp", ""))) or ""
+                        results.append(
+                            {
+                                "query": query,
+                                "timestamp": ts,
+                                "clicked_url": item.get("url", ""),
+                                "source": "google_cache_json",
+                                "is_suspicious": _is_suspicious(query),
+                            }
+                        )
         except Exception:
             continue
 
@@ -390,6 +423,7 @@ def parse_google_search_cache(cache_dir: Path) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Combined search history acquisition
 # ---------------------------------------------------------------------------
+
 
 def get_google_search_history(
     adb: Adb, root_available: bool = False
@@ -439,6 +473,7 @@ def get_google_search_history(
 # Timeline builder
 # ---------------------------------------------------------------------------
 
+
 def build_search_timeline(searches: List[Dict]) -> List[TimelineEvent]:
     """Convert search history dicts into :class:`TimelineEvent` objects.
 
@@ -454,14 +489,16 @@ def build_search_timeline(searches: List[Dict]) -> List[TimelineEvent]:
         query = s.get("query", "")
         suspicious = s.get("is_suspicious", False)
         flag = " [SUSPICIOUS]" if suspicious else ""
-        summary = f"[Search] \"{query}\"{flag}"
-        events.append(TimelineEvent(
-            timestamp  = ts,
-            kind       = "search",
-            summary    = summary,
-            confidence = Confidence.LIVE,
-            ref        = query[:80],
-        ))
+        summary = f'[Search] "{query}"{flag}'
+        events.append(
+            TimelineEvent(
+                timestamp=ts,
+                kind="search",
+                summary=summary,
+                confidence=Confidence.LIVE,
+                ref=query[:80],
+            )
+        )
 
     events.sort(key=lambda e: e.timestamp, reverse=True)
     return events
@@ -470,6 +507,7 @@ def build_search_timeline(searches: List[Dict]) -> List[TimelineEvent]:
 # ---------------------------------------------------------------------------
 # Summary statistics
 # ---------------------------------------------------------------------------
+
 
 def get_search_summary(searches: List[Dict]) -> Dict[str, int]:
     """Aggregate statistics over a parsed search history list.
@@ -482,8 +520,8 @@ def get_search_summary(searches: List[Dict]) -> Dict[str, int]:
     * ``with_timestamp``     -- searches that have a timestamp
     """
     unique: set = set()
-    suspicious  = 0
-    with_ts     = 0
+    suspicious = 0
+    with_ts = 0
 
     for s in searches:
         q = (s.get("query") or "").strip().lower()
@@ -495,8 +533,8 @@ def get_search_summary(searches: List[Dict]) -> Dict[str, int]:
             with_ts += 1
 
     return {
-        "total":          len(searches),
-        "suspicious":     suspicious,
+        "total": len(searches),
+        "suspicious": suspicious,
         "unique_queries": len(unique),
         "with_timestamp": with_ts,
     }

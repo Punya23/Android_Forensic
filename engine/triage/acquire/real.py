@@ -1,4 +1,5 @@
 """Real ADB-backed acquisition source (Tier 0)."""
+
 from __future__ import annotations
 
 import uuid
@@ -59,17 +60,25 @@ class RealDeviceSource(AcquisitionSource):
         res = self.adb.pull(device_path, local)
         if not res.ok or not local.exists():
             return None
-        flags = ["trashed"] if "/.trashed-" in device_path or \
-            Path(device_path).name.startswith(".trashed-") else []
+        flags = (
+            ["trashed"]
+            if "/.trashed-" in device_path
+            or Path(device_path).name.startswith(".trashed-")
+            else []
+        )
         return PulledFile(device_path=device_path, local_path=local, flags=flags)
 
     def capture_screenshot(self, staging_dir: Path) -> Optional[PulledFile]:
         # `adb exec-out screencap -p` streams a PNG of the current screen to stdout with no
         # file written on the device — a read-only framebuffer capture. We capture raw bytes.
         import subprocess
+
         try:
-            proc = subprocess.run(self.adb._base() + ["exec-out", "screencap", "-p"],
-                                  capture_output=True, timeout=30)
+            proc = subprocess.run(
+                self.adb._base() + ["exec-out", "screencap", "-p"],
+                capture_output=True,
+                timeout=30,
+            )
         except Exception:
             return None
         if proc.returncode != 0 or not proc.stdout:
@@ -77,8 +86,11 @@ class RealDeviceSource(AcquisitionSource):
         local = staging_dir / "screenshot.png"
         local.parent.mkdir(parents=True, exist_ok=True)
         local.write_bytes(proc.stdout)
-        return PulledFile(device_path="[screencap]/screenshot.png", local_path=local,
-                          flags=["screenshot"])
+        return PulledFile(
+            device_path="[screencap]/screenshot.png",
+            local_path=local,
+            flags=["screenshot"],
+        )
 
     def root_available(self) -> bool:
         return self.adb.is_root_available()

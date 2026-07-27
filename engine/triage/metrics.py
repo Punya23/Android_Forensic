@@ -22,6 +22,7 @@ Usage example
     print(display_speed_metrics())
     report = get_performance_report()
 """
+
 from __future__ import annotations
 
 import threading
@@ -34,14 +35,15 @@ from typing import Dict, List, Optional
 
 _lock = threading.Lock()
 
-_stage_times: Dict[str, List[float]] = {}   # stage → list of elapsed seconds
-_bytes_total: int = 0                         # cumulative bytes processed
-_run_start: Optional[float] = None           # monotonic timestamp of run start
+_stage_times: Dict[str, List[float]] = {}  # stage → list of elapsed seconds
+_bytes_total: int = 0  # cumulative bytes processed
+_run_start: Optional[float] = None  # monotonic timestamp of run start
 
 
 # ---------------------------------------------------------------------------
 # Public API — timers
 # ---------------------------------------------------------------------------
+
 
 def start_timer() -> float:
     """Return the current monotonic clock value to start a timer.
@@ -73,6 +75,7 @@ def stop_timer(start_time: float) -> float:
 # ---------------------------------------------------------------------------
 # Public API — tracking
 # ---------------------------------------------------------------------------
+
 
 def reset() -> None:
     """Clear all accumulated metrics and start a fresh run timer.
@@ -120,6 +123,7 @@ def add_bytes(n: int) -> None:
 # ---------------------------------------------------------------------------
 # Public API — reporting
 # ---------------------------------------------------------------------------
+
 
 def get_performance_report() -> Dict:
     """Generate a performance summary for the current (or last) run.

@@ -23,6 +23,7 @@ Forensic value:
 Graceful degradation: all functions return empty results on failure rather
 than raising exceptions.
 """
+
 from __future__ import annotations
 
 import json
@@ -31,7 +32,7 @@ import re
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from ..adb import Adb
 from ..models import TimelineEvent, LocationPoint
@@ -48,8 +49,8 @@ _FAST_MOVEMENT_KMH = 120
 _ANOMALY_DISTANCE_KM = 500
 
 # Hours considered "late night" for pattern detection
-_LATE_NIGHT_START = 22   # 10 PM
-_LATE_NIGHT_END   = 5    # 5 AM
+_LATE_NIGHT_START = 22  # 10 PM
+_LATE_NIGHT_END = 5  # 5 AM
 
 # Google Maps app data path (root required)
 _MAPS_DATA_PATH = "/data/data/com.google.android.apps.maps"
@@ -61,6 +62,7 @@ _MIN_ACCURACY_M = 500
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_timestamp(raw: str) -> Optional[str]:
     """Convert various timestamp formats to ISO-8601 UTC."""
@@ -89,13 +91,17 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlam = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    a = (
+        math.sin(dphi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    )
     return 2 * R * math.asin(math.sqrt(a))
 
 
 def _ts_to_epoch(iso_ts: str) -> float:
     """Convert ISO-8601 UTC string to Unix timestamp float."""
     import calendar
+
     t = time.strptime(iso_ts, "%Y-%m-%dT%H:%M:%SZ")
     return float(calendar.timegm(t))
 
@@ -112,9 +118,9 @@ def _get_hour(iso_ts: str) -> Optional[int]:
 # Current GPS location -- dumpsys location
 # ---------------------------------------------------------------------------
 
-_RE_LAT    = re.compile(r"(?:latitude|lat)\s*[=:]\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
-_RE_LON    = re.compile(r"(?:longitude|lon|lng)\s*[=:]\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
-_RE_ACCUR  = re.compile(r"accuracy\s*[=:]\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
+_RE_LAT = re.compile(r"(?:latitude|lat)\s*[=:]\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
+_RE_LON = re.compile(r"(?:longitude|lon|lng)\s*[=:]\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
+_RE_ACCUR = re.compile(r"accuracy\s*[=:]\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
 _RE_LOC_TS = re.compile(r"(?:time|timestamp|mTime)\s*[=:]\s*(\d+)", re.IGNORECASE)
 _RE_PROVIDER = re.compile(r"provider\s*[=:]\s*(\w+)", re.IGNORECASE)
 
@@ -132,21 +138,21 @@ def parse_current_location(dumpsys_output: str) -> Dict[str, Any]:
     * ``valid``      -- True if both lat and lon were extracted
     """
     result: Dict[str, Any] = {
-        "latitude":   None,
-        "longitude":  None,
+        "latitude": None,
+        "longitude": None,
         "accuracy_m": -1,
-        "timestamp":  "",
-        "provider":   "",
-        "valid":      False,
+        "timestamp": "",
+        "provider": "",
+        "valid": False,
     }
 
     if not dumpsys_output:
         return result
 
-    lat_m  = _RE_LAT.search(dumpsys_output)
-    lon_m  = _RE_LON.search(dumpsys_output)
-    acc_m  = _RE_ACCUR.search(dumpsys_output)
-    ts_m   = _RE_LOC_TS.search(dumpsys_output)
+    lat_m = _RE_LAT.search(dumpsys_output)
+    lon_m = _RE_LON.search(dumpsys_output)
+    acc_m = _RE_ACCUR.search(dumpsys_output)
+    ts_m = _RE_LOC_TS.search(dumpsys_output)
     prov_m = _RE_PROVIDER.search(dumpsys_output)
 
     if lat_m:
@@ -183,6 +189,7 @@ def get_current_location(adb: Adb) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Google Takeout location history
 # ---------------------------------------------------------------------------
+
 
 def parse_google_takeout_location(export_path: Path) -> List[Dict[str, Any]]:
     """Parse a Google Takeout Location History JSON export.
@@ -229,14 +236,16 @@ def parse_google_takeout_location(export_path: Path) -> List[Dict[str, Any]]:
                     activity = acts[0].get("type", "")
 
             if -90 <= lat <= 90 and -180 <= lon <= 180:
-                results.append({
-                    "latitude":   lat,
-                    "longitude":  lon,
-                    "timestamp":  ts,
-                    "accuracy_m": acc,
-                    "activity":   activity,
-                    "source":     "takeout",
-                })
+                results.append(
+                    {
+                        "latitude": lat,
+                        "longitude": lon,
+                        "timestamp": ts,
+                        "accuracy_m": acc,
+                        "activity": activity,
+                        "source": "takeout",
+                    }
+                )
         except Exception:
             continue
 
@@ -255,14 +264,16 @@ def parse_google_takeout_location(export_path: Path) -> List[Dict[str, Any]]:
                     parts = lat_str.split(",")
                     lat = float(parts[0].strip())
                     lon = float(parts[1].strip())
-                    results.append({
-                        "latitude":   lat,
-                        "longitude":  lon,
-                        "timestamp":  start_ts,
-                        "accuracy_m": -1,
-                        "activity":   "visit",
-                        "source":     "takeout_semantic",
-                    })
+                    results.append(
+                        {
+                            "latitude": lat,
+                            "longitude": lon,
+                            "timestamp": start_ts,
+                            "accuracy_m": -1,
+                            "activity": "visit",
+                            "source": "takeout_semantic",
+                        }
+                    )
 
             # "timelinePath" is a list of {point, time} objects
             for path_pt in seg.get("timelinePath", []):
@@ -272,14 +283,18 @@ def parse_google_takeout_location(export_path: Path) -> List[Dict[str, Any]]:
                     parts = pt.split(",")
                     lat = float(parts[0].strip())
                     lon = float(parts[1].strip())
-                    results.append({
-                        "latitude":   lat,
-                        "longitude":  lon,
-                        "timestamp":  pt_ts,
-                        "accuracy_m": -1,
-                        "activity":   seg.get("activity", {}).get("topCandidate", {}).get("type", ""),
-                        "source":     "takeout_path",
-                    })
+                    results.append(
+                        {
+                            "latitude": lat,
+                            "longitude": lon,
+                            "timestamp": pt_ts,
+                            "accuracy_m": -1,
+                            "activity": seg.get("activity", {})
+                            .get("topCandidate", {})
+                            .get("type", ""),
+                            "source": "takeout_path",
+                        }
+                    )
         except Exception:
             continue
 
@@ -291,6 +306,7 @@ def parse_google_takeout_location(export_path: Path) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Google Maps cache (root enhanced)
 # ---------------------------------------------------------------------------
+
 
 def parse_maps_cache(cache_dir: Path) -> List[Dict[str, Any]]:
     """Parse Google Maps cache for location data (root access required).
@@ -323,7 +339,9 @@ def parse_maps_cache(cache_dir: Path) -> List[Dict[str, Any]]:
                     cur.execute(f"PRAGMA table_info({table})")
                     cols = {row[1].lower(): row[1] for row in cur.fetchall()}
                     lat_col = next((cols[c] for c in cols if "lat" in c), None)
-                    lon_col = next((cols[c] for c in cols if "lon" in c or "lng" in c), None)
+                    lon_col = next(
+                        (cols[c] for c in cols if "lon" in c or "lng" in c), None
+                    )
                     if not lat_col or not lon_col:
                         continue
                     ts_col = next(
@@ -331,7 +349,11 @@ def parse_maps_cache(cache_dir: Path) -> List[Dict[str, Any]]:
                         None,
                     )
                     name_col = next(
-                        (cols[c] for c in cols if "name" in c or "place" in c or "title" in c),
+                        (
+                            cols[c]
+                            for c in cols
+                            if "name" in c or "place" in c or "title" in c
+                        ),
                         None,
                     )
                     select_cols = [lat_col, lon_col]
@@ -339,7 +361,9 @@ def parse_maps_cache(cache_dir: Path) -> List[Dict[str, Any]]:
                         select_cols.append(ts_col)
                     if name_col:
                         select_cols.append(name_col)
-                    cur.execute(f"SELECT {', '.join(select_cols)} FROM {table} LIMIT 1000")
+                    cur.execute(
+                        f"SELECT {', '.join(select_cols)} FROM {table} LIMIT 1000"
+                    )
                     for row in cur.fetchall():
                         try:
                             lat = float(row[0])
@@ -348,13 +372,15 @@ def parse_maps_cache(cache_dir: Path) -> List[Dict[str, Any]]:
                                 continue
                             ts = _parse_timestamp(str(row[2])) if len(row) > 2 else ""
                             place = str(row[3]) if len(row) > 3 else ""
-                            results.append({
-                                "latitude":   lat,
-                                "longitude":  lon,
-                                "timestamp":  ts or "",
-                                "place_name": place,
-                                "source":     "maps_cache",
-                            })
+                            results.append(
+                                {
+                                    "latitude": lat,
+                                    "longitude": lon,
+                                    "timestamp": ts or "",
+                                    "place_name": place,
+                                    "source": "maps_cache",
+                                }
+                            )
                         except (TypeError, ValueError):
                             continue
                 except sqlite3.OperationalError:
@@ -370,6 +396,7 @@ def parse_maps_cache(cache_dir: Path) -> List[Dict[str, Any]]:
 # Timeline builder
 # ---------------------------------------------------------------------------
 
+
 def build_location_timeline(locations: List[Dict]) -> List[TimelineEvent]:
     """Convert location dicts into :class:`TimelineEvent` objects.
 
@@ -381,23 +408,23 @@ def build_location_timeline(locations: List[Dict]) -> List[TimelineEvent]:
         ts = loc.get("timestamp", "")
         if not ts:
             continue
-        lat       = loc.get("latitude", 0.0)
-        lon       = loc.get("longitude", 0.0)
-        place     = loc.get("place_name", "") or loc.get("activity", "")
-        acc       = loc.get("accuracy_m", -1)
-        source    = loc.get("source", "unknown")
+        lat = loc.get("latitude", 0.0)
+        lon = loc.get("longitude", 0.0)
+        place = loc.get("place_name", "") or loc.get("activity", "")
+        acc = loc.get("accuracy_m", -1)
+        source = loc.get("source", "unknown")
         place_part = f" ({place})" if place else ""
-        acc_part   = f" ±{int(acc)}m" if acc > 0 else ""
-        summary    = (
-            f"[Location] {lat:.5f}, {lon:.5f}{place_part}{acc_part} [{source}]"
+        acc_part = f" ±{int(acc)}m" if acc > 0 else ""
+        summary = f"[Location] {lat:.5f}, {lon:.5f}{place_part}{acc_part} [{source}]"
+        events.append(
+            TimelineEvent(
+                timestamp=ts,
+                kind="location",
+                summary=summary,
+                confidence=Confidence.LIVE,
+                ref=f"{lat:.5f},{lon:.5f}",
+            )
         )
-        events.append(TimelineEvent(
-            timestamp  = ts,
-            kind       = "location",
-            summary    = summary,
-            confidence = Confidence.LIVE,
-            ref        = f"{lat:.5f},{lon:.5f}",
-        ))
 
     events.sort(key=lambda e: e.timestamp, reverse=True)
     return events
@@ -406,6 +433,7 @@ def build_location_timeline(locations: List[Dict]) -> List[TimelineEvent]:
 # ---------------------------------------------------------------------------
 # LocationPoint builder
 # ---------------------------------------------------------------------------
+
 
 def build_location_points(locations: List[Dict]) -> List[LocationPoint]:
     """Convert location dicts to :class:`LocationPoint` model objects.
@@ -427,14 +455,16 @@ def build_location_points(locations: List[Dict]) -> List[LocationPoint]:
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
             continue
 
-        points.append(LocationPoint(
-            latitude   = lat,
-            longitude  = lon,
-            source     = loc.get("source", "unknown"),
-            timestamp  = loc.get("timestamp") or None,
-            label      = loc.get("place_name", ""),
-            source_file= loc.get("source", ""),
-        ))
+        points.append(
+            LocationPoint(
+                latitude=lat,
+                longitude=lon,
+                source=loc.get("source", "unknown"),
+                timestamp=loc.get("timestamp") or None,
+                label=loc.get("place_name", ""),
+                source_file=loc.get("source", ""),
+            )
+        )
 
     return points
 
@@ -442,6 +472,7 @@ def build_location_points(locations: List[Dict]) -> List[LocationPoint]:
 # ---------------------------------------------------------------------------
 # Summary statistics
 # ---------------------------------------------------------------------------
+
 
 def get_location_summary(locations: List[Dict]) -> Dict[str, Any]:
     """Compute aggregate statistics over a parsed location list.
@@ -455,19 +486,19 @@ def get_location_summary(locations: List[Dict]) -> Dict[str, Any]:
     * ``sources``             -- {source_name: count}
     * ``bounding_box``        -- {"min_lat", "max_lat", "min_lon", "max_lon"}
     """
-    with_ts  = 0
-    places: set  = set()
+    with_ts = 0
+    places: set = set()
     sources: Dict[str, int] = {}
     timestamps: List[str] = []
     lats: List[float] = []
     lons: List[float] = []
 
     for loc in locations:
-        ts    = loc.get("timestamp", "")
+        ts = loc.get("timestamp", "")
         place = loc.get("place_name", "")
-        src   = loc.get("source", "unknown")
-        lat   = loc.get("latitude")
-        lon   = loc.get("longitude")
+        src = loc.get("source", "unknown")
+        lat = loc.get("latitude")
+        lon = loc.get("longitude")
 
         if ts:
             with_ts += 1
@@ -481,33 +512,32 @@ def get_location_summary(locations: List[Dict]) -> Dict[str, Any]:
             lons.append(float(lon))
 
     timestamps.sort()
-    date_range = (
-        {"first": timestamps[0], "last": timestamps[-1]}
-        if timestamps
-        else {}
-    )
+    date_range = {"first": timestamps[0], "last": timestamps[-1]} if timestamps else {}
     bounding_box = (
         {
-            "min_lat": min(lats), "max_lat": max(lats),
-            "min_lon": min(lons), "max_lon": max(lons),
+            "min_lat": min(lats),
+            "max_lat": max(lats),
+            "min_lon": min(lons),
+            "max_lon": max(lons),
         }
         if lats and lons
         else {}
     )
 
     return {
-        "total":         len(locations),
+        "total": len(locations),
         "with_timestamp": with_ts,
         "unique_places": len(places),
-        "date_range":    date_range,
-        "sources":       sources,
-        "bounding_box":  bounding_box,
+        "date_range": date_range,
+        "sources": sources,
+        "bounding_box": bounding_box,
     }
 
 
 # ---------------------------------------------------------------------------
 # Anomaly / pattern detection
 # ---------------------------------------------------------------------------
+
 
 def detect_location_anomalies(locations: List[Dict]) -> List[Dict]:
     """Detect suspicious location patterns.
@@ -523,7 +553,8 @@ def detect_location_anomalies(locations: List[Dict]) -> List[Dict]:
 
     # Filter to locations with valid lat/lon and timestamp
     valid = [
-        loc for loc in locations
+        loc
+        for loc in locations
         if loc.get("latitude") is not None
         and loc.get("longitude") is not None
         and loc.get("timestamp")
@@ -538,18 +569,23 @@ def detect_location_anomalies(locations: List[Dict]) -> List[Dict]:
         if hour is None:
             continue
         if hour >= _LATE_NIGHT_START or hour < _LATE_NIGHT_END:
-            place = loc.get("place_name", "") or f"{loc['latitude']:.4f},{loc['longitude']:.4f}"
-            patterns.append({
-                "pattern":     "late_night_location",
-                "description": f"Device was at '{place}' at {hour:02d}:xx UTC (late night).",
-                "severity":    "warn",
-                "evidence":    {
-                    "timestamp": ts,
-                    "latitude":  loc["latitude"],
-                    "longitude": loc["longitude"],
-                    "hour_utc":  hour,
-                },
-            })
+            place = (
+                loc.get("place_name", "")
+                or f"{loc['latitude']:.4f},{loc['longitude']:.4f}"
+            )
+            patterns.append(
+                {
+                    "pattern": "late_night_location",
+                    "description": f"Device was at '{place}' at {hour:02d}:xx UTC (late night).",
+                    "severity": "warn",
+                    "evidence": {
+                        "timestamp": ts,
+                        "latitude": loc["latitude"],
+                        "longitude": loc["longitude"],
+                        "hour_utc": hour,
+                    },
+                }
+            )
 
     # --- Impossible speed / large jumps between consecutive points ---
     for i in range(1, len(valid)):
@@ -557,8 +593,10 @@ def detect_location_anomalies(locations: List[Dict]) -> List[Dict]:
         curr = valid[i]
         try:
             dist_km = _haversine_km(
-                float(prev["latitude"]), float(prev["longitude"]),
-                float(curr["latitude"]), float(curr["longitude"]),
+                float(prev["latitude"]),
+                float(prev["longitude"]),
+                float(curr["latitude"]),
+                float(curr["longitude"]),
             )
             dt_s = _ts_to_epoch(curr["timestamp"]) - _ts_to_epoch(prev["timestamp"])
             if dt_s <= 0:
@@ -566,35 +604,41 @@ def detect_location_anomalies(locations: List[Dict]) -> List[Dict]:
             speed_kmh = (dist_km / dt_s) * 3600
 
             if dist_km >= _ANOMALY_DISTANCE_KM:
-                patterns.append({
-                    "pattern":     "large_location_jump",
-                    "description": (
-                        f"Device moved {dist_km:.0f} km in {dt_s / 3600:.1f} h "
-                        f"({speed_kmh:.0f} km/h) -- may indicate travel or data anomaly."
-                    ),
-                    "severity":    "warn" if speed_kmh < _FAST_MOVEMENT_KMH * 3 else "critical",
-                    "evidence":    {
-                        "from_ts":    prev["timestamp"],
-                        "to_ts":      curr["timestamp"],
-                        "distance_km": round(dist_km, 1),
-                        "speed_kmh":   round(speed_kmh, 1),
-                    },
-                })
+                patterns.append(
+                    {
+                        "pattern": "large_location_jump",
+                        "description": (
+                            f"Device moved {dist_km:.0f} km in {dt_s / 3600:.1f} h "
+                            f"({speed_kmh:.0f} km/h) -- may indicate travel or data anomaly."
+                        ),
+                        "severity": (
+                            "warn" if speed_kmh < _FAST_MOVEMENT_KMH * 3 else "critical"
+                        ),
+                        "evidence": {
+                            "from_ts": prev["timestamp"],
+                            "to_ts": curr["timestamp"],
+                            "distance_km": round(dist_km, 1),
+                            "speed_kmh": round(speed_kmh, 1),
+                        },
+                    }
+                )
             elif speed_kmh > _FAST_MOVEMENT_KMH:
-                patterns.append({
-                    "pattern":     "high_speed_movement",
-                    "description": (
-                        f"Device moved at ~{speed_kmh:.0f} km/h "
-                        f"({dist_km:.1f} km in {dt_s:.0f} s) -- likely vehicle or data error."
-                    ),
-                    "severity":    "info",
-                    "evidence":    {
-                        "from_ts":    prev["timestamp"],
-                        "to_ts":      curr["timestamp"],
-                        "distance_km": round(dist_km, 2),
-                        "speed_kmh":   round(speed_kmh, 1),
-                    },
-                })
+                patterns.append(
+                    {
+                        "pattern": "high_speed_movement",
+                        "description": (
+                            f"Device moved at ~{speed_kmh:.0f} km/h "
+                            f"({dist_km:.1f} km in {dt_s:.0f} s) -- likely vehicle or data error."
+                        ),
+                        "severity": "info",
+                        "evidence": {
+                            "from_ts": prev["timestamp"],
+                            "to_ts": curr["timestamp"],
+                            "distance_km": round(dist_km, 2),
+                            "speed_kmh": round(speed_kmh, 1),
+                        },
+                    }
+                )
         except Exception:
             continue
 

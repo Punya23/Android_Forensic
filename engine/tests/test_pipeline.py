@@ -1,4 +1,5 @@
 """End-to-end pipeline test against a generated mock corpus."""
+
 import sys
 from pathlib import Path
 
@@ -20,8 +21,12 @@ def corpus(tmp_path):
 
 def test_full_acquisition(corpus, tmp_path):
     source = MockDeviceSource(corpus)
-    cfg = PipelineConfig(case_id="TEST-001", examiner="Tester",
-                         legal_authority="warrant#1", cases_root=tmp_path / "cases")
+    cfg = PipelineConfig(
+        case_id="TEST-001",
+        examiner="Tester",
+        legal_authority="warrant#1",
+        cases_root=tmp_path / "cases",
+    )
     summary = run_acquisition(source, cfg)
 
     counts = summary["counts"]
@@ -29,12 +34,12 @@ def test_full_acquisition(corpus, tmp_path):
     assert counts["messages"] > 0
     assert counts["contacts"] == 4
     assert counts["calls"] == 3
-    assert counts["media"] == 5           # 3 DCIM + 1 WA + 1 TG
-    assert counts["locations"] >= 4       # EXIF GPS + dumpsys fixes
-    assert counts["recovered"] > 0        # deleted rows carved
-    assert counts["flags"] > 0            # keyword hits
-    assert counts["browser"] > 0          # browser history parsed
-    assert counts["screenshots"] == 1     # manual screen capture
+    assert counts["media"] == 5  # 3 DCIM + 1 WA + 1 TG
+    assert counts["locations"] >= 4  # EXIF GPS + dumpsys fixes
+    assert counts["recovered"] > 0  # deleted rows carved
+    assert counts["flags"] > 0  # keyword hits
+    assert counts["browser"] > 0  # browser history parsed
+    assert counts["screenshots"] == 1  # manual screen capture
 
     # New analysis blocks must be populated.
     assert summary["risk"]["level"] in ("red", "amber", "green")
@@ -56,11 +61,17 @@ def test_full_acquisition(corpus, tmp_path):
 
 def test_narrative_deleted_messages_recovered(corpus, tmp_path):
     source = MockDeviceSource(corpus)
-    cfg = PipelineConfig(case_id="TEST-002", examiner="Tester",
-                         cases_root=tmp_path / "cases")
+    cfg = PipelineConfig(
+        case_id="TEST-002", examiner="Tester", cases_root=tmp_path / "cases"
+    )
     summary = run_acquisition(source, cfg)
     import json
-    rec = json.loads((Path(summary["case_dir"]) / "derived" / "recovered.json").read_text(encoding="utf-8"))
+
+    rec = json.loads(
+        (Path(summary["case_dir"]) / "derived" / "recovered.json").read_text(
+            encoding="utf-8"
+        )
+    )
     all_text = " ".join(str(v) for r in rec for v in r["values"] if isinstance(v, str))
     # The deleted WhatsApp evidence must be recoverable from msgstore.db.
     assert "4471" in all_text
@@ -69,14 +80,16 @@ def test_narrative_deleted_messages_recovered(corpus, tmp_path):
 
 def test_manifest_hashes_present(corpus, tmp_path):
     source = MockDeviceSource(corpus)
-    cfg = PipelineConfig(case_id="TEST-003", examiner="Tester",
-                         cases_root=tmp_path / "cases")
+    cfg = PipelineConfig(
+        case_id="TEST-003", examiner="Tester", cases_root=tmp_path / "cases"
+    )
     summary = run_acquisition(source, cfg)
     import json
+
     manifest = json.loads((Path(summary["case_dir"]) / "manifest.json").read_text())
     assert len(manifest) > 0
     for art in manifest:
-        assert len(art["sha256"]) == 64      # every artifact hashed
+        assert len(art["sha256"]) == 64  # every artifact hashed
         assert art["tier"] == "tier0"
 
 
@@ -90,7 +103,11 @@ def test_tier1_contacts_requested_on_mock_is_logged_as_skipped(corpus, tmp_path)
     )
     summary = run_acquisition(source, cfg)
     import json
-    audit = [json.loads(line) for line in (Path(summary["case_dir"]) / "audit.jsonl").read_text().splitlines()]
+
+    audit = [
+        json.loads(line)
+        for line in (Path(summary["case_dir"]) / "audit.jsonl").read_text().splitlines()
+    ]
     tier1_events = [e for e in audit if e["action"] == "tier1.helper.contacts"]
     assert tier1_events
     assert tier1_events[-1]["result"] == "skipped"

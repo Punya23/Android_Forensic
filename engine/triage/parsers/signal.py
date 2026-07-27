@@ -20,13 +20,13 @@ guidance.
 `parse_signal_backup()` returns a list of `Message` objects tagged `app='signal'`
 and `direction='consent-based'`.
 """
+
 from __future__ import annotations
 
 import os
 import shutil
 import sqlite3
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -45,7 +45,10 @@ def _find_signalbackup_tools() -> Optional[str]:
         return which
     # Common side-install / bundled vendor locations.
     candidates = [
-        Path(__file__).resolve().parents[3] / "vendor" / "signalbackup-tools" / "signalbackup-tools",
+        Path(__file__).resolve().parents[3]
+        / "vendor"
+        / "signalbackup-tools"
+        / "signalbackup-tools",
         Path.home() / "signalbackup-tools" / "signalbackup-tools",
     ]
     for c in candidates:
@@ -90,22 +93,25 @@ def _read_signal_sqlite(db_path: Path, max_rows: int = 10000) -> list[Message]:
                     if n > 1e12:
                         n //= 1000
                     from datetime import datetime, timezone
+
                     timestamp = datetime.fromtimestamp(n, tz=timezone.utc).strftime(
                         "%Y-%m-%dT%H:%M:%SZ"
                     )
                 except (ValueError, TypeError, OSError):
                     pass
 
-                messages.append(Message(
-                    app="signal",
-                    sender=sender,
-                    body=body,
-                    timestamp=timestamp,
-                    direction=direction,
-                    confidence=Confidence.LIVE,
-                    source_file=db_path.name,
-                    provenance="consent-based Signal backup (signalbackup-tools)",
-                ))
+                messages.append(
+                    Message(
+                        app="signal",
+                        sender=sender,
+                        body=body,
+                        timestamp=timestamp,
+                        direction=direction,
+                        confidence=Confidence.LIVE,
+                        source_file=db_path.name,
+                        provenance="consent-based Signal backup (signalbackup-tools)",
+                    )
+                )
         con.close()
     except sqlite3.Error:
         pass
@@ -136,6 +142,7 @@ def parse_signal_backup(
             ``error``     — str or None
             ``work_dir``  — path where the decrypted DB lives (for further analysis)
     """
+
     def _log(msg: str) -> None:
         if log_fn:
             log_fn(msg)
@@ -144,8 +151,10 @@ def parse_signal_backup(
     tool = _find_signalbackup_tools()
 
     if tool is None:
-        _log("signalbackup-tools not found — Signal backup decryption skipped "
-             "(set SIGNALBACKUP_TOOLS_PATH env var to enable)")
+        _log(
+            "signalbackup-tools not found — Signal backup decryption skipped "
+            "(set SIGNALBACKUP_TOOLS_PATH env var to enable)"
+        )
         return {
             "messages": [],
             "available": False,
@@ -167,11 +176,15 @@ def parse_signal_backup(
     cmd = [
         tool,
         str(backup_path),
-        "--passphrase", passphrase.replace(" ", ""),
-        "--output", str(work_dir),
+        "--passphrase",
+        passphrase.replace(" ", ""),
+        "--output",
+        str(work_dir),
         "--overwrite",
     ]
-    _log(f"Signal decrypt command: {' '.join(cmd[:3])} --passphrase [REDACTED] --output {work_dir} --overwrite")
+    _log(
+        f"Signal decrypt command: {' '.join(cmd[:3])} --passphrase [REDACTED] --output {work_dir} --overwrite"
+    )
 
     try:
         result = subprocess.run(
@@ -231,7 +244,9 @@ def parse_signal_backup(
     }
 
 
-def parse_signal_plaintext_db(db_path: str | Path, max_rows: int = 10000) -> list[Message]:
+def parse_signal_plaintext_db(
+    db_path: str | Path, max_rows: int = 10000
+) -> list[Message]:
     """Parse a Signal SQLite database that is already in plaintext (no decryption needed).
 
     Used when:

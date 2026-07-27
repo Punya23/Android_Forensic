@@ -15,6 +15,7 @@ Forensic value:
 All functions operate entirely without root -- dumpsys is accessible to the
 shell UID via ADB.
 """
+
 from __future__ import annotations
 
 import re
@@ -30,21 +31,32 @@ from ..config import Confidence
 # ---------------------------------------------------------------------------
 
 # Hours considered "late night" for pattern detection
-_LATE_NIGHT_START = 23   # 11 PM
-_LATE_NIGHT_END   = 5    # 5 AM
+_LATE_NIGHT_START = 23  # 11 PM
+_LATE_NIGHT_END = 5  # 5 AM
 
 # A "spike" session is one longer than this many minutes
 _SPIKE_SESSION_MINUTES = 90
 
 # Known suspicious app categories (fragments matched against package name)
 _SUSPICIOUS_PKG_FRAGMENTS: List[str] = [
-    "vpn", "proxy", "tor", "anon", "hide", "cleaner", "eraser",
-    "vault", "secret", "encrypt", "ghost", "incognito",
+    "vpn",
+    "proxy",
+    "tor",
+    "anon",
+    "hide",
+    "cleaner",
+    "eraser",
+    "vault",
+    "secret",
+    "encrypt",
+    "ghost",
+    "incognito",
 ]
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_epoch(raw: str) -> Optional[int]:
     """Parse an epoch value from a raw string (ms or s).  Returns seconds."""
@@ -91,10 +103,7 @@ def _parse_timestamp(raw: str) -> Optional[str]:
     if m2:
         month, day, hour, minute, sec = m2.groups()
         year = time.gmtime().tm_year
-        return (
-            f"{year}-{int(month):02d}-{int(day):02d}"
-            f"T{hour}:{minute}:{sec}Z"
-        )
+        return f"{year}-{int(month):02d}-{int(day):02d}" f"T{hour}:{minute}:{sec}Z"
 
     return None
 
@@ -108,6 +117,7 @@ def _is_suspicious_app(package: str) -> bool:
 def _ts_to_epoch(iso_ts: str) -> float:
     """Convert ISO-8601 UTC string to a float Unix timestamp."""
     import calendar
+
     t = time.strptime(iso_ts, "%Y-%m-%dT%H:%M:%SZ")
     return float(calendar.timegm(t))
 
@@ -153,28 +163,32 @@ def parse_screen_time(dumpsys_output: str) -> List[Dict[str, Any]]:
             event_type = "DOZING"
         else:
             event_type = "OFF"
-        events.append({
-            "event_type":   event_type,
-            "timestamp":    "",
-            "raw_epoch_ms": -1,
-            "wakefulness":  state,
-            "source":       "wakefulness_state",
-        })
+        events.append(
+            {
+                "event_type": event_type,
+                "timestamp": "",
+                "raw_epoch_ms": -1,
+                "wakefulness": state,
+                "source": "wakefulness_state",
+            }
+        )
 
     # Extract timestamped last-sleep / last-wake fields
     for match in _RE_SCREEN_TIMESTAMP.finditer(dumpsys_output):
-        ctx = dumpsys_output[max(0, match.start() - 40): match.start()].strip()
+        ctx = dumpsys_output[max(0, match.start() - 40) : match.start()].strip()
         raw_ms = int(match.group(1))
         ts = _parse_timestamp(str(raw_ms)) or ""
         is_wake = any(k in ctx.lower() for k in ("wake", "poweron", "useractivity"))
         event_type = "ON" if is_wake else "OFF"
-        events.append({
-            "event_type":   event_type,
-            "timestamp":    ts,
-            "raw_epoch_ms": raw_ms,
-            "wakefulness":  "",
-            "source":       "power_timestamp",
-        })
+        events.append(
+            {
+                "event_type": event_type,
+                "timestamp": ts,
+                "raw_epoch_ms": raw_ms,
+                "wakefulness": "",
+                "source": "power_timestamp",
+            }
+        )
 
     # Parse history lines for screen-state change markers
     _RE_HIST = re.compile(
@@ -185,17 +199,19 @@ def parse_screen_time(dumpsys_output: str) -> List[Dict[str, Any]]:
         sign = match.group(1)
         event_type = "ON" if sign == "+" else "OFF"
         line_start = dumpsys_output.rfind("\n", 0, match.start()) + 1
-        line = dumpsys_output[line_start: dumpsys_output.find("\n", match.end())]
+        line = dumpsys_output[line_start : dumpsys_output.find("\n", match.end())]
         ts_m = re.search(r"(\d{10,13})", line)
         raw_ms = int(ts_m.group(1)) if ts_m else -1
         ts = _parse_timestamp(str(raw_ms)) if raw_ms > 0 else ""
-        events.append({
-            "event_type":   event_type,
-            "timestamp":    ts,
-            "raw_epoch_ms": raw_ms,
-            "wakefulness":  "",
-            "source":       "history_line",
-        })
+        events.append(
+            {
+                "event_type": event_type,
+                "timestamp": ts,
+                "raw_epoch_ms": raw_ms,
+                "wakefulness": "",
+                "source": "history_line",
+            }
+        )
 
     return events
 
@@ -216,13 +232,13 @@ def get_screen_time(adb: Adb) -> List[Dict[str, Any]]:
 # Battery stats / app usage -- dumpsys batterystats + usagestats
 # ---------------------------------------------------------------------------
 
-_RE_FGTIME     = re.compile(r"fg\s*(?:time|Time)\s*[=:]\s*(\d+)", re.IGNORECASE)
+_RE_FGTIME = re.compile(r"fg\s*(?:time|Time)\s*[=:]\s*(\d+)", re.IGNORECASE)
 _RE_FGTIME_ALT = re.compile(r"foreground(?:Time)?\s*[=:]\s*(\d+)", re.IGNORECASE)
-_RE_BATT_PCT   = re.compile(r"(?:start|begin)\s+level\s*[=:]\s*(\d+)%?", re.IGNORECASE)
-_RE_USAGE_PKG  = re.compile(
+_RE_BATT_PCT = re.compile(r"(?:start|begin)\s+level\s*[=:]\s*(\d+)%?", re.IGNORECASE)
+_RE_USAGE_PKG = re.compile(
     r"package\s*[=:]\s*\"?([a-z][a-zA-Z0-9_.]+)\"?", re.IGNORECASE
 )
-_RE_USAGE_FG   = re.compile(
+_RE_USAGE_FG = re.compile(
     r"(?:totalTimeInForeground|foreground(?:Time)?)\s*[=:]\s*(\d+)", re.IGNORECASE
 )
 _RE_USAGE_LAST = re.compile(r"lastTimeUsed\s*[=:]\s*(\d+)", re.IGNORECASE)
@@ -251,7 +267,7 @@ def parse_battery_stats(batterystats_output: str) -> List[Dict[str, Any]]:
         pkg = m.group(1)
         if "." not in pkg or len(pkg) <= 5:
             continue
-        window = batterystats_output[m.start(): m.start() + 500]
+        window = batterystats_output[m.start() : m.start() + 500]
         fg_m = _RE_FGTIME.search(window) or _RE_FGTIME_ALT.search(window)
         if not fg_m:
             continue
@@ -259,17 +275,17 @@ def parse_battery_stats(batterystats_output: str) -> List[Dict[str, Any]]:
         if fg_ms <= 0:
             continue
 
-        batt_window = batterystats_output[max(0, m.start() - 200): m.start() + 200]
+        batt_window = batterystats_output[max(0, m.start() - 200) : m.start() + 200]
         batt_m = _RE_BATT_PCT.search(batt_window)
         batt_pct = int(batt_m.group(1)) if batt_m else -1
 
         if pkg not in apps or fg_ms > apps[pkg]["foreground_ms"]:
             apps[pkg] = {
-                "package":          pkg,
-                "foreground_ms":    fg_ms,
-                "foreground_min":   round(fg_ms / 60_000, 2),
+                "package": pkg,
+                "foreground_ms": fg_ms,
+                "foreground_min": round(fg_ms / 60_000, 2),
                 "battery_pct_used": batt_pct,
-                "is_suspicious":    _is_suspicious_app(pkg),
+                "is_suspicious": _is_suspicious_app(pkg),
             }
 
     return sorted(apps.values(), key=lambda x: x["foreground_ms"], reverse=True)
@@ -295,16 +311,19 @@ def _parse_usagestats(usagestats_output: str) -> List[Dict[str, Any]]:
             raw_lu = lu_m.group(1) if lu_m else ""
             last_used = _parse_timestamp(raw_lu) or ""
 
-            entry = apps.get(current_pkg, {
-                "package":          current_pkg,
-                "foreground_ms":    0,
-                "foreground_min":   0.0,
-                "battery_pct_used": -1,
-                "is_suspicious":    _is_suspicious_app(current_pkg),
-                "last_used":        "",
-            })
+            entry = apps.get(
+                current_pkg,
+                {
+                    "package": current_pkg,
+                    "foreground_ms": 0,
+                    "foreground_min": 0.0,
+                    "battery_pct_used": -1,
+                    "is_suspicious": _is_suspicious_app(current_pkg),
+                    "last_used": "",
+                },
+            )
             if fg_ms > entry["foreground_ms"]:
-                entry["foreground_ms"]  = fg_ms
+                entry["foreground_ms"] = fg_ms
                 entry["foreground_min"] = round(fg_ms / 60_000, 2)
             if last_used:
                 entry["last_used"] = last_used
@@ -332,7 +351,7 @@ def get_app_usage(adb: Adb) -> List[Dict[str, Any]]:
             pkg = entry["package"]
             if pkg in combined:
                 if entry["foreground_ms"] > combined[pkg]["foreground_ms"]:
-                    combined[pkg]["foreground_ms"]  = entry["foreground_ms"]
+                    combined[pkg]["foreground_ms"] = entry["foreground_ms"]
                     combined[pkg]["foreground_min"] = entry["foreground_min"]
                 if entry.get("last_used"):
                     combined[pkg]["last_used"] = entry["last_used"]
@@ -346,6 +365,7 @@ def get_app_usage(adb: Adb) -> List[Dict[str, Any]]:
 # Timeline builder
 # ---------------------------------------------------------------------------
 
+
 def build_screen_timeline(screen_events: List[Dict]) -> List[TimelineEvent]:
     """Convert screen on/off events into :class:`TimelineEvent` objects.
 
@@ -358,17 +378,19 @@ def build_screen_timeline(screen_events: List[Dict]) -> List[TimelineEvent]:
         ts = ev.get("timestamp", "")
         if not ts:
             continue
-        etype      = ev.get("event_type", "?")
+        etype = ev.get("event_type", "?")
         wakefulness = ev.get("wakefulness", "")
-        w_part     = f" [{wakefulness}]" if wakefulness else ""
-        summary    = f"[Screen] {etype}{w_part}"
-        events.append(TimelineEvent(
-            timestamp  = ts,
-            kind       = "screen",
-            summary    = summary,
-            confidence = Confidence.LIVE,
-            ref        = etype,
-        ))
+        w_part = f" [{wakefulness}]" if wakefulness else ""
+        summary = f"[Screen] {etype}{w_part}"
+        events.append(
+            TimelineEvent(
+                timestamp=ts,
+                kind="screen",
+                summary=summary,
+                confidence=Confidence.LIVE,
+                ref=etype,
+            )
+        )
 
     events.sort(key=lambda e: e.timestamp)
 
@@ -393,6 +415,7 @@ def build_screen_timeline(screen_events: List[Dict]) -> List[TimelineEvent]:
 # Summary statistics
 # ---------------------------------------------------------------------------
 
+
 def get_screen_time_summary(
     screen_events: List[Dict],
     app_usage: List[Dict],
@@ -413,7 +436,7 @@ def get_screen_time_summary(
     on_epoch: Optional[float] = None
 
     for ev in sorted(screen_events, key=lambda e: e.get("timestamp", "")):
-        ts    = ev.get("timestamp", "")
+        ts = ev.get("timestamp", "")
         etype = ev.get("event_type", "")
         if not ts:
             continue
@@ -432,26 +455,29 @@ def get_screen_time_summary(
                 sessions.append(dur_s / 60)
             on_epoch = None
 
-    total_min   = round(sum(sessions), 1)
+    total_min = round(sum(sessions), 1)
     most_active = sorted(hour_counts, key=lambda h: hour_counts[h], reverse=True)
-    daily_avg   = round(total_min / max(len(sessions), 1), 1)
+    daily_avg = round(total_min / max(len(sessions), 1), 1)
 
-    top_apps   = sorted(app_usage, key=lambda a: a.get("foreground_ms", 0), reverse=True)[:5]
+    top_apps = sorted(app_usage, key=lambda a: a.get("foreground_ms", 0), reverse=True)[
+        :5
+    ]
     suspicious = [a for a in app_usage if a.get("is_suspicious")]
 
     return {
-        "total_sessions":        len(sessions),
+        "total_sessions": len(sessions),
         "total_screen_time_min": total_min,
-        "most_used_apps":        [a["package"] for a in top_apps],
-        "most_active_hours":     most_active[:5],
-        "daily_average_min":     daily_avg,
-        "suspicious_apps":       [a["package"] for a in suspicious],
+        "most_used_apps": [a["package"] for a in top_apps],
+        "most_active_hours": most_active[:5],
+        "daily_average_min": daily_avg,
+        "suspicious_apps": [a["package"] for a in suspicious],
     }
 
 
 # ---------------------------------------------------------------------------
 # Pattern detection
 # ---------------------------------------------------------------------------
+
 
 def detect_usage_patterns(usage: List[Dict]) -> List[Dict]:
     """Detect anomalous or forensically significant usage patterns.
@@ -471,26 +497,30 @@ def detect_usage_patterns(usage: List[Dict]) -> List[Dict]:
 
         # Flag suspicious app names with meaningful usage
         if app.get("is_suspicious") and fg_min > 1:
-            patterns.append({
-                "pattern":     "suspicious_app_usage",
-                "description": (
-                    f"App '{pkg}' contains forensically relevant keywords "
-                    f"(VPN/proxy/vault/etc.) and has {fg_min} min foreground time."
-                ),
-                "severity":    "warn",
-                "evidence":    {"package": pkg, "foreground_min": fg_min},
-            })
+            patterns.append(
+                {
+                    "pattern": "suspicious_app_usage",
+                    "description": (
+                        f"App '{pkg}' contains forensically relevant keywords "
+                        f"(VPN/proxy/vault/etc.) and has {fg_min} min foreground time."
+                    ),
+                    "severity": "warn",
+                    "evidence": {"package": pkg, "foreground_min": fg_min},
+                }
+            )
 
         # Flag unusually long sessions
         if fg_min > _SPIKE_SESSION_MINUTES:
-            patterns.append({
-                "pattern":     "high_usage_spike",
-                "description": (
-                    f"App '{pkg}' had an unusually long foreground session "
-                    f"of {fg_min} min -- may indicate intensive or automated use."
-                ),
-                "severity":    "info",
-                "evidence":    {"package": pkg, "foreground_min": fg_min},
-            })
+            patterns.append(
+                {
+                    "pattern": "high_usage_spike",
+                    "description": (
+                        f"App '{pkg}' had an unusually long foreground session "
+                        f"of {fg_min} min -- may indicate intensive or automated use."
+                    ),
+                    "severity": "info",
+                    "evidence": {"package": pkg, "foreground_min": fg_min},
+                }
+            )
 
     return patterns

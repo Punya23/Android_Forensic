@@ -24,6 +24,7 @@ can be recommended opt-in, and every such decision is recorded in ``plan.notes``
 ``plan.deprioritised``. Retrieval and the knowledge graph can *reorder* priorities and
 flip the recommendation on expensive pulls — they can never silently drop an artifact.
 """
+
 from __future__ import annotations
 
 import re
@@ -35,7 +36,6 @@ from .casebank import CaseBank, RetrievedCase
 from .knowledge_graph import KnowledgeGraph
 from .llm import LLMProvider, get_provider
 from .nomenclature import (
-    RoleAssignment,
     extract_roles,
     roles_by_key,
     validate_description,
@@ -60,20 +60,20 @@ _BAND_MEDIUM = 0.35
 @dataclass
 class CaseProfile:
     description: str
-    case_number: str = ""                                  # FIR / crime number
+    case_number: str = ""  # FIR / crime number
     crime_type: str = "general"
     crime_label: str = "General / Unspecified"
     suspects: list[str] = field(default_factory=list)
     victims: list[str] = field(default_factory=list)
     other_entities: list[str] = field(default_factory=list)
     locations: list[str] = field(default_factory=list)
-    keywords: list[str] = field(default_factory=list)     # case-specific free terms
+    keywords: list[str] = field(default_factory=list)  # case-specific free terms
     timeframe: Optional[str] = None
     summary: str = ""
-    extraction_method: str = "heuristic"                   # heuristic | llm:<name>
+    extraction_method: str = "heuristic"  # heuristic | llm:<name>
     confidence: float = 0.0
     # Forensic-nomenclature layer: every named person with a canonical procedural role.
-    roles: list[dict] = field(default_factory=list)        # RoleAssignment.to_dict()
+    roles: list[dict] = field(default_factory=list)  # RoleAssignment.to_dict()
     nomenclature_warnings: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -107,19 +107,19 @@ class CaseProfile:
 class ArtifactPlan:
     artifact: str
     label: str
-    priority: str          # high | medium | low — the *effective* priority after fusion
-    cost: str              # cheap | expensive
-    tier: str              # tier0 | tier1 | tier2
-    collect: bool          # will the pipeline actually collect it this run?
+    priority: str  # high | medium | low — the *effective* priority after fusion
+    cost: str  # cheap | expensive
+    tier: str  # tier0 | tier1 | tier2
+    collect: bool  # will the pipeline actually collect it this run?
     rationale: str = ""
     # --- belief breakdown, so the officer can audit why this ranked where it did ---
-    doctrine_priority: str = ""     # what the ontology alone said
-    doctrine_score: float = 0.0     # 0..1
-    precedent_score: Optional[float] = None   # from retrieved similar cases
-    learned_score: Optional[float] = None     # from the knowledge graph
-    fused_score: float = 0.0        # what the band was computed from
-    evidence: list[str] = field(default_factory=list)   # cited case numbers / notes
-    adjustment: str = ""            # "", "promoted", "demoted"
+    doctrine_priority: str = ""  # what the ontology alone said
+    doctrine_score: float = 0.0  # 0..1
+    precedent_score: Optional[float] = None  # from retrieved similar cases
+    learned_score: Optional[float] = None  # from the knowledge graph
+    fused_score: float = 0.0  # what the band was computed from
+    evidence: list[str] = field(default_factory=list)  # cited case numbers / notes
+    adjustment: str = ""  # "", "promoted", "demoted"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -131,15 +131,17 @@ class CollectionPlan:
     crime_label: str
     artifacts: list[ArtifactPlan] = field(default_factory=list)
     pipeline_overrides: dict = field(default_factory=dict)
-    extra_keywords: list[dict] = field(default_factory=list)   # serialisable KeywordRule dicts
-    deprioritised: list[dict] = field(default_factory=list)    # {artifact, reason}
+    extra_keywords: list[dict] = field(
+        default_factory=list
+    )  # serialisable KeywordRule dicts
+    deprioritised: list[dict] = field(default_factory=list)  # {artifact, reason}
     notes: list[str] = field(default_factory=list)
     rationale: str = ""
     # --- RAG / knowledge-graph provenance ---------------------------------
-    precedents: list[dict] = field(default_factory=list)       # RetrievedCase.to_dict()
+    precedents: list[dict] = field(default_factory=list)  # RetrievedCase.to_dict()
     similar_crime_types: list[dict] = field(default_factory=list)
     knowledge_graph_stats: dict = field(default_factory=dict)
-    evidence_basis: str = "doctrine"    # doctrine | doctrine+precedent | fused
+    evidence_basis: str = "doctrine"  # doctrine | doctrine+precedent | fused
     estimated_savings: dict = field(default_factory=dict)
     # Artifacts a closely-matching prior case was solved on that this plan is NOT
     # auto-collecting. Surfaced so the officer can enable them in one click.
@@ -150,8 +152,14 @@ class CollectionPlan:
 
     def keyword_rules(self) -> list[KeywordRule]:
         """Rebuild KeywordRule objects for the flagging engine."""
-        return [KeywordRule(term=k["term"], severity=k.get("severity", "warn"),
-                            is_regex=k.get("is_regex", True)) for k in self.extra_keywords]
+        return [
+            KeywordRule(
+                term=k["term"],
+                severity=k.get("severity", "warn"),
+                is_regex=k.get("is_regex", True),
+            )
+            for k in self.extra_keywords
+        ]
 
 
 # --- stage 1: profile extraction --------------------------------------------
@@ -164,12 +172,16 @@ _EXTRACT_SYSTEM = (
 
 _EXTRACT_SCHEMA = {
     "crime_type": "one of: murder, drug_trafficking, financial_fraud, terrorism, "
-                  "kidnapping, sexual_offence, cybercrime, harassment, theft, "
-                  "missing_person, general",
-    "roles": [{"name": "person's name",
-               "role": "one of: accused, suspect, co_accused, absconder, victim, "
-                       "deceased, complainant, informant, witness, panch_witness, "
-                       "third_party"}],
+    "kidnapping, sexual_offence, cybercrime, harassment, theft, "
+    "missing_person, general",
+    "roles": [
+        {
+            "name": "person's name",
+            "role": "one of: accused, suspect, co_accused, absconder, victim, "
+            "deceased, complainant, informant, witness, panch_witness, "
+            "third_party",
+        }
+    ],
     "suspects": ["names of suspects/accused"],
     "victims": ["names of victims"],
     "other_entities": ["other named people/orgs (witnesses etc.)"],
@@ -180,9 +192,9 @@ _EXTRACT_SCHEMA = {
 }
 
 
-def extract_profile(description: str,
-                    provider: Optional[LLMProvider] = None,
-                    *, case_number: str = "") -> CaseProfile:
+def extract_profile(
+    description: str, provider: Optional[LLMProvider] = None, *, case_number: str = ""
+) -> CaseProfile:
     """Extract a :class:`CaseProfile` from *description*.
 
     Tries the LLM first (if configured & available); always merges/falls back to the
@@ -205,8 +217,10 @@ def extract_profile(description: str,
         crime_label=crime.label,
         suspects=_names_for(grouped, ("suspect", "accused", "co_accused", "absconder")),
         victims=_names_for(grouped, ("victim", "deceased")),
-        other_entities=_names_for(grouped, ("complainant", "informant", "witness",
-                                            "panch_witness", "third_party")),
+        other_entities=_names_for(
+            grouped,
+            ("complainant", "informant", "witness", "panch_witness", "third_party"),
+        ),
         locations=[],
         keywords=matched,
         summary=description[:200],
@@ -222,8 +236,11 @@ def extract_profile(description: str,
         base.victims = _extract_role(description, "victim")
 
     # LLM enrichment (optional).
-    llm = provider.extract_json(_EXTRACT_SYSTEM, f"Case description:\n{description}",
-                                schema_hint=_EXTRACT_SCHEMA)
+    llm = provider.extract_json(
+        _EXTRACT_SYSTEM,
+        f"Case description:\n{description}",
+        schema_hint=_EXTRACT_SCHEMA,
+    )
     if llm:
         ct = str(llm.get("crime_type", "")).strip().lower()
         if ct in CRIME_ONTOLOGY:
@@ -233,18 +250,23 @@ def extract_profile(description: str,
         regrouped = {}
         for r in base.roles:
             regrouped.setdefault(r.get("role", "third_party"), []).append(r["name"])
-        base.suspects = (_clean_list(llm.get("suspects"))
-                         or _names_for(regrouped, ("suspect", "accused", "co_accused",
-                                                   "absconder"))
-                         or base.suspects)
-        base.victims = (_clean_list(llm.get("victims"))
-                        or _names_for(regrouped, ("victim", "deceased"))
-                        or base.victims)
-        base.other_entities = _clean_list(llm.get("other_entities")) or base.other_entities
+        base.suspects = (
+            _clean_list(llm.get("suspects"))
+            or _names_for(regrouped, ("suspect", "accused", "co_accused", "absconder"))
+            or base.suspects
+        )
+        base.victims = (
+            _clean_list(llm.get("victims"))
+            or _names_for(regrouped, ("victim", "deceased"))
+            or base.victims
+        )
+        base.other_entities = (
+            _clean_list(llm.get("other_entities")) or base.other_entities
+        )
         base.locations = _clean_list(llm.get("locations")) or base.locations
         # Merge keywords: ontology-matched + model-suggested.
         base.keywords = _dedup(base.keywords + _clean_list(llm.get("keywords")))
-        base.timeframe = (llm.get("timeframe") or None)
+        base.timeframe = llm.get("timeframe") or None
         base.summary = str(llm.get("summary") or base.summary)[:300]
         base.extraction_method = f"llm:{provider.name}"
         base.confidence = max(base.confidence, 0.75)
@@ -252,8 +274,9 @@ def extract_profile(description: str,
 
 
 # --- stage 1b: precedent retrieval -------------------------------------------
-def retrieve_precedents(profile: CaseProfile, bank: Optional[CaseBank] = None,
-                        *, top_k: int = 5) -> tuple[list[RetrievedCase], dict[str, dict]]:
+def retrieve_precedents(
+    profile: CaseProfile, bank: Optional[CaseBank] = None, *, top_k: int = 5
+) -> tuple[list[RetrievedCase], dict[str, dict]]:
     """Find prior cases resembling *profile* and aggregate their artifact outcomes.
 
     Returns ``(hits, artifact_evidence)`` where ``artifact_evidence`` maps each artifact
@@ -263,12 +286,20 @@ def retrieve_precedents(profile: CaseProfile, bank: Optional[CaseBank] = None,
     bank = bank if bank is not None else CaseBank.load()
     if not len(bank):
         return [], {}
-    query = " ".join(filter(None, [
-        profile.description, profile.summary, " ".join(profile.keywords),
-        " ".join(profile.entities()),
-    ]))
-    hits = bank.search(query, crime_type=profile.crime_type,
-                       roles=profile.role_map(), top_k=top_k)
+    query = " ".join(
+        filter(
+            None,
+            [
+                profile.description,
+                profile.summary,
+                " ".join(profile.keywords),
+                " ".join(profile.entities()),
+            ],
+        )
+    )
+    hits = bank.search(
+        query, crime_type=profile.crime_type, roles=profile.role_map(), top_k=top_k
+    )
     return hits, bank.artifact_evidence(hits)
 
 
@@ -278,11 +309,11 @@ PIPELINE_FLAG_MAP: dict[str, Optional[str]] = {
     "contacts": "tier1_contacts",
     "call_logs": "tier1_calllog",
     "sms": "tier1_sms",
-    "media": None,          # Tier-0 shared-storage pull (always runs)
-    "locations": None,      # Tier-0 dumpsys + EXIF
-    "browser": None,        # Tier-0
-    "financial": None,      # derived from SMS/messages
-    "deleted": None,        # SQLite recovery always runs
+    "media": None,  # Tier-0 shared-storage pull (always runs)
+    "locations": None,  # Tier-0 dumpsys + EXIF
+    "browser": None,  # Tier-0
+    "financial": None,  # derived from SMS/messages
+    "deleted": None,  # SQLite recovery always runs
     "calendar": "tier1_collect_all",
     "accounts": "tier1_collect_all",
     "apps": "tier1_collect_all",
@@ -290,14 +321,18 @@ PIPELINE_FLAG_MAP: dict[str, Optional[str]] = {
     "telegram": "tier2_telegram",
     "instagram": "tier2_instagram",
     "snapchat": "tier2_snapchat",
-    "whatsapp": None,       # parsed from whatever the pull/root yields
+    "whatsapp": None,  # parsed from whatever the pull/root yields
 }
 
 
-def build_plan(profile: CaseProfile, *, allow_tier2: bool = True,
-               precedents: Optional[list[RetrievedCase]] = None,
-               artifact_evidence: Optional[dict[str, dict]] = None,
-               graph: Optional[KnowledgeGraph] = None) -> CollectionPlan:
+def build_plan(
+    profile: CaseProfile,
+    *,
+    allow_tier2: bool = True,
+    precedents: Optional[list[RetrievedCase]] = None,
+    artifact_evidence: Optional[dict[str, dict]] = None,
+    graph: Optional[KnowledgeGraph] = None,
+) -> CollectionPlan:
     """Turn a :class:`CaseProfile` into a concrete :class:`CollectionPlan`.
 
     Three belief sources are fused per artifact:
@@ -317,8 +352,9 @@ def build_plan(profile: CaseProfile, *, allow_tier2: bool = True,
     says — the fusion only reorders them.
     """
     crime = CRIME_ONTOLOGY.get(profile.crime_type, CRIME_ONTOLOGY["general"])
-    plan = CollectionPlan(crime_type=crime.key, crime_label=crime.label,
-                          rationale=crime.rationale)
+    plan = CollectionPlan(
+        crime_type=crime.key, crime_label=crime.label, rationale=crime.rationale
+    )
     overrides: dict = {}
     deprioritised: list[dict] = []
 
@@ -344,8 +380,9 @@ def build_plan(profile: CaseProfile, *, allow_tier2: bool = True,
         prec = artifact_evidence.get(name)
         learn = learned.get(name)
         fused, breakdown = _fuse_belief(crime.key, name, doctrine_prio, prec, learn)
-        prio, guard_note = _apply_asymmetry(_band(fused), doctrine_prio, fused,
-                                            prec, learn)
+        prio, guard_note = _apply_asymmetry(
+            _band(fused), doctrine_prio, fused, prec, learn
+        )
         adjustment = ""
         if PRIORITY_WEIGHT[prio] > PRIORITY_WEIGHT[doctrine_prio]:
             adjustment = "promoted"
@@ -362,7 +399,9 @@ def build_plan(profile: CaseProfile, *, allow_tier2: bool = True,
             collect = True
             if flag:
                 overrides[flag] = True
-            rationale = f"{prio.title()} relevance; cheap to collect, so always acquired."
+            rationale = (
+                f"{prio.title()} relevance; cheap to collect, so always acquired."
+            )
         else:
             # Expensive / root artifacts: recommend only when the fused relevance is
             # high (and, for Tier-2, only when permitted). Everything else is opt-in.
@@ -372,38 +411,46 @@ def build_plan(profile: CaseProfile, *, allow_tier2: bool = True,
             if collect and flag:
                 overrides[flag] = True
             if not collect:
-                reason = (
-                    f"{prio.title()} relevance for {crime.label}"
-                    + ("; requires root (Tier-2) — enable manually if available."
-                       if tier2 and wants and not allow_tier2
-                       else "; expensive to acquire — made opt-in to keep the run fast. "
-                            "Enable if the case needs it (evidence can only be collected once).")
+                reason = f"{prio.title()} relevance for {crime.label}" + (
+                    "; requires root (Tier-2) — enable manually if available."
+                    if tier2 and wants and not allow_tier2
+                    else "; expensive to acquire — made opt-in to keep the run fast. "
+                    "Enable if the case needs it (evidence can only be collected once)."
                 )
                 if adjustment == "demoted" and evidence_lines:
                     reason += f" Basis: {evidence_lines[0]}"
-                deprioritised.append({"artifact": name, "label": meta["label"],
-                                      "reason": reason})
-            rationale = (
-                f"{prio.title()} relevance; "
-                + ("recommended." if collect else "opt-in (not auto-collected).")
+                deprioritised.append(
+                    {"artifact": name, "label": meta["label"], "reason": reason}
+                )
+            rationale = f"{prio.title()} relevance; " + (
+                "recommended." if collect else "opt-in (not auto-collected)."
             )
         if adjustment:
             rationale += f" ({adjustment} from {doctrine_prio} by case evidence)"
 
-        plan.artifacts.append(ArtifactPlan(
-            artifact=name, label=meta["label"], priority=prio, cost=cost,
-            tier=meta["tier"], collect=collect, rationale=rationale,
-            doctrine_priority=doctrine_prio,
-            doctrine_score=breakdown["doctrine"],
-            precedent_score=breakdown["precedent"],
-            learned_score=breakdown["learned"],
-            fused_score=round(fused, 3),
-            evidence=evidence_lines,
-            adjustment=adjustment))
+        plan.artifacts.append(
+            ArtifactPlan(
+                artifact=name,
+                label=meta["label"],
+                priority=prio,
+                cost=cost,
+                tier=meta["tier"],
+                collect=collect,
+                rationale=rationale,
+                doctrine_priority=doctrine_prio,
+                doctrine_score=breakdown["doctrine"],
+                precedent_score=breakdown["precedent"],
+                learned_score=breakdown["learned"],
+                fused_score=round(fused, 3),
+                evidence=evidence_lines,
+                adjustment=adjustment,
+            )
+        )
 
     # Sort artifacts by fused score, then priority, then cost (cheap first).
-    plan.artifacts.sort(key=lambda a: (-a.fused_score, -PRIORITY_WEIGHT[a.priority],
-                                       a.cost != "cheap"))
+    plan.artifacts.sort(
+        key=lambda a: (-a.fused_score, -PRIORITY_WEIGHT[a.priority], a.cost != "cheap")
+    )
 
     plan.precedents = [h.to_dict() for h in precedents]
     if graph is not None:
@@ -424,22 +471,33 @@ def build_plan(profile: CaseProfile, *, allow_tier2: bool = True,
     adverse = set(profile.adverse_entities())
     for name in profile.entities():
         if len(name) >= 3:
-            extra.append({"term": name, "is_regex": False,
-                          "severity": "warn" if name in adverse else "info"})
+            extra.append(
+                {
+                    "term": name,
+                    "is_regex": False,
+                    "severity": "warn" if name in adverse else "info",
+                }
+            )
     plan.extra_keywords = _dedup_rules(extra)
 
     plan.pipeline_overrides = overrides
     plan.deprioritised = deprioritised
-    plan.notes = _build_notes(crime, profile, overrides, allow_tier2,
-                              precedents=precedents, plan=plan)
+    plan.notes = _build_notes(
+        crime, profile, overrides, allow_tier2, precedents=precedents, plan=plan
+    )
     return plan
 
 
-def plan_case(description: str, *, provider: Optional[LLMProvider] = None,
-              allow_tier2: bool = True, case_number: str = "",
-              bank: Optional[CaseBank] = None,
-              graph: Optional[KnowledgeGraph] = None,
-              use_rag: bool = True) -> tuple[CaseProfile, CollectionPlan]:
+def plan_case(
+    description: str,
+    *,
+    provider: Optional[LLMProvider] = None,
+    allow_tier2: bool = True,
+    case_number: str = "",
+    bank: Optional[CaseBank] = None,
+    graph: Optional[KnowledgeGraph] = None,
+    use_rag: bool = True,
+) -> tuple[CaseProfile, CollectionPlan]:
     """Convenience: description → (profile, plan) in one call.
 
     With *use_rag* (the default) the case bank is searched for precedents and the
@@ -450,8 +508,13 @@ def plan_case(description: str, *, provider: Optional[LLMProvider] = None,
     if not use_rag:
         return profile, build_plan(profile, allow_tier2=allow_tier2)
     hits, evidence = retrieve_precedents(profile, bank)
-    return profile, build_plan(profile, allow_tier2=allow_tier2, precedents=hits,
-                               artifact_evidence=evidence, graph=graph)
+    return profile, build_plan(
+        profile,
+        allow_tier2=allow_tier2,
+        precedents=hits,
+        artifact_evidence=evidence,
+        graph=graph,
+    )
 
 
 # --- belief fusion -----------------------------------------------------------
@@ -468,9 +531,13 @@ _W_PRECEDENT_MAX = 0.3
 _W_DOCTRINE_FLOOR = 0.15
 
 
-def _fuse_belief(crime_type: str, artifact: str, doctrine_priority: str,
-                 precedent: Optional[dict],
-                 learned: Optional[dict]) -> tuple[float, dict]:
+def _fuse_belief(
+    crime_type: str,
+    artifact: str,
+    doctrine_priority: str,
+    precedent: Optional[dict],
+    learned: Optional[dict],
+) -> tuple[float, dict]:
     """Combine doctrine, precedent and observation into one 0..1 relevance score.
 
     Weights are evidence-proportional: a link the graph has seen twice barely moves the
@@ -514,9 +581,13 @@ def _band(score: float) -> str:
     return "low"
 
 
-def _apply_asymmetry(band: str, doctrine_priority: str, fused: float,
-                     precedent: Optional[dict],
-                     learned: Optional[dict]) -> tuple[str, str]:
+def _apply_asymmetry(
+    band: str,
+    doctrine_priority: str,
+    fused: float,
+    precedent: Optional[dict],
+    learned: Optional[dict],
+) -> tuple[str, str]:
     """Gate band changes asymmetrically. Returns ``(band, guard_note)``.
 
     **Promotion is cheap, demotion is dangerous.** Collecting an artifact the doctrine
@@ -531,11 +602,12 @@ def _apply_asymmetry(band: str, doctrine_priority: str, fused: float,
     doc_w = PRIORITY_WEIGHT[doctrine_priority]
     new_w = PRIORITY_WEIGHT[band]
     if new_w >= doc_w:
-        return band, ""     # promotion or no change — always allowed
+        return band, ""  # promotion or no change — always allowed
 
     strength = float((learned or {}).get("strength", 0.0))
-    learned_low = ((learned or {}).get("posterior") is not None
-                   and float(learned["posterior"]) < 0.4)
+    learned_low = (learned or {}).get("posterior") is not None and float(
+        learned["posterior"]
+    ) < 0.4
     precedent_low = bool(precedent) and float(precedent.get("yield_score", 1.0)) < 0.35
     precedent_seen = len(set((precedent or {}).get("cases", [])))
 
@@ -548,8 +620,10 @@ def _apply_asymmetry(band: str, doctrine_priority: str, fused: float,
         # One source only: allow at most a single band of demotion.
         capped = {3: "medium", 2: "low", 1: "low"}[doc_w]
         if PRIORITY_WEIGHT[capped] >= new_w:
-            return capped, ("Demotion limited to one band — only one evidence source "
-                            "supports lowering this; evidence can only be collected once.")
+            return capped, (
+                "Demotion limited to one band — only one evidence source "
+                "supports lowering this; evidence can only be collected once."
+            )
         return capped, ""
     return doctrine_priority, (
         "Evidence suggested a lower ranking but was too thin to act on "
@@ -558,9 +632,13 @@ def _apply_asymmetry(band: str, doctrine_priority: str, fused: float,
     )
 
 
-def _evidence_lines(artifact: str, precedent: Optional[dict],
-                    learned: Optional[dict], adjustment: str,
-                    doctrine_priority: str) -> list[str]:
+def _evidence_lines(
+    artifact: str,
+    precedent: Optional[dict],
+    learned: Optional[dict],
+    adjustment: str,
+    doctrine_priority: str,
+) -> list[str]:
     """Human-readable citations for why an artifact scored where it did."""
     lines: list[str] = []
     if precedent:
@@ -568,10 +646,14 @@ def _evidence_lines(artifact: str, precedent: Optional[dict],
         none = int(precedent.get("none", 0))
         cases = sorted(set(precedent.get("cases", [])))
         if decisive:
-            lines.append(f"decisive in {decisive} similar case(s): {', '.join(cases[:4])}")
+            lines.append(
+                f"decisive in {decisive} similar case(s): {', '.join(cases[:4])}"
+            )
         elif none:
-            lines.append(f"collected but produced nothing in {none} similar case(s): "
-                         f"{', '.join(cases[:4])}")
+            lines.append(
+                f"collected but produced nothing in {none} similar case(s): "
+                f"{', '.join(cases[:4])}"
+            )
         for note in (precedent.get("notes") or [])[:2]:
             lines.append(note)
     if learned and learned.get("observations"):
@@ -581,14 +663,18 @@ def _evidence_lines(artifact: str, precedent: Optional[dict],
             f"(trust {learned['strength']:.0%})"
         )
     if adjustment:
-        lines.append(f"{adjustment.title()} from the doctrinal '{doctrine_priority}' "
-                     f"ranking on the evidence above; verify before relying on it.")
+        lines.append(
+            f"{adjustment.title()} from the doctrinal '{doctrine_priority}' "
+            f"ranking on the evidence above; verify before relying on it."
+        )
     return lines
 
 
-def _build_recommendations(plan: CollectionPlan,
-                           precedents: list[RetrievedCase],
-                           graph: Optional[KnowledgeGraph]) -> list[dict]:
+def _build_recommendations(
+    plan: CollectionPlan,
+    precedents: list[RetrievedCase],
+    graph: Optional[KnowledgeGraph],
+) -> list[dict]:
     """Flag artifacts a closely-matching prior case turned on that this plan skips.
 
     The numeric fusion is deliberately conservative, so a single very similar case can
@@ -610,14 +696,18 @@ def _build_recommendations(plan: CollectionPlan,
             if outcome.yield_ != "decisive" or outcome.artifact not in skipped:
                 continue
             plan_entry = skipped[outcome.artifact]
-            slot = out.setdefault(outcome.artifact, {
-                "artifact": outcome.artifact,
-                "label": plan_entry.label,
-                "current_priority": plan_entry.priority,
-                "pipeline_flag": PIPELINE_FLAG_MAP.get(outcome.artifact),
-                "tier": plan_entry.tier,
-                "cases": [], "reasons": [],
-            })
+            slot = out.setdefault(
+                outcome.artifact,
+                {
+                    "artifact": outcome.artifact,
+                    "label": plan_entry.label,
+                    "current_priority": plan_entry.priority,
+                    "pipeline_flag": PIPELINE_FLAG_MAP.get(outcome.artifact),
+                    "tier": plan_entry.tier,
+                    "cases": [],
+                    "reasons": [],
+                },
+            )
             slot["cases"].append(hit.study.case_number)
             slot["reasons"].append(f"{hit.study.case_number}: {outcome.note}")
 
@@ -641,12 +731,18 @@ def _estimate_savings(plan: CollectionPlan) -> dict:
     everywhere they surface.
     """
     # Indicative minutes for an expensive pull on a mid-range handset.
-    cost_minutes = {"media": 25, "whatsapp": 10, "telegram": 12,
-                    "instagram": 8, "snapchat": 8}
+    cost_minutes = {
+        "media": 25,
+        "whatsapp": 10,
+        "telegram": 12,
+        "instagram": 8,
+        "snapchat": 8,
+    }
     skipped = [a for a in plan.artifacts if a.cost == "expensive" and not a.collect]
     saved = sum(cost_minutes.get(a.artifact, 6) for a in skipped)
-    total = sum(cost_minutes.get(a.artifact, 6)
-                for a in plan.artifacts if a.cost == "expensive")
+    total = sum(
+        cost_minutes.get(a.artifact, 6) for a in plan.artifacts if a.cost == "expensive"
+    )
     return {
         "deprioritised_artifacts": [a.artifact for a in skipped],
         "estimated_minutes_saved": saved,
@@ -687,9 +783,12 @@ def _merge_roles(base: list[dict], llm_roles) -> list[dict]:
         meta = role_meta(key)
         existing = by_name.get(name)
         if existing and existing.get("confidence", 0) >= 0.9:
-            continue        # an explicit statement in the text outranks the model
+            continue  # an explicit statement in the text outranks the model
         by_name[name] = {
-            "name": name, "role": key, "label": meta.label, "adverse": meta.adverse,
+            "name": name,
+            "role": key,
+            "label": meta.label,
+            "adverse": meta.adverse,
             "evidence": (existing or {}).get("evidence", "llm"),
             "confidence": 0.8,
         }
@@ -713,9 +812,30 @@ _ROLE_PATTERNS = {
 
 # Words that look like proper nouns but aren't people.
 _STOPWORD_CAPS = {
-    "The", "A", "An", "He", "She", "They", "It", "We", "I", "This", "That",
-    "Suspect", "Victim", "Accused", "Police", "Officer", "Case", "Murder",
-    "Whatsapp", "Telegram", "Instagram", "Snapchat", "Android", "Phone",
+    "The",
+    "A",
+    "An",
+    "He",
+    "She",
+    "They",
+    "It",
+    "We",
+    "I",
+    "This",
+    "That",
+    "Suspect",
+    "Victim",
+    "Accused",
+    "Police",
+    "Officer",
+    "Case",
+    "Murder",
+    "Whatsapp",
+    "Telegram",
+    "Instagram",
+    "Snapchat",
+    "Android",
+    "Phone",
 }
 
 
@@ -737,8 +857,12 @@ def _proper_nouns(text: str) -> list[str]:
         toks = sentence.split()
         for i, tok in enumerate(toks):
             word = re.sub(r"[^A-Za-z]", "", tok)
-            if (i > 0 and re.match(r"^[A-Z][a-z]{2,}$", word)
-                    and word not in _STOPWORD_CAPS and word not in out):
+            if (
+                i > 0
+                and re.match(r"^[A-Z][a-z]{2,}$", word)
+                and word not in _STOPWORD_CAPS
+                and word not in out
+            ):
                 out.append(word)
     return out
 
@@ -772,10 +896,15 @@ def _is_regexy(s: str) -> bool:
     return bool(re.search(r"[\\^$.*+?()\[\]{}|]", s))
 
 
-def _build_notes(crime: CrimeProfile, profile: CaseProfile,
-                 overrides: dict, allow_tier2: bool,
-                 *, precedents: Optional[list[RetrievedCase]] = None,
-                 plan: Optional[CollectionPlan] = None) -> list[str]:
+def _build_notes(
+    crime: CrimeProfile,
+    profile: CaseProfile,
+    overrides: dict,
+    allow_tier2: bool,
+    *,
+    precedents: Optional[list[RetrievedCase]] = None,
+    plan: Optional[CollectionPlan] = None,
+) -> list[str]:
     notes: list[str] = []
     if profile.case_number:
         notes.append(f"Case number {profile.case_number}.")
@@ -785,7 +914,8 @@ def _build_notes(crime: CrimeProfile, profile: CaseProfile,
     )
     if profile.roles:
         summary = "; ".join(
-            f"{r['label']}: {r['name']}" for r in profile.roles
+            f"{r['label']}: {r['name']}"
+            for r in profile.roles
             if r.get("role") != "third_party"
         )
         if summary:
@@ -813,7 +943,9 @@ def _build_notes(crime: CrimeProfile, profile: CaseProfile,
         if moved:
             notes.append(
                 "Evidence-based re-ranking: "
-                + "; ".join(f"{a.label} {a.adjustment} to {a.priority}" for a in moved[:5])
+                + "; ".join(
+                    f"{a.label} {a.adjustment} to {a.priority}" for a in moved[:5]
+                )
                 + ". Doctrinal ranking is shown alongside each artifact for audit."
             )
         stats = plan.knowledge_graph_stats or {}
@@ -831,14 +963,22 @@ def _build_notes(crime: CrimeProfile, profile: CaseProfile,
         "reorder priorities but can never drop an artifact."
     )
     if any(k.startswith("tier2_") for k in overrides):
-        notes.append("Root-only (Tier-2) pulls are recommended for this crime type; they "
-                     "run only if the device is rooted.")
+        notes.append(
+            "Root-only (Tier-2) pulls are recommended for this crime type; they "
+            "run only if the device is rooted."
+        )
     elif not allow_tier2:
-        notes.append("Tier-2 (root) pulls were not permitted for this run; enable them "
-                     "manually if the device is rooted and the case needs app-private data.")
-    notes.append("WhatsApp note: msgstore.db is end-to-end encrypted (crypt15) — it is "
-                 "only recoverable with root + the key; non-root devices yield no WhatsApp "
-                 "chat database.")
-    notes.append("All AI output is investigative lead-generation and must be verified by "
-                 "a human examiner against the cited source artifact.")
+        notes.append(
+            "Tier-2 (root) pulls were not permitted for this run; enable them "
+            "manually if the device is rooted and the case needs app-private data."
+        )
+    notes.append(
+        "WhatsApp note: msgstore.db is end-to-end encrypted (crypt15) — it is "
+        "only recoverable with root + the key; non-root devices yield no WhatsApp "
+        "chat database."
+    )
+    notes.append(
+        "All AI output is investigative lead-generation and must be verified by "
+        "a human examiner against the cited source artifact."
+    )
     return notes

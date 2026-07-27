@@ -19,6 +19,9 @@ from . import TOOL_NAME, __version__
 from .config import ACQUISITION_DISCLAIMER, STANDARDS_REFS
 from .models import now_iso
 
+def _generate_hash_verification_section(case_dir: Path) -> str:
+    return ""
+
 _CONF_COLORS = {
     "live": ("#1c7d3f", "#e4f4ea"),
     "recovered": ("#2258a8", "#e2ecfa"),
@@ -43,6 +46,93 @@ def _badge(label: str, colors: tuple[str, str]) -> str:
         f"font-size:11px;font-weight:600;color:{fg};background:{bg};"
         f'white-space:nowrap">{_esc(label)}</span>'
     )
+
+
+def _geotagged_section(locations: list) -> str:
+    """Generate the Geotagged Images HTML section for the forensic report.
+
+    Args:
+        locations: List of LocationPoint dicts from derived/locations.json.
+
+    Returns:
+        HTML string with a table listing all geotagged images, sorted by
+        timestamp descending, capped at 500 rows.
+    """
+    # Filter to image/MediaStore points only (skip raw dumpsys last-known-fix
+    # entries that have no associated photo).
+    photo_locs = [
+        loc
+        for loc in locations
+        if isinstance(loc, dict) and loc.get("source") != "dumpsys"
+    ]
+    if not photo_locs:
+        return ""
+
+    # Sort most-recent first; null timestamps go to the bottom.
+    def _sort_key(loc: dict) -> str:
+        return loc.get("timestamp") or ""
+
+    sorted_locs = sorted(photo_locs, key=_sort_key, reverse=True)[:500]
+
+    rows = ""
+    for loc in sorted_locs:
+        # Derive a display filename from source_file (relative stored path).
+        sf = loc.get("source_file") or loc.get("label") or "—"
+        filename = sf.split("/")[-1].split("\\")[-1] if sf else "—"
+        ts = _esc(loc.get("timestamp") or "—")
+        lat = loc.get("latitude")
+        lon = loc.get("longitude")
+        lat_str = f"{lat:.6f}" if isinstance(lat, (int, float)) else "—"
+        lon_str = f"{lon:.6f}" if isinstance(lon, (int, float)) else "—"
+        source = _esc(loc.get("source") or "—")
+        # Coordinates link to OpenStreetMap for court-printable reports.
+        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+            coords_cell = (
+                f'<a href="https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=15/{lat}/{lon}" '
+                f'style="font-family:monospace;color:#2258a8">'
+                f"{lat_str}, {lon_str}</a>"
+            )
+        else:
+            coords_cell = (
+                f'<span style="font-family:monospace">{lat_str}, {lon_str}</span>'
+            )
+
+        rows += (
+            f"<tr>"
+            f"<td>{_esc(filename)}</td>"
+            f'<td style="font-family:monospace;font-size:11px">{ts}</td>'
+            f"<td>{coords_cell}</td>"
+            f'<td style="font-size:11px;color:#666">{source}</td>'
+            f"</tr>"
+        )
+
+    total = len(photo_locs)
+    shown = len(sorted_locs)
+    cap_note = (
+        f" Showing {shown} of {total} (most recent first)." if total > shown else ""
+    )
+
+    return f"""
+<h2>Geotagged Images</h2>
+<p class="note">
+  <strong>Forensic disclaimer:</strong> Locations are derived from photo EXIF
+  metadata (GPS tags embedded when the photo was taken). They do <em>not</em>
+  represent real-time location tracking. Not all images carry EXIF GPS data —
+  the device owner may have disabled location tagging, or GPS data may have been
+  stripped when photos were shared via messaging applications. Coordinates should
+  be independently verified before reliance in legal proceedings. This section
+  covers only photos acquired during this triage session.{_esc(cap_note)}
+</p>
+<table>
+  <tr>
+    <th>Filename</th>
+    <th>Timestamp (EXIF)</th>
+    <th>Coordinates</th>
+    <th>Source</th>
+  </tr>
+  {rows}
+</table>
+"""
 
 
 def generate_report(case_dir: str | Path) -> Path:
@@ -371,8 +461,10 @@ def generate_report(case_dir: str | Path) -> Path:
             len(discovered.get("messages", []) if isinstance(discovered, dict) else []),
         ),
         ("Wi-Fi networks", len(wifi_networks)),
-        ("Deleted/trashed media",
-         len((case.read_derived("mediastore_trash") or {}).get("items", []))),
+        (
+            "Deleted/trashed media",
+            len((case.read_derived("mediastore_trash") or {}).get("items", [])),
+        ),
         ("Locations", len(locations)),
         ("Browser URLs", len(browser)),
         ("Flags", len(flags)),
@@ -420,6 +512,12 @@ def generate_report(case_dir: str | Path) -> Path:
                 f'<td>{_esc(f["context"])}</td><td>{_esc(f["location"])}</td></tr>'
             )
         parts.append("</table>")
+
+    # --- Geotagged Images (EXIF GPS from photos) ---
+    if locations:
+        geo_html = _geotagged_section(locations)
+        if geo_html:
+            parts.append(geo_html)
 
     # Recovered / deleted data with confidence
     if recovered:
@@ -639,15 +737,15 @@ def _mediastore_trash_section(trash: dict) -> str:
         f'~{_esc(s.get("retention_window_days", 30) or 30)} days rather than erasing it. '
         f'<b>{_esc(s.get("file_recovered", 0))}</b> file(s) were recovered intact from '
         f'shared storage and <b>{_esc(s.get("deletion_detected_only", 0))}</b> further '
-        f'deletion(s) were detected from the MediaStore catalogue without the content. '
-        f'The deletion time is estimated as the item\'s auto-purge time minus the '
-        f'retention window; the exact expiry is shown for each item. All items require '
-        f'examiner verification.</p>'
+        f"deletion(s) were detected from the MediaStore catalogue without the content. "
+        f"The deletion time is estimated as the item's auto-purge time minus the "
+        f"retention window; the exact expiry is shown for each item. All items require "
+        f"examiner verification.</p>"
     )
     if s.get("expiring_within_3_days"):
         parts.append(
             f'<p class="note" style="color:#a5322f"><b>{_esc(s["expiring_within_3_days"])} '
-            f'recovered item(s) auto-purge within 3 days</b> — preserve now.</p>'
+            f"recovered item(s) auto-purge within 3 days</b> — preserve now.</p>"
         )
     parts.append(
         "<table><tr><th>File</th><th>Type</th><th>App</th><th>State</th>"
@@ -663,7 +761,7 @@ def _mediastore_trash_section(trash: dict) -> str:
             f'<td>{_esc(it.get("kind"))}</td>'
             f'<td>{_esc(it.get("owner_app") or "")}</td>'
             f'<td>{_esc(it.get("state"))}</td>'
-            f'<td>{badge}</td>'
+            f"<td>{badge}</td>"
             f'<td class="mono">{_esc((it.get("estimated_deleted_at") or "—")[:10])}</td>'
             f'<td class="mono">{_esc(purge_txt)}</td></tr>'
         )

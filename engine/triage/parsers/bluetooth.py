@@ -12,6 +12,7 @@ Forensic value:
 * Correlates with cell-tower and notification timelines to confirm meetings.
 * MAC manufacturer prefix (OUI) can identify the device vendor / type.
 """
+
 from __future__ import annotations
 
 import re
@@ -52,20 +53,25 @@ _DEVICE_CLASS_MAP: Dict[int, str] = {
 }
 
 # Regex patterns for field extraction
-_RE_NAME         = re.compile(r"name\s*[=:]\s*(.+)", re.IGNORECASE)
-_RE_ALIAS        = re.compile(r"alias\s*[=:]\s*(.+)", re.IGNORECASE)
-_RE_MAC          = re.compile(r"\b([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\b")
-_RE_BOND         = re.compile(r"bondState\s*[=:]\s*(\w+)", re.IGNORECASE)
-_RE_BOND_ALT     = re.compile(r"bond(?:ed)?\s*[=:]\s*(\w+)", re.IGNORECASE)
-_RE_CONNECTED    = re.compile(r"connected\s*[=:]\s*(true|false)", re.IGNORECASE)
-_RE_LAST_SEEN    = re.compile(r"lastSeen\s*[=:]\s*(.+)", re.IGNORECASE)
-_RE_LAST_SEEN_ALT = re.compile(r"last(?:_| )(?:seen|connected|active)\s*[=:]\s*(.+)", re.IGNORECASE)
-_RE_CLASS        = re.compile(r"(?:btClass|deviceClass|class)\s*[=:]\s*(0x[0-9a-fA-F]+|\d+)", re.IGNORECASE)
+_RE_NAME = re.compile(r"name\s*[=:]\s*(.+)", re.IGNORECASE)
+_RE_ALIAS = re.compile(r"alias\s*[=:]\s*(.+)", re.IGNORECASE)
+_RE_MAC = re.compile(r"\b([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\b")
+_RE_BOND = re.compile(r"bondState\s*[=:]\s*(\w+)", re.IGNORECASE)
+_RE_BOND_ALT = re.compile(r"bond(?:ed)?\s*[=:]\s*(\w+)", re.IGNORECASE)
+_RE_CONNECTED = re.compile(r"connected\s*[=:]\s*(true|false)", re.IGNORECASE)
+_RE_LAST_SEEN = re.compile(r"lastSeen\s*[=:]\s*(.+)", re.IGNORECASE)
+_RE_LAST_SEEN_ALT = re.compile(
+    r"last(?:_| )(?:seen|connected|active)\s*[=:]\s*(.+)", re.IGNORECASE
+)
+_RE_CLASS = re.compile(
+    r"(?:btClass|deviceClass|class)\s*[=:]\s*(0x[0-9a-fA-F]+|\d+)", re.IGNORECASE
+)
 
 
 # ---------------------------------------------------------------------------
 # Timestamp parsing
 # ---------------------------------------------------------------------------
+
 
 def parse_bluetooth_timestamp(raw_time: str) -> Optional[str]:
     """Convert various Bluetooth timestamp formats to ISO-8601 UTC.
@@ -105,10 +111,7 @@ def parse_bluetooth_timestamp(raw_time: str) -> Optional[str]:
     if m2:
         month, day, hour, minute, sec = m2.groups()
         year = time.gmtime().tm_year
-        return (
-            f"{year}-{int(month):02d}-{int(day):02d}"
-            f"T{hour}:{minute}:{sec}Z"
-        )
+        return f"{year}-{int(month):02d}-{int(day):02d}" f"T{hour}:{minute}:{sec}Z"
 
     return None
 
@@ -116,6 +119,7 @@ def parse_bluetooth_timestamp(raw_time: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # ADB acquisition
 # ---------------------------------------------------------------------------
+
 
 def get_bluetooth_history(adb: Adb) -> str:
     """Execute ``adb shell dumpsys bluetooth_manager`` and return stdout.
@@ -136,10 +140,13 @@ def get_bluetooth_history(adb: Adb) -> str:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _parse_device_class(raw: str) -> str:
     """Convert a raw device class integer / hex string to a friendly label."""
     try:
-        value = int(raw, 16) if raw.startswith("0x") or raw.startswith("0X") else int(raw)
+        value = (
+            int(raw, 16) if raw.startswith("0x") or raw.startswith("0X") else int(raw)
+        )
         # Major device class is bits 8-12
         major = value & 0x1F00
         return _DEVICE_CLASS_MAP.get(major, "other")
@@ -180,6 +187,7 @@ def _split_device_blocks(text: str) -> List[str]:
 # Core parser
 # ---------------------------------------------------------------------------
 
+
 def parse_bluetooth_history(adb_output: str) -> List[Dict[str, Any]]:
     """Parse raw ``dumpsys bluetooth_manager`` output into structured device rows.
 
@@ -216,7 +224,7 @@ def parse_bluetooth_history(adb_output: str) -> List[Dict[str, Any]]:
 
         # --- name (prefer alias over internal name) ---
         alias_match = _RE_ALIAS.search(block)
-        name_match  = _RE_NAME.search(block)
+        name_match = _RE_NAME.search(block)
         name = ""
         if alias_match:
             name = alias_match.group(1).strip().strip('"')
@@ -229,25 +237,27 @@ def parse_bluetooth_history(adb_output: str) -> List[Dict[str, Any]]:
 
         # --- connected flag ---
         conn_match = _RE_CONNECTED.search(block)
-        connected  = conn_match.group(1).lower() == "true" if conn_match else False
+        connected = conn_match.group(1).lower() == "true" if conn_match else False
 
         # --- last seen timestamp ---
         seen_match = _RE_LAST_SEEN.search(block) or _RE_LAST_SEEN_ALT.search(block)
-        raw_ts     = seen_match.group(1).strip() if seen_match else ""
-        last_seen  = parse_bluetooth_timestamp(raw_ts) or ""
+        raw_ts = seen_match.group(1).strip() if seen_match else ""
+        last_seen = parse_bluetooth_timestamp(raw_ts) or ""
 
         # --- device class ---
-        class_match  = _RE_CLASS.search(block)
-        device_class = _parse_device_class(class_match.group(1)) if class_match else "other"
+        class_match = _RE_CLASS.search(block)
+        device_class = (
+            _parse_device_class(class_match.group(1)) if class_match else "other"
+        )
 
         record: Dict[str, Any] = {
-            "mac":          mac,
-            "name":         name,
-            "bond_state":   bond_state,
-            "connected":    connected,
-            "last_seen":    last_seen,
+            "mac": mac,
+            "name": name,
+            "bond_state": bond_state,
+            "connected": connected,
+            "last_seen": last_seen,
             "device_class": device_class,
-            "is_paired":    bond_state == "bonded",
+            "is_paired": bond_state == "bonded",
         }
 
         # Deduplication: keep richer record (more non-empty fields)
@@ -256,7 +266,7 @@ def parse_bluetooth_history(adb_output: str) -> List[Dict[str, Any]]:
         else:
             existing = devices_by_mac[mac]
             existing_score = sum(1 for v in existing.values() if v)
-            new_score      = sum(1 for v in record.values() if v)
+            new_score = sum(1 for v in record.values() if v)
             if new_score > existing_score:
                 devices_by_mac[mac] = record
 
@@ -266,6 +276,7 @@ def parse_bluetooth_history(adb_output: str) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Timeline builder
 # ---------------------------------------------------------------------------
+
 
 def build_bluetooth_timeline(devices: List[Dict]) -> List[TimelineEvent]:
     """Convert parsed Bluetooth device dicts into :class:`TimelineEvent` objects.
@@ -280,23 +291,25 @@ def build_bluetooth_timeline(devices: List[Dict]) -> List[TimelineEvent]:
         if not ts:
             continue
 
-        mac        = d.get("mac", "??:??:??:??:??:??")
-        name       = d.get("name", "")
+        mac = d.get("mac", "??:??:??:??:??:??")
+        name = d.get("name", "")
         bond_state = d.get("bond_state", "none")
-        connected  = d.get("connected", False)
-        dev_class  = d.get("device_class", "other")
+        connected = d.get("connected", False)
+        dev_class = d.get("device_class", "other")
 
         name_part = f" ({name})" if name else ""
         state_tag = "CONNECTED" if connected else bond_state.upper()
-        summary   = f"[Bluetooth] {mac}{name_part} — {state_tag} [{dev_class}]"
+        summary = f"[Bluetooth] {mac}{name_part} — {state_tag} [{dev_class}]"
 
-        events.append(TimelineEvent(
-            timestamp  = ts,
-            kind       = "bluetooth",
-            summary    = summary,
-            confidence = Confidence.LIVE,
-            ref        = mac,
-        ))
+        events.append(
+            TimelineEvent(
+                timestamp=ts,
+                kind="bluetooth",
+                summary=summary,
+                confidence=Confidence.LIVE,
+                ref=mac,
+            )
+        )
 
     return events
 
@@ -304,6 +317,7 @@ def build_bluetooth_timeline(devices: List[Dict]) -> List[TimelineEvent]:
 # ---------------------------------------------------------------------------
 # Summary statistics
 # ---------------------------------------------------------------------------
+
 
 def get_bluetooth_summary(devices: List[Dict]) -> Dict[str, Any]:
     """Return aggregate statistics over a parsed Bluetooth device list.
@@ -317,18 +331,18 @@ def get_bluetooth_summary(devices: List[Dict]) -> Dict[str, Any]:
     * ``paired``        — count of bonded devices
     * ``with_name``     — count of devices with a non-empty name
     """
-    by_bond:  Dict[str, int] = {}
+    by_bond: Dict[str, int] = {}
     by_class: Dict[str, int] = {}
-    connected  = 0
-    paired     = 0
-    with_name  = 0
+    connected = 0
+    paired = 0
+    with_name = 0
 
     for d in devices:
-        bond  = d.get("bond_state", "none")
-        cls   = d.get("device_class", "other")
+        bond = d.get("bond_state", "none")
+        cls = d.get("device_class", "other")
 
-        by_bond[bond]   = by_bond.get(bond, 0)   + 1
-        by_class[cls]   = by_class.get(cls, 0)   + 1
+        by_bond[bond] = by_bond.get(bond, 0) + 1
+        by_class[cls] = by_class.get(cls, 0) + 1
 
         if d.get("connected"):
             connected += 1
@@ -338,10 +352,10 @@ def get_bluetooth_summary(devices: List[Dict]) -> Dict[str, Any]:
             with_name += 1
 
     return {
-        "total":         len(devices),
+        "total": len(devices),
         "by_bond_state": by_bond,
-        "by_class":      by_class,
-        "connected":     connected,
-        "paired":        paired,
-        "with_name":     with_name,
+        "by_class": by_class,
+        "connected": connected,
+        "paired": paired,
+        "with_name": with_name,
     }

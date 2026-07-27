@@ -20,6 +20,7 @@ Caveats:
 * Signal strength is reported in ASU (Arbitrary Strength Unit) which is
   vendor-defined — the conversion to dBm varies by radio type.
 """
+
 from __future__ import annotations
 
 import re
@@ -39,26 +40,33 @@ _ASU_LABELS: List[Tuple[int, str]] = [
     (20, "excellent"),
     (15, "good"),
     (10, "fair"),
-    (0,  "poor"),
+    (0, "poor"),
 ]
 
 # Regex patterns for field extraction
-_RE_CELL_ID    = re.compile(r"\bcid\b\s*[=:]\s*(-?\d+)", re.IGNORECASE)
-_RE_CELL_ALT   = re.compile(r"\bcellId\b\s*[=:]\s*(-?\d+)", re.IGNORECASE)
-_RE_LAC        = re.compile(r"\blac\b\s*[=:]\s*(-?\d+)", re.IGNORECASE)
-_RE_LAC_ALT    = re.compile(r"\bareaCode\b\s*[=:]\s*(-?\d+)", re.IGNORECASE)
-_RE_MCC        = re.compile(r"\bmcc\b\s*[=:]\s*(\d+)", re.IGNORECASE)
-_RE_MNC        = re.compile(r"\bmnc\b\s*[=:]\s*(\d+)", re.IGNORECASE)
+_RE_CELL_ID = re.compile(r"\bcid\b\s*[=:]\s*(-?\d+)", re.IGNORECASE)
+_RE_CELL_ALT = re.compile(r"\bcellId\b\s*[=:]\s*(-?\d+)", re.IGNORECASE)
+_RE_LAC = re.compile(r"\blac\b\s*[=:]\s*(-?\d+)", re.IGNORECASE)
+_RE_LAC_ALT = re.compile(r"\bareaCode\b\s*[=:]\s*(-?\d+)", re.IGNORECASE)
+_RE_MCC = re.compile(r"\bmcc\b\s*[=:]\s*(\d+)", re.IGNORECASE)
+_RE_MNC = re.compile(r"\bmnc\b\s*[=:]\s*(\d+)", re.IGNORECASE)
 _RE_SIGNAL_ASU = re.compile(r"\basu\b\s*[=:]\s*(-?\d+)", re.IGNORECASE)
-_RE_SIGNAL_DB  = re.compile(r"\bdBm\b\s*[=:]\s*(-?\d+)", re.IGNORECASE)
-_RE_OPERATOR   = re.compile(r"(?:operator|carrierName|networkOperatorName)\s*[=:]\s*([^\n,]+)", re.IGNORECASE)
-_RE_TIMESTAMP  = re.compile(r"(?:timestamp|time|lastChanged|registrationTime)\s*[=:]\s*(\S+)", re.IGNORECASE)
-_RE_NETWORK_TYPE = re.compile(r"(?:networkType|dataNetworkType|type)\s*[=:]\s*(\w+)", re.IGNORECASE)
+_RE_SIGNAL_DB = re.compile(r"\bdBm\b\s*[=:]\s*(-?\d+)", re.IGNORECASE)
+_RE_OPERATOR = re.compile(
+    r"(?:operator|carrierName|networkOperatorName)\s*[=:]\s*([^\n,]+)", re.IGNORECASE
+)
+_RE_TIMESTAMP = re.compile(
+    r"(?:timestamp|time|lastChanged|registrationTime)\s*[=:]\s*(\S+)", re.IGNORECASE
+)
+_RE_NETWORK_TYPE = re.compile(
+    r"(?:networkType|dataNetworkType|type)\s*[=:]\s*(\w+)", re.IGNORECASE
+)
 
 
 # ---------------------------------------------------------------------------
 # Timestamp parsing
 # ---------------------------------------------------------------------------
+
 
 def parse_celltower_timestamp(raw_time: str) -> Optional[str]:
     """Convert various telephony timestamp formats to ISO-8601 UTC.
@@ -98,10 +106,7 @@ def parse_celltower_timestamp(raw_time: str) -> Optional[str]:
     if m2:
         month, day, hour, minute, sec = m2.groups()
         year = time.gmtime().tm_year
-        return (
-            f"{year}-{int(month):02d}-{int(day):02d}"
-            f"T{hour}:{minute}:{sec}Z"
-        )
+        return f"{year}-{int(month):02d}-{int(day):02d}" f"T{hour}:{minute}:{sec}Z"
 
     return None
 
@@ -109,6 +114,7 @@ def parse_celltower_timestamp(raw_time: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # ADB acquisition
 # ---------------------------------------------------------------------------
+
 
 def get_celltower_history(adb: Adb) -> str:
     """Execute ``adb shell dumpsys telephony.registry`` and return stdout.
@@ -128,6 +134,7 @@ def get_celltower_history(adb: Adb) -> str:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _asu_to_label(asu: int) -> str:
     """Convert an ASU value to a human-readable signal quality label."""
     for threshold, label in _ASU_LABELS:
@@ -142,7 +149,9 @@ def _split_tower_blocks(text: str) -> List[str]:
     Tries several heuristics used across AOSP versions / OEM skins.
     """
     # CellIdentity blocks are the most reliable delimiter
-    cell_split = re.split(r"\n(?=\s*(?:CellIdentity|mCellIdentity|ServiceState|CellInfo))", text)
+    cell_split = re.split(
+        r"\n(?=\s*(?:CellIdentity|mCellIdentity|ServiceState|CellInfo))", text
+    )
     if len(cell_split) > 2:
         return cell_split
 
@@ -162,6 +171,7 @@ def _split_tower_blocks(text: str) -> List[str]:
 # ---------------------------------------------------------------------------
 # Core parser
 # ---------------------------------------------------------------------------
+
 
 def parse_celltower_history(adb_output: str) -> List[Dict[str, Any]]:
     """Parse raw ``dumpsys telephony.registry`` output into structured records.
@@ -183,8 +193,8 @@ def parse_celltower_history(adb_output: str) -> List[Dict[str, Any]]:
     if not adb_output:
         return []
 
-    towers: List[Dict[str, Any]]        = []
-    seen: set                           = set()
+    towers: List[Dict[str, Any]] = []
+    seen: set = set()
 
     blocks = _split_tower_blocks(adb_output)
 
@@ -232,11 +242,11 @@ def parse_celltower_history(adb_output: str) -> List[Dict[str, Any]]:
 
         # --- timestamp ---
         ts_match = _RE_TIMESTAMP.search(block)
-        raw_ts   = ts_match.group(1).strip() if ts_match else ""
+        raw_ts = ts_match.group(1).strip() if ts_match else ""
         timestamp = parse_celltower_timestamp(raw_ts) or ""
 
         # --- network type ---
-        nt_match     = _RE_NETWORK_TYPE.search(block)
+        nt_match = _RE_NETWORK_TYPE.search(block)
         network_type = nt_match.group(1).upper() if nt_match else ""
 
         # Deduplication key
@@ -245,17 +255,19 @@ def parse_celltower_history(adb_output: str) -> List[Dict[str, Any]]:
             continue
         seen.add(dedup)
 
-        towers.append({
-            "cell_id":      cell_id,
-            "lac":          lac,
-            "mcc":          mcc,
-            "mnc":          mnc,
-            "signal_asu":   signal_asu,
-            "signal_label": signal_label,
-            "operator":     operator,
-            "timestamp":    timestamp,
-            "network_type": network_type,
-        })
+        towers.append(
+            {
+                "cell_id": cell_id,
+                "lac": lac,
+                "mcc": mcc,
+                "mnc": mnc,
+                "signal_asu": signal_asu,
+                "signal_label": signal_label,
+                "operator": operator,
+                "timestamp": timestamp,
+                "network_type": network_type,
+            }
+        )
 
     return towers
 
@@ -263,6 +275,7 @@ def parse_celltower_history(adb_output: str) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Timeline builder
 # ---------------------------------------------------------------------------
+
 
 def build_celltower_timeline(towers: List[Dict]) -> List[TimelineEvent]:
     """Convert parsed cell tower dicts into :class:`TimelineEvent` objects.
@@ -278,26 +291,28 @@ def build_celltower_timeline(towers: List[Dict]) -> List[TimelineEvent]:
         if not ts:
             continue
 
-        cell_id  = t.get("cell_id", "?")
-        lac      = t.get("lac", "?")
+        cell_id = t.get("cell_id", "?")
+        lac = t.get("lac", "?")
         operator = t.get("operator", "")
-        sig      = t.get("signal_label", "unknown")
-        ntype    = t.get("network_type", "")
+        sig = t.get("signal_label", "unknown")
+        ntype = t.get("network_type", "")
 
-        op_part    = f" via {operator}" if operator else ""
+        op_part = f" via {operator}" if operator else ""
         ntype_part = f" [{ntype}]" if ntype else ""
-        summary    = (
+        summary = (
             f"[Cell Tower] CID={cell_id} LAC={lac}{op_part}"
             f" — signal {sig}{ntype_part}"
         )
 
-        events.append(TimelineEvent(
-            timestamp  = ts,
-            kind       = "celltower",
-            summary    = summary,
-            confidence = Confidence.LIVE,
-            ref        = f"cid={cell_id},lac={lac}",
-        ))
+        events.append(
+            TimelineEvent(
+                timestamp=ts,
+                kind="celltower",
+                summary=summary,
+                confidence=Confidence.LIVE,
+                ref=f"cid={cell_id},lac={lac}",
+            )
+        )
 
     return events
 
@@ -305,6 +320,7 @@ def build_celltower_timeline(towers: List[Dict]) -> List[TimelineEvent]:
 # ---------------------------------------------------------------------------
 # Summary statistics
 # ---------------------------------------------------------------------------
+
 
 def get_celltower_summary(towers: List[Dict]) -> Dict[str, Any]:
     """Return aggregate statistics over a parsed cell tower list.
@@ -317,27 +333,27 @@ def get_celltower_summary(towers: List[Dict]) -> Dict[str, Any]:
     * ``by_signal``          — ``{signal_label: count}``
     * ``by_network_type``    — ``{network_type: count}``
     """
-    by_operator:  Dict[str, int] = {}
-    by_signal:    Dict[str, int] = {}
-    by_ntype:     Dict[str, int] = {}
-    unique_tower_ids: set        = set()
+    by_operator: Dict[str, int] = {}
+    by_signal: Dict[str, int] = {}
+    by_ntype: Dict[str, int] = {}
+    unique_tower_ids: set = set()
 
     for t in towers:
-        op    = t.get("operator", "")  or "unknown"
-        sig   = t.get("signal_label", "unknown")
+        op = t.get("operator", "") or "unknown"
+        sig = t.get("signal_label", "unknown")
         ntype = t.get("network_type", "") or "unknown"
-        cid   = t.get("cell_id", -1)
-        lac   = t.get("lac", -1)
+        cid = t.get("cell_id", -1)
+        lac = t.get("lac", -1)
 
-        by_operator[op]  = by_operator.get(op, 0)  + 1
-        by_signal[sig]   = by_signal.get(sig, 0)   + 1
-        by_ntype[ntype]  = by_ntype.get(ntype, 0)  + 1
+        by_operator[op] = by_operator.get(op, 0) + 1
+        by_signal[sig] = by_signal.get(sig, 0) + 1
+        by_ntype[ntype] = by_ntype.get(ntype, 0) + 1
         unique_tower_ids.add((cid, lac))
 
     return {
-        "total":           len(towers),
-        "unique_towers":   len(unique_tower_ids),
-        "by_operator":     by_operator,
-        "by_signal":       by_signal,
+        "total": len(towers),
+        "unique_towers": len(unique_tower_ids),
+        "by_operator": by_operator,
+        "by_signal": by_signal,
         "by_network_type": by_ntype,
     }

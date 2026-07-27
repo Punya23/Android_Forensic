@@ -20,6 +20,7 @@ from flask_cors import CORS
 
 try:
     from flask_socketio import SocketIO
+
     _HAVE_SOCKETIO = True
 except Exception:
     _HAVE_SOCKETIO = False
@@ -43,28 +44,15 @@ def create_app(cases_root: Path = CASES_ROOT):
 
     CORS(app)
 
-    cases_root.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
+    cases_root.mkdir(parents=True, exist_ok=True)
 
     socketio = (
-        SocketIO(
-            app,
-            cors_allowed_origins="*",
-            async_mode="threading"
-        )
+        SocketIO(app, cors_allowed_origins="*", async_mode="threading")
         if _HAVE_SOCKETIO
         else None
     )
 
-
-    state: dict[str, Any] = {
-        "running": False,
-        "last_case": None
-    }
-
+    state: dict[str, Any] = {"running": False, "last_case": None}
 
     # ---------------------------------------------------------
     # CASE-INTELLIGENCE STORES
@@ -78,16 +66,16 @@ def create_app(cases_root: Path = CASES_ROOT):
     def _local_corpus_path() -> Path:
         return cases_root / "case_studies.jsonl"
 
-
     def _case_bank(refresh: bool = False):
         from .intel import CaseBank
+
         if refresh or "case_bank" not in state:
             state["case_bank"] = CaseBank.load(_local_corpus_path())
         return state["case_bank"]
 
-
     def _knowledge_graph(root: Path, bank=None, refresh: bool = False):
         from .intel import KnowledgeGraph, GRAPH_FILENAME
+
         if refresh or "knowledge_graph" not in state:
             state["knowledge_graph"] = KnowledgeGraph.load(
                 root / GRAPH_FILENAME,
@@ -95,11 +83,10 @@ def create_app(cases_root: Path = CASES_ROOT):
             )
         return state["knowledge_graph"]
 
-
     def _save_graph(graph) -> None:
         from .intel import GRAPH_FILENAME
-        graph.save(cases_root / GRAPH_FILENAME)
 
+        graph.save(cases_root / GRAPH_FILENAME)
 
     # ---------------------------------------------------------
     # META
@@ -114,11 +101,9 @@ def create_app(cases_root: Path = CASES_ROOT):
                 "version": __version__,
                 "disclaimer": ACQUISITION_DISCLAIMER,
                 "adb": Adb().available,
-                "running": state["running"]
+                "running": state["running"],
             }
         )
-
-
 
     @app.get("/api/devices")
     def devices():
@@ -135,33 +120,17 @@ def create_app(cases_root: Path = CASES_ROOT):
 
                 if (d / "_device.json").exists():
 
-                    meta = json.loads(
-                        (d / "_device.json").read_text()
-                    )
+                    meta = json.loads((d / "_device.json").read_text())
 
                     mocks.append(
                         {
                             "id": str(d),
                             "kind": "mock",
-                            "label": meta.get(
-                                "device",
-                                {}
-                            ).get(
-                                "model",
-                                d.name
-                            )
+                            "label": meta.get("device", {}).get("model", d.name),
                         }
                     )
 
-
-        return jsonify(
-            {
-                "real": real,
-                "mock": mocks
-            }
-        )
-
-
+        return jsonify({"real": real, "mock": mocks})
 
     # ---------------------------------------------------------
     # CASE INTELLIGENCE
@@ -172,36 +141,15 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         body = request.get_json(force=True) or {}
 
-        description = str(
-            body.get(
-                "description",
-                ""
-            )
-        ).strip()
-
+        description = str(body.get("description", "")).strip()
 
         if not description:
 
-            return jsonify(
-                {
-                    "error":
-                    "a case description is required"
-                }
-            ), 400
-
+            return jsonify({"error": "a case description is required"}), 400
 
         from .intel import plan_case, get_provider
 
-
-        provider = get_provider(
-            str(
-                body.get(
-                    "llm_provider",
-                    ""
-                )
-            )
-            or None
-        )
+        provider = get_provider(str(body.get("llm_provider", "")) or None)
 
         # Retrieval + learned priors are on by default; a caller can ask for the
         # pure-doctrine plan to see what the ontology alone recommends.
@@ -212,18 +160,12 @@ def create_app(cases_root: Path = CASES_ROOT):
         profile, plan = plan_case(
             description,
             provider=provider,
-            allow_tier2=bool(
-                body.get(
-                    "allow_tier2",
-                    True
-                )
-            ),
+            allow_tier2=bool(body.get("allow_tier2", True)),
             case_number=str(body.get("case_number", "")).strip(),
             bank=bank,
             graph=graph,
             use_rag=use_rag,
         )
-
 
         return jsonify(
             {
@@ -233,8 +175,6 @@ def create_app(cases_root: Path = CASES_ROOT):
                 "case_bank_size": len(bank) if bank is not None else 0,
             }
         )
-
-
 
     # ---------------------------------------------------------
     # CASE BANK  (retrieval corpus)
@@ -248,27 +188,31 @@ def create_app(cases_root: Path = CASES_ROOT):
         crime = str(request.args.get("crime_type", "")).strip() or None
 
         if query:
-            hits = bank.search(query, crime_type=crime,
-                               top_k=int(request.args.get("top_k", 5)))
-            return jsonify({
-                "query": query,
-                "crime_type": crime,
-                "total": len(bank),
-                "results": [h.to_dict() for h in hits],
-            })
+            hits = bank.search(
+                query, crime_type=crime, top_k=int(request.args.get("top_k", 5))
+            )
+            return jsonify(
+                {
+                    "query": query,
+                    "crime_type": crime,
+                    "total": len(bank),
+                    "results": [h.to_dict() for h in hits],
+                }
+            )
 
         studies = bank.by_crime(crime) if crime else bank.all()
-        return jsonify({
-            "total": len(bank),
-            "crime_type": crime,
-            "studies": [s.to_dict() for s in studies],
-            "disclaimer": (
-                "Case studies rank artifacts for collection planning. They are not "
-                "evidence in any case and carry no precedential weight. Entries marked "
-                "'synthetic' are expert-curated teaching exemplars, not real records."
-            ),
-        })
-
+        return jsonify(
+            {
+                "total": len(bank),
+                "crime_type": crime,
+                "studies": [s.to_dict() for s in studies],
+                "disclaimer": (
+                    "Case studies rank artifacts for collection planning. They are not "
+                    "evidence in any case and carry no precedential weight. Entries marked "
+                    "'synthetic' are expert-curated teaching exemplars, not real records."
+                ),
+            }
+        )
 
     @app.post("/api/casebank")
     def casebank_add():
@@ -279,10 +223,15 @@ def create_app(cases_root: Path = CASES_ROOT):
         if not str(body.get("case_number", "")).strip():
             return jsonify({"error": "case_number is required"}), 400
         if not (body.get("artifacts") or []):
-            return jsonify({
-                "error": "at least one artifact outcome is required — a study with no "
-                         "artifact yields teaches the planner nothing"
-            }), 400
+            return (
+                jsonify(
+                    {
+                        "error": "at least one artifact outcome is required — a study with no "
+                        "artifact yields teaches the planner nothing"
+                    }
+                ),
+                400,
+            )
 
         study = CaseStudy.from_dict(body)
         if study.source in ("", "unspecified"):
@@ -296,13 +245,17 @@ def create_app(cases_root: Path = CASES_ROOT):
         edges = graph.observe_study(study)
         _save_graph(graph)
 
-        return jsonify({
-            "added": study.case_number,
-            "corpus_size": len(bank),
-            "graph_edges_updated": edges,
-            "study": study.to_dict(),
-        }), 201
-
+        return (
+            jsonify(
+                {
+                    "added": study.case_number,
+                    "corpus_size": len(bank),
+                    "graph_edges_updated": edges,
+                    "study": study.to_dict(),
+                }
+            ),
+            201,
+        )
 
     # ---------------------------------------------------------
     # KNOWLEDGE GRAPH  (learned artifact priors)
@@ -316,20 +269,21 @@ def create_app(cases_root: Path = CASES_ROOT):
         crime = str(request.args.get("crime_type", "")).strip()
 
         if crime:
-            return jsonify({
-                "crime_type": crime,
-                "artifact_priors": graph.artifact_priors(crime),
-                "similar_crime_types": graph.similar_crime_types(crime),
-                "stats": graph.stats(),
-                "disclaimer": (
-                    "Learned priors are shrunk toward the expert ontology until a link "
-                    "is well observed, and can never remove an artifact from collection "
-                    "— only reorder it."
-                ),
-            })
+            return jsonify(
+                {
+                    "crime_type": crime,
+                    "artifact_priors": graph.artifact_priors(crime),
+                    "similar_crime_types": graph.similar_crime_types(crime),
+                    "stats": graph.stats(),
+                    "disclaimer": (
+                        "Learned priors are shrunk toward the expert ontology until a link "
+                        "is well observed, and can never remove an artifact from collection "
+                        "— only reorder it."
+                    ),
+                }
+            )
 
         return jsonify(graph.to_dict())
-
 
     @app.post("/api/case/<case_id>/outcome")
     def case_outcome(case_id: str):
@@ -339,41 +293,58 @@ def create_app(cases_root: Path = CASES_ROOT):
         writes, and optionally promotes the case into the retrieval corpus so future
         similar cases can cite it.
         """
-        from .intel import (CaseProfile, promote_case_to_study, record_confirmed)
+        from .intel import CaseProfile, promote_case_to_study, record_confirmed
 
         case = _open(cases_root, case_id)
         body = request.get_json(force=True) or {}
 
         yields = body.get("artifact_yields") or {}
         if not isinstance(yields, dict) or not yields:
-            return jsonify({
-                "error": "artifact_yields is required, e.g. "
-                         '{"call_logs": "decisive", "media": "none"}'
-            }), 400
+            return (
+                jsonify(
+                    {
+                        "error": "artifact_yields is required, e.g. "
+                        '{"call_logs": "decisive", "media": "none"}'
+                    }
+                ),
+                400,
+            )
 
         profile_dict = case.read_derived("case_profile") or {}
         if not profile_dict:
-            return jsonify({
-                "error": "this case has no case profile — it was acquired without a "
-                         "case description, so there is no crime type to learn against"
-            }), 400
+            return (
+                jsonify(
+                    {
+                        "error": "this case has no case profile — it was acquired without a "
+                        "case description, so there is no crime type to learn against"
+                    }
+                ),
+                400,
+            )
         profile = CaseProfile(**profile_dict)
 
-        case_number = (str(body.get("case_number", "")).strip()
-                       or profile.case_number or case_id)
+        case_number = (
+            str(body.get("case_number", "")).strip() or profile.case_number or case_id
+        )
         examiner = str(body.get("examiner", "")).strip()
 
         bank = _case_bank()
         graph = _knowledge_graph(cases_root, bank)
-        learned = record_confirmed(graph, profile.crime_type, yields,
-                                   case_number=case_number, examiner=examiner)
+        learned = record_confirmed(
+            graph,
+            profile.crime_type,
+            yields,
+            case_number=case_number,
+            examiner=examiner,
+        )
         if learned.get("recorded"):
             _save_graph(graph)
 
         promoted = None
         if bool(body.get("add_to_case_bank", False)):
             study = promote_case_to_study(
-                profile, yields,
+                profile,
+                yields,
                 outcome=str(body.get("outcome", "")),
                 lessons=[str(x) for x in (body.get("lessons") or [])],
                 notes=body.get("notes") or {},
@@ -394,128 +365,81 @@ def create_app(cases_root: Path = CASES_ROOT):
         case.log(
             "intel.outcome",
             f"Examiner-confirmed outcome recorded by {examiner or 'unspecified'}: "
-            + ", ".join(f"{k}={v}" for k, v in sorted(learned.get("yields", {}).items()))
+            + ", ".join(
+                f"{k}={v}" for k, v in sorted(learned.get("yields", {}).items())
+            )
             + (f"; promoted to case bank as {case_number}" if promoted else ""),
             tier=Tier.TIER0.value,
         )
         return jsonify(result)
 
-
     @app.get("/api/nomenclature")
     def nomenclature_glossary():
         """The controlled forensic-role vocabulary, for the intake help panel."""
         from .intel import glossary
-        return jsonify({
-            "roles": glossary(),
-            "note": ("'Suspect' and 'accused' are procedural statuses, not findings of "
-                     "guilt. Use 'victim' or 'deceased' for the person harmed; avoid "
-                     "'guilty' and 'innocent', which are trial outcomes."),
-        })
 
+        return jsonify(
+            {
+                "roles": glossary(),
+                "note": (
+                    "'Suspect' and 'accused' are procedural statuses, not findings of "
+                    "guilt. Use 'victim' or 'deceased' for the person harmed; avoid "
+                    "'guilty' and 'innocent', which are trial outcomes."
+                ),
+            }
+        )
 
     @app.post("/api/nomenclature/check")
     def nomenclature_check():
         """Validate a draft case description before acquisition starts."""
         from .intel import extract_roles, validate_description
+
         body = request.get_json(force=True) or {}
         description = str(body.get("description", ""))
-        return jsonify({
-            "roles": [r.to_dict() for r in extract_roles(description)],
-            "warnings": validate_description(description),
-        })
-
+        return jsonify(
+            {
+                "roles": [r.to_dict() for r in extract_roles(description)],
+                "warnings": validate_description(description),
+            }
+        )
 
     @app.post("/api/case/<case_id>/analyze")
     def analyze_case_endpoint(case_id: str):
 
-        case = _open(
-            cases_root,
-            case_id
-        )
+        case = _open(cases_root, case_id)
 
-
-        body = request.get_json(
-            silent=True
-        ) or {}
-
+        body = request.get_json(silent=True) or {}
 
         from .intel import analyze_case, get_provider
-        from .intel.planner import (
-            CaseProfile,
-            build_plan,
-            extract_profile
-        )
+        from .intel.planner import CaseProfile, build_plan, extract_profile
 
+        provider = get_provider(str(body.get("llm_provider", "")) or None)
 
-        provider = get_provider(
-            str(
-                body.get(
-                    "llm_provider",
-                    ""
-                )
-            )
-            or None
-        )
-
-
-        description = str(
-            body.get(
-                "description",
-                ""
-            )
-        ).strip()
-
+        description = str(body.get("description", "")).strip()
 
         if description:
 
-            profile = extract_profile(
-                description,
-                provider=provider
-            )
+            profile = extract_profile(description, provider=provider)
 
+            case.write_derived("case_profile", profile.to_dict())
 
-            case.write_derived(
-                "case_profile",
-                profile.to_dict()
-            )
-
-
-            case.write_derived(
-                "collection_plan",
-                build_plan(profile).to_dict()
-            )
+            case.write_derived("collection_plan", build_plan(profile).to_dict())
 
         else:
 
-            stored = case.read_derived(
-                "case_profile"
-            )
-
+            stored = case.read_derived("case_profile")
 
             if not stored:
 
-                return jsonify(
-                    {
-                        "error":
-                        "no case profile available"
-                    }
-                ),400
+                return jsonify({"error": "no case profile available"}), 400
 
+            profile = CaseProfile(**stored)
 
-            profile = CaseProfile(
-                **stored
-            )
-
-
-        bundle = analyze_case(
-            case,
-            profile,
-            provider=provider
-        )
-
+        bundle = analyze_case(case, profile, provider=provider)
 
         return jsonify(bundle)
-            # ---------------------------------------------------------
+        # ---------------------------------------------------------
+
     # ACQUISITION
     # ---------------------------------------------------------
 
@@ -524,32 +448,13 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         if state["running"]:
 
-            return jsonify(
-                {
-                    "error":
-                    "an acquisition is already running"
-                }
-            ), 409
+            return jsonify({"error": "an acquisition is already running"}), 409
 
+        body = request.get_json(force=True) or {}
 
-        body = request.get_json(
-            force=True
-        ) or {}
+        case_id = body.get("case_id") or _auto_case_id(cases_root)
 
-
-        case_id = body.get(
-            "case_id"
-        ) or _auto_case_id(
-            cases_root
-        )
-
-
-        examiner = body.get(
-            "examiner",
-            "Unknown Examiner"
-        )
-
-
+        examiner = body.get("examiner", "Unknown Examiner")
 
         # -------------------------------
         # Device source selection
@@ -557,211 +462,60 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         if body.get("mock"):
 
-            source = MockDeviceSource(
-                Path(
-                    body["mock"]
-                )
-            )
+            source = MockDeviceSource(Path(body["mock"]))
 
         else:
 
-            adb = Adb(
-                serial=body.get(
-                    "serial"
-                )
-            )
-
+            adb = Adb(serial=body.get("serial"))
 
             if not adb.available:
 
-                return jsonify(
-                    {
-                        "error":
-                        "adb not available; supply a mock path"
-                    }
-                ),400
+                return jsonify({"error": "adb not available; supply a mock path"}), 400
 
-
-            source = RealDeviceSource(
-                adb
-            )
-
-
+            source = RealDeviceSource(adb)
 
         # -------------------------------
         # Pipeline configuration
         # -------------------------------
 
         cfg = PipelineConfig(
-
             case_id=case_id,
-
             examiner=examiner,
-
-            legal_authority=body.get(
-                "authority",
-                ""
-            ),
-
-            scope_note=body.get(
-                "scope",
-                ""
-            ),
-
+            legal_authority=body.get("authority", ""),
+            scope_note=body.get("scope", ""),
             cases_root=cases_root,
-
-
-            tier1_contacts=bool(
-                body.get(
-                    "tier1_contacts",
-                    False
-                )
-            ),
-
-            tier1_calllog=bool(
-                body.get(
-                    "tier1_calllog",
-                    False
-                )
-            ),
-
-            tier1_sms=bool(
-                body.get(
-                    "tier1_sms",
-                    False
-                )
-            ),
-
-            tier1_collect_all=bool(
-                body.get(
-                    "tier1_collect_all",
-                    False
-                )
-            ),
-
-
-            tier2_telegram=bool(
-                body.get(
-                    "tier2_telegram",
-                    False
-                )
-            ),
-
-            tier2_instagram=bool(
-                body.get(
-                    "tier2_instagram",
-                    False
-                )
-            ),
-
-            tier2_snapchat=bool(
-                body.get(
-                    "tier2_snapchat",
-                    False
-                )
-            ),
-
-            tier2_wifi=bool(
-                body.get(
-                    "tier2_wifi",
-                    False
-                )
-            ),
-
-
-            tier2_whatsapp_backup=bool(
-                body.get(
-                    "tier2_whatsapp_backup",
-                    False
-                )
-            ),
-
-
+            tier1_contacts=bool(body.get("tier1_contacts", False)),
+            tier1_calllog=bool(body.get("tier1_calllog", False)),
+            tier1_sms=bool(body.get("tier1_sms", False)),
+            tier1_collect_all=bool(body.get("tier1_collect_all", False)),
+            tier2_telegram=bool(body.get("tier2_telegram", False)),
+            tier2_instagram=bool(body.get("tier2_instagram", False)),
+            tier2_snapchat=bool(body.get("tier2_snapchat", False)),
+            tier2_wifi=bool(body.get("tier2_wifi", False)),
+            tier2_whatsapp_backup=bool(body.get("tier2_whatsapp_backup", False)),
             tier2_whatsapp_backup_max_files=int(
-                body.get(
-                    "tier2_whatsapp_backup_max_files",
-                    5
-                )
+                body.get("tier2_whatsapp_backup_max_files", 5)
             ),
-
-
-            case_description=str(
-                body.get(
-                    "case_description",
-                    ""
-                )
-                or ""
-            ),
-
-
-            run_ai_analysis=bool(
-                body.get(
-                    "run_ai_analysis",
-                    True
-                )
-            ),
-
-
-            llm_provider=str(
-                body.get(
-                    "llm_provider",
-                    ""
-                )
-                or ""
-            ),
-
-
-            case_number=str(
-                body.get(
-                    "case_number",
-                    ""
-                )
-                or ""
-            ),
-
-
-            use_case_bank=bool(
-                body.get(
-                    "use_case_bank",
-                    True
-                )
-            ),
-
-
-            learn_from_case=bool(
-                body.get(
-                    "learn_from_case",
-                    True
-                )
-            )
-
+            case_description=str(body.get("case_description", "") or ""),
+            run_ai_analysis=bool(body.get("run_ai_analysis", True)),
+            llm_provider=str(body.get("llm_provider", "") or ""),
+            case_number=str(body.get("case_number", "") or ""),
+            use_case_bank=bool(body.get("use_case_bank", True)),
+            learn_from_case=bool(body.get("learn_from_case", True)),
         )
-
-
 
         # -------------------------------
         # Socket progress emitter
         # -------------------------------
 
-        def emit(
-            stage: str,
-            pct: float,
-            detail: str
-        ):
+        def emit(stage: str, pct: float, detail: str):
 
             if socketio:
 
                 socketio.emit(
                     "progress",
-                    {
-                        "stage": stage,
-                        "pct": pct,
-                        "detail": detail,
-                        "case_id": case_id
-                    }
+                    {"stage": stage, "pct": pct, "detail": detail, "case_id": case_id},
                 )
-
-
 
         # -------------------------------
         # Background worker
@@ -771,95 +525,48 @@ def create_app(cases_root: Path = CASES_ROOT):
 
             state["running"] = True
 
-
             try:
 
-                summary = run_acquisition(
-                    source,
-                    cfg,
-                    progress=emit
-                )
-
-
+                summary = run_acquisition(source, cfg, progress=emit)
 
                 # FIX:
                 # Generate report after acquisition finishes
 
                 from .report import generate_report
 
-
-                case_path = (
-                    cases_root /
-                    case_id
-                )
-
+                case_path = cases_root / case_id
 
                 if case_path.exists():
 
-                    generate_report(
-                        case_path
-                    )
-
-
+                    generate_report(case_path)
 
                 state["last_case"] = case_id
-
-
 
                 if socketio:
 
                     socketio.emit(
                         "complete",
-                        {
-                            "case_id": case_id,
-                            "counts": summary.get(
-                                "counts",
-                                {}
-                            )
-                        }
+                        {"case_id": case_id, "counts": summary.get("counts", {})},
                     )
-
-
 
             except Exception as exc:
 
-
                 if socketio:
 
-                    socketio.emit(
-                        "failed",
-                        {
-                            "case_id": case_id,
-                            "error": str(exc)
-                        }
-                    )
-
-
+                    socketio.emit("failed", {"case_id": case_id, "error": str(exc)})
 
             finally:
 
                 state["running"] = False
 
-
-
-
         # IMPORTANT:
         # thread start must be OUTSIDE worker()
 
-        threading.Thread(
-            target=worker,
-            daemon=True
-        ).start()
+        threading.Thread(target=worker, daemon=True).start()
 
+        return jsonify({"case_id": case_id, "started": True})
+        # ---------------------------------------------------------
 
-
-        return jsonify(
-            {
-                "case_id": case_id,
-                "started": True
-            }
-        )
-            # ---------------------------------------------------------
     # CASE DATA
     # ---------------------------------------------------------
 
@@ -868,53 +575,33 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         out = []
 
-
         for d in sorted(cases_root.iterdir()) if cases_root.exists() else []:
 
             if (d / "case.json").exists():
 
-                meta = json.loads(
-                    (d / "case.json").read_text()
-                )
-
+                meta = json.loads((d / "case.json").read_text())
 
                 out.append(
                     {
                         "case_id": meta["case_id"],
                         "examiner": meta["examiner"],
                         "created_at": meta.get("created_at"),
-                        "device": meta.get("device", {}).get(
-                            "model",
-                            ""
-                        )
+                        "device": meta.get("device", {}).get("model", ""),
                     }
                 )
 
-
         return jsonify(out)
-
-
 
     @app.get("/api/case/<case_id>")
     def case_overview(case_id: str):
 
-        case = _open(
-            cases_root,
-            case_id
-        )
-
+        case = _open(cases_root, case_id)
 
         summary = case.custody_summary()
 
-
         summary["counts"] = {
-
-            name: len(
-                case.read_derived(name)
-            )
-
+            name: len(case.read_derived(name))
             for name in (
-
                 "messages",
                 "contacts",
                 "calls",
@@ -925,151 +612,59 @@ def create_app(cases_root: Path = CASES_ROOT):
                 "timeline",
                 "browser",
                 "screenshots",
-
                 "media_inventory",
                 "apps",
                 "accounts",
                 "calendar",
                 "usage",
-
                 "instagram",
                 "snapchat",
-
                 "wifi",
-
                 "whatsapp_backup_messages",
-                "whatsapp_backup_media"
+                "whatsapp_backup_media",
             )
         }
 
+        discovered = case.read_derived("discovered_chats") or {}
 
+        summary["discovered_chat_count"] = len(discovered.get("messages", []))
 
-        discovered = (
-            case.read_derived(
-                "discovered_chats"
-            )
-            or {}
-        )
+        summary["risk"] = case.read_derived("risk")
 
+        summary["throughput"] = case.read_derived("throughput")
 
-        summary["discovered_chat_count"] = len(
-            discovered.get(
-                "messages",
-                []
-            )
-        )
-
-
-
-        summary["risk"] = case.read_derived(
-            "risk"
-        )
-
-
-        summary["throughput"] = case.read_derived(
-            "throughput"
-        )
-
-
-
-        graph = case.read_derived(
-            "graph"
-        )
-
+        graph = case.read_derived("graph")
 
         summary["graph_stats"] = (
-
-            graph.get(
-                "stats",
-                {}
-            )
-
-            if isinstance(graph, dict)
-
-            else {}
-
+            graph.get("stats", {}) if isinstance(graph, dict) else {}
         )
-
-
 
         summary["media_inventory_summary"] = (
-
-            case.read_derived(
-                "media_inventory_summary"
-            )
-            or {}
-
+            case.read_derived("media_inventory_summary") or {}
         )
 
-
-
-        apps = case.read_derived(
-            "apps"
-        ) or []
-
+        apps = case.read_derived("apps") or []
 
         summary["notable_apps"] = [
-
-            a
-
-            for a in apps
-
-            if isinstance(a, dict)
-            and a.get("notable")
-
+            a for a in apps if isinstance(a, dict) and a.get("notable")
         ]
 
+        summary["tag_count"] = len(case.read_tags())
 
+        ai = case.read_derived("ai_findings")
 
-        summary["tag_count"] = len(
-            case.read_tags()
-        )
-
-
-
-        ai = case.read_derived(
-            "ai_findings"
-        )
-
-
-        summary["case_profile"] = (
-
-            case.read_derived(
-                "case_profile"
-            )
-            or {}
-
-        )
-
+        summary["case_profile"] = case.read_derived("case_profile") or {}
 
         summary["ai_findings_summary"] = (
-
-            ai.get(
-                "counts",
-                {}
-            )
-
-            if isinstance(ai, dict)
-
-            else {}
-
+            ai.get("counts", {}) if isinstance(ai, dict) else {}
         )
-
 
         return jsonify(summary)
 
-
-
-
     @app.get("/api/case/<case_id>/<dataset>")
-    def case_dataset(
-        case_id: str,
-        dataset: str
-    ):
-
+    def case_dataset(case_id: str, dataset: str):
 
         list_sets = {
-
             "messages",
             "contacts",
             "calls",
@@ -1081,101 +676,64 @@ def create_app(cases_root: Path = CASES_ROOT):
             "rowid_gaps",
             "browser",
             "screenshots",
-
             "media_inventory",
             "apps",
             "accounts",
             "calendar",
             "usage",
-
             "instagram",
             "instagram_users",
-
             "snapchat",
             "snapchat_users",
-
             "telegram_recovery",
             "telegram_users",
             "telegram_chats",
             "telegram_media",
             "telegram_conversations",
-
             "wifi",
-
             "whatsapp_backup_messages",
             "whatsapp_backup_media",
-
             # Dumpsys-derived Tier-1 datasets. The pipeline has been writing these
             # since the notification/bluetooth/celltower parsers landed; they were
             # unreachable over the API until now.
             "notifications",
             "bluetooth",
             "celltower",
-
             # Location forensics (engine/triage/forensics/).
             "media_locations",
             "location_places",
             "location_anomalies",
             "location_timeline",
-
             "whatsapp_media",
-            "aleapp"
-
+            "aleapp",
         }
 
-
-
         obj_sets = {
-
             "graph",
             "risk",
             "throughput",
             "media_inventory_summary",
-
             "instagram_conversations",
             "snapchat_conversations",
-
             "discovered_chats",
-
             "ai_findings",
             "case_profile",
             "collection_plan",
             "case_learning",
             "case_outcome",
-
             "location_summary",
             "advanced",
-
             "mediastore_trash",
-
-            "whatsapp_backup_summary"
-
+            "whatsapp_backup_summary",
         }
 
-
-
-        if dataset not in (
-            list_sets | obj_sets
-        ):
+        if dataset not in (list_sets | obj_sets):
 
             abort(404)
 
+        case = _open(cases_root, case_id)
 
-
-        case = _open(
-            cases_root,
-            case_id
-        )
-
-
-        return jsonify(
-            case.read_derived(
-                dataset
-            )
-        )
-
-
-
+        return jsonify(case.read_derived(dataset))
 
     # ---------------------------------------------------------
     # TELEGRAM
@@ -1184,318 +742,129 @@ def create_app(cases_root: Path = CASES_ROOT):
     @app.get("/api/case/<case_id>/telegram/conversations")
     def telegram_conversations(case_id: str):
 
-        case = _open(
-            cases_root,
-            case_id
-        )
+        case = _open(cases_root, case_id)
 
-
-        return jsonify(
-
-            case.read_derived(
-                "telegram_conversations"
-            )
-            or {}
-
-        )
-
-
-
+        return jsonify(case.read_derived("telegram_conversations") or {})
 
     @app.get("/api/case/<case_id>/telegram/conversations/<chat_id>")
-    def telegram_conversation_detail(
-        case_id: str,
-        chat_id: str
-    ):
+    def telegram_conversation_detail(case_id: str, chat_id: str):
 
+        case = _open(cases_root, case_id)
 
-        case = _open(
-            cases_root,
-            case_id
-        )
+        data = case.read_derived("telegram_conversations") or {}
 
-
-        data = case.read_derived(
-            "telegram_conversations"
-        ) or {}
-
-
-
-        conv = data.get(
-            chat_id
-        )
-
+        conv = data.get(chat_id)
 
         if conv is None:
 
             abort(404)
 
-
-
         return jsonify(conv)
-
-
-
 
     # ---------------------------------------------------------
     # WHATSAPP BACKUP
     # ---------------------------------------------------------
 
-
     @app.get("/api/case/<case_id>/whatsapp_backup/messages")
     def whatsapp_backup_messages(case_id: str):
 
-        case = _open(
-            cases_root,
-            case_id
-        )
+        case = _open(cases_root, case_id)
 
-
-        return jsonify(
-
-            case.read_derived(
-                "whatsapp_backup_messages"
-            )
-            or []
-
-        )
-
-
+        return jsonify(case.read_derived("whatsapp_backup_messages") or [])
 
     @app.get("/api/case/<case_id>/whatsapp_backup/media")
     def whatsapp_backup_media(case_id: str):
 
-        case = _open(
-            cases_root,
-            case_id
-        )
+        case = _open(cases_root, case_id)
 
-
-        return jsonify(
-
-            case.read_derived(
-                "whatsapp_backup_media"
-            )
-            or []
-
-        )
-
-
+        return jsonify(case.read_derived("whatsapp_backup_media") or [])
 
     @app.get("/api/case/<case_id>/whatsapp_backup/summary")
     def whatsapp_backup_summary(case_id: str):
 
-        case = _open(
-            cases_root,
-            case_id
-        )
+        case = _open(cases_root, case_id)
 
+        return jsonify(case.read_derived("whatsapp_backup_summary") or {})
+        # ---------------------------------------------------------
 
-        return jsonify(
-
-            case.read_derived(
-                "whatsapp_backup_summary"
-            )
-            or {}
-
-        )
-            # ---------------------------------------------------------
     # DATA EXPORT IMPORT
     # Instagram / Snapchat
     # ---------------------------------------------------------
 
     @app.post("/api/case/<case_id>/import/<app_name>")
-    def import_export(
-        case_id: str,
-        app_name: str
-    ):
+    def import_export(case_id: str, app_name: str):
 
-        if app_name not in (
-            "instagram",
-            "snapchat"
-        ):
+        if app_name not in ("instagram", "snapchat"):
 
             abort(404)
 
+        case = _open(cases_root, case_id)
 
-
-        case = _open(
-            cases_root,
-            case_id
-        )
-
-
-
-        upload = request.files.get(
-            "file"
-        )
-
+        upload = request.files.get("file")
 
         if upload is None or not upload.filename:
 
-            return jsonify(
-                {
-                    "error":
-                    "no file uploaded"
-                }
-            ),400
-
-
+            return jsonify({"error": "no file uploaded"}), 400
 
         from .parsers import (
             parse_instagram_export,
             parse_snapchat_export,
-            thread_conversations
+            thread_conversations,
         )
 
         from .report import generate_report
 
+        suffix = Path(upload.filename).suffix or ".zip"
 
-
-        suffix = Path(
-            upload.filename
-        ).suffix or ".zip"
-
-
-
-        fd, tmp_path = tempfile.mkstemp(
-            suffix=suffix,
-            prefix=f"{app_name}_export_"
-        )
-
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix=f"{app_name}_export_")
 
         os.close(fd)
 
+        tmp = Path(tmp_path)
 
-
-        tmp = Path(
-            tmp_path
-        )
-
-
-        upload.save(
-            str(tmp)
-        )
-
-
+        upload.save(str(tmp))
 
         try:
 
-
             parser = (
-
                 parse_instagram_export
-
                 if app_name == "instagram"
-
                 else parse_snapchat_export
-
             )
 
+            result = parser(tmp)
 
-            result = parser(
-                tmp
+            if not result.get("available"):
+
+                return jsonify({"error": result.get("error", "parse failed")}), 400
+
+            messages = result.get("messages", [])
+
+            existing = case.read_derived(app_name) or []
+
+            merged = list(existing) + messages
+
+            case.write_derived(app_name, merged)
+
+            users = (case.read_derived(f"{app_name}_users") or []) + result.get(
+                "users", []
             )
 
-
-            if not result.get(
-                "available"
-            ):
-
-                return jsonify(
-                    {
-                        "error":
-                        result.get(
-                            "error",
-                            "parse failed"
-                        )
-                    }
-                ),400
-
-
-
-            messages = result.get(
-                "messages",
-                []
-            )
-
-
-
-            existing = case.read_derived(
-                app_name
-            ) or []
-
-
-
-            merged = (
-                list(existing)
-                +
-                messages
-            )
-
-
+            case.write_derived(f"{app_name}_users", users)
 
             case.write_derived(
-                app_name,
-                merged
+                f"{app_name}_conversations", thread_conversations(merged, users)
             )
-
-
-
-            users = (
-
-                case.read_derived(
-                    f"{app_name}_users"
-                )
-                or []
-
-            ) + result.get(
-                "users",
-                []
-            )
-
-
-
-            case.write_derived(
-                f"{app_name}_users",
-                users
-            )
-
-
-
-            case.write_derived(
-                f"{app_name}_conversations",
-                thread_conversations(
-                    merged,
-                    users
-                )
-            )
-
-
 
             try:
 
-                generate_report(
-                    case.root
-                )
+                generate_report(case.root)
 
             except Exception:
 
                 pass
 
-
-
-            return jsonify(
-                {
-                    "imported":
-                    len(messages),
-
-                    "total":
-                    len(merged)
-                }
-            )
-
-
+            return jsonify({"imported": len(messages), "total": len(merged)})
 
         finally:
 
@@ -1503,277 +872,114 @@ def create_app(cases_root: Path = CASES_ROOT):
 
                 tmp.unlink()
 
-
-
     # ---------------------------------------------------------
     # TAGS
     # ---------------------------------------------------------
 
-
     @app.get("/api/case/<case_id>/tags")
     def get_tags(case_id: str):
 
-        return jsonify(
-
-            _open(
-                cases_root,
-                case_id
-            ).read_tags()
-
-        )
-
-
+        return jsonify(_open(cases_root, case_id).read_tags())
 
     @app.post("/api/case/<case_id>/tags")
     def add_tag(case_id: str):
 
-        case = _open(
-            cases_root,
-            case_id
-        )
+        case = _open(cases_root, case_id)
 
-
-        body = request.get_json(
-            force=True
-        ) or {}
-
-
+        body = request.get_json(force=True) or {}
 
         tag = case.add_tag(
-
-            ref=body.get(
-                "ref",
-                ""
-            ),
-
-            kind=body.get(
-                "kind",
-                "artifact"
-            ),
-
-            label=body.get(
-                "label",
-                "Tagged"
-            ),
-
-            note=body.get(
-                "note",
-                ""
-            ),
-
-            by=body.get(
-                "by",
-                ""
-            )
-
+            ref=body.get("ref", ""),
+            kind=body.get("kind", "artifact"),
+            label=body.get("label", "Tagged"),
+            note=body.get("note", ""),
+            by=body.get("by", ""),
         )
-
 
         return jsonify(tag)
 
-
-
     @app.delete("/api/case/<case_id>/tags/<tag_id>")
-    def delete_tag(
-        case_id: str,
-        tag_id: str
-    ):
+    def delete_tag(case_id: str, tag_id: str):
 
-        ok = _open(
-            cases_root,
-            case_id
-        ).remove_tag(
-            tag_id
-        )
+        ok = _open(cases_root, case_id).remove_tag(tag_id)
 
-
-        return jsonify(
-            {
-                "removed": ok
-            }
-        )
-
-
+        return jsonify({"removed": ok})
 
     # ---------------------------------------------------------
     # EVIDENCE EXPORT
     # ---------------------------------------------------------
 
-
     @app.post("/api/case/<case_id>/export")
-    def export_case_endpoint(
-        case_id: str
-    ):
+    def export_case_endpoint(case_id: str):
 
         from .export import export_case
 
+        case = _open(cases_root, case_id)
 
-        case = _open(
-            cases_root,
-            case_id
-        )
+        out = export_case(case.root)
 
-
-        out = export_case(
-            case.root
-        )
-
-
-        return jsonify(
-            {
-                "path": str(out),
-                "name": out.name,
-                "size": out.stat().st_size
-            }
-        )
-
-
+        return jsonify({"path": str(out), "name": out.name, "size": out.stat().st_size})
 
     @app.get("/api/case/<case_id>/export/download")
-    def export_download(
-        case_id: str
-    ):
+    def export_download(case_id: str):
 
         from .export import export_case
 
+        case = _open(cases_root, case_id)
 
-        case = _open(
-            cases_root,
-            case_id
-        )
+        out = export_case(case.root)
 
-
-        out = export_case(
-            case.root
-        )
-
-
-        return send_file(
-            out.resolve(),
-            as_attachment=True,
-            download_name=out.name
-        )
-
-
+        return send_file(out.resolve(), as_attachment=True, download_name=out.name)
 
     @app.get("/api/case/<case_id>/manifest")
-    def manifest(
-        case_id: str
-    ):
+    def manifest(case_id: str):
 
-        case = _open(
-            cases_root,
-            case_id
-        )
+        case = _open(cases_root, case_id)
 
-
-        return jsonify(
-            [
-                r.to_dict()
-                for r in case.manifest
-            ]
-        )
-
-
+        return jsonify([r.to_dict() for r in case.manifest])
 
     @app.get("/api/case/<case_id>/audit")
-    def audit(
-        case_id: str
-    ):
+    def audit(case_id: str):
 
-        return jsonify(
-
-            _open(
-                cases_root,
-                case_id
-            ).read_audit()
-
-        )
-
-
+        return jsonify(_open(cases_root, case_id).read_audit())
 
     # ---------------------------------------------------------
     # REPORT ENDPOINT
     # ---------------------------------------------------------
 
-
     @app.get("/api/case/<case_id>/report")
-    def case_report(
-        case_id: str
-    ):
+    def case_report(case_id: str):
 
-        path = (
-
-            cases_root
-            /
-            case_id
-            /
-            "report.html"
-
-        )
-
+        path = cases_root / case_id / "report.html"
 
         if not path.exists():
 
             abort(404)
 
-
-
-        return send_file(
-            path.resolve()
-        )
-
-
+        return send_file(path.resolve())
 
     # ---------------------------------------------------------
     # MEDIA
     # ---------------------------------------------------------
 
-
     @app.get("/api/case/<case_id>/media/<artifact_id>")
-    def media(
-        case_id: str,
-        artifact_id: str
-    ):
+    def media(case_id: str, artifact_id: str):
 
-
-        case = _open(
-            cases_root,
-            case_id
-        )
-
+        case = _open(cases_root, case_id)
 
         for rec in case.manifest:
 
-
             if rec.artifact_id == artifact_id:
 
+                path = (case.root / rec.stored_path).resolve()
 
-                path = (
-                    case.root
-                    /
-                    rec.stored_path
-                ).resolve()
-
-
-
-                return send_file(
-                    path
-                )
-
-
+                return send_file(path)
 
         abort(404)
 
-
-
     app.config["SOCKETIO"] = socketio
 
-
     return app, socketio
-
-
-
 
 
 # ---------------------------------------------------------
@@ -1781,71 +987,27 @@ def create_app(cases_root: Path = CASES_ROOT):
 # ---------------------------------------------------------
 
 
-def _open(
-    cases_root: Path,
-    case_id: str
-):
+def _open(cases_root: Path, case_id: str):
 
-    path = (
-        cases_root
-        /
-        _safe(case_id)
-    )
+    path = cases_root / _safe(case_id)
 
-
-    if not (
-        path / "case.json"
-    ).exists():
+    if not (path / "case.json").exists():
 
         abort(404)
 
+    return Case.open(path)
 
 
-    return Case.open(
-        path
-    )
+def _safe(case_id: str):
+
+    return "".join(c for c in case_id if c.isalnum() or c in "-_")
 
 
+def _auto_case_id(cases_root: Path):
 
-
-
-def _safe(
-    case_id: str
-):
-
-    return "".join(
-
-        c
-
-        for c in case_id
-
-        if c.isalnum()
-        or c in "-_"
-
-    )
-
-
-
-
-
-def _auto_case_id(
-    cases_root: Path
-):
-
-    n = len(
-        list(
-            cases_root.glob(
-                "CASE-*"
-            )
-        )
-    ) + 1
-
-
+    n = len(list(cases_root.glob("CASE-*"))) + 1
 
     return f"CASE-{n:04d}"
-
-
-
 
 
 # ---------------------------------------------------------
@@ -1857,69 +1019,27 @@ def main():
 
     import argparse
 
+    parser = argparse.ArgumentParser(description="eRakshak triage local service")
 
-    parser = argparse.ArgumentParser(
-        description="eRakshak triage local service"
-    )
+    parser.add_argument("--host", default="127.0.0.1")
 
+    parser.add_argument("--port", type=int, default=5057)
 
-    parser.add_argument(
-        "--host",
-        default="127.0.0.1"
-    )
-
-
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=5057
-    )
-
-
-    parser.add_argument(
-        "--cases",
-        default="_test_output"
-    )
-
-
+    parser.add_argument("--cases", default="_test_output")
 
     args = parser.parse_args()
 
+    app, socketio = create_app(Path(args.cases))
 
-
-    app, socketio = create_app(
-        Path(
-            args.cases
-        )
-    )
-
-
-
-    print(
-        f"{TOOL_NAME} v{__version__} "
-        f"— http://{args.host}:{args.port}"
-    )
-
-
+    print(f"{TOOL_NAME} v{__version__} " f"— http://{args.host}:{args.port}")
 
     if socketio:
 
-        socketio.run(
-            app,
-            host=args.host,
-            port=args.port,
-            allow_unsafe_werkzeug=True
-        )
+        socketio.run(app, host=args.host, port=args.port, allow_unsafe_werkzeug=True)
 
     else:
 
-        app.run(
-            host=args.host,
-            port=args.port
-        )
-
-
-
+        app.run(host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

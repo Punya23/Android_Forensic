@@ -13,6 +13,7 @@ Forensic value:
   have since deleted.
 * Correlates with cell-tower / Bluetooth timelines to establish presence.
 """
+
 from __future__ import annotations
 
 import re
@@ -31,28 +32,28 @@ _MAX_NOTIFICATIONS = 500
 
 # Map package name fragments -> friendly display name.
 _COMM_APPS: Dict[str, str] = {
-    "com.whatsapp":                      "WhatsApp",
-    "com.whatsapp.w4b":                  "WhatsApp Business",
-    "org.telegram.messenger":            "Telegram",
-    "org.thoughtcrime.securesms":        "Signal",
-    "com.instagram.android":             "Instagram",
-    "com.facebook.katana":               "Facebook",
-    "com.facebook.orca":                 "Messenger",
-    "com.twitter.android":               "Twitter/X",
-    "com.snapchat.android":              "Snapchat",
-    "com.discord":                       "Discord",
-    "com.viber.voip":                    "Viber",
-    "com.skype.raider":                  "Skype",
+    "com.whatsapp": "WhatsApp",
+    "com.whatsapp.w4b": "WhatsApp Business",
+    "org.telegram.messenger": "Telegram",
+    "org.thoughtcrime.securesms": "Signal",
+    "com.instagram.android": "Instagram",
+    "com.facebook.katana": "Facebook",
+    "com.facebook.orca": "Messenger",
+    "com.twitter.android": "Twitter/X",
+    "com.snapchat.android": "Snapchat",
+    "com.discord": "Discord",
+    "com.viber.voip": "Viber",
+    "com.skype.raider": "Skype",
     "com.google.android.apps.messaging": "Google Messages",
-    "com.samsung.android.messaging":     "Samsung Messages",
-    "com.android.mms":                   "MMS",
-    "com.google.android.gm":             "Gmail",
-    "com.microsoft.teams":               "Microsoft Teams",
-    "com.slack":                         "Slack",
-    "jp.naver.line.android":             "LINE",
-    "com.tencent.mm":                    "WeChat",
-    "com.kakao.talk":                    "KakaoTalk",
-    "com.truecaller":                    "Truecaller",
+    "com.samsung.android.messaging": "Samsung Messages",
+    "com.android.mms": "MMS",
+    "com.google.android.gm": "Gmail",
+    "com.microsoft.teams": "Microsoft Teams",
+    "com.slack": "Slack",
+    "jp.naver.line.android": "LINE",
+    "com.tencent.mm": "WeChat",
+    "com.kakao.talk": "KakaoTalk",
+    "com.truecaller": "Truecaller",
 }
 
 # Importance-level -> human-readable priority mapping (Android O+)
@@ -76,23 +77,24 @@ _IMPORTANCE_MAP: Dict[str, str] = {
 # Regex patterns for field extraction
 # ---------------------------------------------------------------------------
 
-_RE_PACKAGE      = re.compile(r"(?:^|\s)pkg\s*=\s*(\S+)", re.IGNORECASE)
-_RE_PACKAGE_ALT  = re.compile(r"Package\s*:\s*(\S+)", re.IGNORECASE)
-_RE_KEY          = re.compile(r"NotificationKey\s*:\s*(.+)", re.IGNORECASE)
-_RE_KEY_ALT      = re.compile(r"\bkey\s*=\s*(.+)", re.IGNORECASE)
-_RE_POST_TIME    = re.compile(r"PostTime\s*:\s*(\S+)", re.IGNORECASE)
-_RE_POST_ALT     = re.compile(r"postTime\s*=\s*(\S+)", re.IGNORECASE)
-_RE_TITLE        = re.compile(r"Title\s*:\s*(.+)", re.IGNORECASE)
-_RE_TITLE_ALT    = re.compile(r"android\.title\s*=\s*(.+)", re.IGNORECASE)
-_RE_TEXT         = re.compile(r"(?:Text|Body)\s*:\s*(.+)", re.IGNORECASE)
-_RE_TEXT_ALT     = re.compile(r"android\.text\s*=\s*(.+)", re.IGNORECASE)
-_RE_PRIORITY     = re.compile(r"Priority\s*:\s*(\S+)", re.IGNORECASE)
+_RE_PACKAGE = re.compile(r"(?:^|\s)pkg\s*=\s*(\S+)", re.IGNORECASE)
+_RE_PACKAGE_ALT = re.compile(r"Package\s*:\s*(\S+)", re.IGNORECASE)
+_RE_KEY = re.compile(r"NotificationKey\s*:\s*(.+)", re.IGNORECASE)
+_RE_KEY_ALT = re.compile(r"\bkey\s*=\s*(.+)", re.IGNORECASE)
+_RE_POST_TIME = re.compile(r"PostTime\s*:\s*(\S+)", re.IGNORECASE)
+_RE_POST_ALT = re.compile(r"postTime\s*=\s*(\S+)", re.IGNORECASE)
+_RE_TITLE = re.compile(r"Title\s*:\s*(.+)", re.IGNORECASE)
+_RE_TITLE_ALT = re.compile(r"android\.title\s*=\s*(.+)", re.IGNORECASE)
+_RE_TEXT = re.compile(r"(?:Text|Body)\s*:\s*(.+)", re.IGNORECASE)
+_RE_TEXT_ALT = re.compile(r"android\.text\s*=\s*(.+)", re.IGNORECASE)
+_RE_PRIORITY = re.compile(r"Priority\s*:\s*(\S+)", re.IGNORECASE)
 _RE_PRIORITY_ALT = re.compile(r"importance\s*=\s*(\w+)", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _friendly_name(package: str) -> str:
     """Return a human-readable app name for a given package, or the package itself."""
@@ -152,6 +154,7 @@ def _split_notification_blocks(text: str) -> List[str]:
 # Timestamp parsing
 # ---------------------------------------------------------------------------
 
+
 def parse_notification_timestamp(raw_time: str) -> Optional[str]:
     """Convert various Android timestamp formats to ISO-8601 UTC.
 
@@ -182,10 +185,7 @@ def parse_notification_timestamp(raw_time: str) -> Optional[str]:
     if m:
         month, day, hour, minute, sec = m.groups()
         year = time.gmtime().tm_year
-        return (
-            f"{year}-{int(month):02d}-{int(day):02d}"
-            f"T{hour}:{minute}:{sec}Z"
-        )
+        return f"{year}-{int(month):02d}-{int(day):02d}" f"T{hour}:{minute}:{sec}Z"
 
     # --- ISO-like: YYYY-MM-DD HH:MM:SS ---
     m2 = re.match(
@@ -202,6 +202,7 @@ def parse_notification_timestamp(raw_time: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # ADB acquisition
 # ---------------------------------------------------------------------------
+
 
 def get_notification_history(adb: Adb) -> str:
     """Execute ``adb shell dumpsys notification --history`` and return stdout.
@@ -221,6 +222,7 @@ def get_notification_history(adb: Adb) -> str:
 # ---------------------------------------------------------------------------
 # Core parser
 # ---------------------------------------------------------------------------
+
 
 def parse_notification_history(adb_output: str) -> List[Dict[str, Any]]:
     """Parse raw ``dumpsys notification --history`` output into structured rows.
@@ -286,16 +288,18 @@ def parse_notification_history(adb_output: str) -> List[Dict[str, Any]]:
         pri_match = _RE_PRIORITY.search(block) or _RE_PRIORITY_ALT.search(block)
         priority = _normalise_priority(pri_match.group(1)) if pri_match else "default"
 
-        notifications.append({
-            "package":   package,
-            "app_name":  _friendly_name(package),
-            "key":       key,
-            "timestamp": timestamp,
-            "title":     title,
-            "text":      text,
-            "priority":  priority,
-            "is_comm":   _is_comm_app(package),
-        })
+        notifications.append(
+            {
+                "package": package,
+                "app_name": _friendly_name(package),
+                "key": key,
+                "timestamp": timestamp,
+                "title": title,
+                "text": text,
+                "priority": priority,
+                "is_comm": _is_comm_app(package),
+            }
+        )
 
     return notifications
 
@@ -303,6 +307,7 @@ def parse_notification_history(adb_output: str) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Timeline builder
 # ---------------------------------------------------------------------------
+
 
 def build_notification_timeline(notifications: List[Dict]) -> List[TimelineEvent]:
     """Convert parsed notification dicts into :class:`TimelineEvent` objects.
@@ -318,10 +323,10 @@ def build_notification_timeline(notifications: List[Dict]) -> List[TimelineEvent
         if not ts:
             continue
 
-        app   = n.get("app_name") or n.get("package", "Unknown")
+        app = n.get("app_name") or n.get("package", "Unknown")
         title = n.get("title", "")
-        text  = n.get("text", "")
-        prio  = n.get("priority", "default")
+        text = n.get("text", "")
+        prio = n.get("priority", "default")
 
         # Build a concise summary line for the timeline view.
         parts = [f"[{app}]"]
@@ -331,13 +336,15 @@ def build_notification_timeline(notifications: List[Dict]) -> List[TimelineEvent
             parts.append(f"— {text[:120]}")  # cap preview length
         summary = " ".join(parts)
 
-        events.append(TimelineEvent(
-            timestamp  = ts,
-            kind       = "notification",
-            summary    = summary,
-            confidence = Confidence.LIVE,
-            ref        = n.get("key", ""),
-        ))
+        events.append(
+            TimelineEvent(
+                timestamp=ts,
+                kind="notification",
+                summary=summary,
+                confidence=Confidence.LIVE,
+                ref=n.get("key", ""),
+            )
+        )
 
     return events
 
@@ -345,6 +352,7 @@ def build_notification_timeline(notifications: List[Dict]) -> List[TimelineEvent
 # ---------------------------------------------------------------------------
 # Summary statistics
 # ---------------------------------------------------------------------------
+
 
 def get_notification_summary(notifications: List[Dict]) -> Dict[str, Any]:
     """Return aggregate statistics over a parsed notification list.
@@ -360,21 +368,21 @@ def get_notification_summary(notifications: List[Dict]) -> Dict[str, Any]:
     * ``high_priority``      — count with priority in {``high``, ``max``}
     * ``communication_apps`` — count from known communication apps
     """
-    by_app:  Dict[str, int] = {}
-    by_pkg:  Dict[str, int] = {}
+    by_app: Dict[str, int] = {}
+    by_pkg: Dict[str, int] = {}
     by_prio: Dict[str, int] = {}
     with_title = 0
-    with_text  = 0
-    high_prio  = 0
+    with_text = 0
+    high_prio = 0
     comm_count = 0
 
     for n in notifications:
-        app  = n.get("app_name", "Unknown")
-        pkg  = n.get("package",  "unknown")
+        app = n.get("app_name", "Unknown")
+        pkg = n.get("package", "unknown")
         prio = n.get("priority", "default")
 
-        by_app[app]   = by_app.get(app, 0)   + 1
-        by_pkg[pkg]   = by_pkg.get(pkg, 0)   + 1
+        by_app[app] = by_app.get(app, 0) + 1
+        by_pkg[pkg] = by_pkg.get(pkg, 0) + 1
         by_prio[prio] = by_prio.get(prio, 0) + 1
 
         if n.get("title"):
@@ -387,12 +395,12 @@ def get_notification_summary(notifications: List[Dict]) -> Dict[str, Any]:
             comm_count += 1
 
     return {
-        "total":               len(notifications),
-        "by_app":              by_app,
-        "by_package":          by_pkg,
-        "by_priority":         by_prio,
-        "with_title":          with_title,
-        "with_text":           with_text,
-        "high_priority":       high_prio,
-        "communication_apps":  comm_count,
+        "total": len(notifications),
+        "by_app": by_app,
+        "by_package": by_pkg,
+        "by_priority": by_prio,
+        "with_title": with_title,
+        "with_text": with_text,
+        "high_priority": high_prio,
+        "communication_apps": comm_count,
     }

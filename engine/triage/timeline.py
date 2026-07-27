@@ -8,6 +8,7 @@ New in v2: ``telegram_messages`` and ``telegram_media`` keyword arguments add
 ``kind="telegram_message"`` and ``kind="telegram_media"`` events, complete with
 confidence badges, so deleted Telegram messages appear inline with all other evidence.
 """
+
 from __future__ import annotations
 
 from typing import Iterable
@@ -25,18 +26,20 @@ from .parsers.bluetooth import build_bluetooth_timeline
 from .parsers.celltower import build_celltower_timeline
 
 
-def build_timeline(*,
-                   messages: Iterable[Message] = (),
-                   calls: Iterable[CallRecord] = (),
-                   media: Iterable[MediaItem] = (),
-                   locations: Iterable[LocationPoint] = (),
-                   telegram_messages: Iterable[dict] = (),
-                   telegram_media: Iterable[dict] = (),
-                   calendar_events: Iterable[dict] = (),
-                   media_inventory: Iterable[dict] = (),
-                   notifications: Iterable[dict] = (),
-                   bluetooth_devices: Iterable[dict] = (),
-                   cell_towers: Iterable[dict] = ()) -> list[dict]:
+def build_timeline(
+    *,
+    messages: Iterable[Message] = (),
+    calls: Iterable[CallRecord] = (),
+    media: Iterable[MediaItem] = (),
+    locations: Iterable[LocationPoint] = (),
+    telegram_messages: Iterable[dict] = (),
+    telegram_media: Iterable[dict] = (),
+    calendar_events: Iterable[dict] = (),
+    media_inventory: Iterable[dict] = (),
+    notifications: Iterable[dict] = (),
+    bluetooth_devices: Iterable[dict] = (),
+    cell_towers: Iterable[dict] = (),
+) -> list[dict]:
     """Build a sorted, unified timeline from all evidence types.
 
     Parameters
@@ -85,7 +88,7 @@ def build_timeline(*,
             timestamp=c.timestamp or "",
             kind="call",
             summary=f"{c.call_type} call {c.number}"
-                    + (f" ({c.duration_s}s)" if c.duration_s else ""),
+            + (f" ({c.duration_s}s)" if c.duration_s else ""),
             confidence=c.confidence,
             ref=c.source_file,
         )
@@ -97,7 +100,7 @@ def build_timeline(*,
             timestamp=md.timestamp or "",
             kind="media",
             summary=f"{md.kind} {md.stored_path.split('/')[-1]}{gps}"
-                    + (" [trashed]" if md.trashed else ""),
+            + (" [trashed]" if md.trashed else ""),
             ref=md.artifact_id,
         )
         (events if md.timestamp else undated).append(ev)
@@ -154,14 +157,22 @@ def build_timeline(*,
         title = (ce.get("title") or "(no title)")[:120]
         loc = ce.get("location") or ""
         summary = f"Calendar: {title}" + (f" @ {loc}" if loc else "")
-        ev = TimelineEvent(timestamp=ts or "", kind="calendar", summary=summary,
-                           ref=ce.get("source_file", ""))
+        ev = TimelineEvent(
+            timestamp=ts or "",
+            kind="calendar",
+            summary=summary,
+            ref=ce.get("source_file", ""),
+        )
         (events if ts else undated).append(ev)
 
     # --- MediaStore inventory (metadata-only catalogue; date_taken preferred) ---
     for mi in media_inventory:
         ts = mi.get("date_taken") or mi.get("date_added")
-        name = mi.get("display_name") or mi.get("relative_path") or str(mi.get("media_id", ""))
+        name = (
+            mi.get("display_name")
+            or mi.get("relative_path")
+            or str(mi.get("media_id", ""))
+        )
         owner = mi.get("owner_app")
         badges = []
         if mi.get("is_trashed"):
@@ -169,10 +180,17 @@ def build_timeline(*,
         if mi.get("is_favorite"):
             badges.append("favorite")
         suffix = f" [{', '.join(badges)}]" if badges else ""
-        summary = (f"{mi.get('kind', 'media')} {name}"
-                   + (f" ({owner})" if owner else "") + suffix)
-        ev = TimelineEvent(timestamp=ts or "", kind="media_inventory", summary=summary,
-                           ref=str(mi.get("media_id", "")))
+        summary = (
+            f"{mi.get('kind', 'media')} {name}"
+            + (f" ({owner})" if owner else "")
+            + suffix
+        )
+        ev = TimelineEvent(
+            timestamp=ts or "",
+            kind="media_inventory",
+            summary=summary,
+            ref=str(mi.get("media_id", "")),
+        )
         (events if ts else undated).append(ev)
 
     # --- Dumpsys history events ---

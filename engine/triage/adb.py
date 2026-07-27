@@ -14,6 +14,7 @@ to initialise the transport, :meth:`_ensure_connected` before each command, and
 :meth:`close` at the end of a session.  All methods fall back gracefully to the
 stateless subprocess path when the persistent process is unavailable.
 """
+
 from __future__ import annotations
 
 import os
@@ -21,7 +22,7 @@ import shutil
 import subprocess
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -77,8 +78,8 @@ class Adb:
         # --- Persistent transport state ---
         self._transport_proc: Optional[subprocess.Popen] = None
         self._transport_lock = threading.Lock()
-        self._cmd_count: int = 0          # total commands run (for telemetry)
-        self._reused_count: int = 0       # commands where transport was already alive
+        self._cmd_count: int = 0  # total commands run (for telemetry)
+        self._reused_count: int = 0  # commands where transport was already alive
 
     # -----------------------------------------------------------------------
     # Persistent transport — public interface
@@ -188,10 +189,7 @@ class Adb:
         A return value of ``False`` does *not* mean commands will fail — the
         :meth:`run` method always falls back to stateless subprocesses.
         """
-        return (
-            self._transport_proc is not None
-            and self._transport_proc.poll() is None
-        )
+        return self._transport_proc is not None and self._transport_proc.poll() is None
 
     # -----------------------------------------------------------------------
     # Core API (unchanged contract; transport kept warm as a side-effect)
@@ -228,13 +226,20 @@ class Adb:
             return AdbResult(printable, 127, "", "adb binary not found")
         try:
             proc = subprocess.run(
-                cmd, capture_output=True, timeout=timeout,
+                cmd,
+                capture_output=True,
+                timeout=timeout,
                 text=not binary,
             )
             return AdbResult(
-                printable, proc.returncode,
+                printable,
+                proc.returncode,
                 proc.stdout if not binary else "",
-                proc.stderr if isinstance(proc.stderr, str) else proc.stderr.decode("utf-8", "replace"),
+                (
+                    proc.stderr
+                    if isinstance(proc.stderr, str)
+                    else proc.stderr.decode("utf-8", "replace")
+                ),
             )
         except subprocess.TimeoutExpired:
             return AdbResult(printable, 124, "", f"timeout after {timeout}s")
@@ -252,8 +257,9 @@ class Adb:
         if not path:
             return []
         try:
-            out = subprocess.run([path, "devices"], capture_output=True, text=True,
-                                 timeout=15).stdout
+            out = subprocess.run(
+                [path, "devices"], capture_output=True, text=True, timeout=15
+            ).stdout
         except Exception:
             return []
         devices = []
@@ -287,7 +293,9 @@ class Adb:
         return self.shell("date +%Y-%m-%dT%H:%M:%S%z").stdout.strip()
 
     def is_screen_locked(self) -> Optional[bool]:
-        res = self.shell("dumpsys window | grep -E 'mDreamingLockscreen|mShowingLockscreen'")
+        res = self.shell(
+            "dumpsys window | grep -E 'mDreamingLockscreen|mShowingLockscreen'"
+        )
         if "true" in res.stdout.lower():
             return True
         if "false" in res.stdout.lower():
@@ -312,8 +320,8 @@ class Adb:
     def connection_stats(self) -> dict:
         """Return connection-reuse telemetry for this session."""
         return {
-            "total_commands":   self._cmd_count,
+            "total_commands": self._cmd_count,
             "transport_reuses": self._reused_count,
-            "is_connected":     self.is_connected,
-            "serial":           self.serial,
+            "is_connected": self.is_connected,
+            "serial": self.serial,
         }

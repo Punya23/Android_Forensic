@@ -4,6 +4,7 @@ SHA-256 is the primary algorithm (SWGDE deprecates MD5/SHA-1 as *sole* hashes). 
 compute the hash streaming, so multi-GB media files never load fully into memory, and
 we record it into the manifest at the moment of extraction.
 """
+
 from __future__ import annotations
 
 import hashlib

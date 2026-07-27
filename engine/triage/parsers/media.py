@@ -35,14 +35,14 @@ from typing import Any, Dict, List, Optional
 # Folder-name substrings → canonical media type.
 # Matched case-insensitively; first match wins.
 _FOLDER_TYPE_TOKENS: list[tuple[str, str]] = [
-    ("images",      "image"),
-    ("video",       "video"),
-    ("voice note",  "voice_note"),
-    ("audio",       "audio"),
-    ("document",    "document"),
-    ("animated gif","gif"),
-    ("gif",         "gif"),
-    ("sticker",     "sticker"),
+    ("images", "image"),
+    ("video", "video"),
+    ("voice note", "voice_note"),
+    ("audio", "audio"),
+    ("document", "document"),
+    ("animated gif", "gif"),
+    ("gif", "gif"),
+    ("sticker", "sticker"),
 ]
 
 # WhatsApp filename date pattern: PREFIX-YYYYMMDD-WAxxx[x].ext
@@ -52,16 +52,28 @@ _WA_DATE_RE = re.compile(
 )
 
 # Extension sets used when MIME guessing fails
-_IMAGE_EXTS   = {".jpg", ".jpeg", ".png", ".heic", ".webp", ".tiff", ".bmp"}
-_VIDEO_EXTS   = {".mp4", ".3gp", ".mkv", ".mov", ".avi", ".webm"}
-_AUDIO_EXTS   = {".opus", ".m4a", ".aac", ".mp3", ".ogg", ".amr", ".wav"}
-_DOC_EXTS     = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-                 ".txt", ".csv", ".zip", ".apk"}
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".webp", ".tiff", ".bmp"}
+_VIDEO_EXTS = {".mp4", ".3gp", ".mkv", ".mov", ".avi", ".webm"}
+_AUDIO_EXTS = {".opus", ".m4a", ".aac", ".mp3", ".ogg", ".amr", ".wav"}
+_DOC_EXTS = {
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".txt",
+    ".csv",
+    ".zip",
+    ".apk",
+}
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _classify_folder(folder_name: str) -> Optional[str]:
     """Classify a WhatsApp Media sub-folder by matching its name against known
@@ -85,7 +97,7 @@ def _parse_wa_date(filename: str) -> Optional[str]:
     date_s = m.group("date")
     try:
         dt = datetime.strptime(date_s, "%Y%m%d")
-        return dt.date().isoformat()          # YYYY-MM-DD
+        return dt.date().isoformat()  # YYYY-MM-DD
     except ValueError:
         return None
 
@@ -108,6 +120,7 @@ def _guess_mime(file_path: Path) -> str:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def _extract_media_metadata(
     file_path: Path,
@@ -136,13 +149,13 @@ def _extract_media_metadata(
         date_str = _parse_wa_date(filename)
 
         return {
-            "filename":   filename,
-            "path":       str(file_path.resolve()),
-            "type":       media_type,
+            "filename": filename,
+            "path": str(file_path.resolve()),
+            "type": media_type,
             "size_bytes": stat.st_size,
-            "date":       date_str,
-            "extension":  file_path.suffix.lower(),
-            "mime_type":  _guess_mime(file_path),
+            "date": date_str,
+            "extension": file_path.suffix.lower(),
+            "mime_type": _guess_mime(file_path),
         }
     except Exception:
         return None
@@ -215,27 +228,27 @@ def get_whatsapp_media_summary(media_root: Path) -> Dict[str, int]:
     """
     # Canonical counter names (media_type → summary key)
     _TYPE_TO_KEY: Dict[str, str] = {
-        "image":      "images",
-        "video":      "videos",
+        "image": "images",
+        "video": "videos",
         "voice_note": "voice_notes",
-        "audio":      "audio",
-        "document":   "documents",
-        "gif":        "gifs",
-        "sticker":    "stickers",
-        "other":      "other",
+        "audio": "audio",
+        "document": "documents",
+        "gif": "gifs",
+        "sticker": "stickers",
+        "other": "other",
     }
 
     summary: Dict[str, int] = {
-        "images":          0,
-        "videos":          0,
-        "voice_notes":     0,
-        "audio":           0,
-        "documents":       0,
-        "gifs":            0,
-        "stickers":        0,
-        "other":           0,
-        "total":           0,
-        "total_size_bytes":0,
+        "images": 0,
+        "videos": 0,
+        "voice_notes": 0,
+        "audio": 0,
+        "documents": 0,
+        "gifs": 0,
+        "stickers": 0,
+        "other": 0,
+        "total": 0,
+        "total_size_bytes": 0,
     }
 
     if not media_root.exists():
@@ -285,7 +298,7 @@ def filter_media_by_date(
     """
     try:
         start_dt = datetime.fromisoformat(start_date)
-        end_dt   = datetime.fromisoformat(end_date)
+        end_dt = datetime.fromisoformat(end_date)
     except ValueError:
         return []
 

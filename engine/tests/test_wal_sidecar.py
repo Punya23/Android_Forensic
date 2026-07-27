@@ -10,6 +10,7 @@ pulled with the DB. These tests lock in:
   3. end to end, a row deleted only in the WAL is recovered when the sidecar travels and
      is NOT recovered when it is dropped (proving the fix does real work).
 """
+
 import shutil
 import sqlite3
 import sys
@@ -26,12 +27,15 @@ from triage.recovery import recover_deleted_rows  # noqa: E402
 
 
 # --- priority ----------------------------------------------------------------
-@pytest.mark.parametrize("path", [
-    "/data/data/org.telegram.messenger/files/cache4.db-wal",
-    "/sdcard/Android/media/com.whatsapp/Databases/msgstore.db-wal",
-    "/data/data/x/direct.db-shm",
-    "/data/data/x/arroyo.db-journal",
-])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/data/data/org.telegram.messenger/files/cache4.db-wal",
+        "/sdcard/Android/media/com.whatsapp/Databases/msgstore.db-wal",
+        "/data/data/x/direct.db-shm",
+        "/data/data/x/arroyo.db-journal",
+    ],
+)
 def test_sqlite_sidecars_are_top_priority(path):
     # A -wal/-shm/-journal has no recognised file extension, so before the fix it scored 0
     # and was pulled last or time-gated out. It must now rank with its parent DB.
@@ -82,17 +86,17 @@ def _wal_db_snapshot(tmp_path: Path) -> Path:
     db = work / "cache4.db"
     con = sqlite3.connect(str(db))
     con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA wal_autocheckpoint=0")   # keep everything in the WAL
+    con.execute("PRAGMA wal_autocheckpoint=0")  # keep everything in the WAL
     con.execute("CREATE TABLE msg(id INTEGER PRIMARY KEY, body TEXT)")
     con.execute("INSERT INTO msg VALUES (1,'meet at the docks midnight')")
     con.commit()
     con.execute("INSERT INTO msg VALUES (2,'bring the package')")
     con.commit()
-    con.execute("DELETE FROM msg WHERE id=1")     # deletion recorded in the WAL only
+    con.execute("DELETE FROM msg WHERE id=1")  # deletion recorded in the WAL only
     con.commit()
     snap = tmp_path / "snapshot"
     snap.mkdir()
-    for p in work.iterdir():                      # copy while the app holds it open
+    for p in work.iterdir():  # copy while the app holds it open
         if p.is_file():
             shutil.copy2(p, snap / p.name)
     con.close()
@@ -102,7 +106,9 @@ def _wal_db_snapshot(tmp_path: Path) -> Path:
 def _text_fragments(rows):
     out = []
     for r in rows:
-        vals = (r.get("values") if isinstance(r, dict) else getattr(r, "values", [])) or []
+        vals = (
+            r.get("values") if isinstance(r, dict) else getattr(r, "values", [])
+        ) or []
         out += [v for v in vals if isinstance(v, str)]
     return out
 
@@ -112,7 +118,7 @@ def test_pull_to_path_colocates_sidecar_by_exact_name(tmp_path):
     assert (snap / "cache4.db-wal").exists(), "fixture did not retain a WAL"
 
     src = _FixtureSource(snap)
-    dest = tmp_path / "case" / "AABBCC.db"        # content-hash name, like real ingest
+    dest = tmp_path / "case" / "AABBCC.db"  # content-hash name, like real ingest
     dest.parent.mkdir()
     ok = src.pull_to_path("/data/data/x/cache4.db-wal", Path(str(dest) + "-wal"))
     assert ok
@@ -125,7 +131,7 @@ def test_deleted_row_recovered_only_when_wal_travels(tmp_path):
 
     stored = tmp_path / "case" / "AABBCC.db"
     stored.parent.mkdir()
-    shutil.copy2(snap / "cache4.db", stored)      # DB alone, as a naive .db-only pull
+    shutil.copy2(snap / "cache4.db", stored)  # DB alone, as a naive .db-only pull
 
     before = _text_fragments(recover_deleted_rows(stored))
     assert not any("docks" in t for t in before), (

@@ -12,7 +12,7 @@ import json
 import logging
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from . import TOOL_NAME, __version__
 from .hashing import hash_file

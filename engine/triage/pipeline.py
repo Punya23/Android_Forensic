@@ -43,12 +43,15 @@ from .checkpoint import (
     start_autosave,
     stop_autosave,
 )
+from .battery_monitor import BatteryMonitor
+from .forensics.battery_priority import should_pull_category
 
 from .acquire import AcquisitionSource, RealDeviceSource
 from .analysis import assess_risk, build_communication_graph
 from .config import (
     APP_MEDIA_ROOTS,
     AUDIO_EXTS,
+    BATTERY_POLL_INTERVAL_S,
     IMAGE_EXTS,
     TIER0_PULL_ROOTS,
     Tier,
@@ -189,6 +192,13 @@ class PipelineConfig:
         False  # sort files by forensic value; skip low-value until budget allows
     )
     parallel_workers: int = 8  # ThreadPoolExecutor max_workers for parallel file pulls
+    # -- Battery-aware acquisition (Phase 2) ----------------------------------
+    battery_aware: bool = (
+        False  # gate Tier-0/Tier-2 pulls by live battery level (battery_priority.py bands)
+    )
+    battery_poll_interval_s: float = (
+        BATTERY_POLL_INTERVAL_S  # live battery re-poll cadence, in seconds
+    )
 
 
 def run_acquisition(
@@ -224,10 +234,44 @@ def run_acquisition(
         scope_note=cfg.scope_note,
     )
     case = Case.create(cfg.cases_root, meta)
+    completed_files: set[str] = set()
+
+    if checkpoint_exists(case.root):
+        try:
+            state = load_checkpoint(case.root)
+            completed_files = set(
+                state.get("data", {}).get("completed_files", [])
+            )
+            case.log(
+                "checkpoint",
+                f"Resuming acquisition ({len(completed_files)} files already completed)",
+                tier=Tier.TIER0.value,
+            )
+        except Exception as exc:
+            case.log(
+                "checkpoint",
+                f"Checkpoint load failed: {exc}",
+                result="error",
+                tier=Tier.TIER0.value,
+            )
+
+    def _checkpoint_save() -> None:
+        save_checkpoint(
+            case.root,
+            stage="running",
+            data={
+                "completed_files": list(completed_files),
+            },
+        )
+
+    _autosave_thread = start_autosave(_checkpoint_save, interval=30)
 
     # -- device intake + pre-state ------------------------------------------
     progress("device", 0.03, "Reading device identifiers")
-    device: DeviceInfo = source.device_info()
+    device = source.device_info()
+    # Chain of custody: record the device identity and pre-acquisition snapshot. (These
+    # four calls were dropped by an upstream merge — without them the case carries no
+    # device-intake or pre-state audit record.)
     case.update_device(device)
     case.log(
         "device.intake",
@@ -240,7 +284,42 @@ def run_acquisition(
         "device.prestate", f"pre-acquisition snapshot: {pre}", tier=Tier.TIER0.value
     )
 
+    battery_monitor = BatteryMonitor(
+        source,
+        interval_s=cfg.battery_poll_interval_s,
+        initial_level=pre.get("battery_level"),
+    )
+    if cfg.battery_aware:
+        battery_monitor.start()
+        case.log(
+            "battery.monitor",
+            f"live battery gating enabled (initial reading "
+            f"{pre.get('battery_level')}%, re-poll every {cfg.battery_poll_interval_s}s)",
+            tier=Tier.TIER0.value,
+        )
+
+    def _tier2_battery_ok() -> bool:
+        """Tier-2 stages are root-required, slow, and the most drain-intensive part
+        of a run -- hold them back harder than an ordinary Tier-0 media file."""
+        if not cfg.battery_aware:
+            return True
+        level = battery_monitor.level()
+        if level is not None and level <= 15:
+            case.log(
+                "battery.gate",
+                f"battery {level}% -- Tier-2 stage skipped (root-required stages "
+                f"require >15% battery by policy)",
+                tier=Tier.TIER2.value,
+                result="skipped",
+            )
+            return False
+        return True
+
+    # Temporary staging area for device pulls before they are ingested into the case
+    # folder. (This definition was dropped by an upstream merge, leaving `staging`
+    # undefined throughout the run — re-established here.)
     staging = Path(tempfile.mkdtemp(prefix="triage_stage_"))
+
     # All accumulators are declared up front (before the Tier-1 helpers run) so a Tier-1
     # dump can append to them without a forward-reference, and so the later Tier-0 pull loop
     # never re-initialises (and wipes) what Tier-1 already collected.
@@ -489,6 +568,31 @@ def run_acquisition(
     # Optional priority ordering (opt-in via cfg.use_priority_filter)
     ordered_files = get_priority_files(files) if cfg.use_priority_filter else files
 
+    # Resume support: don't re-pull files a prior (interrupted) run already completed.
+    if completed_files:
+        ordered_files = [f for f in ordered_files if f not in completed_files]
+
+    # Battery-aware gating (opt-in via cfg.battery_aware): drop low-priority files
+    # when the live battery reading is below the existing battery_priority.py bands.
+    # Databases (messages/contacts/calls) are never gated -- only bulk media/docs are.
+    if cfg.battery_aware:
+        _batt = battery_monitor.level()
+        if _batt is not None:
+            _pre_gate_count = len(ordered_files)
+            ordered_files = [
+                f for f in ordered_files
+                if should_pull_category(_categorise(f)[0], _batt)
+            ]
+            _dropped = _pre_gate_count - len(ordered_files)
+            if _dropped:
+                case.log(
+                    "battery.gate",
+                    f"battery {_batt}% -- skipped {_dropped} low-priority file(s) "
+                    f"of {_pre_gate_count} (critical always kept; "
+                    f"documents >30%; media >50%)",
+                    tier=Tier.TIER0.value,
+                )
+
     pull_results: List[Dict] = _parallel_pull_files(
         files=ordered_files,
         source=source,
@@ -507,6 +611,7 @@ def run_acquisition(
     for res in pull_results:
         if not res:
             continue
+
         pulled_bytes += res.get("size_bytes", 0)
         media_items.extend(res.get("media_items", []))
         locations.extend(res.get("locations", []))
@@ -521,10 +626,21 @@ def run_acquisition(
         calendar_events.extend(res.get("calendar_events", []))
         app_usage.extend(res.get("app_usage", []))
 
-    pull_elapsed = max(time.monotonic() - pull_start, 0.001)
-    track_stage_time("pull", pull_elapsed)
-    add_bytes(pulled_bytes)
+    completed_files.update(
+        res["device_path"]
+        for res in pull_results
+        if res and res.get("device_path")
+    )
 
+    save_checkpoint(
+        case.root,
+        stage="pull",
+        data={
+            "completed_files": list(completed_files),
+        },
+    )
+
+    pull_elapsed = max(time.monotonic() - pull_start, 0.001)
     # ── Stage 2 progressive emit: communication data ready ─────────────────
     _emit_stage_data(
         "communication",
@@ -636,7 +752,7 @@ def run_acquisition(
     # recovered_rows pre-declared here so Tier-2 Telegram can append to it
     # before the generic SQLite recovery loop adds its own rows.
     recovered_rows: list = []
-    if cfg.tier2_telegram:
+    if cfg.tier2_telegram and _tier2_battery_ok():
         progress("tier2", 0.60, "Running Tier-2 Telegram recovery (root)")
         if isinstance(source, RealDeviceSource):
             _run_tier2_telegram(
@@ -655,7 +771,7 @@ def run_acquisition(
                 tier=Tier.TIER2.value,
             )
 
-    if cfg.tier2_instagram:
+    if cfg.tier2_instagram and _tier2_battery_ok():
         progress("tier2", 0.61, "Running Tier-2 Instagram recovery (root)")
         if isinstance(source, RealDeviceSource):
             instagram_result = (
@@ -672,7 +788,7 @@ def run_acquisition(
                 tier=Tier.TIER2.value,
             )
 
-    if cfg.tier2_snapchat:
+    if cfg.tier2_snapchat and _tier2_battery_ok():
         progress("tier2", 0.62, "Running Tier-2 Snapchat recovery (root)")
         if isinstance(source, RealDeviceSource):
             snapchat_result = (
@@ -687,7 +803,7 @@ def run_acquisition(
                 tier=Tier.TIER2.value,
             )
 
-    if cfg.tier2_wifi:
+    if cfg.tier2_wifi and _tier2_battery_ok():
         progress("tier2", 0.63, "Running Tier-2 Wi-Fi credential recovery (root)")
         if isinstance(source, RealDeviceSource):
             wifi_networks = _run_tier2_wifi(source, case, staging)
@@ -699,7 +815,7 @@ def run_acquisition(
                 tier=Tier.TIER2.value,
             )
 
-    if cfg.tier2_whatsapp_backup:
+    if cfg.tier2_whatsapp_backup and _tier2_battery_ok():
         progress("tier2", 0.635, "Running Tier-2 WhatsApp backup recovery (root)")
         if isinstance(source, RealDeviceSource):
             wa_backup_messages, wa_backup_media = _run_tier2_whatsapp_backup(
@@ -909,7 +1025,16 @@ def run_acquisition(
                     source_file=mi.source_file,
                 )
             )
-
+    save_checkpoint(
+        case.root,
+        stage="communication",
+        data={
+            "completed_files": list(completed_files),
+            "messages": len(app_messages),
+            "contacts": len(contacts),
+            "calls": len(calls),
+        },
+    )
     all_messages = list(app_messages) + recovered_messages
     timeline = build_timeline(
         messages=all_messages,
@@ -1096,24 +1221,6 @@ def run_acquisition(
     case.write_derived(
         "media_inventory_summary", media_inventory_summary(media_inventory)
     )
-    # MediaStore trash: fuse the DB's trashed/pending rows with the .trashed-* files we
-    # actually pulled → recovered files + defensible deletion timestamps (non-root).
-    try:
-        from .forensics import analyze_mediastore_trash
-        trash = analyze_mediastore_trash(media_inventory, case.manifest)
-        case.write_derived("mediastore_trash", trash)
-        ts = trash["summary"]
-        if ts["total"]:
-            case.log(
-                "forensics.mediastore_trash",
-                f"MediaStore trash: {ts['total']} item(s) — {ts['file_recovered']} file(s) "
-                f"recovered intact, {ts['deletion_detected_only']} deletion-detected; "
-                f"{ts['expiring_within_3_days']} expiring within 3 days.",
-                tier=Tier.TIER0.value,
-            )
-    except Exception as exc:  # trash analysis must never abort a run
-        case.log("forensics.mediastore_trash", f"trash analysis error: {exc}",
-                 result="error", tier=Tier.TIER0.value)
     case.write_derived("wifi", wifi_networks)  # Wi-Fi credentials (Tier 2)
     case.write_derived(
         "whatsapp_backup_messages", wa_backup_messages
@@ -1236,6 +1343,7 @@ def run_acquisition(
 
     # ── Cleanup: stop auto-save, clear checkpoint, record total time ────────
     stop_autosave(_autosave_thread)
+    battery_monitor.stop()
     try:
         clear_checkpoint(case.root)
     except Exception:
@@ -1266,9 +1374,6 @@ def run_acquisition(
                 "screenshots": len(screenshots),
                 "aleapp_modules": len(aleapp_result.get("artifacts", {})),
                 "whatsapp_media": len(wa_media_items),  # NEW
-                "mediastore_trash": sum(
-                    1 for m in media_inventory if m.is_trashed or m.is_pending
-                ),
                 "media_inventory": len(media_inventory),
                 "apps": len(installed_apps),
                 "accounts": len(accounts),
@@ -1450,7 +1555,8 @@ def _process_pulled_file(
         except Exception as exc:  # pragma: no cover - display must never be fatal
             logger.debug("hash display failed (non-fatal): %s", exc)
 
-    result: Dict[str, List] = {
+    result: Dict[str, Any] = {
+        "device_path": dev_path,
         "size_bytes": rec.size_bytes,
         "media_items": [],
         "locations": [],
@@ -1465,7 +1571,6 @@ def _process_pulled_file(
         "calendar_events": [],
         "app_usage": [],
     }
-
     category = rec.category
     app = rec.app
     name = stored.name
@@ -1787,33 +1892,8 @@ def _pull_and_process_file(
         )
     stored = case.root / rec.stored_path
 
-    # ── SQLite WAL/journal co-location ───────────────────────────────────
-    # Ingest renames each file by content, so a DB and its sidecars end up unrelated in
-    # the case store and SQLite could never merge the WAL. Re-pull the sidecars to the
-    # exact name <stored>-wal so the recovery pass (and SQLite itself) associates them.
-    # Missing sidecars are normal; this is best-effort and never fails the DB.
-    _colocate_sqlite_sidecars(device_path, stored, source, case)
-
     # ── Per-file processing (parse / EXIF / DB — can run in parallel) ───
     return _process_pulled_file(pulled, rec, stored, device_path, case)
-
-
-def _colocate_sqlite_sidecars(device_path: str, stored: Path,
-                              source: AcquisitionSource, case: Any) -> None:
-    """Pull a DB's -wal/-shm/-journal next to *stored* under the exact SQLite names."""
-    name = Path(device_path).name.lower()
-    if not (name.endswith((".db", ".sqlite", ".sqlite3")) or name == "history"
-            or any(k in name for k in ("msgstore", "cache4", "mmssms"))):
-        return
-    for suf in _SQLITE_SIDECAR_SUFFIXES:
-        try:
-            if source.pull_to_path(device_path + suf, Path(str(stored) + suf)):
-                case.log("adb.pull.sidecar",
-                         f"co-located {Path(device_path).name}{suf} with its DB — "
-                         f"WAL-resident (newest + deleted) rows are now recoverable",
-                         tier=Tier.TIER0.value)
-        except Exception:
-            continue
 
 
 def _parallel_pull_files(
@@ -2230,60 +2310,6 @@ def _collect_gaps(db_artifacts: list[tuple[Path, Any]]) -> dict[str, Any]:
     return out
 
 
-# The write-ahead log and shared-memory/rollback-journal sidecars that MUST travel
-# with any live SQLite database. The newest committed rows live in the -wal until a
-# checkpoint, and the -wal additionally retains superseded (i.e. deleted/edited) page
-# images — so a .db copied without them silently loses recoverable evidence. Opening
-# the .db later with any ordinary SQLite client would checkpoint and destroy the -wal,
-# so the only correct move is to copy the whole set off the device first.
-_SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
-
-
-def _su_pull_sqlite(source: "RealDeviceSource", remote_db: str, staging_remote: str,
-                    local_db: "Path", case: "Case", tier: "Tier", label: str) -> bool:
-    """Root-copy a SQLite DB *and its -wal/-shm/-journal sidecars* off the device.
-
-    The primary DB is copied via ``su -c cp`` (a byte copy — it does NOT checkpoint the
-    WAL) to an adb-readable staging path, then pulled to *local_db*. Each sidecar is then
-    copied/pulled best-effort so it lands next to *local_db* under the exact name SQLite
-    and the WAL carver expect (``<local_db>-wal`` etc.). A missing sidecar is normal and
-    never an error. Returns ``True`` iff the primary DB was pulled.
-    """
-    def _one(r_src: str, r_stage: str, l_dst: "Path", tag: str, required: bool) -> bool:
-        cp = source.adb.shell(f'su -c "cp {r_src} {r_stage}"')
-        if not cp.ok:
-            if required:
-                case.log(f"{label}.cp", f"su cp failed: {r_src} ({cp.stderr[:160]})",
-                         command=f"adb shell su -c 'cp {r_src} {r_stage}'",
-                         result="error", alters_device=False, tier=tier.value)
-            return False
-        pull = source.adb.pull(r_stage, l_dst)
-        ok = pull.ok and l_dst.exists()
-        # Sidecars are logged only when present, so their absence is not noise.
-        if ok or required:
-            case.log(f"{label}.pull", f"{tag}: {r_src}",
-                     command=f"adb pull {r_stage}",
-                     result="ok" if ok else "error",
-                     alters_device=False, tier=tier.value)
-        # Best-effort tidy of the staging copy we created on shared storage.
-        source.adb.shell(f'su -c "rm -f {r_stage}"')
-        return ok
-
-    if not _one(remote_db, staging_remote, local_db, "primary db", required=True):
-        return False
-    pulled = []
-    for suf in _SQLITE_SIDECAR_SUFFIXES:
-        if _one(remote_db + suf, staging_remote + suf,
-                Path(str(local_db) + suf), f"sidecar {suf}", required=False):
-            pulled.append(suf)
-    if pulled:
-        case.log(f"{label}.sidecars",
-                 f"Recovered WAL/journal sidecars {pulled} alongside {local_db.name} — "
-                 f"newest and superseded rows are now carvable.",
-                 alters_device=False, tier=tier.value)
-    return True
-
-
 def _run_tier2_telegram(
     source: "RealDeviceSource",
     case: "Case",
@@ -2315,17 +2341,41 @@ def _run_tier2_telegram(
     REMOTE_DB = "/data/data/org.telegram.messenger/files/cache4.db"
     REMOTE_STAGING = "/sdcard/Download/tg_cache4_triage.db"
 
-    # Copy cache4.db AND its -wal/-shm sidecars off the device, then pull. Telegram
-    # bundles its own SQLite (no AOSP secure_delete hardening), so freelist + WAL carving
-    # is the highest-yield deleted-message surface it has — losing the WAL would throw it
-    # away. The carver reads <local_db>-wal, which now lands beside the DB.
-    local_db = staging / "tg_cache4.db"
-    if not _su_pull_sqlite(source, REMOTE_DB, REMOTE_STAGING, local_db,
-                           case, Tier.TIER2, "tier2.telegram"):
+    # 1. Copy to accessible location via su.
+    cp_result = source.adb.shell(f'su -c "cp {REMOTE_DB} {REMOTE_STAGING}"')
+    case.log(
+        "tier2.telegram.cp",
+        f"su cp: {REMOTE_DB} → {REMOTE_STAGING}",
+        command=f"adb shell su -c 'cp {REMOTE_DB} {REMOTE_STAGING}'",
+        result="ok" if cp_result.ok else "error",
+        alters_device=False,
+        tier=Tier.TIER2.value,
+    )
+    if not cp_result.ok:
         case.log(
             "tier2.telegram",
-            "su cp / adb pull of cache4.db failed (device may not be rooted or "
-            "Telegram not installed)",
+            f"su cp failed (device may not be rooted or Telegram not installed): "
+            f"{cp_result.stderr[:200]}",
+            result="error",
+            tier=Tier.TIER2.value,
+        )
+        return
+
+    # 2. Pull to local staging.
+    local_db = staging / "tg_cache4.db"
+    pull = source.adb.pull(REMOTE_STAGING, local_db)
+    case.log(
+        "tier2.telegram.pull",
+        "pull tg_cache4.db from device staging area",
+        command=f"adb pull {REMOTE_STAGING}",
+        result="ok" if pull.ok else "error",
+        alters_device=False,
+        tier=Tier.TIER2.value,
+    )
+    if not pull.ok or not local_db.exists():
+        case.log(
+            "tier2.telegram",
+            "adb pull of cache4.db failed",
             result="error",
             tier=Tier.TIER2.value,
         )
@@ -2518,14 +2568,31 @@ def _run_tier2_instagram(
     stage_db = "/sdcard/Download/ig_direct_triage.db"
     stage_prefs = "/sdcard/Download/ig_prefs_triage"
 
-    # direct.db + its WAL/journal sidecars (Instagram bundles its own SQLite).
+    cp = source.adb.shell(f'su -c "cp {remote_db} {stage_db}"')
+    case.log(
+        "tier2.instagram.cp",
+        f"su cp direct.db → {stage_db}",
+        command=f"adb shell su -c 'cp {remote_db} {stage_db}'",
+        result="ok" if cp.ok else "error",
+        alters_device=False,
+        tier=Tier.TIER2.value,
+    )
+    if not cp.ok:
+        case.log(
+            "tier2.instagram",
+            "su cp failed (device may not be rooted or IG not installed)",
+            result="error",
+            tier=Tier.TIER2.value,
+        )
+        return {}
     local_db = staging / "direct.db"
-    if not _su_pull_sqlite(source, remote_db, stage_db, local_db,
-                           case, Tier.TIER2, "tier2.instagram"):
-        case.log("tier2.instagram",
-                 "su cp / adb pull of direct.db failed (device may not be rooted or "
-                 "IG not installed)",
-                 result="error", tier=Tier.TIER2.value)
+    if not source.adb.pull(stage_db, local_db).ok or not local_db.exists():
+        case.log(
+            "tier2.instagram",
+            "adb pull of direct.db failed",
+            result="error",
+            tier=Tier.TIER2.value,
+        )
         return {}
 
     # Best-effort: pull shared_prefs for user_id → username identity.
@@ -2572,20 +2639,37 @@ def _run_tier2_snapchat(
     stage_arroyo = "/sdcard/Download/snap_arroyo_triage.db"
     stage_main = "/sdcard/Download/snap_main_triage.db"
 
-    # arroyo.db (messages) + WAL/journal sidecars — the deleted-Snap surface.
+    cp = source.adb.shell(f'su -c "cp {remote_arroyo} {stage_arroyo}"')
+    case.log(
+        "tier2.snapchat.cp",
+        f"su cp arroyo.db → {stage_arroyo}",
+        command=f"adb shell su -c 'cp {remote_arroyo} {stage_arroyo}'",
+        result="ok" if cp.ok else "error",
+        alters_device=False,
+        tier=Tier.TIER2.value,
+    )
+    if not cp.ok:
+        case.log(
+            "tier2.snapchat",
+            "su cp failed (device may not be rooted or Snapchat not installed)",
+            result="error",
+            tier=Tier.TIER2.value,
+        )
+        return {}
     local_arroyo = staging / "arroyo.db"
-    if not _su_pull_sqlite(source, remote_arroyo, stage_arroyo, local_arroyo,
-                           case, Tier.TIER2, "tier2.snapchat"):
-        case.log("tier2.snapchat",
-                 "su cp / adb pull of arroyo.db failed (device may not be rooted or "
-                 "Snapchat not installed)",
-                 result="error", tier=Tier.TIER2.value)
+    if not source.adb.pull(stage_arroyo, local_arroyo).ok or not local_arroyo.exists():
+        case.log(
+            "tier2.snapchat",
+            "adb pull of arroyo.db failed",
+            result="error",
+            tier=Tier.TIER2.value,
+        )
         return {}
 
-    # main.db (identity) + sidecars — best-effort.
+    # main.db (identity) — best-effort.
     local_main = staging / "main.db"
-    _su_pull_sqlite(source, remote_main, stage_main, local_main,
-                    case, Tier.TIER2, "tier2.snapchat.main")
+    if source.adb.shell(f'su -c "cp {remote_main} {stage_main}"').ok:
+        source.adb.pull(stage_main, local_main)
 
     rec = case.ingest_file(
         local_arroyo,

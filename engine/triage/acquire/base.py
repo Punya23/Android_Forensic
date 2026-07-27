@@ -5,6 +5,7 @@ touches `adb` directly — it goes through a source — so a `MockDeviceSource` 
 local fixtures tree exercises the entire pipeline (hashing, recovery, parsing, report)
 with no hardware attached, and a `RealDeviceSource` does the same over USB.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -19,9 +20,9 @@ from ..custody import DeviceInfo
 class PulledFile:
     """A file the source has staged locally, ready for the case to ingest."""
 
-    device_path: str          # where it lived on the device
-    local_path: Path          # where it is now on the workstation
-    flags: list[str] = field(default_factory=list)   # e.g. ["trashed"]
+    device_path: str  # where it lived on the device
+    local_path: Path  # where it is now on the workstation
+    flags: list[str] = field(default_factory=list)  # e.g. ["trashed"]
 
 
 class AcquisitionSource(ABC):
