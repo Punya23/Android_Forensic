@@ -619,8 +619,43 @@ def recover_deleted_rows(
     return results
 
 
+def _wal_cksum(s0: int, s1: int, buf: bytes, content_le: bool) -> tuple[int, int]:
+    """SQLite WAL cumulative checksum over ``buf`` (must be a multiple of 8 bytes).
+
+    Mirrors ``walChecksumBytes``: interpret the byte stream as pairs of 32-bit
+    integers (endianness selected by the WAL magic) and accumulate the Fibonacci-
+    weighted running sums s0/s1.
+    """
+    fmt = "<I" if content_le else ">I"
+    end = len(buf) - (len(buf) % 8)
+    for i in range(0, end, 8):
+        x0 = struct.unpack_from(fmt, buf, i)[0]
+        x1 = struct.unpack_from(fmt, buf, i + 4)[0]
+        s0 = (s0 + x0 + s1) & 0xFFFFFFFF
+        s1 = (s1 + x1 + s0) & 0xFFFFFFFF
+    return s0, s1
+
+
 def _recover_from_wal(db_path: Path, expected_cols: Optional[int],
                       seen_records: set[tuple[int, tuple[Any, ...]]]) -> list[CarvedRow]:
+    """Recover deleted-content page images from a ``-wal`` sidecar, with per-frame
+    validation.
+
+    A WAL file can hold frames from MORE than one generation: after a checkpoint,
+    SQLite resets the header salt and rewrites from frame 1, but any tail frames not
+    yet overwritten still carry the OLD salt. Blindly carving every frame and stamping
+    it ``RECOVERED_VERIFIED`` is an honesty-model violation — stale, torn, or
+    uncommitted frames are not verified evidence. We therefore validate each frame:
+
+      * salt match     — frame belongs to the current WAL generation (header salt-1/2);
+      * checksum chain  — cumulative Fibonacci checksum matches the stored frame checksum;
+      * commit tracking — a frame with a non-zero db-size field commits its transaction.
+
+    Only current-generation, checksum-valid, committed frames are ``RECOVERED_VERIFIED``.
+    Everything else (stale generation, failed checksum, uncommitted tail) is carved at
+    ``CARVED_PARTIAL`` with the reason in its label, so the content is still surfaced but
+    never overstated.
+    """
     wal = db_path.with_name(db_path.name + "-wal")
     if not wal.exists():
         return []
@@ -630,27 +665,76 @@ def _recover_from_wal(db_path: Path, expected_cols: Optional[int],
     magic = struct.unpack(">I", data[0:4])[0]
     if magic not in (0x377F0682, 0x377F0683):
         return []
+    # magic ...0682 → checksum content read little-endian (native on LE hosts);
+    # magic ...0683 → big-endian. Stored checksum words are always big-endian.
+    content_le = magic == 0x377F0682
     page_size = struct.unpack(">I", data[8:12])[0]
     if page_size == 1:
         page_size = 65536
     if page_size <= 0:
         return []
+    hdr_salt = data[16:24]  # salt-1 + salt-2
+
+    # Seed the checksum chain from the 24-byte WAL header and confirm the header's own
+    # checksum. If the header checksum does not verify we cannot trust the chain, so no
+    # frame can be promoted to RECOVERED_VERIFIED.
+    s0, s1 = _wal_cksum(0, 0, data[0:24], content_le)
+    header_ok = data[24:32] == struct.pack(">II", s0, s1)
+
     frame_size = 24 + page_size
     results: list[CarvedRow] = []
+
+    # Pass 1: classify every frame; track the last valid committed frame.
+    frames: list[tuple[int, int, bytes, int, bool, int]] = []  # idx,page,page_bytes,off,current_valid,db_size
+    chain_ok = header_ok
+    last_commit_idx = 0
     off = 32
     frame_idx = 0
     while off + frame_size <= len(data):
         frame_idx += 1
-        page_num = struct.unpack(">I", data[off:off + 4])[0]
+        fh = data[off:off + 24]
+        page_num = struct.unpack(">I", fh[0:4])[0]
+        db_size = struct.unpack(">I", fh[4:8])[0]
+        f_salt = fh[8:16]
+        stored_cksum = fh[16:24]
         page = data[off + 24:off + 24 + page_size]
-        hdr_off = _btree_header_offset(page_num)
-        if hdr_off < len(page) and page[hdr_off] == _LEAF_TABLE:
-            # Carve the whole page image; WAL frames often hold pre-deletion versions.
-            results += _carve_region(
-                page, off + 24, 0, len(page), expected_cols,
-                wal.name, page_num, f"wal frame {frame_idx} (db page {page_num})",
-                Confidence.RECOVERED_VERIFIED, seen_records)
+
+        current_valid = False
+        if chain_ok and f_salt == hdr_salt:
+            n0, n1 = _wal_cksum(s0, s1, fh[0:8], content_le)
+            n0, n1 = _wal_cksum(n0, n1, page, content_le)
+            if struct.pack(">II", n0, n1) == stored_cksum:
+                current_valid = True
+                s0, s1 = n0, n1
+                if db_size != 0:
+                    last_commit_idx = frame_idx
+            else:
+                chain_ok = False  # torn write — nothing after this is trustworthy
+        frames.append((frame_idx, page_num, page, off, current_valid, db_size))
         off += frame_size
+
+    # Pass 2: carve, assigning confidence from the classification.
+    for frame_idx, page_num, page, foff, current_valid, _db_size in frames:
+        hdr_off = _btree_header_offset(page_num)
+        if not (hdr_off < len(page) and page[hdr_off] == _LEAF_TABLE):
+            continue
+        committed = current_valid and frame_idx <= last_commit_idx
+        if committed:
+            conf = Confidence.RECOVERED_VERIFIED
+            reason = ""
+        elif current_valid:
+            conf = Confidence.CARVED_PARTIAL
+            reason = " [uncommitted tail]"
+        elif not header_ok:
+            conf = Confidence.CARVED_PARTIAL
+            reason = " [unverified: WAL header checksum failed]"
+        else:
+            conf = Confidence.CARVED_PARTIAL
+            reason = " [unverified: stale generation or failed checksum]"
+        label = f"wal frame {frame_idx} (db page {page_num}){reason}"
+        results += _carve_region(
+            page, foff + 24, 0, len(page), expected_cols,
+            wal.name, page_num, label, conf, seen_records)
     return results
 
 

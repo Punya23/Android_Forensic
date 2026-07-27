@@ -758,7 +758,9 @@ def run_acquisition(
     for stored, rec in db_artifacts:
         try:
             primary = [r for r in recovered_rows if r.get("source_file") == stored.name]
-            extra = sqbrite_cross_check(stored, primary_rows=[])
+            # Dedup against rows the primary pass already recovered for THIS db —
+            # passing [] here made every sqbrite hit a duplicate, inflating counts.
+            extra = sqbrite_cross_check(stored, primary_rows=primary)
             for e in extra:
                 d = e.to_dict()
                 d["database_artifact"] = rec.artifact_id

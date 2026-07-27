@@ -232,18 +232,26 @@ def sqbrite_cross_check(
 
     Args:
         db_path:      Path to the database.
-        primary_rows: List of CarvedRow objects from the primary engine (used to build
-                      the dedup fingerprint set automatically).
+        primary_rows: Rows already recovered by the primary engine, used to build the
+                      dedup fingerprint set. Accepts either CarvedRow-like objects
+                      (``.values`` attribute) OR the plain dicts the pipeline keeps
+                      (``{"values": [...]}``). Passing an empty list disables dedup and
+                      double-counts every row the primary pass already found.
         step:         Scan step size (bytes). Default 1 = full coverage.
 
     Returns:
         New rows found only by sqbrite.
     """
-    # Build fingerprint set from primary engine's results.
+    # Build fingerprint set from primary engine's results. Must mirror sqbrite_scan's
+    # own scheme exactly: first two values, str-truncated to 40 chars.
     fps: set[tuple] = set()
     for r in primary_rows:
-        if hasattr(r, "values") and r.values:
-            fp = tuple(str(v)[:40] for v in r.values[:2])
+        if isinstance(r, dict):
+            vals = r.get("values") or []
+        else:
+            vals = getattr(r, "values", None) or []
+        if vals:
+            fp = tuple(str(v)[:40] for v in vals[:2])
             fps.add(fp)
 
     return sqbrite_scan(db_path, primary_fingerprints=fps, step=step)
