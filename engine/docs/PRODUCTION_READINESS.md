@@ -4,18 +4,19 @@ _Synthesised from a 12-axis deep web-research + adversarial-verification + 5-dim
 
 **Coverage:** 12 research axes · 59 claims verified · 29 refuted/corrected.
 
-> Generated 2026-07-27 from workflow wf_959fec02-74c. This file is the durable record of that run — the raw agent output was ephemeral.
+> Generated 2026-07-27 from workflow wf_959fec02-74c. Durable record of an ephemeral run.
+
+
+**Progress:** P0-correctness cluster COMPLETE — P0-1..P0-7 done, tested, committed (f2d2c74, 2dcf8cd, 0d039f4). Next: P1 capability (AFU/BFU gate, non-root Wi-Fi, bt_config.conf, timeline wiring, dead-parser wiring).
 
 
 ---
-
 ## Verdict
 
 eRakshak's honesty model and tiered architecture are genuinely well-conceived, and — importantly — it already invests in the RIGHT recovery surface (application-layer SQLite: freelist, WAL, MediaStore trash) rather than the mythical 'slack space' the user is chasing. But it is not production-ready. Its central integrity guarantee is silently broken (hash verification checks ZERO files because custody writes a JSON list keyed `sha256` while the verifier expects a dict keyed `sha256_hash`), it silently drops recoverable evidence within its own correct scope (rollback -journal sidecars pulled but never parsed; in-page freeblocks carved as text only, losing rowid/columns/typed values), it inflates recovered rows via a dead-code dedup bug (sqbrite_cross_check is fed primary_rows=[] so nothing is de-duplicated), and it over-labels unvalidated WAL frames as 'RECOVERED_VERIFIED' with no salt/checksum/commit check — a direct honesty-model violation, since stale post-checkpoint frames must be lower-confidence. Its compliance scaffolding cites a repealed statute (IEA s.65B, not BSA s.63) and has no validation regime and no characterized error rate. Fix the P0 correctness/integrity defects before ANY evidentiary use, then close the AFU/BFU honesty gate and BSA s.63 compliance, then add breadth. And do NOT build a slack/unallocated-space carver: on any Android 10+ device it would produce FBE ciphertext noise dressed up as 'recovered data' — exactly the overstatement the honesty model exists to prevent. Verified 8/8 audited defects directly against the code; the audit is accurate.
 
 
 ---
-
 ## Honest answers to the direct questions
 
 ### Is it a production-level forensic tool?
@@ -36,10 +37,9 @@ NON-ROOT (Tier 0 + Tier 1) yields: Tier 0 (zero state change) — /sdcard shared
 
 
 ---
-
 ## Roadmap
 
-Effort/feasibility/root columns are the audit's own tags. Status added by us.
+Effort/feasibility/root tags are the audit's own. Status added by us.
 
 
 ### P0-correctness
@@ -55,7 +55,7 @@ Effort/feasibility/root columns are the audit's own tags. Status added by us.
 - **Acceptance:** On a real case folder, verify_all_hashes returns total_files == manifest artifact count; status INTACT when untouched and TAMPERED when one stored artifact byte is flipped. A regression test flips a stored file and asserts detection. A single shared manifest-reader helper handles the list schema and `sha256` key.
 
 
-#### P0-2 — Parse rollback journals (-journal), not just -wal, in recovery
+#### P0-2 — Parse rollback journals (-journal), not just -wal, in recovery ✅ DONE (commit 0d039f4)
 
 `feasibility=proven  effort=medium  requires_root=no`
 
@@ -66,7 +66,7 @@ Effort/feasibility/root columns are the audit's own tags. Status added by us.
 - **Acceptance:** A rollback-journal-mode fixture DB with deleted rows recovers those rows from the -journal with provenance 'journal page N'; recover_deleted_rows reads both -wal and -journal; a unit test covers a TRUNCATE/PERSIST journal left on disk.
 
 
-#### P0-3 — Structured record recovery for in-page freeblocks and page-unallocated (not text-only)
+#### P0-3 — Structured record recovery for in-page freeblocks and page-unallocated (not text-only) ✅ DONE (commit 0d039f4)
 
 `feasibility=proven  effort=medium  requires_root=no`
 
@@ -77,7 +77,7 @@ Effort/feasibility/root columns are the audit's own tags. Status added by us.
 - **Acceptance:** A DB with an in-page freeblock deletion recovers the row's rowid + typed columns via structured carve, falling back to text only when the first-column serial type is destroyed; confidence downgrades per the FQLite taxonomy (intact=recovered, front-clobbered=partial, first-serial-destroyed=unrecoverable/no content emitted).
 
 
-#### P0-4 — Fix the sqbrite dedup (pass real primary fingerprints)
+#### P0-4 — Fix the sqbrite dedup (pass real primary fingerprints) ✅ DONE (commit 2dcf8cd)
 
 `feasibility=proven  effort=small  requires_root=no`
 
@@ -88,7 +88,7 @@ Effort/feasibility/root columns are the audit's own tags. Status added by us.
 - **Acceptance:** sqbrite_cross_check receives the actual primary rows for that DB; a row found by both engines appears once in merged output; a unit test asserts zero duplicate fingerprints post-merge.
 
 
-#### P0-5 — Validate WAL frames (salt/checksum/commit) and stop labeling unvalidated carves RECOVERED_VERIFIED
+#### P0-5 — Validate WAL frames (salt/checksum/commit) and stop labeling unvalidated carves RECOVERED_VERIFIED ✅ DONE (commit 2dcf8cd)
 
 `feasibility=proven  effort=medium  requires_root=no`
 
@@ -308,7 +308,6 @@ Effort/feasibility/root columns are the audit's own tags. Status added by us.
 
 
 ---
-
 ## Do NOT build (verified dead-ends)
 
 - **A slack-space / file-slack / unallocated-space / raw-block carver for /data** — On Android 10+ FBE makes /data unallocated AES-XTS ciphertext, and Android 11+ dm-default-key encrypts even directory structure/filenames/sizes; F2FS allocates fresh pages while real-time discard + vold GC_URGENT destroy invalid blocks within hours; the managed-NAND FTL means no host command reaches a physical page; ext4 unlink zeroes the extent tree; and the per-file key is HKDF-derived from an inode nonce that dies with the file, so orphaned ciphertext is unrecoverable in principle. It would present ciphertext noise as 'recovered data.' SELinux blocks /dev/block/by-name/userdata anyway, and bootloader unlock triggers a factory reset. eRakshak correctly has NO such carver — keep it that way; report unallocated space as a fixed 'not acquirable' capability limitation.
@@ -329,7 +328,6 @@ Effort/feasibility/root columns are the audit's own tags. Status added by us.
 
 
 ---
-
 ## Codebase audit — 5 dimensions (present vs gaps)
 
 
