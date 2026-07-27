@@ -39,6 +39,8 @@ from ..config import Confidence
 _LEAF_TABLE = 0x0D
 _INTERIOR_TABLE = 0x05
 _HEADER_MAGIC = b"SQLite format 3\x00"
+# Rollback-journal header magic (SQLite file-format §rollback journal).
+_JOURNAL_MAGIC = b"\xd9\xd5\x05\xf9\x20\xa1\x63\xd7"
 
 
 # --- varint -----------------------------------------------------------------
@@ -604,17 +606,27 @@ def recover_deleted_rows(
         u_off, u_len = _unallocated_region(page, hdr_off)
         if u_len > 4:
             regions.append((u_off, u_len))
-        # In-page freed regions have clobbered cell headers, so structured re-parsing is
-        # unreliable here — text carving is the honest recovery method. (Structured
-        # carving is reserved for freelist pages / WAL frames, where cells stay intact.)
+        # A freed region's leading bytes are clobbered by the freeblock header, but a
+        # deleted cell whose OWN header survived further in is fully re-parseable (this
+        # is what FQLite recovers). So first slide a STRUCTURED carve to recover those
+        # intact-header cells with rowid + typed columns (CARVED_PARTIAL — the region is
+        # not authoritative), THEN always run a text carve to salvage the raw content of
+        # cells whose header the freeblock destroyed. Text-only carving alone dropped the
+        # structure of every recoverable freeblock cell.
+        base = (pnum - 1) * page_size
         for r_off, r_size in regions:
             kind = "unallocated" if (r_off, r_size) == (u_off, u_len) else "freeblock"
+            results += _carve_region(
+                page, base, r_off, r_size, expected_cols,
+                db_path.name, pnum, kind, Confidence.CARVED_PARTIAL, seen_records)
             results += _carve_text_runs(
-                page, (pnum - 1) * page_size, r_off, r_size,
-                db_path.name, pnum, kind)
+                page, base, r_off, r_size, db_path.name, pnum, kind)
 
     # 3) WAL frames — un-checkpointed page versions.
     results += _recover_from_wal(db_path, expected_cols, seen_records)
+
+    # 4) Rollback journal — pre-deletion page images for non-WAL databases.
+    results += _recover_from_journal(db_path, expected_cols, seen_records)
 
     return results
 
@@ -735,6 +747,99 @@ def _recover_from_wal(db_path: Path, expected_cols: Optional[int],
         results += _carve_region(
             page, foff + 24, 0, len(page), expected_cols,
             wal.name, page_num, label, conf, seen_records)
+    return results
+
+
+def _recover_from_journal(db_path: Path, expected_cols: Optional[int],
+                          seen_records: set[tuple[int, tuple[Any, ...]]]) -> list[CarvedRow]:
+    """Recover pre-deletion page images from a ``-journal`` rollback sidecar.
+
+    For a rollback-mode (non-WAL) database, the ``-journal`` holds the ORIGINAL page
+    content before the current transaction modified it — i.e. for a DELETE, the page
+    exactly as it was WITH the row still present. This sidecar is pulled during
+    acquisition but was never parsed, so that entire deleted-content surface was
+    collected and then silently ignored.
+
+    A journal pre-image page also contains rows that are still live, so these carves are
+    labeled ``CARVED_PARTIAL`` (pre-transaction snapshot — verify against the live db),
+    never ``RECOVERED_VERIFIED``: they are real page bytes but a mix of deleted and live
+    content. Dedups against the freelist/WAL pass via the shared ``seen_records``.
+    """
+    jr = db_path.with_name(db_path.name + "-journal")
+    if not jr.exists():
+        return []
+    data = jr.read_bytes()
+    if len(data) < 28:
+        return []
+
+    sector_size = struct.unpack(">I", data[20:24])[0]
+    page_size = struct.unpack(">I", data[24:28])[0]
+    valid_page_sizes = (512, 1024, 2048, 4096, 8192, 16384, 32768, 65536)
+    has_magic = data[0:8] == _JOURNAL_MAGIC
+    zeroed_magic = data[0:8] == b"\x00" * 8
+    # SQLite writes the header magic LAST, at commit-sync — so a hot journal from a
+    # crash carries the magic, but an in-flight/uncommitted one (which still holds the
+    # pre-deletion page images we want) has a ZEROED magic with the rest of the header
+    # intact. Accept either, provided the page/sector fields are self-consistent, and
+    # reject a committed-then-cleared journal (garbage header, no plausible page size).
+    plausible = page_size in valid_page_sizes and sector_size in valid_page_sizes
+    if not ((has_magic or zeroed_magic) and plausible):
+        return []
+    if not (0 < sector_size <= (1 << 20)):
+        sector_size = 512
+
+    rec_size = 4 + page_size + 4
+    filelen = len(data)
+    results: list[CarvedRow] = []
+    sync_note = "" if has_magic else " (unsynced)"
+
+    seg_off = 0
+    guard = 0
+    first_segment = True
+    while seg_off + 28 <= filelen and guard < 10000:
+        guard += 1
+        # Every segment after the first is announced by a header magic at a sector
+        # boundary; the first segment may have a zeroed (unsynced) magic.
+        if not first_segment and data[seg_off:seg_off + 8] != _JOURNAL_MAGIC:
+            break
+        first_segment = False
+
+        nrec = struct.unpack(">I", data[seg_off + 8:seg_off + 12])[0]
+        seg_sector = struct.unpack(">I", data[seg_off + 20:seg_off + 24])[0] or sector_size
+        # Page records begin at the first sector boundary of this segment.
+        rec_off = seg_off + seg_sector
+        if nrec in (0, 0xFFFFFFFF):
+            max_recs = (filelen - rec_off) // rec_size if rec_size else 0
+        else:
+            max_recs = nrec
+
+        parsed = 0
+        while parsed < max_recs and rec_off + rec_size <= filelen:
+            # A sector-aligned magic marks the next segment header, not a record.
+            if (data[rec_off:rec_off + 8] == _JOURNAL_MAGIC
+                    and (rec_off - seg_off) % seg_sector == 0):
+                break
+            pgno = struct.unpack(">I", data[rec_off:rec_off + 4])[0]
+            page = data[rec_off + 4:rec_off + 4 + page_size]
+            if pgno > 0 and len(page) == page_size:
+                hdr_off = _btree_header_offset(pgno)
+                if hdr_off < len(page) and page[hdr_off] == _LEAF_TABLE:
+                    results += _carve_region(
+                        page, rec_off + 4, 0, len(page), expected_cols,
+                        jr.name, pgno,
+                        f"rollback journal pre-image (db page {pgno}) "
+                        f"[pre-transaction{sync_note}, verify]",
+                        Confidence.CARVED_PARTIAL, seen_records)
+            rec_off += rec_size
+            parsed += 1
+
+        # Advance to the next sector boundary; look for a further segment header.
+        consumed = rec_off - seg_off
+        aligned = seg_off + ((consumed + seg_sector - 1) // seg_sector) * seg_sector
+        if aligned <= seg_off:
+            break
+        seg_off = aligned
+
     return results
 
 

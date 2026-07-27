@@ -15,7 +15,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from triage.config import Confidence  # noqa: E402
-from triage.recovery.sqlite_recovery import _recover_from_wal  # noqa: E402
+from triage.recovery.sqlite_recovery import (  # noqa: E402
+    _recover_from_journal,
+    _recover_from_wal,
+    recover_deleted_rows,
+)
 from triage.recovery.sqbrite import sqbrite_cross_check, sqbrite_scan  # noqa: E402
 
 
@@ -147,3 +151,71 @@ def test_sqbrite_cross_check_empty_primary_keeps_everything(tmp_path):
     # that inflated counts when [] was passed unconditionally).
     everything = sqbrite_cross_check(db, primary_rows=[])
     assert len(everything) >= len(sqbrite_cross_check(db, primary_rows=[{"values": list(full[0].values)}]))
+
+
+# --- P0-2: rollback journal is parsed, not ignored -------------------------
+
+
+def test_rollback_journal_recovers_deleted_preimage(tmp_path):
+    db = tmp_path / "roll.db"
+    con = sqlite3.connect(str(db), isolation_level=None)
+    con.execute("PRAGMA journal_mode=DELETE")
+    con.execute("PRAGMA secure_delete=OFF")
+    con.execute("CREATE TABLE msg(id INTEGER PRIMARY KEY, body TEXT)")
+    con.execute("BEGIN")
+    for i in range(20):
+        con.execute("INSERT INTO msg(body) VALUES(?)", (f"JOURNALWORD_{i}_secret_content",))
+    con.execute("COMMIT")
+    # Start a delete transaction and DO NOT commit — leaves a hot -journal on disk
+    # holding the pre-deletion page image.
+    con.execute("BEGIN")
+    con.execute("DELETE FROM msg WHERE id <= 15")
+    _OPEN_CONNS.append(con)  # keep the transaction (and journal) alive
+
+    assert (Path(str(db) + "-journal")).exists(), "no rollback journal was created"
+
+    rows = _recover_from_journal(db, None, set())
+    assert rows, "the -journal pre-image must be parsed, not ignored"
+    # Pre-image pages are a mix of deleted + live rows, so never claim VERIFIED.
+    assert all(r.confidence == Confidence.CARVED_PARTIAL for r in rows)
+    assert all("rollback journal" in r.provenance for r in rows)
+    texts = " ".join(str(v) for r in rows for v in r.values if isinstance(v, str))
+    assert "JOURNALWORD_3" in texts, "a deleted row should be recovered from the journal"
+
+
+def test_no_journal_returns_nothing(tmp_path):
+    db = tmp_path / "nojournal.db"
+    con = sqlite3.connect(str(db))
+    con.execute("CREATE TABLE t(x)")
+    con.commit()
+    con.close()
+    assert _recover_from_journal(db, None, set()) == []
+
+
+# --- P0-3: freeblock cells with intact headers recover STRUCTURE -----------
+
+
+def test_freeblock_cells_recovered_with_structure(tmp_path):
+    db = tmp_path / "fb.db"
+    con = sqlite3.connect(str(db))
+    con.execute("PRAGMA secure_delete=OFF")
+    con.execute("PRAGMA auto_vacuum=NONE")
+    con.execute("CREATE TABLE t(id INTEGER PRIMARY KEY, a TEXT, b INTEGER)")
+    for i in range(300):
+        con.execute("INSERT INTO t(a,b) VALUES(?,?)", (f"MSG{i:04d}_content_payload", i * 7))
+    con.commit()
+    con.execute("DELETE FROM t WHERE id % 3 = 0")  # non-adjacent -> intact headers survive
+    con.commit()
+    con.close()
+
+    rows = recover_deleted_rows(db)
+    freeblock = [r for r in rows if "freeblock" in r.provenance or "unallocated" in r.provenance]
+    structured = [r for r in freeblock if r.rowid is not None]
+    assert structured, (
+        "freeblock cells whose header survived must be recovered structurally "
+        "(rowid + typed columns), not as a text blob only"
+    )
+    # A structured carve preserves typed columns, not just a flat string.
+    assert any(
+        any(isinstance(v, int) for v in r.values) for r in structured
+    ), "the integer column b should come back typed, proving structured recovery"
