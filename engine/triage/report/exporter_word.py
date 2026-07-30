@@ -1,7 +1,7 @@
 import os
 from docx import Document
 from docx.shared import Inches, Pt
-from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from typing import Dict, Any, List
 
 class WordExporter:
@@ -23,7 +23,7 @@ class WordExporter:
         
         # Add Title
         title = document.add_heading(report_data.get('title', 'Forensic Report'), 0)
-        title.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
         
         # Add metadata
         document.add_heading('Metadata', level=1)
