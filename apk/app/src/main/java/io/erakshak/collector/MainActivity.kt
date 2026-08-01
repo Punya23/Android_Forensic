@@ -9,6 +9,8 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.location.Location
+import android.location.LocationManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
@@ -146,12 +148,14 @@ class MainActivity : Activity() {
             "dump_sms"       -> run("sms")       { "sms.json"       to dumpSms() }
             "dump_wifi"      -> run("wifi")      { "wifi.json"      to dumpWifi() }
             "dump_bluetooth" -> run("bluetooth") { "bluetooth.json" to dumpBluetooth() }
+            "dump_location"  -> run("location")  { "location.json"  to dumpLocation() }
             "dump_all" -> {
                 run("contacts")  { "contacts.json"  to dumpContacts() }
                 run("calllog")   { "calllog.json"   to dumpCallLog() }
                 run("sms")       { "sms.json"       to dumpSms() }
                 run("wifi")      { "wifi.json"      to dumpWifi() }
                 run("bluetooth") { "bluetooth.json" to dumpBluetooth() }
+                run("location")  { "location.json"  to dumpLocation() }
             }
             else -> {
                 writeErrorJson("unknown_action.error.json", "UnknownAction", "unknown action: $action", action)
@@ -220,6 +224,34 @@ class MainActivity : Activity() {
                     .put("body",    cur.getString(1) ?: "")
                     .put("date",    cur.getLong(2))
                     .put("type",    cur.getInt(3)))
+            }
+        }
+        return out
+    }
+
+    private fun dumpLocation(): JSONArray {
+        val out = JSONArray()
+        val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && 
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            return out
+        }
+        
+        val providers = lm.getProviders(true)
+        for (provider in providers) {
+            val location = lm.getLastKnownLocation(provider)
+            if (location != null) {
+                out.put(JSONObject()
+                    .put("provider", provider)
+                    .put("latitude", location.latitude)
+                    .put("longitude", location.longitude)
+                    .put("altitude", location.altitude)
+                    .put("accuracy", location.accuracy)
+                    .put("bearing", location.bearing)
+                    .put("speed", location.speed)
+                    .put("time", location.time)
+                )
             }
         }
         return out
