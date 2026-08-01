@@ -463,6 +463,7 @@ def generate_report(case_dir: str | Path) -> Path:
             "Device (intake block)",
             {
                 "Manufacturer / model": f'{device.get("manufacturer","")} {device.get("model","")}',
+                "OS / skin": device.get("os_skin") or "Stock Android",
                 "Android / build": f'{device.get("android_version","")} (SDK {device.get("sdk","")}) '
                 f'{device.get("build_id","")}',
                 "Serial": device.get("serial"),
@@ -474,6 +475,38 @@ def generate_report(case_dir: str | Path) -> Path:
             },
         )
     )
+    # OEM quirk warning box — rendered only when the registry flagged known limitations.
+    oem_quirks: list = device.get("oem_quirks") or []
+    if oem_quirks:
+        _QUIRK_LABELS: dict[str, str] = {
+            "knox_container":              "Samsung Knox Secure Folder: app-private data inside Secure Folder is separately encrypted and cannot be acquired via ADB.",
+            "secure_folder_opaque":        "Samsung Secure Folder mount is not reachable via the ADB shell.",
+            "logsprovider_db":             "Samsung call log is stored in com.sec.android.provider.logsprovider (not the standard AOSP calllog.db).",
+            "mi_account_usb_auth":         "Xiaomi/HyperOS: 'USB Debugging (Security settings)' requires a linked Mi Account and an active SIM card.",
+            "install_via_usb_toggle":      "Xiaomi/HyperOS: 'Install via USB' must be enabled separately in Developer Options before APK installation.",
+            "aggressive_battery_kill":     "MIUI/HyperOS battery saver may terminate the Collector APK mid-run. Disable battery optimization for this app.",
+            "usb_install_password_prompt": "ColorOS/Realme UI: The OS may display a lock screen PIN prompt during `adb install`. Have the device owner enter it on-screen.",
+            "aggressive_process_kill":     "ColorOS/Realme UI may aggressively kill background processes. Keep the Collector app in the foreground during extraction.",
+            "auto_launch_deny":            "ColorOS/Realme UI may block the Collector from auto-starting on ADB trigger. Launch it manually if needed.",
+            "pm_grant_blocked":            "OnePlus/OxygenOS: `pm grant` raises SecurityException. Runtime permission dialog was used instead (commit 6485e5e).",
+            "usb_debug_timeout":           "Honor MagicOS: USB debugging authorization may time out. Re-authorize in Developer Options if the ADB connection drops.",
+            "magic_link_interference":     "Honor MagicOS: The 'Magic Link' cross-device feature may interfere with ADB sessions.",
+            "harmonyos_check_required":    "Huawei HarmonyOS: Only AOSP-based versions (≤3.x) support ADB extraction. HarmonyOS NEXT is NOT compatible.",
+            "adb_may_be_absent":           "Huawei HarmonyOS NEXT: Standard Android ADB may be absent on this device.",
+            "google_services_absent":      "Huawei: No Google Play / GMS. GMS-dependent artifacts (Google accounts, Play Store history) will not be present.",
+        }
+        quirk_items = "".join(
+            f"<li><b>{_esc(q)}</b> — {_esc(_QUIRK_LABELS.get(q, q))}</li>"
+            for q in oem_quirks
+        )
+        parts.append(
+            f'<div style="border:1px solid #a6741a;background:#f6ecd4;border-left:4px solid #a6741a;'
+            f'border-radius:4px;padding:12px 16px;margin-bottom:16px;font-size:13px">'
+            f'<b>⚠ OEM Forensic Limitations — {_esc(device.get("os_skin") or "")} '
+            f'({_esc(device.get("manufacturer",""))} {_esc(device.get("model",""))})</b>'
+            f'<ul style="margin:6px 0 0;padding-left:20px">'
+            f'{quirk_items}</ul></div>'
+        )
     parts.append(
         _kv_card(
             "Pre-acquisition state",
@@ -709,9 +742,10 @@ def generate_report(case_dir: str | Path) -> Path:
         "<th>Size</th><th>SHA-256</th></tr>"
     )
     for a in manifest[:1000]:
+        size_bytes_fmt = f"{a['size_bytes']:,}"
         parts.append(
             f'<tr><td>{_esc(a["artifact_id"])}</td><td class="mono">{_esc(a["source_path"])}</td>'
-            f'<td>{_esc(a["tier"])}</td><td>{_esc(f"{a['size_bytes']:,}")}</td>'
+            f'<td>{_esc(a["tier"])}</td><td>{_esc(size_bytes_fmt)}</td>'
             f'<td class="mono hash">{_esc(a["sha256"])}</td></tr>'
         )
     parts.append("</table>")
@@ -1642,12 +1676,13 @@ def _wifi_section(wifi_networks: list[dict]) -> str:
         src = net.get("source_file", "")
         sec_colors = _SEC_COLORS.get(sec, ("#666", "#f5f5f5"))
         conf_colors = _CONF_COLORS.get(conf, _CONF_COLORS["live"])
+        pw_cell = _esc(pw) if pw else '<span style="color:#999">— (open / enterprise)</span>'
         parts.append(
             f"<tr>"
             f"<td><b>{_esc(ssid)}</b></td>"
             f'<td>{_badge(sec or "OPEN", sec_colors)}</td>'
             f'<td class="mono" style="user-select:all;word-break:break-all">'
-            f'{_esc(pw) if pw else "<span style=\"color:#999\">— (open / enterprise)</span>"}</td>'
+            f'{pw_cell}</td>'
             f"<td>{_badge(conf.upper(), conf_colors)}</td>"
             f'<td class="mono" style="font-size:11px">{_esc(src)}</td>'
             f"</tr>"

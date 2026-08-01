@@ -20,6 +20,7 @@ import android.provider.ContactsContract
 import android.provider.Telephony
 import android.view.Gravity
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -39,7 +40,14 @@ import java.io.File
  *   dump_all         → all of the above
  *
  * Install with:
- *   adb install -r -g app-debug.apk   (-g grants restricted perms at install time)
+ *   adb install -r app-debug.apk
+ *
+ * OEM-specific notes (detected at runtime):
+ *   Samsung One UI   — Knox / Secure Folder content is NOT accessible via ADB.
+ *   Xiaomi/HyperOS   — Enable Developer Options > 'Install via USB' before install.
+ *   OPPO/Realme/ColorOS — OS may ask for lock screen PIN during `adb install`.
+ *   OnePlus/OxygenOS — pm grant is blocked; runtime permission dialog is used instead.
+ *   Huawei/HarmonyOS — Only AOSP-based builds (≤3.x) are supported.
  */
 class MainActivity : Activity() {
 
@@ -352,9 +360,77 @@ class MainActivity : Activity() {
 
     // ── UI screens ────────────────────────────────────────────────────────
 
+    /**
+     * Detect the OEM skin from Build constants and return brand-specific
+     * guidance text shown on the permission screen.
+     * This mirrors the approach taken for OnePlus/OxygenOS in commit 6485e5e.
+     */
+    private fun oemGuidanceText(): String? {
+        val mfr = Build.MANUFACTURER.lowercase()
+        val brand = Build.BRAND.lowercase()
+        return when {
+            brand == "samsung" || mfr == "samsung" ->
+                "⚠️ Samsung One UI detected.\n" +
+                "Knox Secure Folder content is encrypted and NOT accessible via ADB. " +
+                "Data inside Secure Folder will not be collected."
+
+            brand in listOf("xiaomi", "redmi", "poco") || mfr == "xiaomi" ->
+                "⚠️ Xiaomi / HyperOS / MIUI detected.\n" +
+                "Required steps before install:\n" +
+                "  1. Settings → Additional settings → Developer options\n" +
+                "  2. Enable \"Install via USB\"\n" +
+                "  3. Log in with a Mi Account if prompted.\n" +
+                "Battery saver may kill this app mid-run — disable it before collection."
+
+            brand in listOf("oppo") || mfr == "oppo" ->
+                "⚠️ OPPO / ColorOS detected.\n" +
+                "The OS may ask for your lock screen PIN when installing the APK via ADB. " +
+                "Have the device owner enter it on-screen. " +
+                "ColorOS may kill background processes — keep the app in the foreground."
+
+            brand == "realme" || mfr == "realme" ->
+                "⚠️ Realme UI (ColorOS) detected.\n" +
+                "The OS may ask for your lock screen PIN when installing the APK via ADB. " +
+                "Keep this app in the foreground during collection."
+
+            brand == "oneplus" || mfr == "oneplus" ->
+                "⚠️ OnePlus / OxygenOS detected.\n" +
+                "Runtime permission dialog is used (pm grant is blocked on this OS). " +
+                "Tap Allow for each permission when the dialog appears."
+
+            brand == "honor" || mfr == "honor" ->
+                "⚠️ Honor / MagicOS detected.\n" +
+                "USB debugging authorization may time out quickly. " +
+                "Re-authorize ADB in Developer Options if the connection drops."
+
+            brand == "huawei" || mfr == "huawei" ->
+                "⚠️ Huawei / HarmonyOS detected.\n" +
+                "Only AOSP-based HarmonyOS (≤3.x) is supported. " +
+                "HarmonyOS NEXT devices without an Android layer are NOT compatible. " +
+                "Google services / GMS artifacts will not be present on this device."
+
+            else -> null  // Google, Motorola, Nothing — stock-like, no special guidance
+        }
+    }
+
     private fun showPermissionScreen(missing: List<String>) {
         val layout = buildLayout()
         layout.addView(makeText("🔐 Permissions Required", 22f, Color.parseColor("#1A237E"), bold = true))
+
+        // Show OEM-specific guidance first if applicable
+        val guidance = oemGuidanceText()
+        if (guidance != null) {
+            val guidanceBox = TextView(this).apply {
+                text = guidance
+                textSize = 12f
+                setTextColor(Color.parseColor("#5D4037"))
+                setBackgroundColor(Color.parseColor("#FFF8E1"))
+                setPadding(32, 20, 32, 20)
+                setTypeface(null, Typeface.ITALIC)
+            }
+            layout.addView(guidanceBox)
+        }
+
         layout.addView(makeText("Grant each permission when the dialog appears:", 14f, Color.DKGRAY))
         val box = TextView(this).apply {
             text = missing.joinToString("\n") { "  • " + it.substringAfterLast(".") }
@@ -363,7 +439,7 @@ class MainActivity : Activity() {
             setPadding(32, 24, 32, 24); typeface = Typeface.MONOSPACE
         }
         layout.addView(box)
-        setContentView(layout)
+        setContentView(ScrollView(this).apply { setBackgroundColor(Color.WHITE); addView(layout) })
     }
 
     private fun showStatusScreen() {

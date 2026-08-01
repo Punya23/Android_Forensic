@@ -84,6 +84,129 @@ DEVICE_PROPS: dict[str, str] = {
     "ro.serialno": "serial",
     "ro.boot.serialno": "boot_serial",
     "gsm.sim.operator.alpha": "carrier",
+    # OEM skin / OS version probes — absent on stock Android, populated on OEM builds
+    "ro.build.version.oneui": "oneui_version",        # Samsung One UI
+    "ro.miui.ui.version.name": "miui_version",        # Xiaomi MIUI / HyperOS (legacy key)
+    "ro.mi.os.version.name": "hyperos_version",       # Xiaomi HyperOS (new key)
+    "ro.oplus.version.os": "coloros_version",         # OPPO ColorOS / Realme UI / new OxygenOS
+    "ro.oxygen.version": "oxygenos_version",          # OnePlus OxygenOS (older builds)
+    "ro.nothing.version": "nothing_os_version",       # Nothing OS
+    "ro.build.version.magic": "magicos_version",      # Honor MagicOS
+    "ro.build.version.harmonyos": "harmonyos_version",# Huawei HarmonyOS
+}
+
+# ---------------------------------------------------------------------------
+# OEM Quirks Registry
+# ---------------------------------------------------------------------------
+# Maps lowercase brand/manufacturer name → list of string quirk flags.
+# These flags are attached to DeviceInfo.oem_quirks and surfaced in the
+# forensic report so the examiner knows what friction to expect on-scene.
+#
+# Flag naming convention: <scope>_<issue>  e.g. "pm_grant_blocked"
+# ---------------------------------------------------------------------------
+OEM_QUIRKS: dict[str, list[str]] = {
+    # Samsung One UI — Knox partition keeps Secure Folder data opaque.
+    "samsung": [
+        "knox_container",          # Knox Secure Folder; app-private DBs inside are encrypted
+        "secure_folder_opaque",    # Secure Folder mount not reachable via ADB shell
+        "logsprovider_db",         # Samsung-specific call-log DB at com.sec.android.provider.logsprovider
+    ],
+    # Xiaomi / Redmi / POCO — HyperOS/MIUI has strict USB install controls.
+    "xiaomi": [
+        "mi_account_usb_auth",     # USB Debugging (Security settings) requires Mi Account login + SIM
+        "install_via_usb_toggle",  # 'Install via USB' must be enabled in Developer Options separately
+        "aggressive_battery_kill", # MIUI battery saver may kill the collector APK mid-run
+    ],
+    "redmi": [
+        "mi_account_usb_auth",
+        "install_via_usb_toggle",
+        "aggressive_battery_kill",
+    ],
+    "poco": [
+        "mi_account_usb_auth",
+        "install_via_usb_toggle",
+        "aggressive_battery_kill",
+    ],
+    # OPPO ColorOS — password prompt on APK install, aggressive app management.
+    "oppo": [
+        "usb_install_password_prompt",  # OS may ask for lock screen PIN during `adb install`
+        "aggressive_process_kill",      # ColorOS may terminate collector between ADB triggers
+        "auto_launch_deny",             # ColorOS may block the collector from auto-starting
+    ],
+    # Realme UI (ColorOS derivative)
+    "realme": [
+        "usb_install_password_prompt",
+        "aggressive_process_kill",
+        "auto_launch_deny",
+    ],
+    # OnePlus OxygenOS — pm grant blocked on real devices (fixed in commit 6485e5e).
+    "oneplus": [
+        "pm_grant_blocked",        # `pm grant` raises SecurityException; must use runtime dialog
+    ],
+    # Google Pixel UI — closest to stock; no known forensic friction.
+    "google": [],
+    # Motorola Hello UI — very close to stock; no known forensic friction.
+    "motorola": [],
+    # Nothing OS — stock-like; no known forensic friction.
+    "nothing": [],
+    # Honor MagicOS — similar to OPPO/Realme lineage post-Huawei split.
+    "honor": [
+        "usb_debug_timeout",       # USB debugging authorization may time out quickly on MagicOS
+        "magic_link_interference", # Honor's cross-device feature may interfere with ADB sessions
+    ],
+    # Huawei HarmonyOS — AOSP-based versions (≤3.x) partially work;
+    # HarmonyOS NEXT drops AOSP entirely and is incompatible.
+    "huawei": [
+        "harmonyos_check_required",# Engine will detect version and warn/abort appropriately
+        "adb_may_be_absent",       # HarmonyOS NEXT devices may lack standard ADB
+        "google_services_absent",  # No Google Play, no GMS artifacts
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# OEM-specific artifact paths (DB paths that only exist on that brand's build)
+# ---------------------------------------------------------------------------
+# These are Tier-2 (root required) paths. They are passed to the prefetch
+# module so high-priority OEM databases are pulled early in the pipeline.
+# ---------------------------------------------------------------------------
+OEM_SPECIFIC_PATHS: dict[str, list[str]] = {
+    "samsung": [
+        # Samsung call log (separate from AOSP calllog.db on many builds)
+        "/data/data/com.sec.android.provider.logsprovider/databases/logs.db",
+        # Samsung messaging (alternative to AOSP mmssms.db)
+        "/data/data/com.samsung.android.messaging/databases/message.db",
+        # Samsung Gallery (may contain metadata for deleted media)
+        "/data/data/com.sec.android.gallery3d/databases/picasa.db",
+    ],
+    "xiaomi": [
+        # MIUI/HyperOS Gallery — stores metadata for all media including cloud-synced
+        "/data/data/com.miui.gallery/databases/miuiGallery.db",
+        # MIUI security centre (app-usage + suspicious app history)
+        "/data/data/com.miui.securitycenter/databases/data.db",
+    ],
+    "redmi": [
+        "/data/data/com.miui.gallery/databases/miuiGallery.db",
+        "/data/data/com.miui.securitycenter/databases/data.db",
+    ],
+    "poco": [
+        "/data/data/com.miui.gallery/databases/miuiGallery.db",
+        "/data/data/com.miui.securitycenter/databases/data.db",
+    ],
+    "oppo": [
+        # ColorOS messaging DB
+        "/data/data/com.coloros.mms/databases/message.db",
+    ],
+    "realme": [
+        "/data/data/com.coloros.mms/databases/message.db",
+    ],
+    "oneplus": [
+        "/data/data/com.coloros.mms/databases/message.db",
+    ],
+    "google": [],
+    "motorola": [],
+    "nothing": [],
+    "honor": [],
+    "huawei": [],
 }
 
 # --- Standards references quoted verbatim in the report footer ---------------

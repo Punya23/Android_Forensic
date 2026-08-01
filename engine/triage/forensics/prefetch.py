@@ -39,8 +39,23 @@ def start_prefetch(predicted_files: List[str], adb: Adb) -> None:
 
 
 def get_common_paths(device_info: Dict[str, Any]) -> List[str]:
-    """Get common paths for device based on manufacturer and Android version."""
-    paths = [
+    """Get common paths for device based on manufacturer/brand and Android version.
+
+    OEM-specific paths are prepended so they are prefetched first — they are
+    high-value targets that only exist on a particular brand's build and are
+    otherwise missed by the generic AOSP path list.
+    """
+    from triage.config import OEM_SPECIFIC_PATHS  # local import to avoid circular at module level
+
+    brand_key = (
+        device_info.get("brand") or device_info.get("manufacturer") or ""
+    ).lower()
+
+    # OEM-specific high-value paths first (Tier-2 root paths for the brand)
+    oem_paths: List[str] = OEM_SPECIFIC_PATHS.get(brand_key, [])
+
+    # Standard AOSP paths present on every Android build
+    aosp_paths: List[str] = [
         "/data/system/users/0/accounts.db",
         "/data/system/sync/accounts.xml",
         "/data/data/com.android.providers.contacts/databases/contacts2.db",
@@ -48,13 +63,8 @@ def get_common_paths(device_info: Dict[str, Any]) -> List[str]:
         "/data/data/com.android.providers.contacts/databases/calllog.db",
     ]
 
-    manufacturer = device_info.get("manufacturer", "").lower()
-    if manufacturer == "samsung":
-        paths.append(
-            "/data/data/com.sec.android.provider.logsprovider/databases/logs.db"
-        )
-
-    return paths
+    # Combine: OEM first (highest priority), then AOSP commons
+    return oem_paths + aosp_paths
 
 
 def get_app_paths(installed_apps: List[str]) -> List[str]:

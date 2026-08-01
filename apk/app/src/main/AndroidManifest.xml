@@ -2,15 +2,15 @@
 <!--
   eRakshak Collector — Tier-1 forensic helper.
 
-  Declaring a permission does NOT grant it. The engine grants each one explicitly (and logs
-  it) via `pm grant` for the grantable ones, an appops set for usage-stats, or a temporary
-  default-role swap for the two hard-restricted ones (call log / SMS). Every collector reads
-  only what it was actually granted and reports what it could not reach, so the acquisition
-  is fully auditable.
+  Declaring a permission does NOT grant it. On stock Android the engine grants each one
+  explicitly (and logs it) via `pm grant`. On OEM builds where pm grant is blocked
+  (e.g. OnePlus/OxygenOS — see commit 6485e5e) the app uses ActivityCompat.requestPermissions()
+  to show a runtime dialog instead. Every collector reads only what it was actually granted
+  and reports what it could not reach, so the acquisition is fully auditable.
 
   Permission → how the engine grants it (all logged, alters_device=true):
-    READ_CONTACTS ............. pm grant                     (dangerous, not hard-restricted)
-    READ_MEDIA_IMAGES/VIDEO/AUDIO  pm grant                  (Android 13+ media groups)
+    READ_CONTACTS ............. pm grant / runtime dialog    (dangerous, not hard-restricted)
+    READ_MEDIA_IMAGES/VIDEO/AUDIO  pm grant / runtime dialog (Android 13+ media groups)
     READ_EXTERNAL_STORAGE ..... pm grant                     (<= Android 12 media enumeration)
     ACCESS_MEDIA_LOCATION ..... pm grant                     (unredacted EXIF GPS from MediaStore)
     READ_CALENDAR ............. pm grant
@@ -19,6 +19,7 @@
     PACKAGE_USAGE_STATS ....... appops set GET_USAGE_STATS allow
     READ_CALL_LOG ............. hard-restricted → default-Dialer role swap (revert after use)
     READ_SMS .................. hard-restricted → default-SMS role swap  (revert after use)
+    REQUEST_INSTALL_PACKAGES .. install-time (needed for Xiaomi HyperOS/MIUI USB install flow)
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -47,6 +48,9 @@
         tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
+    <!-- Xiaomi HyperOS/MIUI: 'Install via USB' enforcement needs this permission
+         declared so the USB install flow works in Developer Options. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Wi-Fi (saved networks, current SSID, scan results) -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -71,6 +75,7 @@
     <application
         android:allowBackup="false"
         android:label="eRakshak Collector"
+        android:requestLegacyExternalStorage="true"
         android:theme="@android:style/Theme.Material.Light">
         <activity
             android:name=".MainActivity"

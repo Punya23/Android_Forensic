@@ -7,10 +7,61 @@ from pathlib import Path
 from typing import Optional
 
 from ..adb import Adb
-from ..config import DEVICE_PROPS
+from ..config import DEVICE_PROPS, OEM_QUIRKS, OEM_SPECIFIC_PATHS
 from ..custody import DeviceInfo
 from ..device_state import capture_device_state
 from .base import AcquisitionSource, PulledFile
+
+
+class UnsupportedDeviceError(RuntimeError):
+    """Raised when the connected device is fundamentally incompatible (e.g. HarmonyOS NEXT)."""
+
+
+# ---------------------------------------------------------------------------
+# Helper: derive human-readable OS skin name from getprop values
+# ---------------------------------------------------------------------------
+def _derive_os_skin(props: dict[str, str]) -> str:
+    """Return a human-readable OS skin string, e.g. 'One UI 6.1' or 'OxygenOS 14'."""
+    # Samsung One UI
+    if props.get("oneui_version"):
+        return f"One UI {props['oneui_version']}"
+    # Xiaomi HyperOS (newer builds use a different key than MIUI)
+    if props.get("hyperos_version"):
+        return f"HyperOS {props['hyperos_version']}"
+    if props.get("miui_version"):
+        return f"MIUI {props['miui_version']}"
+    # Huawei HarmonyOS
+    if props.get("harmonyos_version"):
+        return f"HarmonyOS {props['harmonyos_version']}"
+    # Honor MagicOS
+    if props.get("magicos_version"):
+        return f"MagicOS {props['magicos_version']}"
+    # Nothing OS
+    if props.get("nothing_os_version"):
+        return f"Nothing OS {props['nothing_os_version']}"
+    # OnePlus OxygenOS (older standalone key)
+    if props.get("oxygenos_version"):
+        return f"OxygenOS {props['oxygenos_version']}"
+    # OPPO/Realme/OnePlus ColorOS lineage (newer unified key)
+    if props.get("coloros_version"):
+        brand = props.get("brand", "").lower()
+        skin_name = {
+            "realme": "Realme UI",
+            "oneplus": "OxygenOS",
+        }.get(brand, "ColorOS")
+        return f"{skin_name} {props['coloros_version']}"
+    # Motorola — build_id starts with "hello" on Hello UI builds
+    if props.get("brand", "").lower() == "motorola":
+        return "Hello UI (My UX)"
+    # Google Pixel UI — identified by brand
+    if props.get("brand", "").lower() == "google":
+        return f"Pixel UI (Android {props.get('android_version', '')})".strip()
+    # Fallback: just report the brand + Android version
+    brand = props.get("manufacturer") or props.get("brand") or ""
+    android = props.get("android_version") or ""
+    if brand:
+        return f"{brand} Android {android}".strip()
+    return ""
 
 
 class RealDeviceSource(AcquisitionSource):
@@ -22,23 +73,48 @@ class RealDeviceSource(AcquisitionSource):
     def device_info(self) -> DeviceInfo:
         props: dict[str, str] = {}
         for prop, field_name in DEVICE_PROPS.items():
-            props[field_name] = self.adb.getprop(prop)
+            val = self.adb.getprop(prop)
+            if val:
+                props[field_name] = val
+
+        # Detect OS skin and look up quirks
+        os_skin = _derive_os_skin(props)
+        brand_key = (props.get("brand") or props.get("manufacturer") or "").lower()
+        oem_quirks = OEM_QUIRKS.get(brand_key, [])
+
+        # Guard: HarmonyOS NEXT drops AOSP entirely — ADB may be absent or
+        # behave incompatibly. Abort with a clear message rather than silently
+        # failing many steps later in the pipeline.
+        harmonyos_ver = props.get("harmonyos_version", "")
+        android_ver = props.get("android_version", "")
+        if brand_key == "huawei" and harmonyos_ver and not android_ver:
+            raise UnsupportedDeviceError(
+                f"HarmonyOS NEXT detected (version {harmonyos_ver}). "
+                "This build does not include an Android/AOSP layer, so standard "
+                "ADB forensic extraction is not possible. "
+                "Connect an AOSP-based Android device to continue."
+            )
+
         info = DeviceInfo(
             manufacturer=props.get("manufacturer", ""),
             brand=props.get("brand", ""),
             model=props.get("model", ""),
             product=props.get("product", ""),
-            android_version=props.get("android_version", ""),
+            android_version=android_ver,
             sdk=props.get("sdk", ""),
             build_id=props.get("build_id", ""),
             serial=props.get("serial") or props.get("boot_serial", ""),
             carrier=props.get("carrier", ""),
             rooted=self.adb.is_root_available(),
+            os_skin=os_skin,
+            oem_quirks=oem_quirks,
         )
         # IMEI needs a privileged call on modern Android; try, but never fail the run.
         imei = self.adb.shell("service call iphonesubinfo 1").stdout.strip()
         if imei:
             info.extra["imei_raw"] = imei[:200]
+        # Store OEM-specific paths for use by the Tier-2 prefetch stage
+        info.extra["oem_specific_paths"] = OEM_SPECIFIC_PATHS.get(brand_key, [])
         return info
 
     def pre_state(self) -> dict:

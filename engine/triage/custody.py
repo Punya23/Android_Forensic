@@ -47,6 +47,9 @@ class DeviceInfo:
     imei: str = ""
     carrier: str = ""
     rooted: bool = False
+    # OEM skin / OS detection (populated from getprop on real devices)
+    os_skin: str = ""                               # e.g. "One UI 6.1", "HyperOS 2.0", "OxygenOS 14"
+    oem_quirks: list[str] = field(default_factory=list)  # from OEM_QUIRKS registry
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

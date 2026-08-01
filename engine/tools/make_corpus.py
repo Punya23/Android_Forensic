@@ -835,6 +835,8 @@ def build(dest: Path) -> None:
                     "imei": "35-901234-567890-1",
                     "carrier": "Airtel",
                     "rooted": False,
+                    "os_skin": "One UI 6.1",
+                    "oem_quirks": ["knox_container", "secure_folder_opaque", "logsprovider_db"],
                 },
                 "pre_state": {
                     "screen_locked": False,
