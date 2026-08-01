@@ -452,9 +452,30 @@ def device_state_summary(record: dict[str, Any]) -> dict[str, Any]:
     """One-line counts plus an examiner-facing sentence for the report."""
     diff = (record or {}).get("diff", {}) or {}
     teardown = (record or {}).get("teardown", {}) or {}
+    post = (record or {}).get("post", {}) or {}
     verdict = teardown.get("verdict", "unverified")
     unexpected = len(diff.get("unexpected_changes", []) or [])
     residue = len(teardown.get("residue", []) or [])
+
+    # A synthetic (mock-source) or never-taken post-state must not read as a real
+    # device having been checked and found clean. This is the single most quotable
+    # sentence in the section, so it has to be true of what actually happened.
+    if post.get("synthetic") or post.get("not_captured"):
+        reason = post.get("reason") or post.get("note") or ""
+        return {
+            "teardown_verdict": "unverified",
+            "residual_changes": residue,
+            "unexpected_differences": unexpected,
+            "expected_drift": len(diff.get("expected_drift", []) or []),
+            "unavailable_probes": len(diff.get("unavailable_probes", []) or []),
+            "returned_to_found_state": False,
+            "statement": (
+                "No post-acquisition snapshot of a physical device was taken"
+                + (f" ({reason})" if reason else "")
+                + ". Nothing here evidences that a device was returned to its found "
+                "state."
+            ),
+        }
 
     if verdict == "clean" and unexpected == 0:
         sentence = (

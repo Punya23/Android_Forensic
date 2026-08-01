@@ -12,7 +12,9 @@ a failure in one artifact is logged and the run continues.
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import logging
+import shutil
 import tempfile
 import threading
 from dataclasses import dataclass, field
@@ -41,6 +43,43 @@ def _tier1_ledger() -> "TeardownLedger":
     if _TIER1_LEDGER is None:
         _TIER1_LEDGER = TeardownLedger()
     return _TIER1_LEDGER
+
+
+# --- Encryption posture for the current run (P1-1) --------------------------------
+# Run-scoped for the same reason as the ledger above: the Tier-2 stages are sequential
+# and each would otherwise need this threaded through several layers of call site.
+# Set by run_acquisition immediately after the pre-state snapshot.
+_ENCRYPTION_STATE: Optional[Any] = None
+
+
+def _ce_gate(case: "Case", device_path: str, label: str) -> bool:
+    """Decide whether a credential-encrypted pull is worth attempting, and log it honestly.
+
+    Returns True to proceed. Returns False ONLY when the encryption state positively
+    establishes the artifact is unreachable (BFU) — in which case the case records
+    "present, encrypted, inaccessible", never "not found". An undetermined state always
+    proceeds: refusing to look because we are unsure would manufacture an absence.
+    """
+    state = _ENCRYPTION_STATE
+    if state is None or not is_ce_path(device_path):
+        return True
+    try:
+        verdict = gate_ce_artifact(state, device_path)
+    except Exception:  # pragma: no cover - the gate must never block acquisition
+        return True
+    if verdict.get("accessible", True):
+        return True
+    case.log(
+        "tier2.ce_gate",
+        f"{label}: {verdict.get('report_as', 'present, encrypted, inaccessible')} "
+        f"({verdict.get('reason', '')}). The artifact exists on the device; this "
+        f"acquisition could not decrypt it. Do NOT read this as the data being absent.",
+        result="skipped",
+        tier=Tier.TIER2.value,
+        device_path=device_path,
+        encryption_gate=verdict,
+    )
+    return False
 
 from .priority import get_priority_files, should_pull_file
 from .metrics import (
@@ -74,6 +113,12 @@ from .config import (
     VIDEO_EXTS,
 )
 from .custody import Case, CaseMeta, DeviceInfo
+from .forensics.encryption_state import (
+    detect_encryption_state,
+    encryption_summary,
+    gate_ce_artifact,
+    is_ce_path,
+)
 from .device_state import (
     TeardownLedger,
     device_state_summary,
@@ -230,6 +275,24 @@ class PipelineConfig:
     tier2_wifi: bool = (
         False  # root-required: recover stored Wi-Fi credentials from system config
     )
+    # -- Deep artifact stages ------------------------------------------------
+    wifi_live: bool = True  # Tier 0: dumpsys wifi/netstats/connectivity (volatile)
+    scan_encrypted_apps: bool = (
+        True  # Tier 0: report SQLCipher app DBs as present-but-not-recoverable
+    )
+    tier2_bt_config: bool = False  # root: /data/misc/bluedroid/bt_config.conf bond store
+    tier2_app_presence: bool = (
+        False  # root: packages.xml + usagestats + gass.db (survives uninstall)
+    )
+    tier2_antiforensics: bool = (
+        False  # root: multi-user containers, vault apps, factory-reset trace
+    )
+    tier2_recent_tasks: bool = (
+        False  # root + AFU: /data/system_ce/0/recent_tasks and task snapshots
+    )
+    run_self_validation: bool = (
+        True  # run the offline known-answer self-test and attach it to the case
+    )
     tier2_whatsapp_backup: bool = (
         False  # root-required: decrypt msgstore.db.crypt* backups
     )
@@ -348,6 +411,50 @@ def run_acquisition(
         "device.prestate", f"pre-acquisition snapshot: {pre}", tier=Tier.TIER0.value
     )
 
+    # -- Encryption posture (P1-1) ------------------------------------------
+    # Determined BEFORE any Tier-2 pull, because it decides what those pulls can
+    # possibly yield. On a BFU device a `su cp` of a credential-encrypted sandbox
+    # returns ciphertext or an empty directory; without this determination the engine
+    # reported that as "not found", which reads as "the data was not there". It is
+    # read-only: getprop / ls / cat / dumpsys queries only.
+    progress("encryption", 0.035, "Determining encryption state (FBE / AFU-BFU)")
+    global _ENCRYPTION_STATE
+    _ENCRYPTION_STATE = None
+    try:
+        _enc = detect_encryption_state(
+            source.shell_readonly, root_available=source.root_available()
+        )
+        _ENCRYPTION_STATE = _enc
+        encryption_state = _enc.to_dict()
+        encryption_state["summary"] = encryption_summary(_enc)
+        case.write_derived("encryption_state", encryption_state)
+        case.log(
+            "device.encryption",
+            f"encryption posture: {_enc.unlock_state.upper()} "
+            f"(ro.crypto.type={_enc.crypto_type or 'unknown'}, sdk={_enc.sdk or '?'}). "
+            + (
+                "Credential-encrypted app data is present but cryptographically "
+                "inaccessible; absence of app content below is a limitation of the "
+                "acquisition, not evidence of absence."
+                if _enc.unlock_state == "bfu"
+                else "Root is not decryption — see the encryption section of the report."
+            ),
+            tier=Tier.TIER0.value,
+        )
+    except Exception as exc:  # detection must never abort an acquisition
+        encryption_state = {
+            "unlock_state": "unknown",
+            "caveats": [f"encryption-state detection failed: {exc}"],
+            "probes": {},
+        }
+        case.log(
+            "device.encryption",
+            f"encryption-state detection error: {exc}. Treat credential-encrypted "
+            f"artifact accessibility as UNDETERMINED.",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+
     battery_monitor = BatteryMonitor(
         source,
         interval_s=cfg.battery_poll_interval_s,
@@ -405,7 +512,14 @@ def run_acquisition(
     signal_result: dict = {}  # Signal: plaintext rows OR encrypted-present report
     bluetooth_bonds: list[dict] = []  # bt_config.conf persistent bonds (Tier 2, P1-3)
     bluetooth_bond_result: dict = {}  # adapter + bonds + caveats
-    encryption_state: dict = {}  # AFU/BFU + FBE determination (P1-1)
+    # NOTE: `encryption_state` is deliberately NOT initialised here. It is determined
+    # above, before the tier stages, because it gates what they can claim — re-declaring
+    # it in this block would silently wipe that determination.
+    app_presence: list[dict] = []  # persistent app-presence correlation (Tier 2, P3-1)
+    app_presence_detail: dict = {}  # packages + usage events + APK digests
+    antiforensic_result: dict = {}  # users / vault apps / reset trace (Tier 2, P3-2)
+    encrypted_apps_result: dict = {}  # SQLCipher apps + FCM fragments (P3-3)
+    recent_tasks_result: dict = {}  # recent_tasks + snapshots, AFU-gated (P3-4)
     wifi_networks: list = []  # Wi-Fi credentials (Tier-2 / root)
     wa_backup_messages: list = []  # WhatsApp backup recovered messages (Tier-2)
     wa_backup_media: list = []  # WhatsApp backup recovered media (Tier-2)
@@ -789,6 +903,50 @@ def run_acquisition(
                 tier=Tier.TIER0.value,
             )
 
+    # -- P1-2: live Wi-Fi surface via dumpsys (non-root, VOLATILE) ------------
+    # The existing Wi-Fi capture is root-only saved credentials. Everything about the
+    # device's actual network behaviour — current association, scan results, the saved
+    # list, and coarse per-network connected time — is available without root from
+    # dumpsys, and is lost on reboot. It has to be captured live or not at all.
+    wifi_live_result: dict = {}
+    if cfg.wifi_live:
+        progress("wifi_live", 0.5855, "Capturing live Wi-Fi state (volatile)")
+        try:
+            from .parsers.wifi_live import (
+                build_wifi_timeline,
+                collect_wifi_live,
+                wifi_live_summary,
+            )
+
+            wifi_live_result = collect_wifi_live(source.shell_readonly)
+            wifi_live_result["summary"] = wifi_live_summary(wifi_live_result)
+            wifi_live_result["timeline"] = build_wifi_timeline(wifi_live_result)
+            case.write_derived("wifi_live", wifi_live_result)
+            _cur = wifi_live_result.get("current")
+            case.log(
+                "shell.dumpsys",
+                "live Wi-Fi captured: "
+                + (
+                    f"associated to {(_cur or {}).get('ssid', '?')}"
+                    if _cur
+                    else "no current association"
+                )
+                + f"; {len(wifi_live_result.get('saved', []))} saved, "
+                f"{len(wifi_live_result.get('scan_results', []))} scan result(s), "
+                f"{len(wifi_live_result.get('usage', []))} usage bucket(s) "
+                f"(hour-bucketed and approximate — dumpsys carries no reliable "
+                f"per-join timestamp)",
+                command="dumpsys wifi | netstats | connectivity",
+                tier=Tier.TIER0.value,
+            )
+        except Exception as exc:
+            case.log(
+                "shell.dumpsys",
+                f"live Wi-Fi capture error: {exc}",
+                result="error",
+                tier=Tier.TIER0.value,
+            )
+
     # -- P1-7: screen/power events, Google accounts + search, Maps locations ---
     # These four parsers were written, exported and unit-tested but never invoked, so
     # every previous run silently omitted screen-unlock/power events, signed-in Google
@@ -1088,6 +1246,71 @@ def run_acquisition(
                 tier=Tier.TIER2.value,
             )
 
+    # -- Deep root-tier artifact stages (P1-3, P3-1, P3-2, P3-4) --------------
+    # Each is opt-in, root-required, and logs an explicit skip on a mock/non-root source
+    # rather than quietly contributing an empty dataset that reads as "nothing found".
+    _deep_stages = [
+        (
+            cfg.tier2_bt_config,
+            "bt_config",
+            0.631,
+            "Reading Bluetooth bond store (root)",
+        ),
+        (
+            cfg.tier2_app_presence,
+            "app_presence",
+            0.632,
+            "Reading persistent app-presence evidence (root)",
+        ),
+        (
+            cfg.tier2_antiforensics,
+            "antiforensics",
+            0.633,
+            "Enumerating user containers & anti-forensic markers (root)",
+        ),
+        (
+            cfg.tier2_recent_tasks,
+            "recent_tasks",
+            0.634,
+            "Reading recent tasks & snapshots (root, AFU only)",
+        ),
+    ]
+    for _enabled, _name, _pct, _msg in _deep_stages:
+        if not (_enabled and _tier2_battery_ok()):
+            continue
+        progress("tier2", _pct, _msg)
+        if not isinstance(source, RealDeviceSource):
+            case.log(
+                f"tier2.{_name}",
+                f"Tier-2 {_name} requested on non-real (mock) source; skipped",
+                result="skipped",
+                tier=Tier.TIER2.value,
+            )
+            continue
+        try:
+            if _name == "bt_config":
+                bluetooth_bond_result = _run_tier2_bt_config(
+                    source, case, staging, bluetooth_devices
+                )
+                bluetooth_bonds = bluetooth_bond_result.get("bonds", [])
+            elif _name == "app_presence":
+                app_presence, app_presence_detail = _run_tier2_app_presence(
+                    source, case, staging, installed_apps
+                )
+            elif _name == "antiforensics":
+                antiforensic_result = _run_tier2_antiforensics(
+                    source, case, staging, installed_apps
+                )
+            elif _name == "recent_tasks":
+                recent_tasks_result = _run_tier2_recent_tasks(source, case, staging)
+        except Exception as exc:
+            case.log(
+                f"tier2.{_name}",
+                f"stage error: {exc}",
+                result="error",
+                tier=Tier.TIER2.value,
+            )
+
     if cfg.tier2_whatsapp_backup and _tier2_battery_ok():
         progress("tier2", 0.635, "Running Tier-2 WhatsApp backup recovery (root)")
         if isinstance(source, RealDeviceSource):
@@ -1308,6 +1531,22 @@ def run_acquisition(
             "calls": len(calls),
         },
     )
+    # -- P3-3: encrypted-app reporting over everything acquired ---------------
+    # Runs after every pull stage so it sees Tier-0 and Tier-2 acquisitions alike.
+    if cfg.scan_encrypted_apps:
+        progress("encrypted_apps", 0.86, "Cataloguing encrypted app databases")
+        try:
+            encrypted_apps_result = _run_encrypted_app_scan(
+                case, case.artifacts_dir, list(ordered_files)
+            )
+        except Exception as exc:
+            case.log(
+                "parse.encrypted_apps",
+                f"encrypted-app scan error: {exc}",
+                result="error",
+                tier=Tier.TIER0.value,
+            )
+
     all_messages = list(app_messages) + recovered_messages
     timeline = build_timeline(
         messages=all_messages,
@@ -1489,6 +1728,28 @@ def run_acquisition(
     case.write_derived("bluetooth_bonds", bluetooth_bonds)
     case.write_derived("bluetooth_bond_report", bluetooth_bond_result)
     case.write_derived("encryption_state", encryption_state)
+    # P3-1/P3-2/P3-3/P3-4. Every one of these is written even when empty so the API and
+    # dashboard can tell "collected, nothing found" apart from "never collected" — the
+    # latter shows up as a missing dataset, the former as an empty one with a summary.
+    case.write_derived("app_presence", app_presence)
+    case.write_derived("app_presence_summary", app_presence_detail.get("summary", {}))
+    case.write_derived("packages", app_presence_detail.get("packages", []))
+    case.write_derived("usage_events", app_presence_detail.get("usage_events", []))
+    case.write_derived("android_users", antiforensic_result.get("users", []))
+    case.write_derived(
+        "antiforensic_findings", antiforensic_result.get("findings", [])
+    )
+    case.write_derived("antiforensics_summary", antiforensic_result.get("summary", {}))
+    case.write_derived("encrypted_apps", encrypted_apps_result.get("artifacts", []))
+    case.write_derived(
+        "encrypted_apps_summary", encrypted_apps_result.get("summary", {})
+    )
+    case.write_derived(
+        "fcm_records", (encrypted_apps_result.get("fcm") or {}).get("records", [])
+    )
+    case.write_derived("recent_tasks", recent_tasks_result.get("tasks", []))
+    case.write_derived("task_snapshots", recent_tasks_result.get("snapshots", []))
+    case.write_derived("recent_tasks_summary", recent_tasks_result.get("summary", {}))
     case.write_derived("aleapp", aleapp_result)
     case.write_derived("whatsapp_media", wa_media_items)  # NEW
     case.write_derived("advanced", advanced_result)  # NEW
@@ -1682,6 +1943,47 @@ def run_acquisition(
         teardown_verdict=device_state_record["summary"]["teardown_verdict"],
         unexpected_differences=device_state_record["summary"]["unexpected_differences"],
     )
+
+    # -- Tool self-validation (P2-4) ------------------------------------------
+    # A known-answer test run at the time of THIS acquisition, attached to THIS case.
+    # SWGDE 18-Q-001 expects a validation record before use and after each version
+    # change; recording it per-case means the report can state what the tool was
+    # demonstrated to do on the day the evidence was taken, rather than pointing at a
+    # validation performed at some unrelated time. It is offline: no device, no network.
+    if cfg.run_self_validation:
+        progress("validation", 0.955, "Running tool self-validation (known-answer test)")
+        try:
+            from .validation import (
+                coverage_matrix,
+                coverage_summary,
+                render_report_json,
+                run_self_validation,
+                validate_report,
+            )
+
+            _vreport = run_self_validation(tester=cfg.examiner)
+            _vdata = json.loads(render_report_json(_vreport))
+            _vdata["coverage"] = coverage_matrix()
+            _vdata["coverage_summary"] = coverage_summary()
+            _vdata["completeness"] = validate_report(_vreport)
+            case.write_derived("validation_report", _vdata)
+            _passed = sum(1 for c in _vreport.cases if c.passed)
+            case.log(
+                "validation.self_test",
+                f"tool self-validation: {_passed}/{len(_vreport.cases)} known-answer "
+                f"case(s) passed. Producing a validation report is not the same as "
+                f"being independently validated — see the report's limitations list.",
+                tier=Tier.TIER0.value,
+                result="ok" if _passed else "error",
+            )
+        except Exception as exc:
+            case.log(
+                "validation.self_test",
+                f"self-validation error: {exc}. No validation record was produced for "
+                f"this case; do not treat that as a pass.",
+                result="error",
+                tier=Tier.TIER0.value,
+            )
 
     progress("report", 0.96, "Generating triage report")
     report_path = generate_report(case.root)
@@ -2707,6 +3009,15 @@ def _run_tier2_telegram(
     REMOTE_DB = "/data/data/org.telegram.messenger/files/cache4.db"
     REMOTE_STAGING = "/sdcard/Download/tg_cache4_triage.db"
 
+    # 0. Encryption gate (P1-1). On a BFU device this path is ciphertext; copying it
+    #    would yield an unreadable file and the run would report "not found".
+    if not _ce_gate(case, REMOTE_DB, "Telegram cache4.db"):
+        return {
+            "skipped": True,
+            "reason": "credential-encrypted storage inaccessible (BFU)",
+            "messages": [],
+        }
+
     # 1. Copy to accessible location via su.
     cp_result = source.adb.shell(f'su -c "cp {REMOTE_DB} {REMOTE_STAGING}"')
     case.log(
@@ -2934,6 +3245,13 @@ def _run_tier2_instagram(
     stage_db = "/sdcard/Download/ig_direct_triage.db"
     stage_prefs = "/sdcard/Download/ig_prefs_triage"
 
+    if not _ce_gate(case, remote_db, "Instagram direct.db"):
+        return {
+            "skipped": True,
+            "reason": "credential-encrypted storage inaccessible (BFU)",
+            "messages": [],
+        }
+
     cp = source.adb.shell(f'su -c "cp {remote_db} {stage_db}"')
     case.log(
         "tier2.instagram.cp",
@@ -3005,6 +3323,13 @@ def _run_tier2_snapchat(
     stage_arroyo = "/sdcard/Download/snap_arroyo_triage.db"
     stage_main = "/sdcard/Download/snap_main_triage.db"
 
+    if not _ce_gate(case, remote_arroyo, "Snapchat arroyo.db"):
+        return {
+            "skipped": True,
+            "reason": "credential-encrypted storage inaccessible (BFU)",
+            "messages": [],
+        }
+
     cp = source.adb.shell(f'su -c "cp {remote_arroyo} {stage_arroyo}"')
     case.log(
         "tier2.snapchat.cp",
@@ -3061,6 +3386,336 @@ def _run_tier2_snapchat(
             artifact_id=rec.artifact_id,
         )
     return res
+
+
+def _root_pull_paths(
+    source: "RealDeviceSource",
+    case: "Case",
+    staging: "Path",
+    specs: list[tuple[str, str]],
+    *,
+    label: str,
+    category: str = "system",
+    app: Optional[str] = None,
+) -> dict[str, "Path"]:
+    """Copy root-only device paths out via ``su -c cp -r`` and ingest them.
+
+    ``specs`` is [(device_path, local_name)]. Returns {device_path: local Path} for
+    everything that arrived. ``cp`` reads the source and writes only into
+    ``/sdcard/Download``; the system file itself is never modified, which is why these
+    are audited with ``alters_device=False`` even though a staging copy is created (the
+    staging copy IS a device write and is removed by the Tier-1 teardown ledger).
+
+    A path that is absent is logged as absent. A path that exists but could not be read
+    is logged as *unreadable* — a distinction that matters on an FBE device, where an
+    unreadable credential-encrypted path means "present, encrypted", not "not there".
+    """
+    out: dict[str, Path] = {}
+    for device_path, local_name in specs:
+        stage = f"/sdcard/Download/erk_{local_name}"
+        probe = source.adb.shell(
+            f"su -c 'test -e {device_path} && echo exists || echo absent'"
+        )
+        if "exists" not in (probe.stdout or ""):
+            case.log(
+                f"tier2.{label}.probe",
+                f"{device_path}: not present on device",
+                result="skipped",
+                tier=Tier.TIER2.value,
+            )
+            continue
+        cp = source.adb.shell(f"su -c 'cp -r {device_path} {stage}'")
+        if not cp.ok:
+            case.log(
+                f"tier2.{label}.cp",
+                f"{device_path}: present on device but could not be read "
+                f"({(cp.stderr or '').strip()[:160]}). This is NOT a finding that the "
+                f"artifact is absent.",
+                command=f"adb shell su -c 'cp -r {device_path} {stage}'",
+                result="error",
+                alters_device=False,
+                tier=Tier.TIER2.value,
+            )
+            continue
+        _tier1_ledger().record_device_file(stage)
+        local = staging / local_name
+        if local.exists():
+            shutil.rmtree(local, ignore_errors=True) if local.is_dir() else local.unlink()
+        pull = source.adb.pull(stage, local)
+        source.adb.shell(f"rm -rf {stage}")
+        if not pull.ok or not local.exists():
+            case.log(
+                f"tier2.{label}.pull",
+                f"{device_path}: staged copy could not be pulled to the workstation",
+                result="error",
+                tier=Tier.TIER2.value,
+            )
+            continue
+        if local.is_file():
+            case.ingest_file(
+                local,
+                source_path=device_path,
+                tier=Tier.TIER2,
+                method="root-su-cp",
+                category=category,
+                app=app,
+                flags=["tier2-root"],
+            )
+        out[device_path] = local
+        case.log(
+            f"tier2.{label}.pull",
+            f"{device_path} acquired",
+            tier=Tier.TIER2.value,
+        )
+    return out
+
+
+def _run_tier2_app_presence(
+    source: "RealDeviceSource", case: "Case", staging: "Path", installed_apps: list
+) -> tuple[list, dict]:
+    """P3-1 — persistent app-presence / app-execution evidence (root).
+
+    packages.xml, the usagestats protobuf tree and gass.db outlive an uninstall, so they
+    answer "was app X ever on this device / was it ever run" long after the live package
+    list has forgotten it. The live inventory from the Tier-1 Collector cannot.
+    """
+    from .parsers.app_presence import (
+        app_presence_summary,
+        correlate_app_presence,
+        parse_gass_db,
+        parse_packages_xml,
+        parse_usagestats_dir,
+    )
+
+    pulled = _root_pull_paths(
+        source,
+        case,
+        staging,
+        [
+            ("/data/system/packages.xml", "packages.xml"),
+            ("/data/system/usagestats", "usagestats"),
+            (
+                "/data/data/com.google.android.gms/databases/gass.db",
+                "gass.db",
+            ),
+        ],
+        label="app_presence",
+    )
+    packages = pkg_list = []
+    events: list = []
+    digests: list = []
+    if (p := pulled.get("/data/system/packages.xml")) is not None:
+        packages = pkg_list = parse_packages_xml(p)
+    if (u := pulled.get("/data/system/usagestats")) is not None:
+        events = parse_usagestats_dir(u)
+    gass = pulled.get("/data/data/com.google.android.gms/databases/gass.db")
+    if gass is not None:
+        digests = parse_gass_db(gass)
+
+    live = [getattr(a, "package", None) or a.get("package") for a in installed_apps]
+    correlated = correlate_app_presence(
+        packages, events, digests, installed_now=[p for p in live if p]
+    )
+    detail = {
+        "packages": [p.to_dict() for p in pkg_list],
+        "usage_events": [e.to_dict() for e in events],
+        "apk_digests": [d.to_dict() for d in digests],
+        "summary": app_presence_summary(correlated),
+    }
+    case.log(
+        "tier2.app_presence",
+        f"app presence: {len(pkg_list)} packages, {len(events)} usage events, "
+        f"{len(digests)} APK digests; "
+        f"{sum(1 for c in correlated if not c.get('currently_installed'))} package(s) "
+        f"evidenced but no longer installed",
+        tier=Tier.TIER2.value,
+    )
+    return correlated, detail
+
+
+def _run_tier2_antiforensics(
+    source: "RealDeviceSource", case: "Case", staging: "Path", installed_apps: list
+) -> dict:
+    """P3-2 — structural anti-forensics observations (root). Never asserts intent."""
+    from .parsers.antiforensics import (
+        antiforensics_summary,
+        detect_vault_apps,
+        enumerate_users,
+        factory_reset_time,
+        scan_renamed_media,
+    )
+
+    pulled = _root_pull_paths(
+        source,
+        case,
+        staging,
+        [
+            ("/data/system/users", "system_users"),
+            ("/data/misc/bootstat", "bootstat"),
+        ],
+        label="antiforensics",
+    )
+    listing = source.adb.shell("su -c 'ls -1 /data/user'").stdout or ""
+    users = (
+        enumerate_users(pulled["/data/system/users"], data_user_listing=listing)
+        if "/data/system/users" in pulled
+        else []
+    )
+    pkg_dicts = [
+        (a.to_dict() if hasattr(a, "to_dict") else a) for a in installed_apps
+    ]
+    findings = detect_vault_apps(pkg_dicts)
+    reset = (
+        factory_reset_time(pulled["/data/misc/bootstat"])
+        if "/data/misc/bootstat" in pulled
+        else None
+    )
+    findings += scan_renamed_media(staging)
+    result = {
+        "users": [u.to_dict() for u in users],
+        "findings": [f.to_dict() for f in findings],
+        "factory_reset": reset,
+        "summary": antiforensics_summary(users, findings, reset),
+    }
+    case.log(
+        "tier2.antiforensics",
+        f"anti-forensics: {len(users)} Android user(s), {len(findings)} structural "
+        f"observation(s). These are observations, not determinations of intent.",
+        tier=Tier.TIER2.value,
+    )
+    return result
+
+
+def _run_tier2_recent_tasks(
+    source: "RealDeviceSource", case: "Case", staging: "Path"
+) -> dict:
+    """P3-4 — recent_tasks + task snapshots, gated on the AFU determination."""
+    from .parsers.recent_tasks import collect_recent_tasks, recent_tasks_summary
+
+    # Gate first: /data/system_ce is credential-encrypted, so on a BFU device there is
+    # nothing to read and pulling would produce a misleading empty result.
+    if not _ce_gate(case, "/data/system_ce/0/recent_tasks", "recent tasks"):
+        skipped = {
+            "skipped": True,
+            "reason": (
+                "/data/system_ce is credential-encrypted and was not decrypted at "
+                "acquisition time (BFU). Recent tasks could not be read — this is not a "
+                "finding that no recent tasks existed."
+            ),
+            "tasks": [],
+            "snapshots": [],
+        }
+        skipped["summary"] = recent_tasks_summary(skipped)
+        return skipped
+
+    pulled = _root_pull_paths(
+        source,
+        case,
+        staging,
+        [
+            ("/data/system_ce/0/recent_tasks", "recent_tasks"),
+            ("/data/system_ce/0/snapshots", "task_snapshots"),
+        ],
+        label="recent_tasks",
+    )
+    root = pulled.get("/data/system_ce/0/recent_tasks")
+    result = collect_recent_tasks(
+        root.parent if root is not None else staging,
+        encryption_state=_ENCRYPTION_STATE,
+    )
+    result["summary"] = recent_tasks_summary(result)
+    case.log(
+        "tier2.recent_tasks",
+        f"recent tasks: {len(result.get('tasks', []))} task(s), "
+        f"{len(result.get('snapshots', []))} snapshot(s). Volatile — cleared by "
+        f"swipe-away, force-stop, reboot and low-memory trim.",
+        tier=Tier.TIER2.value,
+    )
+    return result
+
+
+def _run_encrypted_app_scan(case: "Case", staging: "Path", attempted: list) -> dict:
+    """P3-3 — report SQLCipher app databases as present-and-encrypted, plus FCM fragments.
+
+    The failure mode this replaces: a Signal/Threema database fell through to a generic
+    parser that cannot read SQLCipher, produced nothing, and was therefore reported
+    identically to an app that was never installed.
+    """
+    from .parsers.encrypted_apps import (
+        encrypted_apps_summary,
+        scan_encrypted_apps,
+        signal_metadata,
+    )
+
+    artifacts = scan_encrypted_apps(staging)
+    result: dict[str, Any] = {
+        "artifacts": [a.to_dict() for a in artifacts],
+        "summary": encrypted_apps_summary(artifacts, paths_attempted=attempted),
+        "signal": signal_metadata(staging),
+    }
+    try:
+        from .parsers.fcm import fcm_summary, parse_fcm_dir
+
+        fcm = parse_fcm_dir(staging)
+        result["fcm"] = fcm
+        result["fcm_summary"] = fcm_summary(fcm)
+    except ImportError:  # module not present in this build
+        result["fcm"] = {"records": [], "caveats": ["FCM parser not available"]}
+
+    if artifacts:
+        case.log(
+            "parse.encrypted_apps",
+            f"{len(artifacts)} encrypted app database(s) found and reported as "
+            f"present-but-not-recoverable (SQLCipher + hardware Keystore). Their "
+            f"existence, size and timestamps are evidence; their content is not "
+            f"recoverable by any on-device software.",
+            tier=Tier.TIER0.value,
+        )
+    return result
+
+
+def _run_tier2_bt_config(
+    source: "RealDeviceSource", case: "Case", staging: "Path", dumpsys_devices: list
+) -> dict:
+    """P1-3 — the persistent Bluetooth bond store (root)."""
+    from .parsers.bt_config import (
+        bt_config_summary,
+        merge_with_dumpsys,
+        parse_bt_config,
+    )
+
+    pulled = _root_pull_paths(
+        source,
+        case,
+        staging,
+        [
+            ("/data/misc/bluedroid/bt_config.conf", "bt_config.conf"),
+            ("/data/misc/bluedroid/bt_config.bak", "bt_config.bak"),
+        ],
+        label="bt_config",
+        category="system",
+        app="bluetooth",
+    )
+    primary = pulled.get("/data/misc/bluedroid/bt_config.conf") or pulled.get(
+        "/data/misc/bluedroid/bt_config.bak"
+    )
+    if primary is None:
+        return {}
+    result = parse_bt_config(primary)
+    bonds = result.get("bonds", []) or []
+    result["bonds"] = [b.to_dict() if hasattr(b, "to_dict") else b for b in bonds]
+    adapter = result.get("adapter")
+    if adapter is not None and hasattr(adapter, "to_dict"):
+        result["adapter"] = adapter.to_dict()
+    result["merged"] = merge_with_dumpsys(bonds, dumpsys_devices)
+    result["summary"] = bt_config_summary(result)
+    case.log(
+        "tier2.bt_config",
+        f"Bluetooth bond store: {len(result['bonds'])} persistent bond(s). Bond "
+        f"timestamps are pairing-record writes — NOT connection or co-location times.",
+        tier=Tier.TIER2.value,
+    )
+    return result
 
 
 def _run_tier2_wifi(

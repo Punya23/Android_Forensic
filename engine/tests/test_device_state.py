@@ -333,6 +333,38 @@ def test_summary_residual_statement_says_not_returned():
     assert summary["returned_to_found_state"] is False
 
 
+def test_summary_of_a_synthetic_post_state_claims_nothing_about_a_real_device():
+    """A mock run must not produce the sentence "the device was returned to its found
+    state" — no device was ever touched."""
+    from triage.acquire.mock import MockDeviceSource
+    import tempfile
+
+    post = MockDeviceSource(tempfile.mkdtemp()).post_state()
+    record = {
+        "pre": {},
+        "post": post,
+        "diff": diff_device_state({}, post),
+        "teardown": verify_teardown(make_shell(CLEAN_DEVICE), TeardownLedger()),
+    }
+    summary = device_state_summary(record)
+    assert summary["teardown_verdict"] == "unverified"
+    assert summary["returned_to_found_state"] is False
+    assert "No post-acquisition snapshot of a physical device" in summary["statement"]
+    assert "confirmed reversed" not in summary["statement"]
+
+
+def test_summary_of_an_uncaptured_post_state_claims_nothing():
+    record = {
+        "pre": {},
+        "post": {"phase": "post", "not_captured": True, "reason": "adb offline"},
+        "diff": {},
+        "teardown": {"verdict": "clean", "residue": [], "unverified": []},
+    }
+    summary = device_state_summary(record)
+    assert summary["teardown_verdict"] == "unverified"
+    assert "adb offline" in summary["statement"]
+
+
 def test_summary_unverified_never_claims_clean():
     ledger = TeardownLedger()
     ledger.record_install(True)

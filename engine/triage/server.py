@@ -105,6 +105,47 @@ def create_app(cases_root: Path = CASES_ROOT):
             }
         )
 
+    @app.get("/api/validation")
+    def validation():
+        """Installation-wide tool validation: known-answer self-test + CFTT coverage.
+
+        Distinct from the per-case copy written into each case folder. This one answers
+        "what is this build demonstrated to do, right now" without needing a case open.
+        The self-test is offline (temp fixtures, no device, no network) and takes about a
+        second, so it is computed on demand rather than cached — a stale validation record
+        is worse than none.
+        """
+        try:
+            from .validation import (
+                coverage_matrix,
+                coverage_summary,
+                known_limitations,
+                render_report_json,
+                run_self_validation,
+                validate_report,
+            )
+
+            report = run_self_validation()
+            data = json.loads(render_report_json(report))
+            data["coverage"] = coverage_matrix()
+            data["coverage_summary"] = coverage_summary()
+            data["completeness"] = validate_report(report)
+            data["known_limitations"] = known_limitations()
+            return jsonify(data)
+        except Exception as exc:  # pragma: no cover - defensive
+            return (
+                jsonify(
+                    {
+                        "error": str(exc),
+                        "note": (
+                            "The self-validation could not run. Treat this build as "
+                            "unvalidated — this is not a pass."
+                        ),
+                    }
+                ),
+                500,
+            )
+
     @app.get("/api/devices")
     def devices():
 

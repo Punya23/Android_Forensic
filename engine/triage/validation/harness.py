@@ -460,7 +460,7 @@ def _case_manifest_tampered(root: Path, intact_case_dir: Optional[Path]) -> Vali
     )
 
 
-def _case_deleted_recovery(con: sqlite3.Connection, db_path: Path) -> ValidationCase:
+def _case_deleted_recovery(db_path: Path) -> ValidationCase:
     def run() -> tuple[dict[str, Any], bool, list[str]]:
         carved = recover_deleted_rows(db_path, "messages")
         blob = _flatten_carved_text(carved)
@@ -514,7 +514,7 @@ def _case_deleted_recovery(con: sqlite3.Connection, db_path: Path) -> Validation
     )
 
 
-def _case_rowid_gap(con: sqlite3.Connection, db_path: Path) -> ValidationCase:
+def _case_rowid_gap(db_path: Path) -> ValidationCase:
     def run() -> tuple[dict[str, Any], bool, list[str]]:
         gaps = detect_rowid_gaps(db_path, "messages")
         expected_gap = {
@@ -553,7 +553,7 @@ def _case_rowid_gap(con: sqlite3.Connection, db_path: Path) -> ValidationCase:
     )
 
 
-def _case_live_rows(con: sqlite3.Connection, db_path: Path) -> ValidationCase:
+def _case_live_rows(db_path: Path) -> ValidationCase:
     def run() -> tuple[dict[str, Any], bool, list[str]]:
         live = read_live_rows(db_path, "messages")
         blob = _flatten_carved_text(live)
@@ -796,9 +796,9 @@ def run_self_validation(
         con: Optional[sqlite3.Connection] = None
         try:
             con = _build_wal_db(db_path)
-            cases.append(_case_deleted_recovery(con, db_path))
-            cases.append(_case_rowid_gap(con, db_path))
-            cases.append(_case_live_rows(con, db_path))
+            cases.append(_case_deleted_recovery(db_path))
+            cases.append(_case_rowid_gap(db_path))
+            cases.append(_case_live_rows(db_path))
         except Exception as exc:  # noqa: BLE001
             # Fixture construction failed. Record it as a failed case; never skip.
             cases.append(

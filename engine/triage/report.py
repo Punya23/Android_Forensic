@@ -196,6 +196,18 @@ def generate_report(case_dir: str | Path) -> Path:
     search_history = case.read_derived("search_history") or []
     search_summary = case.read_derived("search_summary") or {}
     google_accounts = case.read_derived("google_accounts") or []
+    app_presence = case.read_derived("app_presence") or []
+    app_presence_summary = case.read_derived("app_presence_summary") or {}
+    android_users = case.read_derived("android_users") or []
+    antiforensic_findings = case.read_derived("antiforensic_findings") or []
+    antiforensics_summary = case.read_derived("antiforensics_summary") or {}
+    encrypted_apps = case.read_derived("encrypted_apps") or []
+    encrypted_apps_summary = case.read_derived("encrypted_apps_summary") or {}
+    fcm_records = case.read_derived("fcm_records") or []
+    recent_tasks = case.read_derived("recent_tasks") or []
+    task_snapshots = case.read_derived("task_snapshots") or []
+    recent_tasks_summary = case.read_derived("recent_tasks_summary") or {}
+    validation_report = case.read_derived("validation_report") or {}
 
     parts: list[str] = []
     parts.append(_HEAD)
@@ -628,6 +640,31 @@ def generate_report(case_dir: str | Path) -> Path:
         )
     )
 
+    # Deep artifact sections (P3-1..P3-4). Each renders nothing when its stage did not
+    # run, so a report from a Tier-0 acquisition is not padded with empty headings.
+    for _section, _args in (
+        (_app_presence_section, (app_presence, app_presence_summary)),
+        (
+            _antiforensics_section,
+            (android_users, antiforensic_findings, antiforensics_summary),
+        ),
+        (
+            _encrypted_apps_section,
+            (encrypted_apps, encrypted_apps_summary, fcm_records),
+        ),
+        (
+            _recent_tasks_section,
+            (recent_tasks, task_snapshots, recent_tasks_summary),
+        ),
+    ):
+        try:
+            parts.append(_section(*_args))
+        except Exception as exc:  # pragma: no cover - one bad dataset must not kill the report
+            parts.append(
+                f'<p class="note" style="color:#a5322f">A section could not be '
+                f"rendered ({_esc(_section.__name__)}): {_esc(exc)}</p>"
+            )
+
     # Messages preview
     if messages:
         parts.append("<h2>Messages (preview)</h2>")
@@ -737,6 +774,17 @@ def generate_report(case_dir: str | Path) -> Path:
     except Exception as exc:  # pragma: no cover - defensive
         parts.append(
             "<h2>Device state — pre/post acquisition</h2>"
+            f'<p class="note" style="color:#a5322f">Could not render: {_esc(exc)}</p>'
+        )
+
+    # Tool validation — what this build was demonstrated to do on the day of the
+    # acquisition. Placed with the custody material, before the certificate, because a
+    # certificate is only worth what the instrument behind it can be shown to do.
+    try:
+        parts.append(_validation_section(validation_report))
+    except Exception as exc:  # pragma: no cover - defensive
+        parts.append(
+            "<h2>Tool validation</h2>"
             f'<p class="note" style="color:#a5322f">Could not render: {_esc(exc)}</p>'
         )
 
@@ -1187,6 +1235,258 @@ def _activity_section(
                 f"<td class='mono'>{_esc(a.get('last_sync') or '')}</td></tr>"
             )
         parts.append("</table>")
+    return "\n".join(parts)
+
+
+def _app_presence_section(correlated: list, summary: dict) -> str:
+    """Persistent app-presence / execution evidence that survives uninstall (P3-1)."""
+    if not correlated:
+        return ""
+    gone = [
+        c
+        for c in correlated
+        if isinstance(c, dict) and not c.get("currently_installed") and c.get("ever_installed")
+    ]
+    parts = ["<h2>App presence &amp; execution (persistent stores, root)</h2>"]
+    parts.append(
+        f'<p class="note">{_esc(len(correlated))} package(s) reconstructed from stores '
+        "that outlive an uninstall (<span class='mono'>packages.xml</span>, the "
+        "<span class='mono'>usagestats</span> tree, and the Play-Protect APK-digest "
+        "database). <b>Installation evidence is not execution evidence</b>: a package is "
+        "only marked as executed where an actual foreground/resume event exists.</p>"
+    )
+    if gone:
+        parts.append(
+            f'<h3>Present on this device, since removed ({_esc(len(gone))})</h3>'
+            '<p class="note">These packages left evidence in a persistent store but are '
+            "not in the live package list. That is a structural finding that the app was "
+            "on the device and was subsequently uninstalled — it recovers no content.</p>"
+        )
+        parts.append(
+            "<table><tr><th>Package</th><th>Ever executed</th><th>First seen</th>"
+            "<th>Last seen</th><th>Events</th><th>Evidence</th></tr>"
+        )
+        for c in gone[:150]:
+            parts.append(
+                f"<tr><td class='mono'>{_esc(c.get('package'))}</td>"
+                f"<td>{'yes' if c.get('ever_executed') else 'no execution event'}</td>"
+                f"<td class='mono'>{_esc(c.get('first_seen') or '')}</td>"
+                f"<td class='mono'>{_esc(c.get('last_seen') or '')}</td>"
+                f"<td>{_esc(c.get('event_count', 0))}</td>"
+                f"<td>{_esc(', '.join(c.get('evidence_sources', []) or []))}</td></tr>"
+            )
+        parts.append("</table>")
+    if summary.get("statement"):
+        parts.append(f'<p class="note">{_esc(summary["statement"])}</p>')
+    parts.append(
+        '<p class="note">Caveats: device clock changes shift every timestamp here; '
+        "usagestats is per-Android-user, so a second profile has its own tree; and an "
+        "uninstall-then-reinstall resets the first-install time.</p>"
+    )
+    return "\n".join(parts)
+
+
+def _antiforensics_section(users: list, findings: list, summary: dict) -> str:
+    """Structural anti-forensics observations (P3-2). Observations only — never intent."""
+    if not (users or findings):
+        return ""
+    parts = ["<h2>Structural observations (containers, privacy apps, reset trace)</h2>"]
+    parts.append(
+        '<p class="note" style="color:#a5322f"><b>These are observations, not '
+        "conclusions about intent.</b> A work profile, a dual-app clone and a privacy or "
+        "encryption app all have entirely ordinary uses. Nothing in this section is "
+        "evidence that anyone tried to conceal anything; it identifies where data may "
+        "exist that this acquisition could not reach.</p>"
+    )
+    if users:
+        parts.append(
+            "<table><tr><th>User</th><th>Container</th><th>Likely feature</th>"
+            "<th>Extractable</th></tr>"
+        )
+        for u in users[:60]:
+            if not isinstance(u, dict):
+                continue
+            parts.append(
+                f"<tr><td class='mono'>{_esc(u.get('user_id'))} "
+                f"{_esc(u.get('name') or '')}</td>"
+                f"<td>{_esc(u.get('container_kind'))}</td>"
+                f"<td>{_esc(u.get('likely_feature') or '')}</td>"
+                f"<td>{_esc(u.get('extractable'))}</td></tr>"
+            )
+        parts.append("</table>")
+        parts.append(
+            '<p class="note">A container reported <i>present-locked</i> (for example a '
+            "Samsung Secure Folder) holds data that exists but is separately encrypted "
+            "and was not extracted. That is not an empty container.</p>"
+        )
+    if findings:
+        parts.append(
+            "<table><tr><th>Severity</th><th>Observation</th><th>Subject</th>"
+            "<th>Detail</th></tr>"
+        )
+        for f in findings[:150]:
+            if not isinstance(f, dict):
+                continue
+            sev = str(f.get("severity", "info"))
+            parts.append(
+                f"<tr><td>{_badge(sev.upper(), _SEV_COLORS.get(sev, _SEV_COLORS['info']))}</td>"
+                f"<td>{_esc(f.get('kind'))}</td>"
+                f"<td class='mono'>{_esc(f.get('subject'))}</td>"
+                f"<td>{_esc(f.get('detail'))}"
+                + (
+                    '<br><span class="note">'
+                    + _esc(" ".join(f.get("caveats", [])[:3]))
+                    + "</span>"
+                    if f.get("caveats")
+                    else ""
+                )
+                + "</td></tr>"
+            )
+        parts.append("</table>")
+    if summary.get("innocent_explanations"):
+        parts.append(f'<p class="note">{_esc(summary["innocent_explanations"])}</p>')
+    return "\n".join(parts)
+
+
+def _encrypted_apps_section(artifacts: list, summary: dict, fcm: list) -> str:
+    """Present-but-not-recoverable encrypted app databases (P3-3)."""
+    if not (artifacts or fcm):
+        return ""
+    parts = ["<h2>Encrypted application data (present, content not recoverable)</h2>"]
+    parts.append(
+        '<p class="note"><b>Finding the database is the finding.</b> Signal, Threema, '
+        "Session and Wickr encrypt their local databases with SQLCipher under a key held "
+        "in the device's hardware Keystore. That key is non-exportable and bound to the "
+        "current boot, so a root-level copy of the file cannot be decrypted by this or "
+        "any other on-device software. The file's existence, size and timestamps are "
+        "evidence; its contents are not recoverable, and no attempt was made to guess "
+        "them.</p>"
+    )
+    if artifacts:
+        parts.append(
+            "<table><tr><th>App</th><th>Path</th><th>Size</th><th>Modified</th>"
+            "<th>Status</th></tr>"
+        )
+        for a in artifacts[:120]:
+            if not isinstance(a, dict):
+                continue
+            parts.append(
+                f"<tr><td>{_esc(a.get('app'))}</td>"
+                f"<td class='mono'>{_esc(a.get('path'))}</td>"
+                f"<td>{_esc(a.get('size_bytes', 0))} B</td>"
+                f"<td class='mono'>{_esc(a.get('modified') or '')}</td>"
+                f"<td>{_esc(a.get('status'))}</td></tr>"
+            )
+        parts.append("</table>")
+    not_acquired = summary.get("not_acquired") or summary.get("paths_not_acquired")
+    if not_acquired:
+        parts.append(
+            '<p class="note">Some catalogued paths were never pulled by this '
+            "acquisition. They are reported as <i>not acquired</i>, which is different "
+            "from being absent from the device — no claim is made either way.</p>"
+        )
+    if fcm:
+        parts.append(
+            f'<h3>Push-delivery fragments ({_esc(len(fcm))})</h3>'
+            '<p class="note">Raw fragments from the Google Play services push-delivery '
+            "queue. These are not decrypted messages: for end-to-end-encrypted "
+            "messengers the payload body is itself encrypted or absent by design, so "
+            "only routing metadata is legible.</p>"
+        )
+    return "\n".join(parts)
+
+
+def _recent_tasks_section(tasks: list, snapshots: list, summary: dict) -> str:
+    """App-switcher tasks and snapshots, AFU-gated and volatile (P3-4)."""
+    if summary.get("skipped"):
+        return (
+            "<h2>Recent tasks &amp; screen snapshots</h2>"
+            f'<p class="note">Not read. {_esc(summary.get("reason", ""))} This is a '
+            "limitation of the acquisition, not a finding that no recent tasks existed."
+            "</p>"
+        )
+    if not (tasks or snapshots):
+        return ""
+    parts = ["<h2>Recent tasks &amp; screen snapshots</h2>"]
+    parts.append(
+        f'<p class="note">{_esc(len(tasks))} task(s) and {_esc(len(snapshots))} '
+        "snapshot(s) catalogued. <b>Highly volatile:</b> the recents list is cleared by "
+        "swipe-away, force-stop, reboot and low-memory trim, so absence proves nothing. "
+        "A snapshot's timestamp is the file's modification time, not the moment a user "
+        "looked at the screen, and windows marked FLAG_SECURE render blank or "
+        "substituted — an empty-looking snapshot is not evidence of an empty screen. "
+        "Snapshot images are catalogued, not reproduced here.</p>"
+    )
+    if tasks:
+        parts.append(
+            "<table><tr><th>Task</th><th>Activity</th><th>Launched by</th>"
+            "<th>Last moved</th></tr>"
+        )
+        for t in tasks[:150]:
+            if not isinstance(t, dict):
+                continue
+            parts.append(
+                f"<tr><td class='mono'>{_esc(t.get('task_id'))}</td>"
+                f"<td class='mono'>{_esc(t.get('real_activity') or '')}</td>"
+                f"<td class='mono'>{_esc(t.get('calling_package') or '')}</td>"
+                f"<td class='mono'>{_esc(t.get('last_time_moved') or '')}</td></tr>"
+            )
+        parts.append("</table>")
+    return "\n".join(parts)
+
+
+def _validation_section(report: dict) -> str:
+    """Known-answer self-test + CFTT coverage recorded for this acquisition (P2-4)."""
+    if not isinstance(report, dict) or not report:
+        return (
+            "<h2>Tool validation</h2>"
+            '<p class="note">No validation record was produced for this case. Do not '
+            "treat that as a pass — the tool's known-answer self-test did not run.</p>"
+        )
+    cases = report.get("cases", []) or []
+    passed = sum(1 for c in cases if isinstance(c, dict) and c.get("passed"))
+    cov = report.get("coverage_summary", {}) or {}
+    counts = cov.get("counts", cov) if isinstance(cov, dict) else {}
+
+    parts = ["<h2>Tool validation (known-answer test, run for this acquisition)</h2>"]
+    parts.append(
+        f'<p class="note"><b>{_esc(passed)} of {_esc(len(cases))}</b> known-answer '
+        "case(s) passed at the time of this acquisition. The suite deliberately includes "
+        "a negative control that MUST fail; a run in which everything passes means the "
+        "control is broken, not that the tool is perfect.</p>"
+    )
+    if cases:
+        parts.append("<table><tr><th>Case</th><th>Result</th><th>Description</th></tr>")
+        for c in cases[:60]:
+            if not isinstance(c, dict):
+                continue
+            ok = bool(c.get("passed"))
+            parts.append(
+                f"<tr><td class='mono'>{_esc(c.get('case_id'))}</td>"
+                f"<td>{_badge('PASS' if ok else 'FAIL', ('#1c7d3f', '#e4f4ea') if ok else ('#a5322f', '#f6dedd'))}</td>"
+                f"<td>{_esc(c.get('description'))}</td></tr>"
+            )
+        parts.append("</table>")
+    if counts:
+        parts.append(
+            '<p class="note">NIST CFTT coverage: '
+            + _esc(
+                ", ".join(f"{k}={v}" for k, v in counts.items() if not isinstance(v, dict))
+            )
+            + ". Assertions marked not-met are listed as such rather than omitted.</p>"
+        )
+    limits = report.get("limitations") or []
+    if limits:
+        parts.append("<h3>Declared limitations</h3><ul>")
+        for lim in limits[:40]:
+            parts.append(f'<li class="note">{_esc(lim)}</li>')
+        parts.append("</ul>")
+    parts.append(
+        '<p class="note"><b>Producing a validation report is not the same as being '
+        "validated.</b> This is the tool testing itself; SWGDE 18-Q-001 recommends the "
+        "tester be independent of the developer, and no independent validation is "
+        "evidenced here.</p>"
+    )
     return "\n".join(parts)
 
 
