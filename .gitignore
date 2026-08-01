@@ -47,3 +47,8 @@ engine/_test_output/
 .coverage
 .coverage.*
 htmlcov/
+
+# Root-level pulled device evidence files
+/calllog.json
+/contacts.json
+/sms.json
