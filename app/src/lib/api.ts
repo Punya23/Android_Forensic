@@ -190,6 +190,15 @@ export const api = {
     tier2_snapchat?: boolean;
     tier2_wifi?: boolean;
     tier2_whatsapp_backup?: boolean;
+    // Deep system-artifact stages (root). Omitted => the engine's default (all off).
+    tier2_bt_config?: boolean;
+    tier2_app_presence?: boolean;
+    tier2_antiforensics?: boolean;
+    tier2_recent_tasks?: boolean;
+    // Tier-0 stages, on by default in the engine; send false to opt out.
+    wifi_live?: boolean;
+    scan_encrypted_apps?: boolean;
+    run_self_validation?: boolean;
   }): Promise<{ case_id: string; started: boolean }> => {
     const res = await fetch(`${BASE}/api/acquire`, {
       method: "POST",

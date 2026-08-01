@@ -78,7 +78,20 @@ def cmd_acquire(args) -> int:
         tier1_contacts=args.tier1_contacts,
         tier1_calllog=args.tier1_calllog,
         tier1_sms=args.tier1_sms,
+        tier1_collect_all=getattr(args, "tier1_collect_all", False),
         tier2_telegram=args.tier2_telegram,
+        tier2_instagram=getattr(args, "tier2_instagram", False),
+        tier2_snapchat=getattr(args, "tier2_snapchat", False),
+        tier2_wifi=getattr(args, "tier2_wifi", False),
+        tier2_whatsapp_backup=getattr(args, "tier2_whatsapp_backup", False),
+        # Deep artifact stages (see PipelineConfig for what each reads).
+        wifi_live=not getattr(args, "no_wifi_live", False),
+        scan_encrypted_apps=not getattr(args, "no_encrypted_app_scan", False),
+        run_self_validation=not getattr(args, "no_self_validation", False),
+        tier2_bt_config=getattr(args, "tier2_bt_config", False),
+        tier2_app_presence=getattr(args, "tier2_app_presence", False),
+        tier2_antiforensics=getattr(args, "tier2_antiforensics", False),
+        tier2_recent_tasks=getattr(args, "tier2_recent_tasks", False),
         case_description=getattr(args, "case_description", "") or "",
         case_number=getattr(args, "case_number", "") or "",
         llm_provider=getattr(args, "llm", "") or "",
@@ -164,6 +177,76 @@ def main(argv: list[str] | None = None) -> int:
         dest="no_learn",
         action="store_true",
         help="Do not feed this run's outcome back into the knowledge graph",
+    )
+
+    # -- Tier-1 / Tier-2 stages that existed but had no CLI switch -------------
+    a.add_argument(
+        "--tier1-collect-all",
+        action="store_true",
+        help="Tier 1 (STATE-CHANGING): helper APK dump_all — media inventory, apps, "
+        "accounts, calendar, usage. Installs an APK and grants permissions; both are "
+        "audited and reversed with verification.",
+    )
+    a.add_argument(
+        "--tier2-instagram", action="store_true", help="Root: pull and recover direct.db"
+    )
+    a.add_argument(
+        "--tier2-snapchat", action="store_true", help="Root: pull and recover arroyo.db"
+    )
+    a.add_argument(
+        "--tier2-wifi",
+        action="store_true",
+        help="Root: recover saved Wi-Fi credentials from the system config",
+    )
+    a.add_argument(
+        "--tier2-whatsapp-backup",
+        action="store_true",
+        help="Root: decrypt msgstore.db.crypt* backups",
+    )
+
+    # -- Deep artifact stages --------------------------------------------------
+    a.add_argument(
+        "--tier2-bt-config",
+        action="store_true",
+        help="Root: parse /data/misc/bluedroid/bt_config.conf. NOTE the bond "
+        "timestamps are pairing-record writes, NOT connection or co-location times.",
+    )
+    a.add_argument(
+        "--tier2-app-presence",
+        action="store_true",
+        help="Root: packages.xml + usagestats + gass.db — evidence that an app was "
+        "present or executed, which survives uninstall",
+    )
+    a.add_argument(
+        "--tier2-antiforensics",
+        action="store_true",
+        help="Root: enumerate Android users (work profiles / clones / Secure Folder), "
+        "privacy-app packages and the factory-reset trace. Observations only — the "
+        "output never asserts intent.",
+    )
+    a.add_argument(
+        "--tier2-recent-tasks",
+        action="store_true",
+        help="Root + AFU: /data/system_ce/0/recent_tasks and task snapshots. Skipped "
+        "with a stated reason on a BFU device (credential-encrypted, unreadable).",
+    )
+    a.add_argument(
+        "--no-wifi-live",
+        action="store_true",
+        help="Skip the non-root live Wi-Fi capture (dumpsys wifi/netstats/connectivity). "
+        "That data is volatile and is lost on reboot, so skipping it forfeits it.",
+    )
+    a.add_argument(
+        "--no-encrypted-app-scan",
+        action="store_true",
+        help="Skip cataloguing SQLCipher app databases. Without it, an encrypted "
+        "Signal/Threema database is indistinguishable from the app never being installed.",
+    )
+    a.add_argument(
+        "--no-self-validation",
+        action="store_true",
+        help="Skip the offline known-answer self-test. The case will then carry no "
+        "validation record — which is not a pass.",
     )
 
     args = p.parse_args(argv)

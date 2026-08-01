@@ -7,7 +7,18 @@ _Synthesised from a 12-axis deep web-research + adversarial-verification + 5-dim
 > Generated 2026-07-27 from workflow wf_959fec02-74c. Durable record of an ephemeral run.
 
 
-**Progress:** P0-correctness cluster COMPLETE — P0-1..P0-7 done, tested, committed (f2d2c74, 2dcf8cd, 0d039f4). Next: P1 capability (AFU/BFU gate, non-root Wi-Fi, bt_config.conf, timeline wiring, dead-parser wiring).
+**Progress:** ALL 23 roadmap items (P0, P1, P2, P3) are implemented and tested. See the per-item ✅ markers below.
+
+The do-not-build list at the bottom remains authoritative and unbuilt: there is still no slack-space /
+unallocated / raw-block carver, no bootloader-unlock path, no LSKF/FBE key attack, no claim of deleted-record
+recovery on a non-rooted device, and no attempt to decrypt SQLCipher app content. Those are dead ends, not
+backlog.
+
+What closing the roadmap does NOT establish: the tool has still never been validated against a ground-truthed
+reference image by an independent tester, and it has no characterised error rate. The self-validation harness
+(P2-4) produces the report structure and runs real known-answer tests, but SWGDE 18-Q-001 recommends the tester
+be independent of the developer — a tool testing itself cannot satisfy that. Treat the roadmap as complete and
+the instrument as unvalidated until that work is done.
 
 
 ---
@@ -124,7 +135,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 
 ### P1-capability
 
-#### P1-1 — AFU/BFU + FBE encryption-state detection as a first-class field gating CE-artifact claims
+#### P1-1 — AFU/BFU + FBE encryption-state detection as a first-class field gating CE-artifact claims ✅ DONE (commit b2f09b8) — forensics/encryption_state.py + `_ce_gate` on every Tier-2 CE pull; report section; dashboard Encryption view
 
 `feasibility=proven  effort=medium  requires_root=partial`
 
@@ -135,7 +146,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 - **Acceptance:** pre_state records android_sdk, ro.crypto.type (file/block/none), ro.crypto.state, and a derived AFU/BFU determination (readability of a known CE canary path); every CE-class artifact is tagged with that state, and on a BFU device CE sandboxes are reported 'present, encrypted, inaccessible (BFU)' rather than absent.
 
 
-#### P1-2 — Non-root live Wi-Fi capture via dumpsys (wifi/netstats/connectivity) with a labeled coarse timeline
+#### P1-2 — Non-root live Wi-Fi capture via dumpsys (wifi/netstats/connectivity) with a labeled coarse timeline ✅ DONE (commit b2f09b8) — parsers/wifi_live.py; every netstats row labelled approximate/hour-bucketed; dashboard WifiLive view
 
 `feasibility=proven  effort=medium  requires_root=no`
 
@@ -146,7 +157,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 - **Acceptance:** On a non-rooted authorized device the run captures current + saved + scanned SSIDs/BSSIDs and a coarse netstats connection timeline, each labeled volatile/approximate (hour-bucketed); WifiNetwork.timestamp is populated where available; connection times explicitly flagged not-authoritative.
 
 
-#### P1-3 — Root-tier Bluetooth bond store (bt_config.conf) with correct timestamp labeling + OUI resolution
+#### P1-3 — Root-tier Bluetooth bond store (bt_config.conf) with correct timestamp labeling + OUI resolution ✅ DONE — parsers/bt_config.py + parsers/oui.py; bond timestamps labelled 'pairing-record write, NOT connection/co-location'; link keys recorded as present, never displayed
 
 `feasibility=proven  effort=medium  requires_root=yes`
 
@@ -157,7 +168,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 - **Acceptance:** On a rooted device bt_config.conf (+ .bak) is pulled and parsed into per-device bond records (Name, Address, DevClass, DevType, AddrType, Timestamp) with timestamps explicitly labeled 'bond/first-pair, NOT connection/co-location'; OUI vendor resolved only for AddrType=0 classic devices; link keys stored-but-never-displayed; unknown Gabeldorsche keys handled gracefully.
 
 
-#### P1-4 — Wire Bluetooth + cell-tower into the unified timeline and add dashboard views
+#### P1-4 — Wire Bluetooth + cell-tower into the unified timeline and add dashboard views ✅ DONE (commit dbab739) — BT + celltower reach the unified timeline, the report, and dedicated dashboard views; summaries wired
 
 `feasibility=proven  effort=small  requires_root=no`
 
@@ -168,7 +179,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 - **Acceptance:** BT and celltower events appear in the unified timeline; each has a dashboard view and sidebar entry; get_*_summary render in the report.
 
 
-#### P1-5 — Emit rowid-gap / live-vs-recovered 'deletion detected' as a confidence-tagged evidence class
+#### P1-5 — Emit rowid-gap / live-vs-recovered 'deletion detected' as a confidence-tagged evidence class ✅ DONE — DeletionEvidence emitted with Confidence.DELETION_DETECTED across 5 named mechanisms, each carrying false-positive causes
 
 `feasibility=proven  effort=small  requires_root=partial`
 
@@ -179,7 +190,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 - **Acceptance:** rowid gaps and live-vs-recovered set differences surface as DELETION_DETECTED rows with the mechanism named and false-positive caveats disclosed (rolled-back transactions, WITHOUT ROWID tables, per-thread vs global counters); rendered distinctly from recovered content.
 
 
-#### P1-6 — Follow SQLite overflow-page chains in record recovery
+#### P1-6 — Follow SQLite overflow-page chains in record recovery ✅ DONE — SQLite overflow-page chains followed with cycle/range guards; an incomplete chain downgrades the row to CARVED_PARTIAL and marks it truncated
 
 `feasibility=plausible  effort=medium  requires_root=no`
 
@@ -190,7 +201,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 - **Acceptance:** A record with a column spilled to an overflow page is reconstructed fully when the overflow pages are intact, and explicitly marked truncated when an overflow page was reused/unavailable; test with a >1-page TEXT value in both live and carved contexts.
 
 
-#### P1-7 — Wire the dead-but-tested parsers into the run path (google_maps, google_search, screen_time, signal)
+#### P1-7 — Wire the dead-but-tested parsers into the run path (google_maps, google_search, screen_time, signal) ✅ DONE (commit dbab739) — google_maps / google_search / screen_time / signal now invoked by run_acquisition
 
 `feasibility=proven  effort=small  requires_root=partial`
 
@@ -204,7 +215,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 
 ### P2-compliance
 
-#### P2-1 — Replace IEA s.65B certificate with BSA s.63 (2023) Schedule form, dual-signature
+#### P2-1 — Replace IEA s.65B certificate with BSA s.63 (2023) Schedule form, dual-signature ✅ DONE (commit dbab739) — BSA 2023 s.63 Schedule Part A/B, dual signature; _section_65b deleted; forensics/section65b.py now raises
 
 `feasibility=proven  effort=medium  requires_root=no`
 
@@ -215,7 +226,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 - **Acceptance:** the report emits a BSA s.63 Schedule Part A/Part B certificate pre-filled with computed SHA-256 (MD5/SHA-1 optional), auto-captured IMEI/model/serial, IST 24-hr timestamp and place, and two signature blocks (custodian/IO + expert); labeled an illustrative template pending counsel review.
 
 
-#### P2-2 — Tamper-evident (hash-chained) audit log
+#### P2-2 — Tamper-evident (hash-chained) audit log ✅ DONE (commit dbab739) — forensics/audit_chain.py wired into Case.audit(); verdict in the report and VERIFICATION.txt
 
 `feasibility=proven  effort=medium  requires_root=no`
 
@@ -226,7 +237,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 - **Acceptance:** each AuditEvent stores prev_hash (hash of the previous event); a verifier detects any edit/reorder/deletion; the sealed export records the signed/printed chain head out-of-band; a test that mutates one line fails verification.
 
 
-#### P2-3 — Post-acquisition device-state snapshot + verified Tier-1 teardown
+#### P2-3 — Post-acquisition device-state snapshot + verified Tier-1 teardown ✅ DONE (commit dbab739) — triage/device_state.py: pre/post snapshot, ledger-driven verified teardown, 'unverified' as a first-class verdict
 
 `feasibility=proven  effort=medium  requires_root=no`
 
@@ -237,7 +248,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 - **Acceptance:** run_acquisition records a post_state (package present? perms still granted? appops set?), explicitly pm-revokes granted permissions and resets the appop, verifies uninstall, and the report shows a pre/post diff of every device-altering action.
 
 
-#### P2-4 — SWGDE 18-Q-001 validation report + CFTT MDT-CA coverage mapping against a ground-truthed reference image
+#### P2-4 — SWGDE 18-Q-001 validation report + CFTT MDT-CA coverage mapping against a ground-truthed reference image ✅ DONE (commit b2f09b8) — triage/validation/: offline known-answer harness with a negative control + honest CFTT coverage matrix; run per-case, plus GET /api/validation
 
 `feasibility=proven  effort=large  requires_root=no`
 
@@ -248,7 +259,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 - **Acceptance:** a machine-readable validation report is emitted per release with the 18-Q-001 fields and per-artifact pass/fail counts against a public reference image; the report includes a CFTT MDT-CA coverage table with unmet assertions honestly labeled.
 
 
-#### P2-5 — Correct capability-overclaim labels and remove result-fabricating dead code
+#### P2-5 — Correct capability-overclaim labels and remove result-fabricating dead code ✅ DONE (commit dbab739) — fabricated-success stubs deleted, role-swap labels corrected, transport-reuse counter renamed to what it measures
 
 `feasibility=proven  effort=small  requires_root=no`
 
@@ -262,7 +273,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 
 ### P3-breadth
 
-#### P3-1 — App-presence/execution evidence: gass.db + raw usagestats protobuf + packages.xml
+#### P3-1 — App-presence/execution evidence: gass.db + raw usagestats protobuf + packages.xml ✅ DONE (commit b2f09b8) — parsers/app_presence.py; 'present but since uninstalled' emitted as DELETION_DETECTED
 
 `feasibility=proven  effort=medium  requires_root=yes`
 
@@ -273,7 +284,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 - **Acceptance:** gass.db, usagestats protobuf (reusing ALEAPP schemas), and packages.xml are parsed on rooted/FFS; 'has the user ever run app X' is answered with persistence caveats and AFU/BFU tagging.
 
 
-#### P3-2 — Anti-forensics structural detection: work-profile / dual-app clones / Secure Folder, vault apps, factory-reset trace
+#### P3-2 — Anti-forensics structural detection: work-profile / dual-app clones / Secure Folder, vault apps, factory-reset trace ✅ DONE (commit b2f09b8) — parsers/antiforensics.py; observations only, every finding carries innocent explanations
 
 `feasibility=proven  effort=large  requires_root=yes`
 
@@ -284,7 +295,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 - **Acceptance:** non-zero Android users are enumerated and flagged as potential cloned/hidden containers (Secure Folder reported 'present, locked'); vault/anti-forensic packages surfaced including uninstalled ones; factory-reset timestamp reported from bootstat mtime; magic-byte carving offered to defeat extension-renamed vault media.
 
 
-#### P3-3 — FCM queued-message mining + 'encrypted-present, content-not-recoverable' reporting for SQLCipher apps
+#### P3-3 — FCM queued-message mining + 'encrypted-present, content-not-recoverable' reporting for SQLCipher apps ✅ DONE (commit b2f09b8) — parsers/encrypted_apps.py + parsers/fcm.py; encrypted-present reported as a finding, never as absence
 
 `feasibility=proven  effort=medium  requires_root=yes`
 
@@ -295,7 +306,7 @@ Effort/feasibility/root tags are the audit's own. Status added by us.
 - **Acceptance:** FCM queued payloads are parsed where present; Signal/Threema/Session DBs are reported 'present, encrypted (SQLCipher/Keystore), content not recoverable' with path/size/timestamps — never as empty/absent and never attempted-and-fabricated.
 
 
-#### P3-4 — recent_tasks + task snapshots (AFU-gated)
+#### P3-4 — recent_tasks + task snapshots (AFU-gated) ✅ DONE (commit b2f09b8) — parsers/recent_tasks.py + parsers/abx.py; BFU produces an explicit skip with a reason, never an empty list
 
 `feasibility=proven  effort=large  requires_root=yes`
 

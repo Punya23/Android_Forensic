@@ -537,6 +537,16 @@ def create_app(cases_root: Path = CASES_ROOT):
             tier2_whatsapp_backup_max_files=int(
                 body.get("tier2_whatsapp_backup_max_files", 5)
             ),
+            # Deep artifact stages. The Tier-0 ones default ON because they are
+            # read-only and cost nothing; every Tier-2 stage defaults OFF because it
+            # requires root and is opt-in by policy.
+            wifi_live=bool(body.get("wifi_live", True)),
+            scan_encrypted_apps=bool(body.get("scan_encrypted_apps", True)),
+            run_self_validation=bool(body.get("run_self_validation", True)),
+            tier2_bt_config=bool(body.get("tier2_bt_config", False)),
+            tier2_app_presence=bool(body.get("tier2_app_presence", False)),
+            tier2_antiforensics=bool(body.get("tier2_antiforensics", False)),
+            tier2_recent_tasks=bool(body.get("tier2_recent_tasks", False)),
             case_description=str(body.get("case_description", "") or ""),
             run_ai_analysis=bool(body.get("run_ai_analysis", True)),
             llm_provider=str(body.get("llm_provider", "") or ""),

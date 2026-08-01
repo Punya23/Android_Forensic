@@ -22,8 +22,9 @@ Limitations — read these before quoting any output
 * **Nothing here establishes intent.** Every container kind listed below has a mundane,
   supported, extremely common use (corporate MDM, a shared family tablet, two WhatsApp
   accounts, selling a phone). Every finding this module emits therefore carries at least one
-  innocent explanation in ``caveats``, and no function ever emits the words "concealment
-  proven", "guilty" or "deliberate".
+  innocent explanation in ``caveats`` — an invariant enforced in the dataclass itself, not
+  left to the call sites — and no finding text asserts that anything was concealed or that
+  any act was intentional.
 * **A locked container is not an empty container.** Samsung Secure Folder and a locked
   Android 15 Private Space are protected by keys this tool cannot reach on a running
   device. They are reported ``extractable="present-locked"``, never as absent or empty.
@@ -1660,13 +1661,18 @@ def identify_by_magic(path: Any) -> Optional[dict]:
             continue
         declared = p.suffix.lower().lstrip(".")
         allowed = _EXT_ALIASES.get(ext, {ext})
-        mismatch = bool(declared) and declared not in allowed
+        opaque = declared in OPAQUE_EXTENSIONS
+        # An opaque or absent extension makes no claim about content, so it cannot
+        # *contradict* it. Those files are reported separately (opaque-extension-media)
+        # rather than being folded into the mismatch count, which would inflate it.
+        mismatch = bool(declared) and not opaque and declared not in allowed
         return {
             "extension": ext,
             "mime": mime,
             "matched_offset": offset,
             "declared_extension": declared,
             "mismatch": mismatch,
+            "declared_extension_is_opaque": opaque,
             "matched_magic_hex": magic.hex(),
             "path": str(p),
         }

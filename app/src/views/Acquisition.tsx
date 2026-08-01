@@ -38,6 +38,12 @@ export function AcquisitionView({
   const [tier2Snapchat, setTier2Snapchat] = useState(false);
   const [tier2Wifi, setTier2Wifi] = useState(false);
   const [tier2WhatsappBackup, setTier2WhatsappBackup] = useState(false);
+  // Deep root-tier artifact stages. All default off: each requires root, and the
+  // examiner should choose them deliberately rather than inherit them.
+  const [tier2BtConfig, setTier2BtConfig] = useState(false);
+  const [tier2AppPresence, setTier2AppPresence] = useState(false);
+  const [tier2AntiForensics, setTier2AntiForensics] = useState(false);
+  const [tier2RecentTasks, setTier2RecentTasks] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<number | null>(null);
 
@@ -144,6 +150,10 @@ export function AcquisitionView({
         tier2_snapchat: target.kind === "real" ? tier2Snapchat : false,
         tier2_wifi: target.kind === "real" ? tier2Wifi : false,
         tier2_whatsapp_backup: target.kind === "real" ? tier2WhatsappBackup : false,
+        tier2_bt_config: target.kind === "real" ? tier2BtConfig : false,
+        tier2_app_presence: target.kind === "real" ? tier2AppPresence : false,
+        tier2_antiforensics: target.kind === "real" ? tier2AntiForensics : false,
+        tier2_recent_tasks: target.kind === "real" ? tier2RecentTasks : false,
       });
     } catch (e) {
       stopTimer();
@@ -594,6 +604,107 @@ export function AcquisitionView({
               </div>
             </div>
           </label>
+        </div>
+      </div>
+
+      {/* Deep system artifacts (root). Separated from app recovery because these read
+          OS-level stores rather than a messaging app's database, and each carries a
+          specific interpretation limit the examiner must know before enabling it. */}
+      <div className="card p-4 mb-4">
+        <div className="label mb-1">
+          Deep System Artifacts (root required, real device only)
+        </div>
+        <p className="text-xs text-muted mb-3">
+          OS-level stores that outlive app uninstalls and answer questions app databases
+          cannot. Each is copied read-only via <code className="text-accent">su</code> and
+          logged. Read the caveat on each one — they are easy to over-read.
+        </p>
+        <div className="space-y-3">
+          {[
+            {
+              key: "bt",
+              icon: "🔵",
+              label: "Bluetooth bond store",
+              checked: tier2BtConfig,
+              set: setTier2BtConfig,
+              body: (
+                <>
+                  Parses <code className="text-accent">bt_config.conf</code> for persistent
+                  pairings, device class and vendor. <strong>Caveat:</strong> a bond
+                  timestamp is when the pairing record was written — it is not a connection
+                  time and does not place two devices together at any later moment. Link
+                  keys are never displayed.
+                </>
+              ),
+            },
+            {
+              key: "presence",
+              icon: "🧩",
+              label: "App presence & execution",
+              checked: tier2AppPresence,
+              set: setTier2AppPresence,
+              body: (
+                <>
+                  Reads <code className="text-accent">packages.xml</code>, the{" "}
+                  <code className="text-accent">usagestats</code> tree and the Play-Protect
+                  APK-digest database, which survive an uninstall.{" "}
+                  <strong>Caveat:</strong> installation evidence is not execution evidence —
+                  execution is only claimed where a real foreground event exists.
+                </>
+              ),
+            },
+            {
+              key: "antiforensics",
+              icon: "🕵",
+              label: "User containers & privacy apps",
+              checked: tier2AntiForensics,
+              set: setTier2AntiForensics,
+              body: (
+                <>
+                  Enumerates Android users (work profiles, dual-app clones, Secure Folder),
+                  privacy/vault packages and the factory-reset trace.{" "}
+                  <strong>Caveat:</strong> these are structural observations, never
+                  conclusions about intent — a work profile or a privacy app has ordinary,
+                  lawful uses.
+                </>
+              ),
+            },
+            {
+              key: "recents",
+              icon: "🪟",
+              label: "Recent tasks & screen snapshots",
+              checked: tier2RecentTasks,
+              set: setTier2RecentTasks,
+              body: (
+                <>
+                  Catalogues <code className="text-accent">/data/system_ce/0/recent_tasks</code>{" "}
+                  and its snapshots. <strong>Requires AFU</strong> — on a device that has not
+                  been unlocked since boot this is skipped with a stated reason. Highly
+                  volatile: cleared by swipe-away, force-stop and reboot, so absence proves
+                  nothing.
+                </>
+              ),
+            },
+          ].map((t) => (
+            <label
+              key={t.key}
+              className="flex items-start gap-3 cursor-pointer border-t border-line pt-3 first:border-t-0 first:pt-0"
+            >
+              <input
+                type="checkbox"
+                className="mt-1"
+                disabled={!target || target.kind !== "real"}
+                checked={target?.kind === "real" ? t.checked : false}
+                onChange={(e) => t.set(e.target.checked)}
+              />
+              <div>
+                <div className="text-sm font-medium flex items-center gap-1.5">
+                  <span>{t.icon}</span> {t.label}
+                </div>
+                <div className="text-xs text-muted mt-1">{t.body}</div>
+              </div>
+            </label>
+          ))}
         </div>
       </div>
 

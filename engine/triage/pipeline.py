@@ -67,7 +67,12 @@ def _ce_gate(case: "Case", device_path: str, label: str) -> bool:
         verdict = gate_ce_artifact(state, device_path)
     except Exception:  # pragma: no cover - the gate must never block acquisition
         return True
-    if verdict.get("accessible", True):
+    # Block ONLY when inaccessibility is positively established (BFU). gate_ce_artifact
+    # also returns accessible=False for an UNDETERMINED state — correct as a *reporting*
+    # decision ("we cannot say"), but wrong as an *acquisition* decision: skipping a pull
+    # because detection failed would convert an unresolved probe into a recorded absence.
+    # When we do not know, we look, and the encryption section carries the uncertainty.
+    if verdict.get("unlock_state") != "bfu" or verdict.get("accessible", True):
         return True
     case.log(
         "tier2.ce_gate",
