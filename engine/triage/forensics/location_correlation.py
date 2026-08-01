@@ -14,7 +14,7 @@ a significance tier is derived from the score.
 
 Usage::
 
-    from engine.triage.forensics.location_correlation import (
+    from triage.forensics.location_correlation import (
         correlate_locations_with_messages,
         calculate_correlation_score,
         determine_significance,

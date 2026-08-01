@@ -17,7 +17,7 @@ Usage example
 -------------
 ::
 
-    from engine.triage.checkpoint import save_checkpoint, load_checkpoint, checkpoint_exists
+    from triage.checkpoint import save_checkpoint, load_checkpoint, checkpoint_exists
 
     if checkpoint_exists(case_dir):
         state = load_checkpoint(case_dir)

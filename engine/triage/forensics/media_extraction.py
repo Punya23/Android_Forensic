@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
-from engine.triage.adb import Adb
+from triage.adb import Adb
 
 logger = logging.getLogger(__name__)
 

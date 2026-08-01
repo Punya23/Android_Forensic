@@ -2,7 +2,7 @@
 
 Import from here for a stable, clean external interface::
 
-    from engine.triage.advanced import (
+    from triage.advanced import (
         AdvancedForensicFeatures,
         run_advanced_analysis,
     )

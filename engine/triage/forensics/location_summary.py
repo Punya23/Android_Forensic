@@ -15,7 +15,7 @@ The HTML report includes:
 
 Usage::
 
-    from engine.triage.forensics.location_summary import (
+    from triage.forensics.location_summary import (
         generate_location_summary,
         generate_location_html_summary,
     )

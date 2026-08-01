@@ -10,7 +10,7 @@ Processes a chronological list of GPS location dicts to calculate:
 
 Usage::
 
-    from engine.triage.forensics.movement_analysis import detect_movement_pattern
+    from triage.forensics.movement_analysis import detect_movement_pattern
 
     result = detect_movement_pattern(locations)
     # result == {

@@ -14,7 +14,7 @@ stored via ``case.write_derived``.
 
 Usage::
 
-    from engine.triage.forensics.location_anomaly import detect_location_anomalies
+    from triage.forensics.location_anomaly import detect_location_anomalies
 
     anomalies = detect_location_anomalies(locations)
 """

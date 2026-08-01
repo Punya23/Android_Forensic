@@ -8,7 +8,7 @@ compose cleanly with the rest of the forensics location-tracing subsystem.
 
 Typical usage::
 
-    from engine.triage.forensics.gps_clustering import cluster_gps_points
+    from triage.forensics.gps_clustering import cluster_gps_points
 
     locations = [{"lat": 28.61, "lon": 77.20, "timestamp": "2024-03-01T09:00:00Z"}, ...]
     clusters  = cluster_gps_points(locations, radius_km=0.5)

@@ -10,7 +10,7 @@ import logging
 import threading
 from typing import Any, Dict, List
 
-from engine.triage.adb import Adb
+from triage.adb import Adb
 
 logger = logging.getLogger(__name__)
 

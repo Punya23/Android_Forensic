@@ -11,8 +11,8 @@ Usage example
 -------------
 ::
 
-    from engine.triage.metrics import start_timer, stop_timer, track_stage_time
-    from engine.triage.metrics import get_performance_report, display_speed_metrics
+    from triage.metrics import start_timer, stop_timer, track_stage_time
+    from triage.metrics import get_performance_report, display_speed_metrics
 
     t0 = start_timer()
     # … do work …

@@ -11,7 +11,7 @@ Algorithm outline:
 
 Usage::
 
-    from engine.triage.forensics.place_identification import identify_places_from_locations
+    from triage.forensics.place_identification import identify_places_from_locations
 
     places = identify_places_from_locations(locations)
     # places == {'home': {...}, 'work': {...}, 'frequent_places': [...]}

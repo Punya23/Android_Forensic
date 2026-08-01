@@ -5,7 +5,7 @@ All numeric thresholds are exposed as module-level constants (prefixed
 
 Example::
 
-    from engine.triage.advanced.features import AdvancedForensicFeatures, CFG_PEAK_HOURS
+    from triage.advanced.features import AdvancedForensicFeatures, CFG_PEAK_HOURS
     CFG_PEAK_HOURS = (6, 23)   # extend quiet hours window
 
     aff = AdvancedForensicFeatures()

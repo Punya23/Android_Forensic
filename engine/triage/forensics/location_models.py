@@ -5,7 +5,7 @@ GPS coordinate validation is performed in ``__post_init__`` where applicable.
 
 Usage::
 
-    from engine.triage.forensics.location_models import (
+    from triage.forensics.location_models import (
         MediaLocation, LocationCluster, LocationAnomaly, LocationTrace
     )
 """

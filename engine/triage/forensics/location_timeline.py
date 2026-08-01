@@ -15,7 +15,7 @@ gracefully with a warning; the rest of the module remains fully functional.
 
 Usage::
 
-    from engine.triage.forensics.location_timeline import (
+    from triage.forensics.location_timeline import (
         build_location_timeline,
         plot_locations_on_map,
         generate_timeline_visualization,

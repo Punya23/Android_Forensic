@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
-from engine.triage.metrics import get_performance_report
+from triage.metrics import get_performance_report
 
 logger = logging.getLogger(__name__)
 

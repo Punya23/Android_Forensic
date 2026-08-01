@@ -26,7 +26,7 @@ Usage example
 -------------
 ::
 
-    from engine.triage.cache import get_cached_data, set_cached_data, clear_cache
+    from triage.cache import get_cached_data, set_cached_data, clear_cache
 
     data = get_cached_data(device_path)
     if data is None:
