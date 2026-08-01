@@ -361,7 +361,8 @@ _SERVICE_UUID_NAMES: dict[str, str] = {
 
 _MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}$")
 _HEX_BLOB_RE = re.compile(r"^[0-9a-fA-F]{16,}$")
-_SECRETISH_KEY_RE = re.compile(r"(key|ltk|irk|csrk|secret|salt|passkey|pin)", re.IGNORECASE)
+_BASE64ISH_RE = re.compile(r"^[A-Za-z0-9+/]{24,}={0,2}$")
+_SECRETISH_KEY_RE = re.compile(r"(key|ltk|irk|csrk|secret|salt|passkey)", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -393,17 +394,24 @@ def _sanitise_unknown_value(key: str, value: str) -> str:
     """Redact anything that could be key material before it enters output.
 
     Vendor forks invent their own keys, and we cannot know whether a given
-    unknown key holds a secret.  A long hex blob, or a key whose *name* smells
-    like key material, is replaced by a length description.  The key name and
-    the fact of its presence are always preserved.
+    unknown key holds a secret.  Redaction is driven by the *value's shape*
+    rather than by the key name alone (a name like ``UnknownVendorKey`` says
+    nothing about its content, and over-redacting would destroy evidence):
+
+    * any run of >= 16 hex characters is treated as a binary blob;
+    * a base64-looking value under a key whose name smells like key material is
+      treated as a wrapped secret.
+
+    The key name and the fact of its presence are always preserved, so a
+    redaction is visible in the output rather than a silent deletion.
     """
     value = value.strip()
     if not value:
         return ""
-    if _HEX_BLOB_RE.match(value) or _SECRETISH_KEY_RE.search(key):
-        if _HEX_BLOB_RE.match(value):
-            return f"<redacted binary blob: {len(value)} hex chars>"
-        return "<redacted: key-like property>"
+    if _HEX_BLOB_RE.match(value):
+        return f"<redacted binary blob: {len(value)} hex chars>"
+    if _SECRETISH_KEY_RE.search(key) and _BASE64ISH_RE.match(value):
+        return f"<redacted: key-like property, {len(value)} chars>"
     return value[:256]
 
 
