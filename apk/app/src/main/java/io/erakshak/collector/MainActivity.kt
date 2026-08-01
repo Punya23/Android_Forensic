@@ -1,9 +1,15 @@
 package io.erakshak.collector
 
+import android.Manifest
 import android.app.Activity
-import android.content.ContentResolver
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
+import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Typeface
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -13,7 +19,6 @@ import android.provider.CallLog
 import android.provider.ContactsContract
 import android.provider.Telephony
 import android.view.Gravity
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.ActivityCompat
@@ -25,14 +30,16 @@ import java.io.File
 /**
  * eRakshak Collector — Tier-1 forensic helper.
  *
- * Triggered by ADB:
- *   adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_contacts
- *   adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_calllog
- *   adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_sms
+ * Supported actions (trigger via ADB):
+ *   dump_contacts    → contacts.json
+ *   dump_calllog     → calllog.json
+ *   dump_sms         → sms.json
+ *   dump_wifi        → wifi.json   (saved networks + current association)
+ *   dump_bluetooth   → bluetooth.json (bonded + recently seen devices)
+ *   dump_all         → all of the above
  *
- * On real devices (OxygenOS/MIUI etc.) `pm grant` is blocked, so the app
- * requests permissions via the standard Android dialog on first launch.
- * Grant them once — subsequent ADB triggers work silently.
+ * Install with:
+ *   adb install -r -g app-debug.apk   (-g grants restricted perms at install time)
  */
 class MainActivity : Activity() {
 
@@ -41,22 +48,35 @@ class MainActivity : Activity() {
     companion object {
         private const val REQ_CODE = 1001
 
-        // All permissions the app may need — request all upfront on first launch
         private val ALL_PERMISSIONS = buildList {
-            add(android.Manifest.permission.READ_CONTACTS)
-            add(android.Manifest.permission.READ_CALL_LOG)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(android.Manifest.permission.READ_MEDIA_IMAGES)
-                add(android.Manifest.permission.READ_MEDIA_VIDEO)
-                add(android.Manifest.permission.READ_MEDIA_AUDIO)
+            add(Manifest.permission.READ_CONTACTS)
+            add(Manifest.permission.READ_CALL_LOG)
+            add(Manifest.permission.READ_SMS)
+            add(Manifest.permission.ACCESS_FINE_LOCATION)   // needed for WiFi SSID on Android 8.1+
+            add(Manifest.permission.ACCESS_WIFI_STATE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(Manifest.permission.BLUETOOTH_CONNECT)
+                add(Manifest.permission.BLUETOOTH_SCAN)
             } else {
-                add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                @Suppress("DEPRECATION")
+                add(Manifest.permission.BLUETOOTH)
+                @Suppress("DEPRECATION")
+                add(Manifest.permission.BLUETOOTH_ADMIN)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.READ_MEDIA_IMAGES)
+                add(Manifest.permission.READ_MEDIA_VIDEO)
+                add(Manifest.permission.READ_MEDIA_AUDIO)
+            } else {
+                add(Manifest.permission.READ_EXTERNAL_STORAGE)
             }
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             }
         }.toTypedArray()
     }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,169 +87,74 @@ class MainActivity : Activity() {
         }
 
         if (missing.isNotEmpty()) {
-            // Show permission request screen
             showPermissionScreen(missing)
             ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQ_CODE)
         } else {
-            // All permissions already granted — execute action directly
             executeAction(pendingAction)
         }
     }
 
     override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQ_CODE) {
             val denied = permissions.zip(grantResults.toTypedArray())
                 .filter { it.second != PackageManager.PERMISSION_GRANTED }
                 .map { it.first.substringAfterLast(".") }
-
-            if (denied.isEmpty()) {
-                executeAction(pendingAction)
-            } else {
-                showResultScreen(
-                    pendingAction ?: "setup",
-                    "DENIED: ${denied.joinToString(", ")}\n\nGrant permissions and try again."
-                )
-                // Don't finish — let user see the error
-            }
+            if (denied.isEmpty()) executeAction(pendingAction)
+            else showResultScreen(pendingAction ?: "setup",
+                "DENIED: ${denied.joinToString(", ")}\n\nPlease grant permissions and try again.")
         }
     }
 
-    // ── Core action executor ───────────────────────────────────────────────
+    // ── Action dispatcher ─────────────────────────────────────────────────
 
     private fun executeAction(action: String?) {
-        if (action == null) {
-            // Manual launch with all permissions — show status screen
-            showStatusScreen(allGranted = true)
-            return
-        }
+        if (action == null) { showStatusScreen(); return }
 
-        var statusMsg: String
-        try {
-            statusMsg = when (action) {
-                "dump_contacts" -> {
-                    val data = dumpContacts()
-                    writeJson("contacts.json", data)
-                    "contacts.json written (${data.length()} records)"
-                }
-                "dump_calllog" -> {
-                    val data = dumpCallLog()
-                    writeJson("calllog.json", data)
-                    "calllog.json written (${data.length()} records)"
-                }
-                "dump_sms" -> {
-                    val data = dumpSms()
-                    writeJson("sms.json", data)
-                    "sms.json written (${data.length()} records)"
-                }
-                else -> {
-                    writeJson("error.json",
-                        JSONArray().put(JSONObject().put("error", "unknown action: $action")))
-                    "ERROR: unknown action '$action'"
-                }
+        val results = mutableListOf<String>()
+        var hasError = false
+
+        fun run(name: String, block: () -> Pair<String, JSONArray>) {
+            try {
+                val (file, data) = block()
+                writeJson(file, data)
+                results += "✓ $file (${data.length()} records)"
+            } catch (e: SecurityException) {
+                writeErrorJson("$name.error.json", "SecurityException", e.message, action)
+                results += "✗ $name: permission denied"
+                hasError = true
+            } catch (e: Exception) {
+                writeErrorJson("$name.error.json", e.javaClass.simpleName, e.message, action)
+                results += "✗ $name: ${e.message}"
+                hasError = true
             }
-        } catch (e: SecurityException) {
-            val errArr = JSONArray().put(
-                JSONObject().put("error", "SecurityException")
-                    .put("message", e.message ?: "permission denied")
-                    .put("action", action)
-            )
-            runCatching { writeJson("$action.error.json", errArr) }
-            statusMsg = "PERMISSION DENIED: ${e.message}"
-        } catch (e: Exception) {
-            val errArr = JSONArray().put(
-                JSONObject().put("error", e.javaClass.simpleName)
-                    .put("message", e.message ?: "unknown error")
-                    .put("action", action)
-            )
-            runCatching { writeJson("$action.error.json", errArr) }
-            statusMsg = "ERROR: ${e.message}"
         }
 
-        showResultScreen(action, statusMsg)
-        Handler(Looper.getMainLooper()).postDelayed({ finish() }, 1800)
-    }
-
-    // ── UI screens ────────────────────────────────────────────────────────
-
-    private fun showPermissionScreen(missing: List<String>) {
-        val layout = buildLayout()
-
-        layout.addView(makeText("🔐 Permissions Required", 22f, Color.parseColor("#1A237E"), bold = true))
-        layout.addView(makeText("eRakshak needs the following permissions\nto collect forensic data:", 14f, Color.DKGRAY))
-
-        val permsText = missing.joinToString("\n") { "  • " + it.substringAfterLast(".") }
-        val box = TextView(this).apply {
-            text = permsText
-            textSize = 13f
-            setTextColor(Color.DKGRAY)
-            setBackgroundColor(Color.parseColor("#F5F5F5"))
-            setPadding(32, 24, 32, 24)
-            setTypeface(android.graphics.Typeface.MONOSPACE)
-        }
-        layout.addView(box)
-        layout.addView(makeText("\nA dialog will appear — tap Allow for each.", 13f, Color.parseColor("#555555")))
-
-        setContentView(layout)
-    }
-
-    private fun showStatusScreen(allGranted: Boolean) {
-        val layout = buildLayout()
-        layout.addView(makeText("eRakshak Collector", 22f, Color.parseColor("#1A237E"), bold = true))
-        layout.addView(makeText("Forensic Tier-1 Helper", 14f, Color.GRAY))
-
-        if (allGranted) {
-            layout.addView(makeText("\n✓ All permissions granted", 14f, Color.parseColor("#2E7D32")))
+        when (action) {
+            "dump_contacts"  -> run("contacts")  { "contacts.json"  to dumpContacts() }
+            "dump_calllog"   -> run("calllog")   { "calllog.json"   to dumpCallLog() }
+            "dump_sms"       -> run("sms")       { "sms.json"       to dumpSms() }
+            "dump_wifi"      -> run("wifi")      { "wifi.json"      to dumpWifi() }
+            "dump_bluetooth" -> run("bluetooth") { "bluetooth.json" to dumpBluetooth() }
+            "dump_all" -> {
+                run("contacts")  { "contacts.json"  to dumpContacts() }
+                run("calllog")   { "calllog.json"   to dumpCallLog() }
+                run("sms")       { "sms.json"       to dumpSms() }
+                run("wifi")      { "wifi.json"      to dumpWifi() }
+                run("bluetooth") { "bluetooth.json" to dumpBluetooth() }
+            }
+            else -> {
+                writeErrorJson("unknown_action.error.json", "UnknownAction", "unknown action: $action", action)
+                results += "✗ Unknown action: $action"
+                hasError = true
+            }
         }
 
-        val info = TextView(this).apply {
-            text = "Trigger via ADB:\n\n" +
-                    "adb shell am start \\\n" +
-                    "  -n io.erakshak.collector/.MainActivity \\\n" +
-                    "  --es action dump_contacts\n\n" +
-                    "Actions: dump_contacts | dump_calllog | dump_sms"
-            textSize = 12f
-            setTextColor(Color.DKGRAY)
-            setBackgroundColor(Color.parseColor("#F5F5F5"))
-            setPadding(32, 28, 32, 28)
-            setTypeface(android.graphics.Typeface.MONOSPACE)
-        }
-        layout.addView(info)
-        layout.addView(makeText("\nv0.1.0 · Android ${Build.VERSION.RELEASE} · ${Build.MODEL}", 11f, Color.LTGRAY))
-        setContentView(layout)
+        showResultScreen(action, results.joinToString("\n"), hasError)
+        Handler(Looper.getMainLooper()).postDelayed({ finish() }, 2500)
     }
-
-    private fun showResultScreen(action: String, status: String) {
-        val layout = buildLayout()
-        val ok = !status.startsWith("ERROR") && !status.startsWith("PERMISSION") && !status.startsWith("DENIED")
-        val color = if (ok) Color.parseColor("#2E7D32") else Color.parseColor("#C62828")
-
-        layout.addView(makeText(if (ok) "✓ Done" else "✗ Failed", 28f, color, bold = true))
-        layout.addView(makeText("Action: $action", 13f, Color.GRAY))
-        layout.addView(makeText("\n$status", 13f, Color.DKGRAY))
-        setContentView(layout)
-    }
-
-    private fun buildLayout() = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        gravity = Gravity.CENTER
-        setPadding(64, 64, 64, 64)
-        setBackgroundColor(Color.WHITE)
-    }
-
-    private fun makeText(text: String, size: Float, color: Int, bold: Boolean = false) =
-        TextView(this).apply {
-            this.text = text
-            textSize = size
-            setTextColor(color)
-            gravity = Gravity.CENTER
-            setPadding(0, 8, 0, 8)
-            if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }
 
     // ── Content-provider dumps ────────────────────────────────────────────
 
@@ -243,11 +168,11 @@ class MainActivity : Activity() {
             ), null, null, null
         )?.use { cur ->
             val nameIdx = cur.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-            val numIdx = cur.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+            val numIdx  = cur.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
             while (cur.moveToNext()) {
                 out.put(JSONObject()
-                    .put("name", cur.getString(nameIdx) ?: "")
-                    .put("number", cur.getString(numIdx) ?: ""))
+                    .put("name",   cur.getString(nameIdx) ?: "")
+                    .put("number", cur.getString(numIdx)  ?: ""))
             }
         }
         return out
@@ -257,17 +182,16 @@ class MainActivity : Activity() {
         val out = JSONArray()
         contentResolver.query(
             CallLog.Calls.CONTENT_URI,
-            arrayOf(
-                CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME,
-                CallLog.Calls.TYPE, CallLog.Calls.DATE, CallLog.Calls.DURATION
-            ), null, null, "${CallLog.Calls.DATE} DESC"
+            arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME,
+                    CallLog.Calls.TYPE,   CallLog.Calls.DATE, CallLog.Calls.DURATION),
+            null, null, "${CallLog.Calls.DATE} DESC"
         )?.use { cur ->
             while (cur.moveToNext()) {
                 out.put(JSONObject()
-                    .put("number", cur.getString(0) ?: "")
-                    .put("name", cur.getString(1) ?: "")
-                    .put("type", cur.getInt(2))
-                    .put("date", cur.getLong(3))
+                    .put("number",   cur.getString(0) ?: "")
+                    .put("name",     cur.getString(1) ?: "")
+                    .put("type",     cur.getInt(2))
+                    .put("date",     cur.getLong(3))
                     .put("duration", cur.getInt(4)))
             }
         }
@@ -278,30 +202,226 @@ class MainActivity : Activity() {
         val out = JSONArray()
         contentResolver.query(
             Telephony.Sms.CONTENT_URI,
-            arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE, Telephony.Sms.TYPE),
+            arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY,
+                    Telephony.Sms.DATE,    Telephony.Sms.TYPE),
             null, null, "${Telephony.Sms.DATE} DESC"
         )?.use { cur ->
             while (cur.moveToNext()) {
                 out.put(JSONObject()
                     .put("address", cur.getString(0) ?: "")
-                    .put("body", cur.getString(1) ?: "")
-                    .put("date", cur.getLong(2))
-                    .put("type", cur.getInt(3)))
+                    .put("body",    cur.getString(1) ?: "")
+                    .put("date",    cur.getLong(2))
+                    .put("type",    cur.getInt(3)))
             }
         }
         return out
     }
 
+    // ── WiFi dump ─────────────────────────────────────────────────────────
+
+    private fun dumpWifi(): JSONArray {
+        val out = JSONArray()
+        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+
+        // 1. Currently connected network
+        @Suppress("DEPRECATION")
+        val info = wm.connectionInfo
+        if (info != null && info.networkId != -1) {
+            val ssid = info.ssid.trim('"')
+            out.put(JSONObject()
+                .put("type",     "current_connection")
+                .put("ssid",     ssid)
+                .put("bssid",    info.bssid ?: "")
+                .put("rssi",     info.rssi)
+                .put("link_speed_mbps", info.linkSpeed)
+                .put("ip_address", intToIp(info.ipAddress))
+                .put("frequency_mhz", info.frequency)
+                .put("hidden",   ssid.isEmpty()))
+        }
+
+        // 2. Saved / configured networks
+        @Suppress("DEPRECATION")
+        val configured = wm.configuredNetworks
+        if (configured != null) {
+            for (cfg in configured) {
+                val ssid = (cfg.SSID ?: "").trim('"')
+                out.put(JSONObject()
+                    .put("type",     "saved_network")
+                    .put("ssid",     ssid)
+                    .put("bssid",    cfg.BSSID ?: "")
+                    .put("network_id", cfg.networkId)
+                    .put("priority", cfg.priority)
+                    .put("hidden",   cfg.hiddenSSID)
+                    .put("status",   when(cfg.status) {
+                        android.net.wifi.WifiConfiguration.Status.CURRENT  -> "current"
+                        android.net.wifi.WifiConfiguration.Status.ENABLED  -> "enabled"
+                        android.net.wifi.WifiConfiguration.Status.DISABLED -> "disabled"
+                        else -> "unknown"
+                    }))
+            }
+        }
+
+        // 3. Recent scan results (APs visible right now)
+        @Suppress("DEPRECATION")
+        val scanResults = wm.scanResults
+        if (scanResults != null) {
+            for (sr in scanResults) {
+                out.put(JSONObject()
+                    .put("type",          "scan_result")
+                    .put("ssid",          sr.SSID ?: "")
+                    .put("bssid",         sr.BSSID ?: "")
+                    .put("capabilities",  sr.capabilities ?: "")
+                    .put("frequency_mhz", sr.frequency)
+                    .put("level_dbm",     sr.level)
+                    .put("timestamp_us",  sr.timestamp))
+            }
+        }
+
+        return out
+    }
+
+    private fun intToIp(ip: Int): String {
+        return "${ip and 0xff}.${ip shr 8 and 0xff}.${ip shr 16 and 0xff}.${ip shr 24 and 0xff}"
+    }
+
+    // ── Bluetooth dump ────────────────────────────────────────────────────
+
+    private fun dumpBluetooth(): JSONArray {
+        val out = JSONArray()
+        val btManager = applicationContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        val adapter   = btManager?.adapter ?: BluetoothAdapter.getDefaultAdapter()
+
+        if (adapter == null) {
+            out.put(JSONObject().put("error", "Bluetooth not available on this device"))
+            return out
+        }
+
+        // Adapter info
+        out.put(JSONObject()
+            .put("type",    "adapter")
+            .put("enabled", adapter.isEnabled)
+            .put("name",    safeBluetoothName(adapter))
+            .put("address", safeBluetoothAddress(adapter))
+            .put("state",   when(adapter.state) {
+                BluetoothAdapter.STATE_ON          -> "on"
+                BluetoothAdapter.STATE_OFF         -> "off"
+                BluetoothAdapter.STATE_TURNING_ON  -> "turning_on"
+                BluetoothAdapter.STATE_TURNING_OFF -> "turning_off"
+                else -> "unknown"
+            }))
+
+        // Bonded (paired) devices — persisted across sessions
+        val bondedDevices: Set<BluetoothDevice>? = try {
+            adapter.bondedDevices
+        } catch (e: SecurityException) { null }
+
+        bondedDevices?.forEach { dev ->
+            val obj = JSONObject()
+                .put("type",       "bonded_device")
+                .put("bond_state", "bonded")
+            try {
+                obj.put("name",    dev.name ?: "")
+                obj.put("address", dev.address ?: "")
+                obj.put("device_class", dev.bluetoothClass?.deviceClass ?: -1)
+                obj.put("device_type",  when(dev.type) {
+                    BluetoothDevice.DEVICE_TYPE_CLASSIC -> "classic"
+                    BluetoothDevice.DEVICE_TYPE_LE      -> "ble"
+                    BluetoothDevice.DEVICE_TYPE_DUAL    -> "dual"
+                    else -> "unknown"
+                })
+                obj.put("uuids", JSONArray().also { arr ->
+                    dev.uuids?.forEach { uuid -> arr.put(uuid.toString()) }
+                })
+            } catch (e: SecurityException) {
+                obj.put("name", "[permission_denied]")
+                obj.put("address", "[permission_denied]")
+            }
+            out.put(obj)
+        }
+
+        return out
+    }
+
+    private fun safeBluetoothName(adapter: BluetoothAdapter): String = try {
+        adapter.name ?: ""
+    } catch (e: SecurityException) { "[permission_denied]" }
+
+    private fun safeBluetoothAddress(adapter: BluetoothAdapter): String = try {
+        @Suppress("DEPRECATION") adapter.address ?: ""
+    } catch (e: SecurityException) { "[permission_denied]" }
+
+    // ── UI screens ────────────────────────────────────────────────────────
+
+    private fun showPermissionScreen(missing: List<String>) {
+        val layout = buildLayout()
+        layout.addView(makeText("🔐 Permissions Required", 22f, Color.parseColor("#1A237E"), bold = true))
+        layout.addView(makeText("Grant each permission when the dialog appears:", 14f, Color.DKGRAY))
+        val box = TextView(this).apply {
+            text = missing.joinToString("\n") { "  • " + it.substringAfterLast(".") }
+            textSize = 13f; setTextColor(Color.DKGRAY)
+            setBackgroundColor(Color.parseColor("#F5F5F5"))
+            setPadding(32, 24, 32, 24); typeface = Typeface.MONOSPACE
+        }
+        layout.addView(box)
+        setContentView(layout)
+    }
+
+    private fun showStatusScreen() {
+        val layout = buildLayout()
+        layout.addView(makeText("eRakshak Collector", 22f, Color.parseColor("#1A237E"), bold = true))
+        layout.addView(makeText("✓ All permissions granted — ready", 14f, Color.parseColor("#2E7D32")))
+        val info = TextView(this).apply {
+            text = "Actions:\n" +
+                "  dump_contacts\n  dump_calllog\n  dump_sms\n" +
+                "  dump_wifi\n  dump_bluetooth\n  dump_all"
+            textSize = 12f; setTextColor(Color.DKGRAY)
+            setBackgroundColor(Color.parseColor("#F5F5F5"))
+            setPadding(32, 28, 32, 28); typeface = Typeface.MONOSPACE
+        }
+        layout.addView(info)
+        setContentView(layout)
+    }
+
+    private fun showResultScreen(action: String, status: String, hasError: Boolean = false) {
+        val layout = buildLayout()
+        val color = if (hasError) Color.parseColor("#C62828") else Color.parseColor("#2E7D32")
+        layout.addView(makeText(if (hasError) "⚠ Partial" else "✓ Done", 28f, color, bold = true))
+        layout.addView(makeText("Action: $action", 13f, Color.GRAY))
+        layout.addView(makeText("\n$status", 13f, Color.DKGRAY))
+        setContentView(layout)
+    }
+
+    private fun buildLayout() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+        setPadding(64, 64, 64, 64); setBackgroundColor(Color.WHITE)
+    }
+
+    private fun makeText(text: String, size: Float, color: Int, bold: Boolean = false) =
+        TextView(this).apply {
+            this.text = text; textSize = size; setTextColor(color); gravity = Gravity.CENTER
+            setPadding(0, 8, 0, 8)
+            if (bold) setTypeface(typeface, Typeface.BOLD)
+        }
+
     // ── File write ────────────────────────────────────────────────────────
 
-    private fun writeJson(fileName: String, data: JSONArray) {
-        val dir: File = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    private fun getOutputDir(): File {
+        val dir = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val pub = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             if (pub.canWrite()) pub else getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: filesDir
         } else {
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         }
-        dir.mkdirs()
-        File(dir, fileName).writeText(data.toString(2), Charsets.UTF_8)
+        dir.mkdirs(); return dir
+    }
+
+    private fun writeJson(fileName: String, data: JSONArray) {
+        File(getOutputDir(), fileName).writeText(data.toString(2), Charsets.UTF_8)
+    }
+
+    private fun writeErrorJson(fileName: String, type: String, msg: String?, action: String) {
+        val arr = JSONArray().put(JSONObject()
+            .put("error", type).put("message", msg ?: "").put("action", action))
+        runCatching { File(getOutputDir(), fileName).writeText(arr.toString(2), Charsets.UTF_8) }
     }
 }
