@@ -273,6 +273,77 @@ def test_activity_section_absent_when_nothing_was_collected(case: Case):
 
 
 # ---------------------------------------------------------------------------
+# P1-5 — deletion detected as its own evidence class
+# ---------------------------------------------------------------------------
+def _msgstore_with_a_gap(tmp_path: Path) -> Path:
+    import sqlite3
+
+    db = tmp_path / "msgstore.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE message(_id INTEGER PRIMARY KEY, body TEXT)")
+    con.executemany(
+        "INSERT INTO message(_id, body) VALUES (?,?)",
+        [(i, f"message number {i}") for i in range(1, 41)],
+    )
+    con.commit()
+    con.execute("DELETE FROM message WHERE _id BETWEEN 10 AND 25")
+    con.commit()
+    con.close()
+    return db
+
+
+def test_deletion_evidence_is_collected_and_tagged(case: Case, tmp_path: Path):
+    from triage.pipeline import _collect_deletion_evidence
+
+    db = _msgstore_with_a_gap(tmp_path)
+    rec = case.ingest_file(
+        db,
+        source_path="/data/data/com.whatsapp/databases/msgstore.db",
+        tier="tier2",
+        method="root-su-cp",
+        category="database",
+    )
+    items = _collect_deletion_evidence([(case.root / rec.stored_path, rec)], [])
+
+    assert items, "a 16-row rowid gap must be detected"
+    assert {i["mechanism"] for i in items} >= {"rowid-gap"}
+    for i in items:
+        assert i["confidence"] == "deletion"
+        assert i["false_positive_causes"], "every finding must disclose its confounders"
+        assert i["device_path"].startswith("/data/data/com.whatsapp")
+
+
+def test_report_renders_deletion_evidence_apart_from_recovered_content(
+    case: Case, tmp_path: Path
+):
+    from triage.pipeline import _collect_deletion_evidence
+    from triage.recovery import deletion_evidence_summary
+
+    db = _msgstore_with_a_gap(tmp_path)
+    rec = case.ingest_file(
+        db,
+        source_path="/data/data/com.whatsapp/databases/msgstore.db",
+        tier="tier2",
+        method="root-su-cp",
+        category="database",
+    )
+    items = _collect_deletion_evidence([(case.root / rec.stored_path, rec)], [])
+    case.write_derived("deletion_evidence", items)
+    case.write_derived("deletion_evidence_summary", deletion_evidence_summary(items))
+
+    html = render(case)
+    assert "Deletion detected (no content recovered)" in html
+    assert "DELETION DETECTED" in html
+    # The whole point of the separate section: it must not read as recovered content.
+    assert "No content is recovered by these findings" in html
+    assert "Innocent explanations that produce the same signal" in html
+
+
+def test_no_deletion_evidence_renders_no_section(case: Case):
+    assert "Deletion detected" not in render(case)
+
+
+# ---------------------------------------------------------------------------
 # Robustness — a malformed derived dataset must not break the report
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize(

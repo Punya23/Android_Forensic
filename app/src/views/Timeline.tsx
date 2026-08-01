@@ -4,11 +4,27 @@ import { useDataset, fmtTs } from "../lib/hooks";
 import { ConfidenceBadge } from "../components/Badges";
 import { Filters, SectionHeader, EmptyState } from "../components/common";
 
+// Every event kind the engine's build_timeline() can emit. An unlisted kind still
+// renders (see the fallback at the row), but it loses its icon and colour, so anything
+// added on the engine side belongs here too.
 const KIND_META: Record<string, { icon: string; color: string }> = {
   message: { icon: "💬", color: "border-recovered" },
+  telegram_message: { icon: "✈", color: "border-recovered" },
+  telegram_media: { icon: "📎", color: "border-carved" },
   call: { icon: "📞", color: "border-live" },
   media: { icon: "🖼", color: "border-carved" },
+  media_inventory: { icon: "🗂", color: "border-carved" },
   location: { icon: "📍", color: "border-accent" },
+  calendar: { icon: "📅", color: "border-live" },
+  notification: { icon: "🔔", color: "border-accent" },
+  bluetooth: { icon: "🔵", color: "border-accent" },
+  // A bond event is a pairing record, not a connection — the engine words the summary
+  // accordingly; the distinct icon keeps it from reading as live connectivity.
+  bluetooth_bond: { icon: "🔗", color: "border-recovered" },
+  celltower: { icon: "📶", color: "border-muted" },
+  wifi: { icon: "📡", color: "border-accent" },
+  screen: { icon: "⏳", color: "border-live" },
+  search: { icon: "🔍", color: "border-accent" },
 };
 
 export function TimelineView({ caseId }: { caseId: string }) {

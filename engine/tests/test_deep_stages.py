@@ -400,6 +400,57 @@ def test_encrypted_app_scan_reports_present_not_absent(case: Case, tmp_path: Pat
     assert json.dumps(result)  # JSON-serialisable for the derived dataset
 
 
+BT_CONFIG = b"""[Adapter]
+Address = 11:22:33:44:55:66
+ScanMode = 21
+
+[AA:BB:CC:DD:EE:FF]
+Name = Pixel Buds Pro
+DevClass = 2360344
+DevType = 3
+AddrType = 0
+Timestamp = 1717000000
+LinkKey = 0123456789abcdef0123456789abcdef
+LinkKeyType = 4
+
+[7C:2E:BD:00:11:22]
+Name = Car Multimedia
+DevClass = 1032
+DevType = 1
+AddrType = 1
+Timestamp = 1717100000
+"""
+
+
+def test_bt_config_stage_never_leaks_link_key_material(case: Case, tmp_path: Path):
+    """Link keys are pairing secrets. Their presence is evidence; their bytes are not."""
+    adb = FakeAdb(device_files={"/data/misc/bluedroid/bt_config.conf": BT_CONFIG})
+    src = RealDeviceSource(adb)  # type: ignore[arg-type]
+    result = pipeline._run_tier2_bt_config(src, case, tmp_path / "stage", [])
+    assert len(result["bonds"]) == 2
+    assert "0123456789abcdef" not in json.dumps(result)
+
+
+def test_bt_config_bond_timestamps_are_labelled_as_pairing_records(case: Case, tmp_path: Path):
+    adb = FakeAdb(device_files={"/data/misc/bluedroid/bt_config.conf": BT_CONFIG})
+    src = RealDeviceSource(adb)  # type: ignore[arg-type]
+    result = pipeline._run_tier2_bt_config(src, case, tmp_path / "stage", [])
+    for bond in result["bonds"]:
+        meaning = (bond.get("timestamp_meaning") or "").lower()
+        assert meaning, "a bond timestamp with no stated meaning invites misreading"
+        assert "bond" in meaning or "pair" in meaning
+    # The audit line must carry the same caveat, since that is what ends up quoted.
+    detail = " ".join(e["detail"] for e in case.read_audit() if e["action"] == "tier2.bt_config")
+    assert "NOT connection or co-location times" in detail
+
+
+def test_bt_config_suppresses_vendor_for_a_random_address(case: Case, tmp_path: Path):
+    """An OUI lookup on a resolvable-private address names a vendor that isn't there."""
+    from triage.parsers.oui import lookup_vendor
+
+    assert lookup_vendor("7C:2E:BD:00:11:22", addr_type=1) is None
+
+
 def test_encrypted_app_scan_never_emits_message_content(case: Case, tmp_path: Path):
     root = tmp_path / "artifacts"
     sig = root / "data/data/org.thoughtcrime.securesms/databases"

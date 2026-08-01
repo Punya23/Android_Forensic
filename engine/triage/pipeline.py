@@ -207,6 +207,8 @@ from .aleapp import run_aleapp, promote_aleapp_results
 from .recovery import (
     recover_deleted_rows,
     detect_rowid_gaps,
+    detect_deletion_evidence,
+    deletion_evidence_summary,
     sqbrite_cross_check,
     map_columns_to_whatsapp,
     rows_meta_colnames,
@@ -1714,6 +1716,22 @@ def run_acquisition(
     case.write_derived("risk", risk)
     case.write_derived("throughput", throughput)
     case.write_derived("rowid_gaps", _collect_gaps(db_artifacts))
+    # P1-5: deletion detected as a first-class, confidence-tagged evidence class —
+    # rendered separately from recovered content because it proves a deletion occurred
+    # while recovering none of it.
+    _deletion_evidence = _collect_deletion_evidence(db_artifacts, recovered_rows)
+    case.write_derived("deletion_evidence", _deletion_evidence)
+    case.write_derived(
+        "deletion_evidence_summary", deletion_evidence_summary(_deletion_evidence)
+    )
+    if _deletion_evidence:
+        case.log(
+            "recovery.deletion_evidence",
+            f"{len(_deletion_evidence)} structural deletion finding(s) across "
+            f"{len({d.get('db_file') for d in _deletion_evidence})} database(s). These "
+            f"establish that records were deleted; they recover no content.",
+            tier=Tier.TIER0.value,
+        )
     # P1-4: the Bluetooth and cell-tower summaries were defined but never called, so the
     # datasets existed with nothing to interpret them. P1-7 adds the screen/search/Maps
     # equivalents. All are cheap derivations over data already collected.
@@ -2957,6 +2975,43 @@ def _dict_to_carved(d: dict):
         offset=d.get("offset"),
         warnings=d.get("warnings", []),
     )
+
+
+def _collect_deletion_evidence(
+    db_artifacts: list[tuple[Path, Any]], recovered_rows: list
+) -> list[dict[str, Any]]:
+    """Structural proof that data WAS deleted, even where no content survives (P1-5).
+
+    This is a distinct evidence class from recovered content and deliberately kept
+    separate from it. "Forty-one messages were deleted from this conversation and their
+    text is unrecoverable" is a strong, honest finding; folding it in with carved rows
+    would either inflate the recovered count or bury the finding entirely.
+
+    Every record names its mechanism and carries its own false-positive causes, because
+    each mechanism has real ones — a rowid gap can also come from a rolled-back
+    transaction or an explicit rowid insert, not only from a deletion.
+    """
+    out: list[dict[str, Any]] = []
+    by_db: dict[str, list] = {}
+    for row in recovered_rows or []:
+        src = (row or {}).get("source_file") if isinstance(row, dict) else None
+        if src:
+            by_db.setdefault(src, []).append(row)
+    for stored, rec in db_artifacts:
+        try:
+            items = detect_deletion_evidence(
+                stored, recovered_rows=by_db.get(stored.name, [])
+            )
+        except Exception as exc:  # a corrupt DB must not abort the pass
+            logger.debug("deletion-evidence scan failed for %s: %s", stored, exc)
+            continue
+        for item in items:
+            d = item.to_dict() if hasattr(item, "to_dict") else dict(item)
+            # Report the device path, not the workstation path — the examiner cares
+            # where the database lived on the phone.
+            d["device_path"] = getattr(rec, "source_path", str(stored))
+            out.append(d)
+    return out
 
 
 def _collect_gaps(db_artifacts: list[tuple[Path, Any]]) -> dict[str, Any]:

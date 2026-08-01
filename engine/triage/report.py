@@ -208,6 +208,8 @@ def generate_report(case_dir: str | Path) -> Path:
     task_snapshots = case.read_derived("task_snapshots") or []
     recent_tasks_summary = case.read_derived("recent_tasks_summary") or {}
     validation_report = case.read_derived("validation_report") or {}
+    deletion_evidence = case.read_derived("deletion_evidence") or []
+    deletion_evidence_summary = case.read_derived("deletion_evidence_summary") or {}
 
     parts: list[str] = []
     parts.append(_HEAD)
@@ -643,6 +645,7 @@ def generate_report(case_dir: str | Path) -> Path:
     # Deep artifact sections (P3-1..P3-4). Each renders nothing when its stage did not
     # run, so a report from a Tier-0 acquisition is not padded with empty headings.
     for _section, _args in (
+        (_deletion_evidence_section, (deletion_evidence, deletion_evidence_summary)),
         (_app_presence_section, (app_presence, app_presence_summary)),
         (
             _antiforensics_section,
@@ -1235,6 +1238,73 @@ def _activity_section(
                 f"<td class='mono'>{_esc(a.get('last_sync') or '')}</td></tr>"
             )
         parts.append("</table>")
+    return "\n".join(parts)
+
+
+def _deletion_evidence_section(items: list, summary: dict) -> str:
+    """Structural deletion findings — rendered apart from recovered content (P1-5).
+
+    Kept visually and semantically separate from the recovered-data table because it is a
+    different kind of claim. Recovered content says "here is what was deleted"; this says
+    "records were deleted here and their content is gone". The second is often the
+    stronger finding and is routinely lost when the two are merged.
+    """
+    if not items:
+        return ""
+    by_mech: dict[str, int] = {}
+    for i in items:
+        if isinstance(i, dict):
+            by_mech[i.get("mechanism", "unknown")] = (
+                by_mech.get(i.get("mechanism", "unknown"), 0) + 1
+            )
+
+    parts = ["<h2>Deletion detected (no content recovered)</h2>"]
+    parts.append(f'<p>{_badge("DELETION DETECTED", _CONF_COLORS["deletion"])}</p>')
+    parts.append(
+        f'<p class="note"><b>{_esc(len(items))}</b> structural finding(s) that records '
+        "were deleted. <b>No content is recovered by these findings</b> — they are "
+        "evidence that a deletion occurred, established from the database's own "
+        "structure, and are reported separately from any recovered text for that "
+        "reason. Mechanisms: "
+        + _esc(", ".join(f"{k} ({v})" for k, v in sorted(by_mech.items())))
+        + ".</p>"
+    )
+    parts.append(
+        "<table><tr><th>Database</th><th>Table</th><th>Mechanism</th><th>Missing</th>"
+        "<th>What it means</th></tr>"
+    )
+    for i in items[:200]:
+        if not isinstance(i, dict):
+            continue
+        rng = ""
+        if i.get("first_missing_rowid") is not None:
+            rng = f"{i.get('first_missing_rowid')}–{i.get('last_missing_rowid')}"
+        parts.append(
+            f"<tr><td class='mono'>{_esc(i.get('device_path') or i.get('db_file'))}</td>"
+            f"<td class='mono'>{_esc(i.get('table'))}</td>"
+            f"<td>{_esc(i.get('mechanism'))}</td>"
+            f"<td class='mono'>{_esc(i.get('missing_count', ''))}"
+            + (f" ({_esc(rng)})" if rng else "")
+            + f"</td><td>{_esc(i.get('description'))}</td></tr>"
+        )
+    parts.append("</table>")
+
+    causes: list[str] = []
+    for i in items:
+        if isinstance(i, dict):
+            for c in i.get("false_positive_causes", []) or []:
+                if c not in causes:
+                    causes.append(c)
+    if causes:
+        parts.append(
+            "<p class='note'><b>Innocent explanations that produce the same signal</b> "
+            "and must be excluded before relying on any finding above:</p><ul>"
+        )
+        for c in causes[:20]:
+            parts.append(f'<li class="note">{_esc(c)}</li>')
+        parts.append("</ul>")
+    if summary.get("statement"):
+        parts.append(f'<p class="note">{_esc(summary["statement"])}</p>')
     return "\n".join(parts)
 
 
