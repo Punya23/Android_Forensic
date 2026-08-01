@@ -32,6 +32,12 @@ export const api = {
   audit: (id: string) => get<AuditEvent[]>(`/api/case/${id}/audit`),
   tags: (id: string) => get<import("./types").Tag[]>(`/api/case/${id}/tags`),
   reportUrl: (id: string) => `${BASE}/api/case/${id}/report`,
+  regenerateReport: async (id: string): Promise<{ ok: boolean; error?: string }> => {
+    const res = await fetch(`${BASE}/api/case/${id}/report/regenerate`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+    return data as { ok: boolean };
+  },
   mediaUrl: (id: string, artifactId: string) => `${BASE}/api/case/${id}/media/${artifactId}`,
   exportUrl: (id: string) => `${BASE}/api/case/${id}/export/download`,
 

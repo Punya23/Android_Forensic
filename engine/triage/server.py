@@ -1044,13 +1044,31 @@ def create_app(cases_root: Path = CASES_ROOT):
     @app.get("/api/case/<case_id>/report")
     def case_report(case_id: str):
 
-        path = cases_root / case_id / "report.html"
+        path = cases_root / _safe(case_id) / "report.html"
 
         if not path.exists():
+            # Return a minimal 404 JSON so the UI can show a helpful message
+            # rather than the default Flask HTML error page.
+            return jsonify({"error": "report not yet generated", "hint": "POST to /report/regenerate"}), 404
 
-            abort(404)
+        return send_file(path.resolve(), mimetype="text/html")
 
-        return send_file(path.resolve())
+    @app.post("/api/case/<case_id>/report/regenerate")
+    def regenerate_report(case_id: str):
+        """(Re-)generate the HTML triage report for an existing case.
+
+        Called by the Report view's "Generate Report" button.  Safe to call
+        multiple times — each call overwrites ``report.html`` in the case dir.
+        """
+        from .report import generate_report
+
+        case = _open(cases_root, case_id)
+
+        try:
+            generate_report(case.root)
+            return jsonify({"ok": True, "path": str(case.root / "report.html")})
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
 
     # ---------------------------------------------------------
     # MEDIA
