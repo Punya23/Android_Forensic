@@ -79,7 +79,13 @@ class Adb:
         self._transport_proc: Optional[subprocess.Popen] = None
         self._transport_lock = threading.Lock()
         self._cmd_count: int = 0  # total commands run (for telemetry)
-        self._reused_count: int = 0  # commands where transport was already alive
+        # Commands dispatched while the keep-alive `adb shell` process was still running.
+        # HONEST NAMING (P2-5): this is NOT a count of reused connections. run() always
+        # spawns a fresh `subprocess.run`, so no per-command transport is ever reused; what
+        # this measures is how often the daemon-warming process was alive at dispatch time.
+        # It was previously exposed as "transport_reuses", which claimed an optimisation
+        # the code does not perform.
+        self._transport_alive_count: int = 0
 
     # -----------------------------------------------------------------------
     # Persistent transport — public interface
@@ -208,15 +214,17 @@ class Adb:
     def run(self, *args: str, timeout: int = 120, binary: bool = False) -> AdbResult:
         """Run an adb subcommand.  Never raises on device/adb errors.
 
-        If a persistent transport is alive, it is kept warm (connection reuse
-        is tracked for telemetry via ``_reused_count``).  The actual command is
-        always dispatched via a fresh ``subprocess.run`` call so the exact
-        command string can be audited.
+        The keep-alive ``adb shell`` process (if started) only keeps the ADB
+        *host-daemon* connection to the device from being torn down between
+        commands. The command itself is always dispatched via a fresh
+        ``subprocess.run`` so the exact command string can be audited — nothing
+        is multiplexed over the persistent process, so no connection is reused
+        at the per-command level.
         """
-        # Keep transport warm and track reuse.
+        # Keep the daemon connection warm; record whether it was alive at dispatch.
         self._cmd_count += 1
         if self.is_connected:
-            self._reused_count += 1
+            self._transport_alive_count += 1
         else:
             self._ensure_connected()
 
@@ -318,10 +326,21 @@ class Adb:
     # -- telemetry -----------------------------------------------------------
     @property
     def connection_stats(self) -> dict:
-        """Return connection-reuse telemetry for this session."""
+        """Return keep-alive telemetry for this session.
+
+        ``transport_alive_at_dispatch`` counts commands issued while the keep-alive
+        process was running. It is deliberately NOT called "reuses": every command
+        still spawns its own ``adb`` subprocess (see :meth:`run`), so this figure
+        must not be read as commands saved or connections multiplexed.
+        """
         return {
             "total_commands": self._cmd_count,
-            "transport_reuses": self._reused_count,
+            "transport_alive_at_dispatch": self._transport_alive_count,
+            "measures": (
+                "commands dispatched while the keep-alive adb-shell process was "
+                "running; NOT a count of reused connections — every command spawns "
+                "its own adb subprocess so the exact command string can be audited"
+            ),
             "is_connected": self.is_connected,
             "serial": self.serial,
         }

@@ -40,6 +40,24 @@ class AcquisitionSource(ABC):
     def pre_state(self) -> dict:
         """Pre-acquisition snapshot: locked?, battery, device time / skew, screen."""
 
+    def post_state(self) -> dict:
+        """Post-acquisition snapshot, taken after every stage (including Tier-1 teardown).
+
+        Its purpose is to evidence that a device altered by Tier 1 was returned to the
+        state in which it was received. The default implementation returns an explicit
+        "not captured" marker rather than an empty dict, so a source that cannot re-query
+        the device can never be mistaken for one that checked and found nothing changed.
+        """
+        return {
+            "phase": "post",
+            "probes": {},
+            "not_captured": True,
+            "reason": (
+                f"{type(self).__name__} does not implement post_state(); no "
+                "post-acquisition device query was performed."
+            ),
+        }
+
     @abstractmethod
     def shell_readonly(self, cmd: str) -> str:
         """Run a read-only shell command (e.g. dumpsys location) and return stdout."""

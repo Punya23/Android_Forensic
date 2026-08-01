@@ -8,7 +8,7 @@ export function ReportView({ caseId }: { caseId: string }) {
     <div className="p-6 h-full flex flex-col">
       <SectionHeader
         title="Triage Report"
-        sub="NIST/SWGDE-aligned, with Section 65B certificate block — printable to PDF from the browser"
+        sub="NIST/SWGDE-aligned, with a BSA 2023 s.63 Schedule certificate block (replaces the repealed IEA s.65B) — printable to PDF from the browser"
         right={
           <div className="flex gap-2">
             <a className="btn-ghost text-sm" href={url} target="_blank" rel="noreferrer">Open in new tab</a>

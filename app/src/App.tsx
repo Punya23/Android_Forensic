@@ -31,6 +31,21 @@ import { CalendarView } from "./views/Calendar";
 import { MediaInventoryView } from "./views/MediaInventory";
 import { DeletedMediaView } from "./views/DeletedMedia";
 import { WifiView } from "./views/WiFi";
+// Views for datasets the engine collects but previously never rendered (P1-1/3/4/7,
+// P2-3/4, P3-1..4). Grouped here so the set is obvious at a glance.
+import { WifiLiveView } from "./views/WifiLive";
+import { BluetoothView } from "./views/Bluetooth";
+import { CellTowerView } from "./views/CellTower";
+import { ScreenTimeView } from "./views/ScreenTime";
+import { SearchHistoryView } from "./views/SearchHistory";
+import { GoogleAccountsView } from "./views/GoogleAccounts";
+import { EncryptionView } from "./views/Encryption";
+import { DeviceStateView } from "./views/DeviceState";
+import { AppPresenceView } from "./views/AppPresence";
+import { AntiForensicsView } from "./views/AntiForensics";
+import { RecentTasksView } from "./views/RecentTasks";
+import { EncryptedAppsView } from "./views/EncryptedApps";
+import { ValidationView } from "./views/Validation";
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
@@ -88,6 +103,19 @@ export default function App() {
           {caseId && view === "report" && <ReportView caseId={caseId} />}
           {caseId && view === "telegram" && <TelegramView caseId={caseId} />}
           {caseId && view === "whatsapp_backup" && <WhatsAppBackupView caseId={caseId} />}
+          {caseId && view === "wifi_live" && <WifiLiveView caseId={caseId} />}
+          {caseId && view === "bluetooth" && <BluetoothView caseId={caseId} />}
+          {caseId && view === "celltower" && <CellTowerView caseId={caseId} />}
+          {caseId && view === "screentime" && <ScreenTimeView caseId={caseId} />}
+          {caseId && view === "search" && <SearchHistoryView caseId={caseId} />}
+          {caseId && view === "gaccounts" && <GoogleAccountsView caseId={caseId} />}
+          {caseId && view === "encryption" && <EncryptionView caseId={caseId} />}
+          {caseId && view === "devicestate" && <DeviceStateView caseId={caseId} />}
+          {caseId && view === "apppresence" && <AppPresenceView caseId={caseId} />}
+          {caseId && view === "antiforensics" && <AntiForensicsView caseId={caseId} />}
+          {caseId && view === "recenttasks" && <RecentTasksView caseId={caseId} />}
+          {caseId && view === "encryptedapps" && <EncryptedAppsView caseId={caseId} />}
+          {caseId && view === "validation" && <ValidationView caseId={caseId} />}
         </div>
       </main>
     </div>

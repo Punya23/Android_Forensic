@@ -19,6 +19,12 @@ export type ViewKey =
   | "accounts"
   | "calendar"
   | "wifi"
+  | "wifi_live"
+  | "bluetooth"
+  | "celltower"
+  | "screentime"
+  | "search"
+  | "gaccounts"
   | "locations"
   | "browser"
   | "timeline"
@@ -26,6 +32,13 @@ export type ViewKey =
   | "discovered"
   | "graph"
   | "tagged"
+  | "apppresence"
+  | "antiforensics"
+  | "recenttasks"
+  | "encryptedapps"
+  | "encryption"
+  | "devicestate"
+  | "validation"
   | "custody"
   | "report";
 
@@ -47,13 +60,26 @@ const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
   { key: "accounts", label: "Accounts", icon: "🔑" },
   { key: "calendar", label: "Calendar", icon: "📅" },
   { key: "wifi", label: "Wi-Fi Passwords", icon: "📶" },
+  { key: "screentime", label: "Screen & App Usage", icon: "⏳" },
+  { key: "search", label: "Search History", icon: "🔍" },
+  { key: "gaccounts", label: "Registered Accounts", icon: "👥" },
   { key: "locations", label: "Location Tracing", icon: "🗺" },
   { key: "browser", label: "Browser History", icon: "🌐" },
+  { key: "wifi_live", label: "Wi-Fi (live, non-root)", icon: "📡", group: "Connectivity" },
+  { key: "bluetooth", label: "Bluetooth", icon: "🔵" },
+  { key: "celltower", label: "Cell Towers", icon: "📶" },
   { key: "timeline", label: "Timeline", icon: "⏱", group: "Analysis" },
   { key: "recovered", label: "Recovered / Deleted", icon: "♻" },
   { key: "graph", label: "Social Graph", icon: "🕸" },
+  { key: "apppresence", label: "App Presence", icon: "🧩" },
+  { key: "antiforensics", label: "Anti-Forensics", icon: "🕵" },
+  { key: "recenttasks", label: "Recent Tasks", icon: "🪟" },
+  { key: "encryptedapps", label: "Encrypted Apps", icon: "🔐" },
   { key: "tagged", label: "Tagged Items", icon: "★" },
   { key: "custody", label: "Chain of Custody", icon: "🔒", group: "Forensics" },
+  { key: "encryption", label: "Encryption Posture", icon: "🛡" },
+  { key: "devicestate", label: "Device State (pre/post)", icon: "🔁" },
+  { key: "validation", label: "Tool Validation", icon: "✅" },
   { key: "knowledge", label: "Knowledge Base", icon: "📚" },
   { key: "report", label: "Report", icon: "📄" },
 ];

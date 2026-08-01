@@ -332,6 +332,37 @@ def _parse_usagestats(usagestats_output: str) -> List[Dict[str, Any]]:
     return list(apps.values())
 
 
+def merge_app_usage(
+    batterystats_output: str = "", usagestats_output: str = ""
+) -> List[Dict[str, Any]]:
+    """Merge already-captured ``batterystats`` and ``usagestats`` text into usage rows.
+
+    The text-in variant of :func:`get_app_usage`. The pipeline captures dumpsys output
+    through its :class:`AcquisitionSource` (so a mock corpus exercises the same code path
+    as a real phone) and has no ``Adb`` handle to pass, which is why this split exists.
+    Both arguments are optional — a missing source simply contributes nothing.
+    """
+    combined: Dict[str, Dict[str, Any]] = {}
+
+    if batterystats_output and batterystats_output.strip():
+        for entry in parse_battery_stats(batterystats_output):
+            combined[entry["package"]] = entry
+
+    if usagestats_output and usagestats_output.strip():
+        for entry in _parse_usagestats(usagestats_output):
+            pkg = entry["package"]
+            if pkg in combined:
+                if entry["foreground_ms"] > combined[pkg]["foreground_ms"]:
+                    combined[pkg]["foreground_ms"] = entry["foreground_ms"]
+                    combined[pkg]["foreground_min"] = entry["foreground_min"]
+                if entry.get("last_used"):
+                    combined[pkg]["last_used"] = entry["last_used"]
+            else:
+                combined[pkg] = entry
+
+    return sorted(combined.values(), key=lambda x: x["foreground_ms"], reverse=True)
+
+
 def get_app_usage(adb: Adb) -> List[Dict[str, Any]]:
     """Collect app usage from ``dumpsys batterystats`` and ``dumpsys usagestats``.
 

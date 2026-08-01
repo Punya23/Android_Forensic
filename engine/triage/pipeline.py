@@ -19,12 +19,28 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-import asyncio
 import time
 
 # Module logger. Several hash-integrity helpers reference `logger`; without this it
 # was an undefined name that would raise NameError the moment any of them ran.
 logger = logging.getLogger(__name__)
+
+# --- Tier-1 teardown ledger (P2-3) ------------------------------------------------
+# Tier-1 is strictly sequential within a run (install -> grant -> dump -> pull -> revert),
+# so a single run-scoped ledger is sufficient and keeps the four helper entry points from
+# each needing an extra threaded-through parameter. run_acquisition() resets it at the top
+# of every run; _tier1_teardown() consumes it. It records only actions that actually
+# SUCCEEDED, so teardown never issues a revoke for a grant that never took effect (that
+# would itself be an unnecessary device modification recorded against the examiner).
+_TIER1_LEDGER: Optional["TeardownLedger"] = None
+
+
+def _tier1_ledger() -> "TeardownLedger":
+    """Return the current run's teardown ledger, creating one if a helper runs early."""
+    global _TIER1_LEDGER
+    if _TIER1_LEDGER is None:
+        _TIER1_LEDGER = TeardownLedger()
+    return _TIER1_LEDGER
 
 from .priority import get_priority_files, should_pull_file
 from .metrics import (
@@ -58,6 +74,12 @@ from .config import (
     VIDEO_EXTS,
 )
 from .custody import Case, CaseMeta, DeviceInfo
+from .device_state import (
+    TeardownLedger,
+    device_state_summary,
+    diff_device_state,
+    verify_teardown,
+)
 from .flagging import (
     DEFAULT_KEYWORDS,
     KeywordRule,
@@ -86,9 +108,38 @@ from .parsers import (
     get_notification_history,
     parse_bluetooth_history,
     get_bluetooth_history,
+    get_bluetooth_summary,
     parse_celltower_history,
     get_celltower_history,
+    get_celltower_summary,
 )
+
+# P1-7: parsers that shipped fully written + unit-tested but were never called by
+# run_acquisition. Imported explicitly (rather than via the parsers package re-export)
+# so the call sites below are traceable back to the module that owns each format.
+from .parsers.screen_time import (
+    parse_screen_time,
+    merge_app_usage,
+    build_screen_timeline,
+    get_screen_time_summary,
+    detect_usage_patterns,
+)
+from .parsers.google_search import (
+    parse_google_accounts,
+    parse_browser_search_history,
+    parse_google_search_cache,
+    build_search_timeline,
+    get_search_summary,
+)
+from .parsers.google_maps import (
+    parse_current_location,
+    parse_google_takeout_location,
+    parse_maps_cache,
+    build_location_points,
+    get_location_summary as get_maps_location_summary,
+    detect_location_anomalies as detect_maps_anomalies,
+)
+from .parsers.signal import parse_signal_plaintext_db
 from .parsers.exif import extract_datetime
 from .parsers.collector import (
     parse_media_inventory,
@@ -147,8 +198,19 @@ class PipelineConfig:
     max_files: int = 5000  # safety cap for a field triage run
     capture_screenshot: bool = True  # manual-capture the current screen (read-only)
     tier1_contacts: bool = False  # run helper APK flow to collect contacts.json
-    tier1_calllog: bool = False  # run helper APK call-log role-swap (intrusive, logged)
-    tier1_sms: bool = False  # run helper APK SMS role-swap (intrusive, logged)
+    # NOTE (P2-5): these two flags used to be labelled "role-swap". That was wrong and
+    # over-stated what the code does. The implementation installs the Collector APK and
+    # issues `pm grant android.permission.READ_CALL_LOG` / `READ_SMS` — it never touches
+    # RoleManager and never makes the helper the default SMS handler. The grant succeeds
+    # because an adb-installed package is allowlisted for restricted permissions; if that
+    # allowlisting is absent the grant simply fails and the flow aborts (it does not fall
+    # back to a role change). Both remain state-changing and are audited as Tier 1.
+    tier1_calllog: bool = (
+        False  # helper APK + `pm grant READ_CALL_LOG` (state-changing, logged)
+    )
+    tier1_sms: bool = (
+        False  # helper APK + `pm grant READ_SMS` (state-changing, logged)
+    )
     tier1_collect_all: bool = (
         False  # run helper APK dump_all: media/apps/accounts/calendar/usage
     )
@@ -223,6 +285,8 @@ def run_acquisition(
         immediately (progressive display).
     """
     _metrics_reset()  # reset per-run metrics
+    global _TIER1_LEDGER
+    _TIER1_LEDGER = TeardownLedger()  # fresh teardown ledger for this run (P2-3)
     _run_t0 = start_timer()  # wall-clock start for the whole run
     _autosave_thread = None
 
@@ -330,6 +394,18 @@ def run_acquisition(
     notifications: list[dict] = []  # dumpsys notification --history
     bluetooth_devices: list[dict] = []  # dumpsys bluetooth_manager
     cell_towers: list[dict] = []  # dumpsys telephony.registry
+    # P1-7: these four parsers were fully written, exported and unit-tested but had ZERO
+    # call sites in run_acquisition, so screen/power events, Google account + search
+    # history, Maps location history and Signal were silently absent from every run.
+    screen_events: list[dict] = []  # dumpsys power — screen on/off / unlock events
+    screen_app_usage: list[dict] = []  # dumpsys usagestats/batterystats foreground usage
+    google_accounts: list[dict] = []  # dumpsys account — signed-in Google accounts
+    search_history: list[dict] = []  # Google + browser search queries
+    maps_locations: list[dict] = []  # Google Maps / location-history points
+    signal_result: dict = {}  # Signal: plaintext rows OR encrypted-present report
+    bluetooth_bonds: list[dict] = []  # bt_config.conf persistent bonds (Tier 2, P1-3)
+    bluetooth_bond_result: dict = {}  # adapter + bonds + caveats
+    encryption_state: dict = {}  # AFU/BFU + FBE determination (P1-1)
     wifi_networks: list = []  # Wi-Fi credentials (Tier-2 / root)
     wa_backup_messages: list = []  # WhatsApp backup recovered messages (Tier-2)
     wa_backup_media: list = []  # WhatsApp backup recovered media (Tier-2)
@@ -713,6 +789,203 @@ def run_acquisition(
                 tier=Tier.TIER0.value,
             )
 
+    # -- P1-7: screen/power events, Google accounts + search, Maps locations ---
+    # These four parsers were written, exported and unit-tested but never invoked, so
+    # every previous run silently omitted screen-unlock/power events, signed-in Google
+    # accounts, search history and Maps location history. All of it is Tier 0: read-only
+    # dumpsys plus already-pulled artifacts. Each stage degrades independently — a parser
+    # that finds nothing contributes an empty dataset, and a parser that raises is logged
+    # and skipped rather than aborting the acquisition.
+
+    # Screen on/off + per-app foreground usage (dumpsys power / batterystats / usagestats)
+    progress("screentime", 0.586, "Reading screen and app-usage events")
+    try:
+        dumpsys_power = source.shell_readonly("dumpsys power")
+        if dumpsys_power:
+            screen_events = parse_screen_time(dumpsys_power)
+        screen_app_usage = merge_app_usage(
+            source.shell_readonly("dumpsys batterystats"),
+            source.shell_readonly("dumpsys usagestats"),
+        )
+        if screen_events or screen_app_usage:
+            case.write_derived("screen_events", screen_events)
+            case.write_derived("screen_app_usage", screen_app_usage)
+            case.log(
+                "shell.dumpsys",
+                f"screen/usage captured ({len(screen_events)} screen events, "
+                f"{len(screen_app_usage)} apps)",
+                command="dumpsys power | batterystats | usagestats",
+                tier=Tier.TIER0.value,
+            )
+    except Exception as exc:
+        case.log(
+            "shell.dumpsys",
+            f"screen-time capture error: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+
+    # Signed-in Google accounts (dumpsys account)
+    progress("gaccounts", 0.587, "Reading signed-in accounts")
+    try:
+        dumpsys_account = source.shell_readonly("dumpsys account")
+        if dumpsys_account:
+            google_accounts = parse_google_accounts(dumpsys_account)
+            if google_accounts:
+                case.write_derived("google_accounts", google_accounts)
+                case.log(
+                    "shell.dumpsys",
+                    f"dumpsys account captured ({len(google_accounts)} accounts)",
+                    command="dumpsys account",
+                    tier=Tier.TIER0.value,
+                )
+    except Exception as exc:
+        case.log(
+            "shell.dumpsys",
+            f"account capture error: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+
+    # Search history: from already-pulled browser history DBs (Tier 0) plus, when the
+    # Google app cache was pulled at Tier 2, its residual query strings.
+    progress("search", 0.588, "Extracting search history")
+    try:
+        _seen_q: set = set()
+        for _stored, _rec in db_artifacts:
+            name = _stored.name.lower()
+            if "history" not in name and "browser" not in name:
+                continue
+            for row in parse_browser_search_history(_stored):
+                key = (row.get("query", "").lower(), row.get("timestamp", ""))
+                if key in _seen_q:
+                    continue
+                _seen_q.add(key)
+                search_history.append(row)
+        _gsb = staging / "gsb_cache"
+        if _gsb.exists():
+            for row in parse_google_search_cache(_gsb):
+                key = (row.get("query", "").lower(), row.get("timestamp", ""))
+                if key not in _seen_q:
+                    _seen_q.add(key)
+                    search_history.append(row)
+        if search_history:
+            search_history.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+            case.write_derived("search_history", search_history)
+            case.write_derived("search_summary", get_search_summary(search_history))
+            case.log(
+                "parse.search",
+                f"{len(search_history)} search queries recovered from browser history",
+                tier=Tier.TIER0.value,
+            )
+    except Exception as exc:
+        case.log(
+            "parse.search",
+            f"search-history parse error: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+
+    # Google Maps / location history: live fix from dumpsys location, plus any Takeout
+    # export or Maps cache present in the staged tree.
+    progress("maps", 0.589, "Extracting Maps / location history")
+    try:
+        if dumpsys:
+            cur = parse_current_location(dumpsys)
+            if cur and cur.get("latitude") is not None:
+                maps_locations.append(cur)
+        for takeout in list(staging.rglob("*ocation*istory*.json"))[:20]:
+            maps_locations.extend(parse_google_takeout_location(takeout))
+        _maps_cache = staging / "maps_cache"
+        if _maps_cache.exists():
+            maps_locations.extend(parse_maps_cache(_maps_cache))
+        if maps_locations:
+            case.write_derived("maps_locations", maps_locations)
+            case.write_derived(
+                "maps_location_summary", get_maps_location_summary(maps_locations)
+            )
+            case.write_derived(
+                "maps_location_anomalies", detect_maps_anomalies(maps_locations)
+            )
+            # Fold into the main LocationPoint set so the map view and timeline see them.
+            locations.extend(build_location_points(maps_locations))
+            case.log(
+                "parse.maps",
+                f"{len(maps_locations)} Maps/location-history points",
+                tier=Tier.TIER0.value,
+            )
+    except Exception as exc:
+        case.log(
+            "parse.maps",
+            f"Maps location parse error: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+
+    # Signal. The parser exists but had no call site, so a pulled Signal database fell
+    # through to the generic app-DB parser — which cannot read SQLCipher and therefore
+    # produced nothing, indistinguishable from "Signal was not on the device". Signal's
+    # key is held in the hardware Keystore, non-exportable and boot-bound, so a root pull
+    # captures the ciphertext and can never decrypt it. The only honest outputs are
+    # (a) rows, if the DB is genuinely plaintext (a decrypted export), or
+    # (b) "present, encrypted, content not recoverable" with the file's metadata.
+    progress("signal", 0.5895, "Checking for Signal databases")
+    try:
+        signal_msgs: list = []
+        signal_encrypted: list[dict] = []
+        for _stored, _rec in db_artifacts:
+            name = _stored.name.lower()
+            if "signal" not in name and name not in ("plaintext.db",):
+                continue
+            try:
+                header = _stored.open("rb").read(16)
+            except OSError:
+                header = b""
+            if header == b"SQLite format 3\x00":
+                signal_msgs.extend(parse_signal_plaintext_db(_stored))
+            else:
+                signal_encrypted.append(
+                    {
+                        "artifact_id": getattr(_rec, "artifact_id", ""),
+                        "path": getattr(_rec, "source_path", str(_stored)),
+                        "size_bytes": getattr(_rec, "size_bytes", 0),
+                        "status": (
+                            "present, encrypted (SQLCipher + hardware Keystore), "
+                            "content not recoverable"
+                        ),
+                        "recoverable": False,
+                        "reason": (
+                            "Signal encrypts its database with SQLCipher using a key held "
+                            "in the Android hardware Keystore. The key is non-exportable "
+                            "and boot-bound, so a root-level copy of this file cannot be "
+                            "decrypted by any on-device software, including this tool."
+                        ),
+                    }
+                )
+        if signal_msgs or signal_encrypted:
+            signal_result = {
+                "messages": [
+                    m.to_dict() if hasattr(m, "to_dict") else m for m in signal_msgs
+                ],
+                "encrypted_databases": signal_encrypted,
+            }
+            app_messages.extend(signal_msgs)
+            case.write_derived("signal", signal_result)
+            case.log(
+                "parse.signal",
+                f"Signal: {len(signal_msgs)} plaintext rows, "
+                f"{len(signal_encrypted)} encrypted database(s) reported as "
+                f"present-but-not-recoverable",
+                tier=Tier.TIER0.value,
+            )
+    except Exception as exc:
+        case.log(
+            "parse.signal",
+            f"Signal parse error: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+
     # -- ALEAPP broad artifact parsing -------------------------------------
     aleapp_result: dict = {
         "available": False,
@@ -1048,6 +1321,9 @@ def run_acquisition(
         notifications=notifications,
         bluetooth_devices=bluetooth_devices,
         cell_towers=cell_towers,
+        screen_events=screen_events,
+        searches=search_history,
+        bluetooth_bonds=bluetooth_bonds,
     )
 
     # -- analysis: social graph + risk verdict ------------------------------
@@ -1194,6 +1470,25 @@ def run_acquisition(
     case.write_derived("risk", risk)
     case.write_derived("throughput", throughput)
     case.write_derived("rowid_gaps", _collect_gaps(db_artifacts))
+    # P1-4: the Bluetooth and cell-tower summaries were defined but never called, so the
+    # datasets existed with nothing to interpret them. P1-7 adds the screen/search/Maps
+    # equivalents. All are cheap derivations over data already collected.
+    case.write_derived("bluetooth_summary", get_bluetooth_summary(bluetooth_devices))
+    case.write_derived("celltower_summary", get_celltower_summary(cell_towers))
+    case.write_derived("screen_events", screen_events)
+    case.write_derived("screen_app_usage", screen_app_usage)
+    case.write_derived(
+        "screen_time_summary", get_screen_time_summary(screen_events, screen_app_usage)
+    )
+    case.write_derived("usage_patterns", detect_usage_patterns(screen_app_usage))
+    case.write_derived("google_accounts", google_accounts)
+    case.write_derived("search_history", search_history)
+    case.write_derived("search_summary", get_search_summary(search_history))
+    case.write_derived("maps_locations", maps_locations)
+    case.write_derived("signal", signal_result)
+    case.write_derived("bluetooth_bonds", bluetooth_bonds)
+    case.write_derived("bluetooth_bond_report", bluetooth_bond_result)
+    case.write_derived("encryption_state", encryption_state)
     case.write_derived("aleapp", aleapp_result)
     case.write_derived("whatsapp_media", wa_media_items)  # NEW
     case.write_derived("advanced", advanced_result)  # NEW
@@ -1331,6 +1626,63 @@ def run_acquisition(
         socketio,
     )
 
+    # -- post-acquisition device state + Tier-1 reversal verification (P2-3) --
+    # Taken AFTER every stage (including Tier-1 teardown) and BEFORE the report, so the
+    # report can show the examiner a pre/post diff of every device-altering action. A
+    # snapshot that cannot be taken is recorded as such — never as an implied "unchanged".
+    progress("poststate", 0.95, "Capturing post-acquisition device state")
+    ledger = _tier1_ledger()
+    try:
+        post = source.post_state()
+    except Exception as exc:
+        post = {
+            "phase": "post",
+            "probes": {},
+            "not_captured": True,
+            "reason": f"post_state() failed: {exc}",
+        }
+    case.set_post_state(post)
+
+    try:
+        state_diff = diff_device_state(pre, post)
+    except Exception as exc:  # pragma: no cover - defensive
+        state_diff = {"error": str(exc), "unexpected_changes": [], "expected_drift": []}
+
+    # If Tier 1 ran, _tier1_teardown already verified reversal on the device; re-verify
+    # here so the case carries a final verdict even on runs where a helper aborted early.
+    try:
+        teardown_verdict = verify_teardown(source.shell_readonly, ledger)
+    except Exception as exc:  # pragma: no cover - defensive
+        teardown_verdict = {
+            "verdict": "unverified",
+            "residue": [],
+            "unverified": [f"verification failed: {exc}"],
+            "detail": "Reversal could not be verified; device state is unknown, not clean.",
+            "ledger": ledger.to_dict(),
+        }
+
+    device_state_record = {
+        "pre": pre,
+        "post": post,
+        "diff": state_diff,
+        "teardown": teardown_verdict,
+    }
+    device_state_record["summary"] = device_state_summary(device_state_record)
+    case.set_device_state_record(device_state_record)
+    case.write_derived("device_state", device_state_record)
+    case.log(
+        "device.poststate",
+        device_state_record["summary"]["statement"],
+        tier=Tier.TIER0.value,
+        result=(
+            "ok"
+            if device_state_record["summary"]["teardown_verdict"] == "clean"
+            else "error"
+        ),
+        teardown_verdict=device_state_record["summary"]["teardown_verdict"],
+        unexpected_differences=device_state_record["summary"]["unexpected_differences"],
+    )
+
     progress("report", 0.96, "Generating triage report")
     report_path = generate_report(case.root)
     case.log(
@@ -1394,8 +1746,22 @@ def run_acquisition(
                 ),
                 "notifications": len(notifications),
                 "bluetooth_devices": len(bluetooth_devices),
+                "bluetooth_bonds": len(bluetooth_bonds),
                 "cell_towers": len(cell_towers),
+                "screen_events": len(screen_events),
+                "screen_app_usage": len(screen_app_usage),
+                "google_accounts": len(google_accounts),
+                "search_history": len(search_history),
+                "maps_locations": len(maps_locations),
+                "signal_plaintext": len(signal_result.get("messages", [])),
+                "signal_encrypted_databases": len(
+                    signal_result.get("encrypted_databases", [])
+                ),
             },
+            # Encryption posture gates what a rooted acquisition can honestly claim, so it
+            # travels with the summary rather than being buried in a derived dataset.
+            "encryption_state": encryption_state,
+            "device_state": device_state_record.get("summary", {}),
             "case_profile": case_profile_dict,
             "ai_findings_summary": ai_findings.get("counts", {}) if ai_findings else {},
             "collection_plan_summary": (
@@ -3282,6 +3648,7 @@ def _run_tier1_calllog_helper(
         install,
         alters_device=True,
     )
+    _tier1_ledger().record_install(install.ok)
     if not install.ok:
         return [], set()
 
@@ -3293,6 +3660,7 @@ def _run_tier1_calllog_helper(
         grant,
         alters_device=True,
     )
+    _tier1_ledger().record_grant("android.permission.READ_CALL_LOG", grant.ok)
     if not grant.ok:
         _best_effort_uninstall(source, case, package)
         return [], set()
@@ -3305,6 +3673,12 @@ def _run_tier1_calllog_helper(
         dump,
         alters_device=True,
     )
+    # Record what the helper is about to write to shared storage so teardown can remove
+    # it. The file is examiner-created data on an evidence device; leaving it behind
+    # contaminates the device with artefacts of our own acquisition.
+    _tier1_ledger().record_activity(activity)
+    if dump.ok:
+        _tier1_ledger().record_device_file(remote_calllog)
     if not dump.ok:
         _best_effort_uninstall(source, case, package)
         return [], set()
@@ -3370,6 +3744,7 @@ def _run_tier1_sms_helper(
         install,
         alters_device=True,
     )
+    _tier1_ledger().record_install(install.ok)
     if not install.ok:
         return [], set()
 
@@ -3381,6 +3756,7 @@ def _run_tier1_sms_helper(
         grant,
         alters_device=True,
     )
+    _tier1_ledger().record_grant("android.permission.READ_SMS", grant.ok)
     if not grant.ok:
         _best_effort_uninstall(source, case, package)
         return [], set()
@@ -3393,6 +3769,9 @@ def _run_tier1_sms_helper(
         dump,
         alters_device=True,
     )
+    _tier1_ledger().record_activity(activity)
+    if dump.ok:
+        _tier1_ledger().record_device_file(remote_sms)
     if not dump.ok:
         _best_effort_uninstall(source, case, package)
         return [], set()
@@ -3458,10 +3837,12 @@ def _run_tier1_contacts_helper(
         install,
         alters_device=True,
     )
+    _tier1_ledger().record_install(install.ok)
     if not install.ok:
         return [], set()
 
     grant = source.adb.shell(f"pm grant {package} android.permission.READ_CONTACTS")
+    _tier1_ledger().record_grant("android.permission.READ_CONTACTS", grant.ok)
     _log_tier1_step(
         case,
         "tier1.helper.grant_contacts",
@@ -3481,6 +3862,9 @@ def _run_tier1_contacts_helper(
         dump,
         alters_device=True,
     )
+    _tier1_ledger().record_activity(activity)
+    if dump.ok:
+        _tier1_ledger().record_device_file(remote_contacts)
     if not dump.ok:
         _best_effort_uninstall(source, case, package)
         return [], set()
@@ -3562,6 +3946,7 @@ def _run_tier1_collect_all(
         install,
         alters_device=True,
     )
+    _tier1_ledger().record_install(install.ok)
     if not install.ok:
         return
 
@@ -3584,6 +3969,7 @@ def _run_tier1_collect_all(
             res,
             alters_device=True,
         )
+        _tier1_ledger().record_grant(perm, res.ok)
     # Usage-stats is a special access, enabled via appops rather than pm grant.
     appop = source.adb.shell(f"appops set {package} GET_USAGE_STATS allow")
     _log_tier1_step(
@@ -3593,6 +3979,7 @@ def _run_tier1_collect_all(
         appop,
         alters_device=True,
     )
+    _tier1_ledger().record_appop("GET_USAGE_STATS", appop.ok)
 
     dump = source.adb.shell(f"am start -n {activity} --es action dump_all")
     _log_tier1_step(
@@ -3602,6 +3989,19 @@ def _run_tier1_collect_all(
         dump,
         alters_device=True,
     )
+    _tier1_ledger().record_activity(activity)
+    if dump.ok:
+        for _out in (
+            "media_inventory.json",
+            "apps.json",
+            "accounts.json",
+            "calendar.json",
+            "usage.json",
+            "contacts.json",
+            "collector_manifest.json",
+            "device_extra.json",
+        ):
+            _tier1_ledger().record_device_file(f"/sdcard/Download/{_out}")
     if not dump.ok:
         _best_effort_uninstall(source, case, package)
         return
@@ -3672,7 +4072,59 @@ def _run_tier1_collect_all(
     _best_effort_uninstall(source, case, package)
 
 
-def _best_effort_uninstall(source: RealDeviceSource, case: Case, package: str) -> None:
+def _tier1_teardown(source: RealDeviceSource, case: Case, package: str) -> dict:
+    """Reverse every Tier-1 device modification recorded in the ledger, then VERIFY it.
+
+    The old behaviour was a lone ``adb uninstall`` whose failure was logged and then
+    ignored — so a failed uninstall silently left READ_CONTACTS / READ_SMS /
+    READ_CALL_LOG granted and the GET_USAGE_STATS appop set on an evidence device.
+
+    Order matters. Permissions and the appop are revoked BEFORE the uninstall, because a
+    failed uninstall would otherwise leave them in place; doing it in this order means the
+    grants are gone even in the worst case. The helper's own output files in shared
+    storage are removed too — they were written by the acquisition, not by the device
+    owner, and leaving them behind contaminates the device with examiner-created data.
+
+    Returns the verification verdict (also logged and stored on the case).
+    """
+    ledger = _tier1_ledger()
+    ledger.package = package
+
+    # 1. Revoke exactly the permissions this run actually obtained.
+    for perm in list(ledger.granted_permissions):
+        res = source.adb.shell(f"pm revoke {package} {perm}")
+        _log_tier1_step(
+            case,
+            "tier1.helper.revoke",
+            f"revoke {perm.rsplit('.', 1)[-1]} from collector helper (reversal)",
+            res,
+            alters_device=True,
+        )
+
+    # 2. Reset appops back to default rather than to a hard 'deny' — 'default' is the
+    #    state the device was in, and forcing 'deny' would be a different modification.
+    for op in list(ledger.appops_set):
+        res = source.adb.shell(f"appops set {package} {op} default")
+        _log_tier1_step(
+            case,
+            "tier1.helper.appops_reset",
+            f"reset {op} appop to default (reversal)",
+            res,
+            alters_device=True,
+        )
+
+    # 3. Remove the helper's output files from shared storage.
+    for path in list(ledger.files_written_to_device):
+        res = source.adb.shell(f"rm -f '{path}'")
+        _log_tier1_step(
+            case,
+            "tier1.helper.rm_output",
+            f"remove helper output {path} written during acquisition (reversal)",
+            res,
+            alters_device=True,
+        )
+
+    # 4. Uninstall the helper.
     uninstall = source.adb.run("uninstall", package)
     _log_tier1_step(
         case,
@@ -3681,6 +4133,44 @@ def _best_effort_uninstall(source: RealDeviceSource, case: Case, package: str) -
         uninstall,
         alters_device=True,
     )
+
+    # 5. Verify — re-query the device rather than trusting the exit codes above.
+    try:
+        verdict = verify_teardown(source.shell_readonly, ledger)
+    except Exception as exc:  # pragma: no cover - defensive
+        verdict = {
+            "verdict": "unverified",
+            "residue": [],
+            "unverified": [f"verification failed: {exc}"],
+            "detail": (
+                "Teardown verification could not run. Treat the device state as unknown, "
+                "not clean."
+            ),
+            "ledger": ledger.to_dict(),
+        }
+
+    case.log(
+        "tier1.teardown.verify",
+        f"Tier-1 reversal verification: {verdict['verdict'].upper()} — "
+        f"{verdict.get('detail', '')}",
+        result="ok" if verdict["verdict"] == "clean" else "error",
+        alters_device=False,
+        tier=Tier.TIER1.value,
+        residue=verdict.get("residue", []),
+        unverified=verdict.get("unverified", []),
+    )
+    return verdict
+
+
+def _best_effort_uninstall(source: RealDeviceSource, case: Case, package: str) -> None:
+    """Backwards-compatible alias for the verified teardown (see :func:`_tier1_teardown`).
+
+    Kept because the four Tier-1 helper flows call it from a dozen early-return paths; the
+    name is now a misnomer (reversal is no longer best-effort-and-forget) but changing all
+    those call sites in one edit would risk missing one, which is the failure mode this
+    fix exists to prevent.
+    """
+    _tier1_teardown(source, case, package)
 
 
 def _log_tier1_step(
@@ -3814,46 +4304,18 @@ def _generate_location_report(locations: List[Dict[str, Any]], case_dir: Path) -
 
 
 # ---------------------------------------------------------------------------
-# Task 3: Async I/O Implementation
+# Async I/O
 # ---------------------------------------------------------------------------
-
-
-async def _async_pull_files(files: List[str], adb: Any) -> List[Dict]:
-    """Pull files asynchronously using asyncio."""
-
-    async def _pull_single(f: str) -> Dict:
-        # Mock async pull
-        return {"file": f, "status": "pulled"}
-
-    tasks = [_pull_single(f) for f in files]
-    return await asyncio.gather(*tasks)
-
-
-async def _async_process_file(file_path: str, adb: Any) -> Dict:
-    """Process a single file asynchronously."""
-    # Mock async processing
-    await asyncio.sleep(0.01)
-    return {"file": file_path, "status": "processed"}
-
-
-def _run_async_acquisition(source: AcquisitionSource) -> Dict:
-    """Run acquisition using asyncio."""
-    # Mock entry point
-    return {}
-
-
-async def _async_parse_messages(db_path: Path) -> List[Any]:
-    """Parse messages asynchronously."""
-    # Mock async parse
-    await asyncio.sleep(0.01)
-    return []
-
-
-async def _async_sqlite_query(db_path: Path, query: str) -> List:
-    """Run SQLite query asynchronously."""
-    # Mock async query
-    await asyncio.sleep(0.01)
-    return []
+# REMOVED (P2-5): a block of five async "acquisition" stubs used to live here
+# (_async_pull_files, _async_process_file, _run_async_acquisition,
+# _async_parse_messages, _async_sqlite_query). None of them had a call site, and
+# each returned a *fabricated* success — e.g. {"file": f, "status": "pulled"} for a
+# file that was never touched. In a tool whose entire value is that its output can be
+# trusted, a function that reports "pulled" without pulling is a latent evidence-
+# fabrication bug: the moment anything wired them up, the case would carry invented
+# results. Parallel pulling is real and lives in _parallel_pull_files() (a
+# ThreadPoolExecutor over actual adb pulls). If async I/O is wanted later, build it
+# there against the real transport — do not reintroduce placeholder success values.
 
 
 # ---------------------------------------------------------------------------
@@ -3880,10 +4342,12 @@ def _initialize_optimizations(
         pass
 
 
-def _run_optimized_acquisition(source: AcquisitionSource, cfg: PipelineConfig) -> Dict:
-    """Run acquisition with all optimizations (Parallel, Smart selection, etc.)."""
-    # This would typically replace the main pull loop
-    return {}
+# REMOVED (P2-5): _run_optimized_acquisition() was a stub that returned {} while its
+# docstring claimed to "run acquisition with all optimizations". The optimisations it
+# named are real and already applied inline by run_acquisition (priority filtering via
+# cfg.use_priority_filter, parallel pulls via _parallel_pull_files, profile-driven
+# ordering via _get_optimal_file_order) — the stub only added a way to report a
+# successful acquisition that never happened.
 
 
 def _get_optimal_file_order(device_id: str, files: List[str]) -> List[str]:

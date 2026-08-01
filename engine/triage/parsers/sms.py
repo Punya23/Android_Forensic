@@ -1,8 +1,11 @@
 """Parser for SMS JSON exported by the Collector helper APK (Tier-1, intrusive path).
 
-SMS is a hard-restricted permission requiring the temporary default-SMS role swap, so like
-the call log it's an explicitly-flagged, revert-after-use acquisition. This parser just
-normalises the helper's JSON output into Message rows (app='sms').
+READ_SMS is a hard-restricted permission. The pipeline obtains it by installing the
+Collector helper over adb and issuing ``pm grant android.permission.READ_SMS`` — an
+adb-installed package is allowlisted for restricted permissions, so no default-SMS role
+swap is performed (an earlier version of this docstring claimed one; it never happened in
+code). It is still an explicitly-flagged, state-changing, revert-after-use acquisition.
+This parser just normalises the helper's JSON output into Message rows (app='sms').
 """
 
 from __future__ import annotations

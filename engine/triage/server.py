@@ -699,6 +699,30 @@ def create_app(cases_root: Path = CASES_ROOT):
             "notifications",
             "bluetooth",
             "celltower",
+            # P1-7: parsers that shipped dead (no call site in run_acquisition) and are
+            # now wired in — screen/power events, per-app usage, Google accounts, search
+            # history and Maps location history.
+            "screen_events",
+            "screen_app_usage",
+            "usage_patterns",
+            "google_accounts",
+            "search_history",
+            "maps_locations",
+            "maps_location_anomalies",
+            # P1-3: root-tier Bluetooth bond store (bt_config.conf).
+            "bluetooth_bonds",
+            # P3-1/P3-2/P3-3/P3-4: persistent app-presence, anti-forensics, encrypted-app
+            # reporting and recent tasks.
+            "app_presence",
+            "usage_events",
+            "packages",
+            "android_users",
+            "antiforensic_findings",
+            "encrypted_apps",
+            "fcm_records",
+            "recent_tasks",
+            "task_snapshots",
+            "deletion_evidence",
             # Location forensics (engine/triage/forensics/).
             "media_locations",
             "location_places",
@@ -725,6 +749,25 @@ def create_app(cases_root: Path = CASES_ROOT):
             "advanced",
             "mediastore_trash",
             "whatsapp_backup_summary",
+            # P1-4 summaries (defined but never rendered until now).
+            "bluetooth_summary",
+            "celltower_summary",
+            "screen_time_summary",
+            "search_summary",
+            "maps_location_summary",
+            # P1-1 encryption posture, P2-3 pre/post device state, P1-3 bond report,
+            # P1-7 Signal, P3-* structured reports.
+            "encryption_state",
+            "device_state",
+            "wifi_live",
+            "bluetooth_bond_report",
+            "signal",
+            "app_presence_summary",
+            "antiforensics_summary",
+            "encrypted_apps_summary",
+            "recent_tasks_summary",
+            "deletion_evidence_summary",
+            "validation_report",
         }
 
         if dataset not in (list_sets | obj_sets):

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from . import TOOL_NAME, __version__
+from .forensics.audit_chain import render_seal_text, seal_record, verify_chain
 from .hashing import hash_file
 from .models import now_iso
 
@@ -110,6 +111,22 @@ def create_integrity_manifest(case_dir: Path) -> Dict[str, Any]:
     audit_file = case_dir / "audit.jsonl"
     audit_hash = hash_file(audit_file) if audit_file.exists() else "—"
 
+    # Audit-log tamper evidence (P2-2). A whole-file hash proves the log has not changed
+    # SINCE EXPORT; the hash chain additionally localises any pre-export edit, reorder or
+    # deletion to a specific line. Both are recorded — they answer different questions.
+    try:
+        chain_verification = verify_chain(audit_file)
+        chain_seal = seal_record(audit_file, case_id=case_dir.name)
+    except Exception as exc:  # pragma: no cover - defensive
+        chain_verification = {"valid": False, "reason": f"chain check failed: {exc}"}
+        chain_seal = {}
+    if not chain_verification.get("valid"):
+        logger.error(
+            "Audit-chain verification FAILED for %s: %s",
+            case_dir.name,
+            chain_verification.get("reason", "unknown"),
+        )
+
     verification = verify_artifacts_on_disk(case_dir, manifest)
     if verification["mismatched"] or verification["missing"]:
         logger.error(
@@ -127,6 +144,8 @@ def create_integrity_manifest(case_dir: Path) -> Dict[str, Any]:
         "audit_hash": audit_hash,
         "artifacts": manifest,
         "seal_verification": verification,
+        "audit_chain": chain_verification,
+        "audit_chain_seal": chain_seal,
     }
 
 
@@ -164,6 +183,31 @@ def add_verification_file(package_path: Path, manifest_data: Dict[str, Any]) -> 
                        if r["status"] == "MISMATCH" else "")
                 )
         lines.append("")
+
+    chain = manifest_data.get("audit_chain", {})
+    if chain:
+        lines += [
+            "Audit-log tamper evidence (hash chain):",
+            f"  Status: {'VALID' if chain.get('valid') else 'BROKEN'}",
+            f"  Events verified: {chain.get('verified', 0)} of {chain.get('total', 0)}",
+            f"  Chain head: {chain.get('head', '—')}",
+        ]
+        if not chain.get("valid"):
+            lines.append(f"  ** {chain.get('reason', 'chain verification failed')} **")
+            if chain.get("first_bad_line"):
+                lines.append(f"  ** First discrepancy at line {chain['first_bad_line']} **")
+            for err in (chain.get("errors") or [])[:20]:
+                lines.append(
+                    f"    line {err.get('line')}: {err.get('kind')} — {err.get('detail')}"
+                )
+        lines.append("")
+
+    seal = manifest_data.get("audit_chain_seal", {})
+    if seal:
+        try:
+            lines += [render_seal_text(seal), ""]
+        except Exception:  # pragma: no cover - defensive
+            pass
 
     lines += [
         generate_verification_instructions(artifacts),

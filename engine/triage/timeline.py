@@ -24,6 +24,41 @@ from .config import Confidence
 from .parsers.notification import build_notification_timeline
 from .parsers.bluetooth import build_bluetooth_timeline
 from .parsers.celltower import build_celltower_timeline
+from .parsers.screen_time import build_screen_timeline
+from .parsers.google_search import build_search_timeline
+
+
+def build_bond_timeline_events(bonds: Iterable[dict]) -> list[TimelineEvent]:
+    """Adapt root-tier Bluetooth *bond* records (bt_config.conf) to timeline events.
+
+    Kept here rather than in the parser because the bond timestamp is the single most
+    over-claimed field in Bluetooth forensics: it records when the pairing record was
+    written, NOT when the two devices were connected or near each other. The summary is
+    therefore worded as a pairing, and the confidence is never LIVE — a bond record is a
+    persisted artefact, not an observation of a live connection.
+    """
+    events: list[TimelineEvent] = []
+    for bond in bonds or ():
+        if not isinstance(bond, dict):
+            continue
+        ts = bond.get("bond_timestamp") or ""
+        addr = bond.get("address", "")
+        name = bond.get("name") or "(unnamed device)"
+        vendor = bond.get("vendor")
+        label = f"{name} [{addr}]" + (f" — {vendor}" if vendor else "")
+        events.append(
+            TimelineEvent(
+                timestamp=ts,
+                kind="bluetooth_bond",
+                summary=(
+                    f"Bluetooth pairing record written for {label}. This is a bond/"
+                    f"pairing-store timestamp, NOT a connection or co-location time."
+                ),
+                confidence=Confidence.RECOVERED_VERIFIED,
+                ref=addr,
+            )
+        )
+    return events
 
 
 def build_timeline(
@@ -39,6 +74,9 @@ def build_timeline(
     notifications: Iterable[dict] = (),
     bluetooth_devices: Iterable[dict] = (),
     cell_towers: Iterable[dict] = (),
+    screen_events: Iterable[dict] = (),
+    searches: Iterable[dict] = (),
+    bluetooth_bonds: Iterable[dict] = (),
 ) -> list[dict]:
     """Build a sorted, unified timeline from all evidence types.
 
@@ -201,6 +239,18 @@ def build_timeline(
         (events if ev.timestamp else undated).append(ev)
 
     for ev in build_celltower_timeline(list(cell_towers)):
+        (events if ev.timestamp else undated).append(ev)
+
+    # Screen on/off + unlock events and search queries (P1-7). Both are pattern-of-life
+    # anchors: a screen-on at 03:14 or a search query is often what places a person at
+    # the device at a given moment, so they belong on the same axis as the messages.
+    for ev in build_screen_timeline(list(screen_events)):
+        (events if ev.timestamp else undated).append(ev)
+
+    for ev in build_search_timeline(list(searches)):
+        (events if ev.timestamp else undated).append(ev)
+
+    for ev in build_bond_timeline_events(list(bluetooth_bonds)):
         (events if ev.timestamp else undated).append(ev)
 
     # Sort timestamped events; append undated at the end.

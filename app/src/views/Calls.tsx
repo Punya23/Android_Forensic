@@ -10,8 +10,9 @@ export function CallsView({ caseId }: { caseId: string }) {
   if (loading) return <div className="p-8 text-muted">Loading calls…</div>;
 
   // Honest empty state: the call log is one of the most intrusive artifacts to reach
-  // without root (default-Dialer role swap). If we didn't get it, say exactly why —
-  // a better demo beat than a missing tab, and it reinforces the honesty pitch.
+  // without root — it needs the Collector helper installed and READ_CALL_LOG granted.
+  // If we didn't get it, say exactly why, and describe the mechanism the engine actually
+  // uses (`pm grant`, not a Dialer role swap — see pipeline._run_tier1_calllog_helper).
   if (data.length === 0) {
     return (
       <div className="p-6">
@@ -21,8 +22,10 @@ export function CallsView({ caseId }: { caseId: string }) {
           <p className="text-sm text-muted leading-relaxed">
             The call log is gated by <code className="text-ink">READ_CALL_LOG</code>, a
             <em> hard-restricted</em> Android permission. Reaching it without root requires
-            temporarily reassigning the device's default Dialer role to the Collector helper —
-            a more invasive, state-changing step than this Tier-0/Tier-1 acquisition performed.
+            installing the Collector helper APK and granting that permission with{" "}
+            <code className="text-ink">pm grant</code> — a state-changing step this
+            Tier-0/Tier-1 acquisition did not perform. The device's default Dialer role is
+            never reassigned.
           </p>
           <p className="text-sm text-muted leading-relaxed mt-2">
             This is an intentional scope choice, not a gap: enable the call-log path in

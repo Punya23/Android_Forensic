@@ -21,6 +21,13 @@ from typing import Any, Optional
 
 from . import TOOL_NAME, __version__
 from .config import ACQUISITION_DISCLAIMER, STANDARDS_REFS
+from .forensics.audit_chain import (
+    CHAIN_SELF_FIELD,
+    chain_event,
+    chain_head,
+    seal_record,
+    verify_chain,
+)
 from .hashing import file_hashes
 from .models import ArtifactRecord, AuditEvent, now_iso
 
@@ -61,6 +68,13 @@ class CaseMeta:
     pre_state: dict[str, Any] = field(
         default_factory=dict
     )  # locked?, battery, time-skew...
+    # Post-acquisition counterpart to pre_state. A Tier-1 run installs an APK, grants
+    # permissions and sets an appop; without a post-state snapshot there is no record that
+    # the device was returned to the state in which it was received. Empty on runs that
+    # could not re-query the device — which is itself recorded, never assumed clean.
+    post_state: dict[str, Any] = field(default_factory=dict)
+    # {"pre":…, "post":…, "diff":…, "teardown":…, "summary":…} — see triage/device_state.py
+    device_state: dict[str, Any] = field(default_factory=dict)
     custody_transfers: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -93,6 +107,10 @@ class Case:
         self._case_path = root / "case.json"
         self._manifest: list[ArtifactRecord] = []
         self._lock = threading.Lock()
+        # Head of the audit hash chain. Read from disk so reopening a case continues the
+        # existing chain instead of restarting it (a restart would look exactly like a
+        # deletion to the verifier).
+        self._chain_head: str = chain_head(self._audit_path)
 
     # -- lifecycle -----------------------------------------------------------
     @classmethod
@@ -150,15 +168,51 @@ class Case:
         self.meta.pre_state = state
         self._save_meta()
 
+    def set_post_state(self, state: dict[str, Any]) -> None:
+        """Record the post-acquisition device snapshot (see triage/device_state.py)."""
+        self.meta.post_state = state
+        self._save_meta()
+
+    def set_device_state_record(self, record: dict[str, Any]) -> None:
+        """Record the full pre/post/diff/teardown bundle for the report."""
+        self.meta.device_state = record
+        self._save_meta()
+
     # -- audit ---------------------------------------------------------------
     def audit(self, event: AuditEvent) -> None:
-        """Append one event and flush immediately (append-only, crash-safe)."""
+        """Append one event and flush immediately (append-only, crash-safe, hash-chained).
+
+        Each line carries ``prev_hash`` (the previous line's ``entry_hash``) and its own
+        ``entry_hash``. Without that link, "append-only" was only a file-mode convention:
+        nothing tied line N to line N-1, so an examiner — or anyone with write access to
+        the case folder — could edit, reorder or delete an audit line and leave no internal
+        trace. With the chain, any such change breaks verification at a known line number.
+
+        The honest limit is stated in triage/forensics/audit_chain.py and reproduced in the
+        seal: chaining detects surgical edits, but someone who rewrites the WHOLE file can
+        recompute a consistent chain. That is why the chain head is sealed out of band at
+        export. This is tamper-EVIDENCE, not non-repudiation.
+        """
         if not event.examiner:
             event.examiner = self.meta.examiner
         with self._lock:
+            chained = chain_event(event.to_dict(), self._chain_head)
             with open(self._audit_path, "a") as fh:
-                fh.write(json.dumps(event.to_dict()) + "\n")
+                fh.write(json.dumps(chained) + "\n")
                 fh.flush()
+            self._chain_head = chained[CHAIN_SELF_FIELD]
+
+    def verify_audit_chain(self) -> dict[str, Any]:
+        """Re-verify the audit log's hash chain. See :func:`audit_chain.verify_chain`."""
+        return verify_chain(self._audit_path)
+
+    def audit_seal(self) -> dict[str, Any]:
+        """The chain head + counts to be recorded out of band at seal time."""
+        return seal_record(
+            self._audit_path,
+            case_id=self.meta.case_id,
+            examiner=self.meta.examiner,
+        )
 
     def log(
         self,
@@ -316,6 +370,10 @@ class Case:
     # -- summary for the dashboard/report ------------------------------------
     def custody_summary(self) -> dict[str, Any]:
         audit = self.read_audit()
+        try:
+            chain = self.verify_audit_chain()
+        except Exception as exc:  # pragma: no cover - defensive
+            chain = {"valid": False, "reason": f"chain verification failed: {exc}"}
         return {
             "case": self.meta.to_dict(),
             "disclaimer": ACQUISITION_DISCLAIMER,
@@ -324,6 +382,7 @@ class Case:
             "total_bytes": sum(r.size_bytes for r in self._manifest),
             "audit_event_count": len(audit),
             "device_altering_actions": sum(1 for e in audit if e.get("alters_device")),
+            "audit_chain": chain,
         }
 
 

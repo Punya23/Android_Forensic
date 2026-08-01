@@ -9,6 +9,7 @@ from typing import Optional
 from ..adb import Adb
 from ..config import DEVICE_PROPS
 from ..custody import DeviceInfo
+from ..device_state import capture_device_state
 from .base import AcquisitionSource, PulledFile
 
 
@@ -41,12 +42,30 @@ class RealDeviceSource(AcquisitionSource):
         return info
 
     def pre_state(self) -> dict:
-        return {
-            "screen_locked": self.adb.is_screen_locked(),
-            "battery_level": self.adb.battery_level(),
-            "device_time": self.adb.device_time(),
-            "root_available": self.adb.is_root_available(),
-        }
+        state = capture_device_state(
+            self.shell_readonly,
+            phase="pre",
+            extra={
+                "screen_locked": self.adb.is_screen_locked(),
+                "battery_level": self.adb.battery_level(),
+                "device_time": self.adb.device_time(),
+                "root_available": self.adb.is_root_available(),
+            },
+        )
+        return state
+
+    def post_state(self) -> dict:
+        """Re-query the same read-only probes after acquisition, for the pre/post diff."""
+        return capture_device_state(
+            self.shell_readonly,
+            phase="post",
+            extra={
+                "screen_locked": self.adb.is_screen_locked(),
+                "battery_level": self.adb.battery_level(),
+                "device_time": self.adb.device_time(),
+                "root_available": self.adb.is_root_available(),
+            },
+        )
 
     def shell_readonly(self, cmd: str) -> str:
         return self.adb.shell(cmd).stdout

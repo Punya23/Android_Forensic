@@ -58,13 +58,42 @@ class MockDeviceSource(AcquisitionSource):
         return self._meta.get(
             "pre_state",
             {
+                "phase": "pre",
                 "screen_locked": False,
                 "battery_level": 87,
                 "device_time": "2026-07-06T10:15:00+0530",
                 "root_available": False,
+                "probes": {},
                 "note": "MOCK DEVICE — synthetic fixtures, not a real acquisition",
             },
         )
+
+    def post_state(self) -> dict:
+        """Mock post-state.
+
+        A mock source never touches a device, so nothing can have been altered — but it
+        still must not silently look like a verified-clean real acquisition. The snapshot
+        is explicitly stamped as synthetic so the report can label it as such.
+        """
+        state = dict(
+            self._meta.get(
+                "post_state",
+                {
+                    "phase": "post",
+                    "screen_locked": False,
+                    "battery_level": 87,
+                    "device_time": "2026-07-06T10:15:00+0530",
+                    "root_available": False,
+                    "probes": {},
+                },
+            )
+        )
+        state["note"] = (
+            "MOCK DEVICE — no physical device was queried; this snapshot is synthetic "
+            "and is not evidence that any device was returned to its found state."
+        )
+        state["synthetic"] = True
+        return state
 
     def shell_readonly(self, cmd: str) -> str:
         # Serve canned dumpsys output if present (e.g. _shell/dumpsys_location.txt).

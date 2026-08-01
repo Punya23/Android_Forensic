@@ -19,8 +19,10 @@ from . import TOOL_NAME, __version__
 from .config import ACQUISITION_DISCLAIMER, STANDARDS_REFS
 from .models import now_iso
 
-def _generate_hash_verification_section(case_dir: Path) -> str:
-    return ""
+# NOTE: a stub `_generate_hash_verification_section` returning "" used to sit here. It was
+# shadowed by the real implementation further down the module (last definition wins), so it
+# was dead — but it is exactly the kind of silent-empty-integrity-section that P0-6 existed
+# to kill, so it is removed rather than left as a trap for the next reader.
 
 _CONF_COLORS = {
     "live": ("#1c7d3f", "#e4f4ea"),
@@ -178,6 +180,22 @@ def generate_report(case_dir: str | Path) -> Path:
     collect_plan = case.read_derived("collection_plan") or {}
     case_learning = case.read_derived("case_learning") or {}
     wifi_networks = case.read_derived("wifi") or []
+    # --- Encryption posture, device state, and the newly-wired artifact datasets ---
+    # Each of these is absent on a run that did not collect it; every renderer below
+    # distinguishes "not collected" from "collected and empty".
+    encryption_state = case.read_derived("encryption_state") or {}
+    device_state = case.read_derived("device_state") or {}
+    bt_devices = case.read_derived("bluetooth") or []
+    bt_summary = case.read_derived("bluetooth_summary") or {}
+    bt_bonds = case.read_derived("bluetooth_bonds") or []
+    bt_bond_report = case.read_derived("bluetooth_bond_report") or {}
+    cell_towers = case.read_derived("celltower") or []
+    cell_summary = case.read_derived("celltower_summary") or {}
+    screen_events = case.read_derived("screen_events") or []
+    screen_summary = case.read_derived("screen_time_summary") or {}
+    search_history = case.read_derived("search_history") or []
+    search_summary = case.read_derived("search_summary") or {}
+    google_accounts = case.read_derived("google_accounts") or []
 
     parts: list[str] = []
     parts.append(_HEAD)
@@ -225,6 +243,17 @@ def generate_report(case_dir: str | Path) -> Path:
             "<h2>Evidence Integrity (SHA-256 re-verification)</h2>"
             f'<p class="note" style="color:#a5322f">Integrity verification could not be '
             f"run: {_esc(exc)}. Do not treat this as a pass.</p>"
+        )
+
+    # Encryption posture sits directly under integrity because it bounds every claim in
+    # the rest of the report: on a BFU device an empty app-data section means "could not
+    # decrypt", not "nothing was there".
+    try:
+        parts.append(_encryption_state_section(encryption_state))
+    except Exception as exc:  # pragma: no cover - defensive
+        parts.append(
+            "<h2>Encryption posture (FBE / AFU-BFU)</h2>"
+            f'<p class="note" style="color:#a5322f">Could not render: {_esc(exc)}</p>'
         )
 
     # Case-intelligence: profile + AI leads (only if a case brief was provided)
@@ -581,6 +610,24 @@ def generate_report(case_dir: str | Path) -> Path:
     if wifi_networks:
         parts.append(_wifi_section(wifi_networks))
 
+    # Bluetooth (seen + bonded) and serving-cell artifacts (P1-3 / P1-4)
+    parts.append(
+        _bluetooth_celltower_section(
+            bt_devices, bt_summary, bt_bonds, bt_bond_report, cell_towers, cell_summary
+        )
+    )
+
+    # Screen/power activity, search queries, registered accounts (P1-7)
+    parts.append(
+        _activity_section(
+            screen_events,
+            screen_summary,
+            search_history,
+            search_summary,
+            google_accounts,
+        )
+    )
+
     # Messages preview
     if messages:
         parts.append("<h2>Messages (preview)</h2>")
@@ -647,8 +694,57 @@ def generate_report(case_dir: str | Path) -> Path:
         )
     parts.append("</table>")
 
-    # Section 65B certificate
-    parts.append(_section_65b(meta, device, summary, tg_present=tg_present))
+    # Audit-log tamper evidence (P2-2). Without this the "append-only" claim above rests
+    # on a file-mode convention; with it, any edit/reorder/deletion is localised to a line.
+    _chain = summary.get("audit_chain", {}) or {}
+    if _chain:
+        _ok = bool(_chain.get("valid"))
+        _lab, _col = (
+            ("AUDIT CHAIN VERIFIED", ("#1c7d3f", "#e4f4ea"))
+            if _ok
+            else ("AUDIT CHAIN BROKEN", ("#a5322f", "#f6dedd"))
+        )
+        parts.append("<h3>Audit-log tamper evidence</h3>")
+        parts.append(f"<p>{_badge(_lab, _col)}</p>")
+        parts.append(
+            f'<p class="note">{_esc(_chain.get("verified", 0))} of '
+            f'{_esc(_chain.get("total", 0))} audit entries verified against the SHA-256 '
+            f"hash chain. Chain head "
+            f'<span class="mono">{_esc(_chain.get("head", "—"))}</span>.</p>'
+        )
+        if not _ok:
+            parts.append(
+                f'<p class="note" style="color:#a5322f">{_esc(_chain.get("reason", ""))}'
+                + (
+                    f" First discrepancy at line {_esc(_chain['first_bad_line'])}."
+                    if _chain.get("first_bad_line")
+                    else ""
+                )
+                + "</p>"
+            )
+        parts.append(
+            '<p class="note">Each entry stores the hash of its predecessor, so an edited, '
+            "reordered or deleted line breaks verification at a known point. This is "
+            "tamper <i>evidence</i>, not non-repudiation: an actor who rewrites the entire "
+            "log can recompute a consistent chain, which is why the chain head above must "
+            "also be recorded out of band (printed or signed at seal time).</p>"
+        )
+
+    # Pre/post device state + Tier-1 reversal verdict (P2-3). Sits with the custody
+    # material because it is the record of what this acquisition did to the device.
+    try:
+        parts.append(_device_state_section(device_state))
+    except Exception as exc:  # pragma: no cover - defensive
+        parts.append(
+            "<h2>Device state — pre/post acquisition</h2>"
+            f'<p class="note" style="color:#a5322f">Could not render: {_esc(exc)}</p>'
+        )
+
+    # Electronic-evidence certificate — BSA 2023 s.63 (the IEA 1872 s.65B certificate this
+    # replaced cited a statute repealed on 2024-07-01).
+    parts.append(
+        _bsa_certificate_section(meta, device, manifest, tg_present=tg_present)
+    )
 
     # Standards footer
     parts.append('<h2>Standards references</h2><ul class="refs">')
@@ -724,6 +820,373 @@ def _generate_hash_verification_section(case_dir: Path) -> str:
             "longer hashes to the value recorded at acquisition.</b> Treat the affected "
             "artifacts as compromised and investigate before relying on them.</p>"
         )
+    return "\n".join(parts)
+
+
+def _encryption_state_section(state: dict) -> str:
+    """Render the FBE / AFU-BFU determination that gates every app-data claim below it.
+
+    This section is placed high in the report on purpose. On an Android 10+ device the
+    encryption posture decides what an acquisition could *possibly* have reached, so a
+    reader who skips it can misread an empty WhatsApp section as "there were no messages"
+    when the correct reading is "the sandbox was ciphertext and we could not open it".
+    """
+    if not isinstance(state, dict) or not state:
+        return (
+            "<h2>Encryption posture (FBE / AFU-BFU)</h2>"
+            '<p class="note">Encryption state was <b>not captured</b> for this case. Do not '
+            "infer from this that the device was unencrypted or that credential-encrypted "
+            "app data was reachable — neither was established.</p>"
+        )
+
+    unlock = str(state.get("unlock_state", "unknown")).lower()
+    verdicts = {
+        "afu": (
+            "AFU — After First Unlock",
+            ("#1c7d3f", "#e4f4ea"),
+            "Credential-encrypted storage (/data/data, /data/user/0) was mounted and "
+            "readable at acquisition time, so app sandboxes were reachable subject to the "
+            "acquisition tier used.",
+        ),
+        "bfu": (
+            "BFU — Before First Unlock",
+            ("#a5322f", "#f6dedd"),
+            "Credential-encrypted storage was NOT decrypted at acquisition time. App data "
+            "is present on the device but cryptographically inaccessible. The absence of "
+            "app content in this report is a limitation of the acquisition, NOT evidence "
+            "that the data was absent from the device.",
+        ),
+        "not_encrypted": (
+            "Not encrypted",
+            ("#a6741a", "#f6ecd4"),
+            "The device reported no user-data encryption. This is unusual on modern "
+            "Android and should be corroborated against the device's OS version.",
+        ),
+        "unknown": (
+            "UNDETERMINED",
+            ("#a6741a", "#f6ecd4"),
+            "The encryption state could not be determined from the probes available. Treat "
+            "it as unknown — do not assume the device was unlocked.",
+        ),
+    }
+    label, colors, explain = verdicts.get(unlock, verdicts["unknown"])
+
+    parts = ["<h2>Encryption posture (FBE / AFU-BFU)</h2>"]
+    parts.append(f"<p>{_badge(label, colors)}</p>")
+    parts.append(f'<p class="note">{_esc(explain)}</p>')
+    parts.append(
+        '<p class="note"><b>Root is not decryption.</b> File-Based Encryption is mandatory '
+        "from Android 10 (SDK 29). Before the first unlock a root shell reads /data as "
+        "ciphertext with encrypted filenames; only Device-Encrypted storage is legible. "
+        "A root-level acquisition of a BFU device therefore cannot recover app content no "
+        "matter how privileged the access.</p>"
+    )
+
+    rows = [
+        ("ro.crypto.type", state.get("crypto_type"), "file = FBE, block = legacy FDE"),
+        ("ro.crypto.state", state.get("crypto_state"), "encrypted / unencrypted"),
+        ("Android SDK", state.get("sdk"), "FBE is mandatory from SDK 29"),
+        ("Android release", state.get("android_release"), ""),
+        (
+            "Metadata encryption",
+            state.get("metadata_encryption"),
+            "Android 11+ dm-default-key also encrypts directory structure and filenames",
+        ),
+        (
+            "FBE mandatory for this OS",
+            state.get("fbe_mandatory"),
+            "",
+        ),
+        (
+            "CE storage readable",
+            state.get("ce_accessible"),
+            "/data/data, /data/user/0 — credential-encrypted",
+        ),
+        (
+            "DE storage readable",
+            state.get("de_accessible"),
+            "/data/user_de/0, /data/system_de — device-encrypted, readable BFU",
+        ),
+        ("Screen locked at capture", state.get("screen_locked"), "not the same as BFU"),
+    ]
+    parts.append("<table><tr><th>Property</th><th>Value</th><th>Meaning</th></tr>")
+    for name, value, meaning in rows:
+        shown = "not captured" if value is None or value == "" else value
+        parts.append(
+            f"<tr><td>{_esc(name)}</td><td class='mono'>{_esc(shown)}</td>"
+            f"<td>{_esc(meaning)}</td></tr>"
+        )
+    parts.append("</table>")
+
+    evidence = state.get("unlock_evidence") or []
+    if evidence:
+        parts.append("<p class='note'><b>How this was determined:</b></p><ul>")
+        for item in evidence[:30]:
+            parts.append(f"<li>{_esc(item)}</li>")
+        parts.append("</ul>")
+
+    caveats = state.get("caveats") or []
+    if caveats:
+        parts.append("<ul>")
+        for c in caveats[:30]:
+            parts.append(f'<li class="note">{_esc(c)}</li>')
+        parts.append("</ul>")
+    return "\n".join(parts)
+
+
+def _device_state_section(record: dict) -> str:
+    """Render the pre/post device-state diff and the Tier-1 reversal verdict.
+
+    A Tier-1 acquisition installs software, grants permissions and sets an appop on an
+    evidence device. This section is the record that those changes were reversed — or the
+    record that they were not, which the examiner must disclose either way.
+    """
+    if not isinstance(record, dict) or not record:
+        return (
+            "<h2>Device state — pre/post acquisition</h2>"
+            '<p class="note">No post-acquisition device snapshot was recorded for this '
+            "case, so any device-altering action taken during the run is <b>unverified</b> "
+            "as reversed.</p>"
+        )
+
+    summary = record.get("summary", {}) or {}
+    teardown = record.get("teardown", {}) or {}
+    diff = record.get("diff", {}) or {}
+    verdict = str(summary.get("teardown_verdict", "unverified")).lower()
+
+    styles = {
+        "clean": ("RETURNED TO FOUND STATE", ("#1c7d3f", "#e4f4ea")),
+        "residual": ("DEVICE MODIFICATIONS REMAIN", ("#a5322f", "#f6dedd")),
+        # 'unverified' is amber, deliberately NOT green: "we could not check" must never
+        # be presented with the same weight as "we checked and it was clean".
+        "unverified": ("REVERSAL UNVERIFIED", ("#a6741a", "#f6ecd4")),
+    }
+    label, colors = styles.get(verdict, styles["unverified"])
+
+    parts = ["<h2>Device state — pre/post acquisition</h2>"]
+    parts.append(f"<p>{_badge(label, colors)}</p>")
+    parts.append(f'<p class="note">{_esc(summary.get("statement", ""))}</p>')
+
+    residue = teardown.get("residue") or []
+    if residue:
+        parts.append(
+            "<table><tr><th>Kind</th><th>Subject</th><th>Detail</th></tr>"
+        )
+        for r in residue[:100]:
+            parts.append(
+                f"<tr><td>{_esc(r.get('kind'))}</td>"
+                f"<td class='mono'>{_esc(r.get('subject'))}</td>"
+                f"<td>{_esc(r.get('detail'))}</td></tr>"
+            )
+        parts.append("</table>")
+
+    unver = teardown.get("unverified") or []
+    if unver:
+        parts.append(
+            '<p class="note" style="color:#a6741a">Could not verify: '
+            + _esc(", ".join(str(u) for u in unver[:20]))
+            + "</p>"
+        )
+
+    added_p = diff.get("permissions_added") or []
+    added_o = diff.get("appops_added") or []
+    if added_p or added_o:
+        parts.append(
+            '<p class="note" style="color:#a5322f"><b>Still granted after acquisition:</b> '
+            + _esc(", ".join(list(added_p) + list(added_o)))
+            + "</p>"
+        )
+
+    unexpected = diff.get("unexpected_changes") or []
+    if unexpected:
+        parts.append("<h3>Unexpected differences</h3>")
+        parts.append("<table><tr><th>Probe</th><th>Before</th><th>After</th></tr>")
+        for e in unexpected[:60]:
+            parts.append(
+                f"<tr><td>{_esc(e.get('probe'))}</td>"
+                f"<td class='mono'>{_esc(str(e.get('before'))[:160])}</td>"
+                f"<td class='mono'>{_esc(str(e.get('after'))[:160])}</td></tr>"
+            )
+        parts.append("</table>")
+
+    drift = diff.get("expected_drift") or []
+    if drift:
+        parts.append(
+            f'<p class="note">{len(drift)} probe(s) showed expected drift (clock, uptime, '
+            "battery, screen state). Every acquisition causes these; they are not "
+            "modifications made by the examiner and are excluded from the verdict above.</p>"
+        )
+
+    ledger = teardown.get("ledger") or {}
+    if any(
+        ledger.get(k)
+        for k in (
+            "installed",
+            "granted_permissions",
+            "appops_set",
+            "files_written_to_device",
+        )
+    ):
+        parts.append("<h3>Device-altering actions performed</h3><ul>")
+        if ledger.get("installed"):
+            parts.append(
+                f'<li>Installed helper package <span class="mono">'
+                f'{_esc(ledger.get("package"))}</span></li>'
+            )
+        for perm in ledger.get("granted_permissions", []) or []:
+            parts.append(f'<li>Granted <span class="mono">{_esc(perm)}</span></li>')
+        for op in ledger.get("appops_set", []) or []:
+            parts.append(f'<li>Set appop <span class="mono">{_esc(op)}</span></li>')
+        for path in ledger.get("files_written_to_device", []) or []:
+            parts.append(
+                f'<li>Helper wrote <span class="mono">{_esc(path)}</span> to shared '
+                "storage</li>"
+            )
+        parts.append("</ul>")
+    return "\n".join(parts)
+
+
+def _bluetooth_celltower_section(
+    bt_devices: list,
+    bt_summary: dict,
+    bonds: list,
+    bond_report: dict,
+    cells: list,
+    cell_summary: dict,
+) -> str:
+    """Bluetooth (seen + bonded) and serving-cell artifacts, with their real limits."""
+    if not (bt_devices or bonds or cells):
+        return ""
+
+    parts = ["<h2>Bluetooth &amp; cellular network artifacts</h2>"]
+
+    if bt_devices or bonds:
+        parts.append(
+            f'<p class="note"><b>{_esc(len(bt_devices))}</b> device(s) from '
+            f"<span class='mono'>dumpsys bluetooth_manager</span> (non-root; Android 8+ "
+            f"redacts MAC addresses for non-privileged callers) and "
+            f"<b>{_esc(len(bonds))}</b> persistent bond record(s) from "
+            f"<span class='mono'>bt_config.conf</span> (root).</p>"
+        )
+        if bond_report.get("encrypted"):
+            parts.append(
+                '<p class="note" style="color:#a6741a">The Bluetooth bond store was '
+                "encrypted and could not be parsed. This is <b>not</b> a finding of "
+                "&ldquo;no paired devices&rdquo;.</p>"
+            )
+        parts.append(
+            '<p class="note" style="color:#a5322f"><b>A bond timestamp is not a '
+            "connection time.</b> It records when the pairing record was written to the "
+            "bond store. It proves the two devices were paired once; it does not place "
+            "them together at any later moment. Any co-location claim needs independent "
+            "corroboration from an app database.</p>"
+        )
+    if bonds:
+        parts.append(
+            "<table><tr><th>Device</th><th>Address</th><th>Type</th><th>Vendor</th>"
+            "<th>Bond record written</th></tr>"
+        )
+        for b in bonds[:200]:
+            if not isinstance(b, dict):
+                continue
+            vendor = b.get("vendor") or "—"
+            parts.append(
+                f"<tr><td>{_esc(b.get('name') or '(unnamed)')}</td>"
+                f"<td class='mono'>{_esc(b.get('address'))}</td>"
+                f"<td>{_esc(b.get('dev_type_label') or b.get('dev_class_label') or '')}</td>"
+                f"<td>{_esc(vendor)}</td>"
+                f"<td class='mono'>{_esc(b.get('bond_timestamp') or 'not recorded')}</td></tr>"
+            )
+        parts.append("</table>")
+
+    if cells:
+        ops = cell_summary.get("operators") or cell_summary.get("by_operator") or {}
+        parts.append(
+            f'<h3>Serving cells</h3><p class="note"><b>{_esc(len(cells))}</b> serving-cell '
+            f"observation(s)"
+            + (f" across {_esc(len(ops))} operator(s)" if ops else "")
+            + ". A serving-cell identifier places the device somewhere inside that cell's "
+            "coverage area — potentially many square kilometres, overlapping neighbouring "
+            "cells. It is <b>not</b> a GPS position, and this tool does not resolve cell "
+            "identifiers to coordinates. <span class='mono'>dumpsys telephony.registry</span> "
+            "reports the current/recent serving cell only; it is volatile and is not a "
+            "location history.</p>"
+        )
+        parts.append(
+            "<table><tr><th>Operator</th><th>Technology</th><th>Cell ID</th>"
+            "<th>LAC/TAC</th><th>Signal</th><th>Observed</th></tr>"
+        )
+        for c in cells[:200]:
+            if not isinstance(c, dict):
+                continue
+            parts.append(
+                f"<tr><td>{_esc(c.get('operator') or '')}</td>"
+                f"<td>{_esc(c.get('technology') or '')}</td>"
+                f"<td class='mono'>{_esc(c.get('cell_id') or '')}</td>"
+                f"<td class='mono'>{_esc(c.get('tac') or c.get('lac') or '')}</td>"
+                f"<td class='mono'>{_esc(c.get('signal_dbm') or '')}</td>"
+                f"<td class='mono'>{_esc(c.get('timestamp') or '')}</td></tr>"
+            )
+        parts.append("</table>")
+    return "\n".join(parts)
+
+
+def _activity_section(
+    screen_events: list,
+    screen_summary: dict,
+    searches: list,
+    search_summary: dict,
+    google_accounts: list,
+) -> str:
+    """Screen/power activity, search queries and signed-in accounts (P1-7)."""
+    if not (screen_events or searches or google_accounts):
+        return ""
+
+    parts = ["<h2>Device activity — screen, search &amp; accounts</h2>"]
+    if screen_events or screen_summary:
+        parts.append(
+            f'<p class="note"><b>{_esc(len(screen_events))}</b> screen/power event(s); '
+            f"{_esc(screen_summary.get('total_sessions', 0))} session(s), "
+            f"{_esc(screen_summary.get('total_screen_time_min', 0))} minutes of screen-on "
+            "time observed. These come from rolling dumpsys buffers "
+            "(<span class='mono'>power</span>, <span class='mono'>batterystats</span>, "
+            "<span class='mono'>usagestats</span>) which cover a recent window — typically "
+            "days, not the device's lifetime — and are cleared by a reboot. An absent event "
+            "is not evidence the device was idle.</p>"
+        )
+    if searches:
+        parts.append(
+            f'<h3>Search queries</h3><p class="note"><b>{_esc(len(searches))}</b> quer(y/ies) '
+            "recovered from browser history. A query proves it was issued from this browser "
+            "profile; it does not identify who typed it, and history is user-editable.</p>"
+        )
+        parts.append("<table><tr><th>When</th><th>Query</th><th>Source</th></tr>")
+        for s in searches[:150]:
+            if not isinstance(s, dict):
+                continue
+            parts.append(
+                f"<tr><td class='mono'>{_esc(s.get('timestamp') or '')}</td>"
+                f"<td>{_esc((s.get('query') or '')[:200])}</td>"
+                f"<td>{_esc(s.get('source') or '')}</td></tr>"
+            )
+        parts.append("</table>")
+    if google_accounts:
+        parts.append(
+            f'<h3>Registered accounts</h3><p class="note"><b>{_esc(len(google_accounts))}</b> '
+            "account(s) registered with AccountManager at capture time. This shows presence, "
+            "not ownership — a signed-in account is not proof the account holder was using "
+            "the device.</p>"
+        )
+        parts.append("<table><tr><th>Account</th><th>Type</th><th>Last sync</th></tr>")
+        for a in google_accounts[:100]:
+            if not isinstance(a, dict):
+                continue
+            parts.append(
+                f"<tr><td>{_esc(a.get('name') or '')}</td>"
+                f"<td class='mono'>{_esc(a.get('type') or '')}</td>"
+                f"<td class='mono'>{_esc(a.get('last_sync') or '')}</td></tr>"
+            )
+        parts.append("</table>")
     return "\n".join(parts)
 
 
@@ -1048,56 +1511,76 @@ def _kv_card(title: str, kv: dict[str, Any]) -> str:
     return f'<div class="card"><h3>{_esc(title)}</h3>{rows}</div>'
 
 
-def _section_65b(
-    meta: dict, device: dict, summary: dict, tg_present: bool = False
+def _bsa_certificate_section(
+    meta: dict, device: dict, manifest: list, tg_present: bool = False
 ) -> str:
-    tg_clause = (
-        (
-            "<li>Where Telegram message data was recovered (Tier-2 root acquisition): "
-            "the Telegram <code>cache4.db</code> database was copied from the device's "
-            "app-private storage (<code>/data/data/org.telegram.messenger/files/</code>) "
-            "using a root shell command logged in the audit trail above. "
-            "<b>This tool does not bypass, circumvent, or decrypt any Telegram encryption.</b> "
-            "The <code>cache4.db</code> SQLite file is stored in plaintext on the device "
-            "(Telegram's encryption operates at the transport layer, not at the local database layer). "
-            "Recovered deleted rows were extracted using standard SQLite forensic techniques "
-            "(freelist, WAL, and raw freeblock scanning) and are clearly labelled with their "
-            "confidence tier in all reports.</li>"
-        )
-        if tg_present
-        else ""
-    )
-    return f"""
-    <h2>Section 65B (Indian Evidence Act) — Certificate</h2>
-    <div class="cert">
-      <p><b>Statement under Section 65B(4) of the Indian Evidence Act, 1872</b>
-      (illustrative template — verify wording against current legal guidance before
-      evidentiary use).</p>
-      <ol>
-        <li>The electronic records described in the hash manifest of case
-            <b>{_esc(meta['case_id'])}</b> were produced by {_esc(TOOL_NAME)}
-            v{_esc(__version__)} during a minimally-invasive logical acquisition of the
-            device identified above (serial {_esc(device.get('serial'))}).</li>
-        <li>During the material period the said tool was operated by the examiner
-            <b>{_esc(meta['examiner'])}</b> under legal authority
-            "{_esc(meta.get('legal_authority') or 'NOT RECORDED')}".</li>
-        <li>Each artifact's integrity is evidenced by a SHA-256 hash computed at the moment
-            of extraction and recorded in the manifest; {_esc(summary['artifact_count'])}
-            artifacts totalling {_esc(f"{summary['total_bytes']:,}")} bytes were acquired.</li>
-        <li>Every action performed by the tool that interacted with the device
-            ({_esc(summary['device_altering_actions'])} of
-            {_esc(summary['audit_event_count'])} logged events altered device state) is
-            recorded in the append-only audit trail reproduced above.</li>
-        {tg_clause}
-        <li>This is a field-triage preview and is NOT a substitute for a full forensic
-            laboratory examination.</li>
-      </ol>
-      <div class="sign">
-        <div>Examiner signature: __________________________</div>
-        <div>Name: {_esc(meta['examiner'])} &nbsp;&nbsp; Date: __________</div>
-      </div>
-    </div>"""
+    """Render the BSA 2023 s.63 Schedule certificate (Part A + Part B, dual signature).
 
+    Replaces the previous "Section 65B, Indian Evidence Act, 1872" block. That statute was
+    repealed with effect from 2024-07-01, so for an Indian deployment the old certificate
+    was not merely stylistically outdated — it cited law that no longer exists.
+
+    The certificate is emitted UNSIGNED and self-describes as a template: s.63 requires
+    signatures from BOTH the person in charge of the device/system AND an expert, and no
+    tool can supply either.
+    """
+    from .forensics.bsa_certificate import (
+        IEA_65B_MIGRATION_NOTE,
+        build_certificate,
+        render_certificate_html,
+        validate_certificate,
+    )
+
+    try:
+        cert = build_certificate(meta, device, manifest)
+        html = render_certificate_html(cert)
+        check = validate_certificate(cert)
+    except Exception as exc:  # pragma: no cover - defensive
+        return (
+            "<h2>Electronic-evidence certificate (BSA 2023 s.63)</h2>"
+            f'<p class="note" style="color:#a5322f">The certificate could not be '
+            f"generated: {_esc(exc)}. It must be prepared manually before evidentiary "
+            "use.</p>"
+        )
+
+    parts = [html]
+
+    if not check.get("complete", False):
+        missing = ", ".join(str(m) for m in (check.get("missing") or [])[:20])
+        parts.append(
+            '<p class="note" style="color:#a6741a"><b>Incomplete certificate.</b> '
+            "The following are not filled in and must be completed and signed by hand "
+            f"before this is relied upon: {_esc(missing)}.</p>"
+        )
+    for warning in (check.get("warnings") or [])[:20]:
+        parts.append(f'<p class="note">{_esc(warning)}</p>')
+
+    if tg_present:
+        parts.append(
+            "<h3>Annexure — Telegram acquisition method</h3>"
+            '<p class="note">Where Telegram message data was recovered (Tier-2 root '
+            "acquisition): the Telegram <code>cache4.db</code> database was copied from "
+            "the device's app-private storage "
+            "(<code>/data/data/org.telegram.messenger/files/</code>) using a root shell "
+            "command logged in the audit trail above. <b>This tool does not bypass, "
+            "circumvent or decrypt any Telegram encryption.</b> The <code>cache4.db</code> "
+            "SQLite file is stored in plaintext on the device — Telegram's encryption "
+            "operates at the transport layer, not at the local database layer. Recovered "
+            "deleted rows were extracted using standard SQLite forensic techniques "
+            "(freelist, WAL, rollback journal and raw freeblock carving) and are labelled "
+            "with their confidence tier throughout this report.</p>"
+        )
+
+    parts.append(f'<p class="note">{_esc(IEA_65B_MIGRATION_NOTE)}</p>')
+    return "\n".join(parts)
+
+
+# REMOVED (P2-1): _section_65b() rendered an "Indian Evidence Act, 1872 s.65B"
+# certificate. That Act was repealed on 2024-07-01 and replaced by the Bharatiya
+# Sakshya Adhiniyam, 2023; electronic-evidence certification now runs through BSA
+# s.63 and its Schedule (Part A / Part B, dual signature), rendered by
+# _bsa_certificate_section() above. The function is deleted rather than left unused
+# so no future call site can reintroduce a certificate citing a repealed statute.
 
 _HEAD = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
