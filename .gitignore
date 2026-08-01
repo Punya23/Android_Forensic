@@ -38,3 +38,12 @@ engine/calllog.json
 engine/sms.json
 engine/contacts_pulled.json
 engine/*.error.json
+
+# Test / benchmark output. `engine/_test_output/` was previously committed — 58 files of a
+# generated case folder, including artifacts and hashes from a synthetic run. Committed
+# case output is confusing at best (it looks like real evidence in the tree) and it churns
+# on every benchmark run.
+engine/_test_output/
+.coverage
+.coverage.*
+htmlcov/

@@ -256,7 +256,10 @@ points and is genuinely cheap to build correctly:
    face.
 
 If this is aimed at Indian law enforcement (the "state forensic laboratory" phrasing suggests it
-is), also add a **Section 65B (Indian Evidence Act)-style certificate block** to the generated
+is), also add a **BSA 2023 s.63 Schedule certificate block** to the generated
+(SUPERSEDED NOTE: this plan originally said "Section 65B (Indian Evidence Act)". That Act was
+repealed on 2024-07-01 and replaced by the Bharatiya Sakshya Adhiniyam, 2023; the shipped
+implementation emits the BSA s.63 Schedule, Part A and Part B, with dual signature blocks.)
 report — an examiner declaration, system description, and hash values in the format Indian courts
 expect for electronic evidence admissibility. Verify the exact wording against current guidance;
 treat this as a strong differentiator for domain-savvy judges, not a legal guarantee.
@@ -324,7 +327,8 @@ treat this as a strong differentiator for domain-savvy judges, not a legal guara
 ### Days 22–27 — Cross-Device Hardening
 - Re-run the full pipeline on every test device acquired on Day 1–2; fix OEM-specific path/
   permission breakage as it appears (expect it to appear).
-- Report generation: NIST/SWGDE-aligned fields, triage disclaimer, optional 65B-style certificate
+- Report generation: NIST/SWGDE-aligned fields, triage disclaimer, BSA 2023 s.63 Schedule
+  certificate (the plan's original "65B-style" wording predates the 2024 repeal of the IEA)
   block.
 - Package as a portable, no-install build (bundled Python via PyInstaller + bundled `adb`
   platform-tools) — this is the realistic version of the "lightweight portable deployment" bonus; a

@@ -39,7 +39,7 @@ prejudice the later full laboratory examination.
 | **Bluetooth device history** (`dumpsys bluetooth_manager`) | ✅ | connected devices analysis |
 | **Cell tower history** (`dumpsys telephony.registry`) | ✅ | location data analysis |
 | Forensic Preview Dashboard (Electron + React) with live 5–10 min progress | ✅ | MDI field dashboard |
-| NIST/SWGDE-aligned HTML report + Section 65B certificate block | ✅ | court-ready reporting |
+| NIST/SWGDE-aligned HTML report + **BSA 2023 s.63** Schedule certificate (Part A/B, dual signature) | ✅ | court-ready reporting |
 | **Sealed evidence-package export** (ZIP + SHA-256 verification manifest) | ✅ | evidence export |
 | Runs **with no phone** via a synthetic mock corpus (dev + demo fallback) | ✅ | — |
 
@@ -68,6 +68,29 @@ against the synthetic corpus (`tools/make_corpus.py` seeds Instagram/Snapchat DB
 Where we deliberately **don't** claim parity (and say so, honestly): cloud extraction,
 lock-screen bypass, physical/chip-off imaging, and defeating Signal's hardware-backed
 Keystore — none are achievable non-root in scope. See `docs/IMPLEMENTATION_PLAN.md` §0.
+
+### New in v0.3 — integrity, encryption posture, and persistent artifacts
+
+Driven by a deep-research + adversarial-audit pass; the full findings, the roadmap and the
+list of things we verified are **not worth building** live in
+[`engine/docs/PRODUCTION_READINESS.md`](engine/docs/PRODUCTION_READINESS.md).
+
+| Capability | Tier | Why it matters |
+|---|---|---|
+| **FBE / AFU-BFU encryption posture** determined before any root pull, gating every credential-encrypted claim | 0 | *Root is not decryption.* On a Before-First-Unlock device `/data/data` is ciphertext; the engine now reports "present, encrypted, inaccessible (BFU)" instead of "not found" |
+| **Tamper-evident audit log** — every entry hash-chained to its predecessor | — | An edited, reordered or deleted audit line now breaks verification at a known line number |
+| **Post-acquisition device snapshot + verified Tier-1 teardown** | 1 | Permissions revoked, appop reset, helper output removed, uninstall confirmed by re-query. "Unverified" is a distinct verdict from "clean" |
+| **Deletion detected as its own evidence class** (rowid gaps, max-rowid shortfall, freelist pages, sequence shortfall, live-vs-recovered) | 0–2 | "41 records were deleted here and the content is unrecoverable" is a finding in its own right — rendered apart from carved content, with its false-positive causes listed |
+| **SQLite overflow-page chains** followed during carving | 0–2 | Long messages and large TEXT/BLOB columns are no longer silently truncated; an incomplete chain downgrades the row to Carved-Partial |
+| **Rollback-journal (`-journal`) recovery** alongside WAL | 0–2 | Pre-deletion page images for non-WAL databases |
+| **Non-root live Wi-Fi** (`dumpsys wifi` / `netstats` / `connectivity`) with hour-bucketed usage | 0 | The entire realistic non-root Wi-Fi surface — volatile, so captured live. Randomised per-SSID MACs flagged as the address the router logged |
+| **Bluetooth bond store** (`bt_config.conf`) + offline OUI vendor table | 2 | Persistent pairings, device class, vendor. Bond timestamps are labelled pairing-record writes — **not** connection or co-location times. Link keys are recorded as present, never displayed |
+| **App presence & execution** (`packages.xml` + `usagestats` + Play-Protect APK digests) | 2 | Survives uninstall: answers "was this app ever here / ever run". Installation evidence is kept distinct from execution evidence |
+| **Structural anti-forensics** — Android users (work profile / dual-app clone / Secure Folder), privacy-app packages, factory-reset trace, magic-byte extension mismatch | 2 | Observations only; every finding lists innocent explanations and the tool never asserts intent |
+| **Encrypted-app reporting** for Signal / Threema / Session / Wickr + FCM delivery fragments | 0–2 | Finding the SQLCipher database *is* the finding. Never reported as absent, never attempted-and-fabricated |
+| **Recent tasks & screen snapshots**, gated on the AFU determination | 2 | On a BFU device this is an explicit skip with a stated reason, never an empty list |
+| **Tool self-validation** — SWGDE 18-Q-001-shaped known-answer report + honest NIST CFTT coverage matrix, run per acquisition | — | Includes a deliberate negative control that *must* fail. Producing a validation report is not the same as being independently validated, and the report says so |
+| Screen/power events, Google search history, registered accounts, Maps location history | 0 | Four parsers that shipped fully written and unit-tested but had **no call site** — every previous run silently omitted them |
 
 ---
 
@@ -173,6 +196,22 @@ corrupt-DB safety), the parsers, and the full end-to-end pipeline.
   verification.
 - **Triage disclaimer** is stamped on every report — this is a preview, not a full
   examination.
+- **Absent is not the same finding as inaccessible.** A credential-encrypted path that
+  could not be read is reported as present-and-encrypted. Reporting it as missing would be
+  a false exculpatory finding, and the encryption-posture section makes the distinction
+  explicit for the whole run.
+- **"Could not check" is never rendered as "checked and clean."** Teardown verification,
+  hash verification and the audit chain each have a third, visibly distinct *unverified*
+  state.
+- **Not independently validated.** The self-validation harness runs real known-answer tests
+  (including a negative control designed to fail), but the tool has never been tested
+  against a ground-truthed reference image by a tester independent of its developer, and it
+  has no characterised error rate. Both facts are printed in the report.
+- **Deliberately unbuilt.** No slack-space / unallocated / raw-block carver for `/data`
+  (on Android 10+ that yields FBE ciphertext dressed up as recovered data), no
+  bootloader-unlock path (it triggers a factory reset), no offline lock-screen or FBE key
+  attack, and no attempt to decrypt SQLCipher app content. Reasoning in
+  `engine/docs/PRODUCTION_READINESS.md` → "Do NOT build".
 
 See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) for the full feasibility
 matrix (what is and isn't achievable non-root for WhatsApp/Signal/Telegram) and the 30-day
