@@ -23,6 +23,14 @@ export interface EncryptionState {
   fbe_mandatory?: boolean | null;
   caveats?: string[];
   probes?: Record<string, string>;
+  /** Per-Android-user CE key state — a work profile can be sealed while user 0 is not. */
+  per_user?: {
+    user_id?: number | string;
+    ce_state?: string;
+    /** The engine emits `source` (e.g. "dumpsys user State"); `evidence` tolerated too. */
+    source?: string;
+    evidence?: string;
+  }[];
 }
 
 // Palette lifted verbatim from the confidence colours used across the app.
@@ -279,6 +287,7 @@ export function EncryptionView({ caseId }: { caseId: string }) {
   const caveats = s.caveats ?? [];
   const probes = s.probes ?? {};
   const probeKeys = Object.keys(probes).sort();
+  const perUser = s.per_user ?? [];
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -423,6 +432,49 @@ export function EncryptionView({ caseId }: { caseId: string }) {
           </ul>
         )}
       </div>
+
+      {/* Per-Android-user CE key state. On a device with a work profile, a dual-app clone
+          or a Samsung Secure Folder, the primary user can be unlocked while a secondary
+          user's credential-encrypted storage is still sealed — so a single device-level
+          AFU verdict would overstate what was reachable for those containers. */}
+      {perUser.length > 0 && (
+        <div className="card p-4 mb-4">
+          <div className="text-sm font-semibold mb-1">Per-user key state</div>
+          <p className="text-xs text-muted mb-3 leading-relaxed">
+            Each Android user has its own credential-encrypted class key. A user shown here
+            as <span className="font-mono">bfu</span> had its storage sealed at acquisition
+            time regardless of the device-level verdict above — data in that container is
+            present and encrypted, not absent.
+          </p>
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="border-b border-line text-xs uppercase tracking-wider text-muted">
+                <th className="text-left py-1.5 pr-3 font-semibold">User</th>
+                <th className="text-left py-1.5 pr-3 font-semibold">CE key state</th>
+                <th className="text-left py-1.5 font-semibold">Observed from</th>
+              </tr>
+            </thead>
+            <tbody>
+              {perUser.map((u, i) => {
+                const state = String(u.ce_state ?? "unknown");
+                const tone =
+                  state === "afu" ? "text-live" : state === "bfu" ? "text-deletion" : "text-warn";
+                return (
+                  <tr key={i} className="border-b border-line/50">
+                    <td className="py-1.5 pr-3 font-mono">{String(u.user_id ?? "—")}</td>
+                    <td className={`py-1.5 pr-3 font-semibold ${tone}`}>
+                      {state.toUpperCase()}
+                    </td>
+                    <td className="py-1.5 text-xs text-muted">
+                      {u.source ?? u.evidence ?? "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Raw probe output, collapsed by default. */}
       <div className="card">
