@@ -344,6 +344,160 @@ def test_no_deletion_evidence_renders_no_section(case: Case):
 
 
 # ---------------------------------------------------------------------------
+# Escaping — every string in this report came off a suspect's device
+# ---------------------------------------------------------------------------
+XSS = '<script>alert("pwned")</script>'
+
+
+def test_hostile_device_data_cannot_inject_script_into_the_report(case: Case):
+    """Filenames, message bodies, SSIDs and package names are attacker-controlled.
+
+    The report is a standalone HTML file an examiner opens in a browser, so an unescaped
+    value is script execution in the examiner's context on evidence they were handed.
+    Every new section is populated with a payload here rather than spot-checking one.
+    """
+    hostile_lists = {
+        "bluetooth_bonds": [
+            {
+                "address": XSS,
+                "name": XSS,
+                "vendor": XSS,
+                "bond_timestamp": XSS,
+                "dev_type_label": XSS,
+            }
+        ],
+        "bluetooth": [{"mac": XSS, "name": XSS}],
+        "celltower": [
+            {
+                "operator": XSS,
+                "technology": XSS,
+                "cell_id": XSS,
+                "tac": XSS,
+                "signal_dbm": XSS,
+                "timestamp": XSS,
+            }
+        ],
+        "screen_events": [{"timestamp": XSS, "event_type": XSS}],
+        "search_history": [{"query": XSS, "timestamp": XSS, "source": XSS}],
+        "google_accounts": [{"name": XSS, "type": XSS, "last_sync": XSS}],
+        "app_presence": [
+            {
+                "package": XSS,
+                "currently_installed": False,
+                "ever_installed": True,
+                "ever_executed": False,
+                "first_seen": XSS,
+                "last_seen": XSS,
+                "event_count": 1,
+                "evidence_sources": [XSS],
+            }
+        ],
+        "android_users": [
+            {
+                "user_id": XSS,
+                "name": XSS,
+                "container_kind": XSS,
+                "likely_feature": XSS,
+                "extractable": XSS,
+            }
+        ],
+        "antiforensic_findings": [
+            {
+                "kind": XSS,
+                "subject": XSS,
+                "detail": XSS,
+                "severity": "critical",
+                "caveats": [XSS],
+            }
+        ],
+        "encrypted_apps": [
+            {"app": XSS, "path": XSS, "size_bytes": 1, "modified": XSS, "status": XSS}
+        ],
+        "fcm_records": [{"sender": XSS}],
+        "recent_tasks": [
+            {
+                "task_id": XSS,
+                "real_activity": XSS,
+                "calling_package": XSS,
+                "last_time_moved": XSS,
+            }
+        ],
+        "task_snapshots": [{"path": XSS}],
+        "deletion_evidence": [
+            {
+                "db_file": XSS,
+                "device_path": XSS,
+                "table": XSS,
+                "mechanism": XSS,
+                "missing_count": 1,
+                "description": XSS,
+                "false_positive_causes": [XSS],
+            }
+        ],
+    }
+    for name, payload in hostile_lists.items():
+        case.write_derived(name, payload)
+    case.write_derived(
+        "encryption_state",
+        {
+            "unlock_state": "bfu",
+            "crypto_type": XSS,
+            "unlock_evidence": [XSS],
+            "caveats": [XSS],
+            "probes": {XSS: XSS},
+        },
+    )
+    case.write_derived(
+        "device_state",
+        {
+            "summary": {"teardown_verdict": "residual", "statement": XSS},
+            "teardown": {
+                "verdict": "residual",
+                "residue": [{"kind": XSS, "subject": XSS, "detail": XSS}],
+                "unverified": [XSS],
+                "ledger": {
+                    "package": XSS,
+                    "installed": True,
+                    "granted_permissions": [XSS],
+                    "appops_set": [XSS],
+                    "files_written_to_device": [XSS],
+                },
+            },
+            "diff": {
+                "permissions_added": [XSS],
+                "appops_added": [XSS],
+                "unexpected_changes": [{"probe": XSS, "before": XSS, "after": XSS}],
+                "expected_drift": [],
+            },
+        },
+    )
+    case.write_derived(
+        "validation_report",
+        {
+            "cases": [{"case_id": XSS, "passed": False, "description": XSS}],
+            "limitations": [XSS],
+            "coverage_summary": {"counts": {XSS: 1}},
+        },
+    )
+
+    html = render(case)
+    assert "<script" not in html.lower()
+    assert XSS not in html
+    assert "&lt;script&gt;" in html, "the payload must appear escaped, not be dropped"
+
+
+def test_hostile_artifact_path_is_escaped_in_the_manifest(case: Case, tmp_path: Path):
+    payload = tmp_path / "evil.txt"
+    payload.write_text("x")
+    case.ingest_file(
+        payload, source_path=f"/sdcard/DCIM/{XSS}.jpg", tier="tier0", method="mock"
+    )
+    html = render(case)
+    assert "<script" not in html.lower()
+    assert "&lt;script&gt;" in html
+
+
+# ---------------------------------------------------------------------------
 # Robustness — a malformed derived dataset must not break the report
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
