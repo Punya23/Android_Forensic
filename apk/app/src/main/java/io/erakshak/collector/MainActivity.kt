@@ -1,214 +1,307 @@
 package io.erakshak.collector
 
 import android.app.Activity
+import android.content.ContentResolver
+import android.content.pm.PackageManager
 import android.graphics.Color
-import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.CallLog
+import android.provider.ContactsContract
+import android.provider.Telephony
 import android.view.Gravity
+import android.widget.Button
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 /**
  * eRakshak Collector — Tier-1 forensic helper.
  *
- * A deliberately small, auditable activity that dumps the requested content-provider /
- * platform data to JSON in shared storage, where the desktop engine pulls it via `adb pull`.
- * It performs no network I/O, keeps no persistent state, and reads only what the `action`
- * extra asks for, and only what it was actually granted.
- *
- * ADB-driven actions:
- *
+ * Triggered by ADB:
  *   adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_contacts
  *   adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_calllog
  *   adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_sms
- *   adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_media
- *   adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_apps
- *   adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_accounts
- *   adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_calendar
- *   adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_usage
- *   adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_device
- *   adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_all
  *
- * Output (public Download/): contacts.json, calllog.json, sms.json, media_inventory.json,
- * apps.json, accounts.json, calendar.json, usage.json, device_extra.json, and
- * collector_manifest.json (a summary of what ran, how many rows, and any denials).
- *
- * When opened manually (no action), a status screen is shown instead of doing anything.
+ * On real devices (OxygenOS/MIUI etc.) `pm grant` is blocked, so the app
+ * requests permissions via the standard Android dialog on first launch.
+ * Grant them once — subsequent ADB triggers work silently.
  */
 class MainActivity : Activity() {
 
-    private val ui = Handler(Looper.getMainLooper())
+    private var pendingAction: String? = null
+
+    companion object {
+        private const val REQ_CODE = 1001
+
+        // All permissions the app may need — request all upfront on first launch
+        private val ALL_PERMISSIONS = buildList {
+            add(android.Manifest.permission.READ_CONTACTS)
+            add(android.Manifest.permission.READ_CALL_LOG)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(android.Manifest.permission.READ_MEDIA_IMAGES)
+                add(android.Manifest.permission.READ_MEDIA_VIDEO)
+                add(android.Manifest.permission.READ_MEDIA_AUDIO)
+            } else {
+                add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+        }.toTypedArray()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val action = intent.getStringExtra("action")
+        pendingAction = intent.getStringExtra("action")
 
+        val missing = ALL_PERMISSIONS.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missing.isNotEmpty()) {
+            // Show permission request screen
+            showPermissionScreen(missing)
+            ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQ_CODE)
+        } else {
+            // All permissions already granted — execute action directly
+            executeAction(pendingAction)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_CODE) {
+            val denied = permissions.zip(grantResults.toTypedArray())
+                .filter { it.second != PackageManager.PERMISSION_GRANTED }
+                .map { it.first.substringAfterLast(".") }
+
+            if (denied.isEmpty()) {
+                executeAction(pendingAction)
+            } else {
+                showResultScreen(
+                    pendingAction ?: "setup",
+                    "DENIED: ${denied.joinToString(", ")}\n\nGrant permissions and try again."
+                )
+                // Don't finish — let user see the error
+            }
+        }
+    }
+
+    // ── Core action executor ───────────────────────────────────────────────
+
+    private fun executeAction(action: String?) {
         if (action == null) {
-            showStatusScreen()
+            // Manual launch with all permissions — show status screen
+            showStatusScreen(allGranted = true)
             return
         }
 
-        val collectors = collectorsFor(action)
-        if (collectors == null) {
-            writeResults(action, listOf(
-                CollectionResult("error", "error.json",
-                    JSONArray().put(JSONObject().put("error", "unknown action: $action")),
-                    0, CollectionResult.ERROR, "unknown action")
-            ))
-            showResultScreen(action, listOf("✗ unknown action '$action'"))
-            ui.postDelayed({ finish() }, 1800)
-            return
-        }
-
-        showBusyScreen(action)
-        // Heavy collectors (media/apps) must run off the main thread to avoid ANR.
-        Thread {
-            val results = collectors.map { runCatching { it(this) }.getOrElse { e ->
-                CollectionResult("unknown", "error.json", JSONArray(), 0,
-                    CollectionResult.ERROR, e.message)
-            } }
-            writeResults(action, results)
-            val lines = results.map { r ->
-                val icon = if (r.status == CollectionResult.OK) "✓" else
-                    if (r.status == CollectionResult.EMPTY) "•" else "✗"
-                "$icon ${r.name}: ${r.count} (${r.status})" +
-                    (r.error?.let { " — ${it.take(60)}" } ?: "")
-            }
-            ui.post {
-                showResultScreen(action, lines)
-                ui.postDelayed({ finish() }, 2200)
-            }
-        }.start()
-    }
-
-    /** Map an action to the collectors it runs, or null if unknown. */
-    private fun collectorsFor(action: String): List<(Activity) -> CollectionResult>? = when (action) {
-        "dump_contacts" -> listOf(ContactsCollector::collect)
-        "dump_calllog" -> listOf(CallLogCollector::collect)
-        "dump_sms" -> listOf(SmsCollector::collect)
-        "dump_media" -> listOf(MediaCollector::collect)
-        "dump_apps" -> listOf(AppsCollector::collect)
-        "dump_accounts" -> listOf(AccountsCollector::collect)
-        "dump_calendar" -> listOf(CalendarCollector::collect)
-        "dump_usage" -> listOf(UsageCollector::collect)
-        "dump_device" -> listOf(DeviceCollector::collect)
-        "dump_all" -> listOf(
-            ContactsCollector::collect, CallLogCollector::collect, SmsCollector::collect,
-            MediaCollector::collect, AppsCollector::collect, AccountsCollector::collect,
-            CalendarCollector::collect, UsageCollector::collect, DeviceCollector::collect,
-        )
-        else -> null
-    }
-
-    /** Write each result's payload plus a collector_manifest.json summary. */
-    private fun writeResults(action: String, results: List<CollectionResult>) {
-        for (r in results) {
-            runCatching {
-                val text = when (val p = r.payload) {
-                    is JSONArray -> p.toString(2)
-                    is JSONObject -> p.toString(2)
-                    else -> p.toString()
+        var statusMsg: String
+        try {
+            statusMsg = when (action) {
+                "dump_contacts" -> {
+                    val data = dumpContacts()
+                    writeJson("contacts.json", data)
+                    "contacts.json written (${data.length()} records)"
                 }
-                // Don't emit empty error.json placeholders on success.
-                if (!(r.fileName == "error.json" && r.count == 0 && r.status == CollectionResult.OK)) {
-                    StorageWriter.write(this, r.fileName, text)
+                "dump_calllog" -> {
+                    val data = dumpCallLog()
+                    writeJson("calllog.json", data)
+                    "calllog.json written (${data.length()} records)"
+                }
+                "dump_sms" -> {
+                    val data = dumpSms()
+                    writeJson("sms.json", data)
+                    "sms.json written (${data.length()} records)"
+                }
+                else -> {
+                    writeJson("error.json",
+                        JSONArray().put(JSONObject().put("error", "unknown action: $action")))
+                    "ERROR: unknown action '$action'"
                 }
             }
+        } catch (e: SecurityException) {
+            val errArr = JSONArray().put(
+                JSONObject().put("error", "SecurityException")
+                    .put("message", e.message ?: "permission denied")
+                    .put("action", action)
+            )
+            runCatching { writeJson("$action.error.json", errArr) }
+            statusMsg = "PERMISSION DENIED: ${e.message}"
+        } catch (e: Exception) {
+            val errArr = JSONArray().put(
+                JSONObject().put("error", e.javaClass.simpleName)
+                    .put("message", e.message ?: "unknown error")
+                    .put("action", action)
+            )
+            runCatching { writeJson("$action.error.json", errArr) }
+            statusMsg = "ERROR: ${e.message}"
         }
-        val manifest = JSONObject()
-            .put("tool", "eRakshak Collector")
-            .put("version", VERSION)
-            .put("action", action)
-            .put("android_sdk", Build.VERSION.SDK_INT)
-            .put("collected_at_ms", System.currentTimeMillis())
-            .put("results", JSONArray().apply { results.forEach { put(it.summary()) } })
-        runCatching { StorageWriter.write(this, "collector_manifest.json", manifest.toString(2)) }
+
+        showResultScreen(action, statusMsg)
+        Handler(Looper.getMainLooper()).postDelayed({ finish() }, 1800)
     }
 
-    // ── UI ────────────────────────────────────────────────────────────────────
+    // ── UI screens ────────────────────────────────────────────────────────
 
-    private fun showStatusScreen() {
+    private fun showPermissionScreen(missing: List<String>) {
         val layout = buildLayout()
-        layout.addView(title("eRakshak Collector"))
-        layout.addView(subtitle("Forensic Tier-1 Helper · v$VERSION"))
-        layout.addView(mono(
-            "Controlled by the eRakshak engine via ADB.\n" +
-                "Not meant to be opened manually.\n\n" +
-                "Example:\n" +
-                "  adb shell am start \\\n" +
-                "    -n io.erakshak.collector/.MainActivity \\\n" +
-                "    --es action dump_all"
-        ))
-        layout.addView(subtitle("minSdk 26 · Android ${Build.VERSION.RELEASE}"))
-        setContentView(wrap(layout))
-    }
 
-    private fun showBusyScreen(action: String) {
-        val layout = buildLayout()
-        layout.addView(title("Collecting…"))
-        layout.addView(subtitle("action: $action"))
-        setContentView(wrap(layout))
-    }
+        layout.addView(makeText("🔐 Permissions Required", 22f, Color.parseColor("#1A237E"), bold = true))
+        layout.addView(makeText("eRakshak needs the following permissions\nto collect forensic data:", 14f, Color.DKGRAY))
 
-    private fun showResultScreen(action: String, lines: List<String>) {
-        val ok = lines.none { it.startsWith("✗") }
-        val layout = buildLayout()
-        val head = TextView(this).apply {
-            text = if (ok) "✓ Done" else "Completed with issues"
-            textSize = 24f
-            setTextColor(if (ok) Color.parseColor("#2E7D32") else Color.parseColor("#C62828"))
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 12)
+        val permsText = missing.joinToString("\n") { "  • " + it.substringAfterLast(".") }
+        val box = TextView(this).apply {
+            text = permsText
+            textSize = 13f
+            setTextColor(Color.DKGRAY)
+            setBackgroundColor(Color.parseColor("#F5F5F5"))
+            setPadding(32, 24, 32, 24)
+            setTypeface(android.graphics.Typeface.MONOSPACE)
         }
-        layout.addView(head)
-        layout.addView(subtitle("action: $action"))
-        for (l in lines) {
-            layout.addView(TextView(this).apply {
-                text = l
-                textSize = 13f
-                setTextColor(Color.DKGRAY)
-                setPadding(0, 8, 0, 0)
-                typeface = Typeface.MONOSPACE
-            })
-        }
-        setContentView(wrap(layout))
+        layout.addView(box)
+        layout.addView(makeText("\nA dialog will appear — tap Allow for each.", 13f, Color.parseColor("#555555")))
+
+        setContentView(layout)
     }
 
-    private fun buildLayout(): LinearLayout = LinearLayout(this).apply {
+    private fun showStatusScreen(allGranted: Boolean) {
+        val layout = buildLayout()
+        layout.addView(makeText("eRakshak Collector", 22f, Color.parseColor("#1A237E"), bold = true))
+        layout.addView(makeText("Forensic Tier-1 Helper", 14f, Color.GRAY))
+
+        if (allGranted) {
+            layout.addView(makeText("\n✓ All permissions granted", 14f, Color.parseColor("#2E7D32")))
+        }
+
+        val info = TextView(this).apply {
+            text = "Trigger via ADB:\n\n" +
+                    "adb shell am start \\\n" +
+                    "  -n io.erakshak.collector/.MainActivity \\\n" +
+                    "  --es action dump_contacts\n\n" +
+                    "Actions: dump_contacts | dump_calllog | dump_sms"
+            textSize = 12f
+            setTextColor(Color.DKGRAY)
+            setBackgroundColor(Color.parseColor("#F5F5F5"))
+            setPadding(32, 28, 32, 28)
+            setTypeface(android.graphics.Typeface.MONOSPACE)
+        }
+        layout.addView(info)
+        layout.addView(makeText("\nv0.1.0 · Android ${Build.VERSION.RELEASE} · ${Build.MODEL}", 11f, Color.LTGRAY))
+        setContentView(layout)
+    }
+
+    private fun showResultScreen(action: String, status: String) {
+        val layout = buildLayout()
+        val ok = !status.startsWith("ERROR") && !status.startsWith("PERMISSION") && !status.startsWith("DENIED")
+        val color = if (ok) Color.parseColor("#2E7D32") else Color.parseColor("#C62828")
+
+        layout.addView(makeText(if (ok) "✓ Done" else "✗ Failed", 28f, color, bold = true))
+        layout.addView(makeText("Action: $action", 13f, Color.GRAY))
+        layout.addView(makeText("\n$status", 13f, Color.DKGRAY))
+        setContentView(layout)
+    }
+
+    private fun buildLayout() = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        gravity = Gravity.CENTER_HORIZONTAL
-        setPadding(56, 72, 56, 72)
+        gravity = Gravity.CENTER
+        setPadding(64, 64, 64, 64)
         setBackgroundColor(Color.WHITE)
     }
 
-    private fun wrap(inner: LinearLayout): ScrollView = ScrollView(this).apply {
-        setBackgroundColor(Color.WHITE)
-        addView(inner)
+    private fun makeText(text: String, size: Float, color: Int, bold: Boolean = false) =
+        TextView(this).apply {
+            this.text = text
+            textSize = size
+            setTextColor(color)
+            gravity = Gravity.CENTER
+            setPadding(0, 8, 0, 8)
+            if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+
+    // ── Content-provider dumps ────────────────────────────────────────────
+
+    private fun dumpContacts(): JSONArray {
+        val out = JSONArray()
+        contentResolver.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            arrayOf(
+                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                ContactsContract.CommonDataKinds.Phone.NUMBER
+            ), null, null, null
+        )?.use { cur ->
+            val nameIdx = cur.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+            val numIdx = cur.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+            while (cur.moveToNext()) {
+                out.put(JSONObject()
+                    .put("name", cur.getString(nameIdx) ?: "")
+                    .put("number", cur.getString(numIdx) ?: ""))
+            }
+        }
+        return out
     }
 
-    private fun title(t: String) = TextView(this).apply {
-        text = t; textSize = 22f; setTextColor(Color.parseColor("#1A237E"))
-        gravity = Gravity.CENTER; setPadding(0, 0, 0, 8)
+    private fun dumpCallLog(): JSONArray {
+        val out = JSONArray()
+        contentResolver.query(
+            CallLog.Calls.CONTENT_URI,
+            arrayOf(
+                CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME,
+                CallLog.Calls.TYPE, CallLog.Calls.DATE, CallLog.Calls.DURATION
+            ), null, null, "${CallLog.Calls.DATE} DESC"
+        )?.use { cur ->
+            while (cur.moveToNext()) {
+                out.put(JSONObject()
+                    .put("number", cur.getString(0) ?: "")
+                    .put("name", cur.getString(1) ?: "")
+                    .put("type", cur.getInt(2))
+                    .put("date", cur.getLong(3))
+                    .put("duration", cur.getInt(4)))
+            }
+        }
+        return out
     }
 
-    private fun subtitle(t: String) = TextView(this).apply {
-        text = t; textSize = 13f; setTextColor(Color.GRAY)
-        gravity = Gravity.CENTER; setPadding(0, 0, 0, 16)
+    private fun dumpSms(): JSONArray {
+        val out = JSONArray()
+        contentResolver.query(
+            Telephony.Sms.CONTENT_URI,
+            arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE, Telephony.Sms.TYPE),
+            null, null, "${Telephony.Sms.DATE} DESC"
+        )?.use { cur ->
+            while (cur.moveToNext()) {
+                out.put(JSONObject()
+                    .put("address", cur.getString(0) ?: "")
+                    .put("body", cur.getString(1) ?: "")
+                    .put("date", cur.getLong(2))
+                    .put("type", cur.getInt(3)))
+            }
+        }
+        return out
     }
 
-    private fun mono(t: String) = TextView(this).apply {
-        text = t; textSize = 12f; setTextColor(Color.DKGRAY)
-        setBackgroundColor(Color.parseColor("#F5F5F5")); setPadding(28, 28, 28, 28)
-        typeface = Typeface.MONOSPACE
-    }
+    // ── File write ────────────────────────────────────────────────────────
 
-    companion object {
-        const val VERSION = "0.2.0"
+    private fun writeJson(fileName: String, data: JSONArray) {
+        val dir: File = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val pub = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (pub.canWrite()) pub else getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: filesDir
+        } else {
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        }
+        dir.mkdirs()
+        File(dir, fileName).writeText(data.toString(2), Charsets.UTF_8)
     }
 }
