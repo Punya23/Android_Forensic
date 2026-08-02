@@ -36,7 +36,10 @@ class FakeResult:
 class FakeAdb:
     """Answers shell commands from a script; serves pulls from a fake device filesystem."""
 
-    def __init__(self, *, device_files: dict[str, bytes] | None = None, readable=None):
+    def __init__(
+        self, *, device_files: dict[str, bytes] | None = None, readable=None,
+        root_available: bool = True,
+    ):
         # device path -> content. A directory is represented by "<dir>/<name>" entries.
         self.device_files = dict(device_files or {})
         # paths that exist but cannot be read (permission denied / encrypted)
@@ -45,6 +48,7 @@ class FakeAdb:
         self.staged: dict[str, bytes] = {}
         self.serial = "FAKE"
         self.adb_path = "/usr/bin/adb"
+        self.root_available = root_available
 
     # -- helpers -----------------------------------------------------------
     def _exists(self, path: str) -> bool:
@@ -52,6 +56,12 @@ class FakeAdb:
 
     def shell(self, cmd: str, timeout: int = 120) -> FakeResult:
         self.commands.append(cmd)
+        if "su -c 'id'" in cmd:
+            return (
+                FakeResult(cmd, 0, "uid=0(root)")
+                if self.root_available
+                else FakeResult(cmd, 1, "", "su: not found")
+            )
         if "test -e" in cmd:
             path = cmd.split("test -e ", 1)[1].split(" ", 1)[0]
             return FakeResult(cmd, 0, "exists" if self._exists(path) else "absent")
@@ -616,3 +626,29 @@ def test_browser_history_stage_returns_zero_when_no_browser_installed(
     src = RealDeviceSource(adb)  # type: ignore[arg-type]
     result = pipeline._run_tier2_browser_history(src, case, tmp_path / "stage", [], [], [])
     assert result == {"browsers_found": 0, "rows": 0}
+
+
+def test_browser_history_stage_no_root_is_not_reported_as_absent(case: Case, tmp_path: Path):
+    """On a non-rooted device the per-path probe fails identically whether the browser
+    genuinely isn't installed or `su` itself is missing. Without an upfront root check,
+    every browser would be logged 'not present on device' — a false-exculpatory finding
+    (see erakshak-honesty-invariants: absent != inaccessible)."""
+    adb = FakeAdb(
+        device_files={
+            "/data/data/com.android.chrome/app_chrome/Default/History": b"present",
+        },
+        root_available=False,
+    )
+    src = RealDeviceSource(adb)  # type: ignore[arg-type]
+    browser_history: list = []
+    result = pipeline._run_tier2_browser_history(
+        src, case, tmp_path / "stage", browser_history, [], []
+    )
+    assert result == {"browsers_found": 0, "rows": 0}
+    assert browser_history == []
+    # No per-path probe may fire once root is known to be unavailable — a probe result
+    # ("not present on device") would misreport a real, unreachable browser as absent.
+    assert not any("test -e" in c for c in adb.commands)
+    entries = [e for e in case.read_audit() if e["action"] == "tier2.browser_history"]
+    assert entries and "root not available" in entries[0]["detail"]
+    assert "NOT a finding that no browsers are installed" in entries[0]["detail"]

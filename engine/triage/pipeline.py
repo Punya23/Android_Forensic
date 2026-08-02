@@ -4386,6 +4386,31 @@ def _run_tier2_browser_history(
     deleted-row carver used everywhere else in the tool so cleared history shows up as
     :class:`~triage.config.Confidence.DELETION_DETECTED`, not silence.
     """
+    # Verify root FIRST. _root_pull_paths' `su -c 'test -e ...'` probe fails identically
+    # whether the target genuinely doesn't exist or `su` itself is missing — without this
+    # check, a non-rooted phone would get every browser logged as "not present on device",
+    # which reads as "no browsers installed" when the true state is "could not check root
+    # paths at all". That is exactly the false-exculpatory finding the honesty model forbids.
+    root_check = source.adb.shell("su -c 'id'")
+    case.log(
+        "tier2.browser_history.root_check",
+        f"root check: {'ok' if root_check.ok else 'failed'}",
+        command="adb shell su -c 'id'",
+        result="ok" if root_check.ok else "error",
+        alters_device=False,
+        tier=Tier.TIER2.value,
+    )
+    if not root_check.ok:
+        case.log(
+            "tier2.browser_history",
+            "root not available; browser history recovery skipped. This is NOT a "
+            "finding that no browsers are installed — app-private History databases "
+            "are unreachable without root on this device.",
+            result="skipped",
+            tier=Tier.TIER2.value,
+        )
+        return {"browsers_found": 0, "rows": 0}
+
     specs: list[tuple[str, str]] = []
     label_by_path: dict[str, str] = {}
     for _pkg, label, dev_path in _CHROMIUM_HISTORY_TARGETS:
