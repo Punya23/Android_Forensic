@@ -34,12 +34,15 @@ import java.io.File
  * eRakshak Collector — Tier-1 forensic helper.
  *
  * Supported actions (trigger via ADB):
- *   dump_contacts    → contacts.json
- *   dump_calllog     → calllog.json
- *   dump_sms         → sms.json
- *   dump_wifi        → wifi.json   (saved networks + current association)
- *   dump_bluetooth   → bluetooth.json (bonded + recently seen devices)
- *   dump_all         → all of the above
+ *   dump_contacts      → contacts.json
+ *   dump_calllog       → calllog.json
+ *   dump_sms           → sms.json
+ *   dump_wifi          → wifi.json   (saved networks + current association)
+ *   dump_bluetooth     → bluetooth.json (bonded + recently seen devices)
+ *   dump_location      → location.json  (GPS/network last known location)
+ *   dump_recordings    → recordings.json (call recording audio file index)
+ *   dump_notifications → notifications.json (notification history, needs Notification Access)
+ *   dump_all           → all of the above
  *
  * Install with:
  *   adb install -r app-debug.apk
@@ -143,19 +146,35 @@ class MainActivity : Activity() {
         }
 
         when (action) {
-            "dump_contacts"  -> run("contacts")  { "contacts.json"  to dumpContacts() }
-            "dump_calllog"   -> run("calllog")   { "calllog.json"   to dumpCallLog() }
-            "dump_sms"       -> run("sms")       { "sms.json"       to dumpSms() }
-            "dump_wifi"      -> run("wifi")      { "wifi.json"      to dumpWifi() }
-            "dump_bluetooth" -> run("bluetooth") { "bluetooth.json" to dumpBluetooth() }
-            "dump_location"  -> run("location")  { "location.json"  to dumpLocation() }
+            "dump_contacts"      -> run("contacts")      { "contacts.json"      to dumpContacts() }
+            "dump_calllog"       -> run("calllog")       { "calllog.json"       to dumpCallLog() }
+            "dump_sms"           -> run("sms")           { "sms.json"           to dumpSms() }
+            "dump_wifi"          -> run("wifi")          { "wifi.json"          to dumpWifi() }
+            "dump_bluetooth"     -> run("bluetooth")     { "bluetooth.json"     to dumpBluetooth() }
+            "dump_location"      -> run("location")      { "location.json"      to dumpLocation() }
+            "dump_recordings"    -> run("recordings")    {
+                val r = CallRecordingsCollector.collect(this)
+                r.fileName to (r.payload as org.json.JSONArray)
+            }
+            "dump_notifications" -> run("notifications") {
+                val r = NotificationCollector.collect(this)
+                r.fileName to (r.payload as org.json.JSONArray)
+            }
             "dump_all" -> {
-                run("contacts")  { "contacts.json"  to dumpContacts() }
-                run("calllog")   { "calllog.json"   to dumpCallLog() }
-                run("sms")       { "sms.json"       to dumpSms() }
-                run("wifi")      { "wifi.json"      to dumpWifi() }
-                run("bluetooth") { "bluetooth.json" to dumpBluetooth() }
-                run("location")  { "location.json"  to dumpLocation() }
+                run("contacts")      { "contacts.json"  to dumpContacts() }
+                run("calllog")       { "calllog.json"   to dumpCallLog() }
+                run("sms")           { "sms.json"       to dumpSms() }
+                run("wifi")          { "wifi.json"      to dumpWifi() }
+                run("bluetooth")     { "bluetooth.json" to dumpBluetooth() }
+                run("location")      { "location.json"  to dumpLocation() }
+                run("recordings")    {
+                    val r = CallRecordingsCollector.collect(this)
+                    r.fileName to (r.payload as org.json.JSONArray)
+                }
+                run("notifications") {
+                    val r = NotificationCollector.collect(this)
+                    r.fileName to (r.payload as org.json.JSONArray)
+                }
             }
             else -> {
                 writeErrorJson("unknown_action.error.json", "UnknownAction", "unknown action: $action", action)
