@@ -23,19 +23,21 @@ import org.json.JSONObject
  * eRakshak Collector — Tier-1 forensic helper.
  *
  * Supported actions (trigger via ADB):
- *   dump_contacts    → contacts.json
- *   dump_calllog     → calllog.json
- *   dump_sms         → sms.json
- *   dump_media       → media_inventory.json (MediaStore catalogue + EXIF/MP4 GPS)
- *   dump_apps        → apps.json
- *   dump_accounts    → accounts.json
- *   dump_calendar    → calendar.json
- *   dump_usage       → usage.json
- *   dump_device      → device_extra.json
- *   dump_wifi        → wifi.json      (saved networks + current association + scan)
- *   dump_bluetooth   → bluetooth.json (adapter + bonded devices)
- *   dump_location    → location.json  (last-known fix per provider)
- *   dump_all         → all of the above + collector_manifest.json
+ *   dump_contacts      → contacts.json
+ *   dump_calllog       → calllog.json
+ *   dump_sms           → sms.json
+ *   dump_media         → media_inventory.json (MediaStore catalogue + EXIF/MP4 GPS)
+ *   dump_apps          → apps.json
+ *   dump_accounts      → accounts.json
+ *   dump_calendar      → calendar.json
+ *   dump_usage         → usage.json
+ *   dump_device        → device_extra.json
+ *   dump_wifi          → wifi.json      (saved networks + current association + scan)
+ *   dump_bluetooth     → bluetooth.json (adapter + bonded devices)
+ *   dump_location      → location.json  (last-known fix per provider)
+ *   dump_recordings    → recordings.json (call recording audio file index)
+ *   dump_notifications → notifications.json (notification history, needs Notification Access)
+ *   dump_all           → all of the above + collector_manifest.json
  *
  * Every action routes through the same [CollectionResult] registry, so a denied permission is
  * recorded as a `denied` row in `collector_manifest.json` rather than silently producing an
@@ -142,6 +144,8 @@ class MainActivity : Activity() {
         "apps" to { c: Context -> AppsCollector.collect(c) },
         "usage" to { c: Context -> UsageCollector.collect(c) },
         "media" to { c: Context -> MediaCollector.collect(c) },
+        "recordings" to { c: Context -> CallRecordingsCollector.collect(c) },
+        "notifications" to { c: Context -> NotificationCollector.collect(c) },
         "location" to { c: Context -> LocationCollector.collect(c) },
         "wifi" to { c: Context -> WifiCollector.collect(c) },
         "bluetooth" to { c: Context -> BluetoothCollector.collect(c) },
