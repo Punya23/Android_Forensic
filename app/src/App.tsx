@@ -5,6 +5,7 @@ import { TagProvider } from "./lib/tagStore";
 import { Sidebar, isCaseIndependent, type ViewKey } from "./components/Sidebar";
 import { GlobalSearch } from "./components/GlobalSearch";
 import { AcquisitionView } from "./views/Acquisition";
+import { CasesView } from "./views/Cases";
 import { OverviewView } from "./views/Overview";
 import { CaseIntelView } from "./views/CaseIntel";
 import { KnowledgeBaseView } from "./views/KnowledgeBase";
@@ -13,6 +14,7 @@ import { ContactsView } from "./views/Contacts";
 import { CallsView } from "./views/Calls";
 import { MediaView } from "./views/Media";
 import { LocationsView } from "./views/Locations";
+import { LocationTraceView } from "./views/LocationTrace";
 import { BrowserView } from "./views/Browser";
 import { TimelineView } from "./views/Timeline";
 import { RecoveredView } from "./views/Recovered";
@@ -74,6 +76,7 @@ export default function App() {
         <TopBar health={health} caseId={caseId} setView={setView} />
         <div className="flex-1 overflow-auto">
           {view === "acquire" && <AcquisitionView onCaseReady={onCaseReady} onOpenCase={onCaseReady} />}
+          {view === "cases" && <CasesView onOpenCase={onCaseReady} />}
           {view === "knowledge" && <KnowledgeBaseView />}
           {!isCaseIndependent(view) && !caseId && (
             <div className="p-8 text-muted">No case loaded. Start an acquisition first.</div>
@@ -94,6 +97,7 @@ export default function App() {
           {caseId && view === "snapchat" && <SnapchatView caseId={caseId} />}
           {caseId && view === "discovered" && <DiscoveredChatsView caseId={caseId} />}
           {caseId && view === "locations" && <LocationsView caseId={caseId} />}
+          {caseId && view === "loctrace" && <LocationTraceView caseId={caseId} />}
           {caseId && view === "browser" && <BrowserView caseId={caseId} />}
           {caseId && view === "timeline" && <TimelineView caseId={caseId} />}
           {caseId && view === "recovered" && <RecoveredView caseId={caseId} />}

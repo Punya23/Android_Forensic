@@ -86,6 +86,47 @@ export interface CaseSummary {
   ai_findings_summary?: Record<string, number>;
 }
 
+// -- Case registry (cross-case history, SQLite-backed) ----------------------
+
+export interface RegistryCase {
+  case_id: string;
+  examiner: string;
+  device_model: string;
+  legal_authority: string;
+  scope_note: string;
+  crime_type: string;
+  created_at: string;
+  updated_at: string;
+  artifact_count: number;
+  total_bytes: number;
+  audit_event_count: number;
+  tag_count: number;
+  report_count: number;
+  latest_report_at: string;
+  latest_report_path: string;
+}
+
+export interface RegistryStats {
+  cases: number;
+  artifacts: number;
+  bytes: number;
+  reports: number;
+}
+
+export interface RegistryCasesResponse {
+  cases: RegistryCase[];
+  stats: RegistryStats;
+}
+
+export interface ReportVersion {
+  id: number;
+  case_id: string;
+  generated_at: string;
+  path: string;
+  size_bytes: number;
+  trigger: string;
+}
+
 // -- Case-intelligence layer ------------------------------------------------
 
 /** Canonical procedural role from the engine's forensic nomenclature vocabulary. */
@@ -367,6 +408,7 @@ export interface BrowserEntry {
   title: string;
   visit_count: number;
   last_visit: string | null;
+  browser_app?: string;
   source_file: string;
 }
 
@@ -424,6 +466,78 @@ export interface LocationPoint {
   timestamp: string | null;
   label: string;
   source_file: string;
+}
+
+/**
+ * What a location row actually evidences. These are NOT interchangeable — only the
+ * `is_presence` categories place the device at a coordinate. `navigation` and `interest`
+ * record what the user looked up, which is a claim about attention, not position.
+ */
+export type LocationCategory =
+  | "device_fix"
+  | "media_capture"
+  | "shared_location"
+  | "network_inferred"
+  | "navigation"
+  | "interest";
+
+/** One row of the unified location trace (derived/location_traces.json). */
+export interface LocationTraceRow {
+  latitude: number | null;
+  longitude: number | null;
+  timestamp: string | null;
+  source: string;
+  source_label: string;
+  category: LocationCategory;
+  weight: number;
+  is_presence: boolean;
+  tier: string;
+  app: string;
+  label: string;
+  place_name: string;
+  address: string;
+  accuracy_m: number | null;
+  confidence: string;
+  provenance: string;
+  source_file: string;
+  url: string;
+  flags: string[];
+}
+
+export interface LocationTraceSummary {
+  total: number;
+  with_coordinates: number;
+  without_coordinates: number;
+  presence_points: number;
+  interest_points: number;
+  dated: number;
+  undated: number;
+  by_category: Record<string, number>;
+  by_source: Record<string, number>;
+  by_tier: Record<string, number>;
+  by_app: Record<string, number>;
+  first_seen: string | null;
+  last_seen: string | null;
+  bounding_box: {
+    min_lat: number;
+    max_lat: number;
+    min_lon: number;
+    max_lon: number;
+  } | null;
+  sources_present: string[];
+  caveat: string;
+}
+
+/** A pair of readings implying physically impossible travel — an anomaly, never a conclusion. */
+export interface ImpossibleTravel {
+  from: { latitude: number; longitude: number; timestamp: string; source: string };
+  to: { latitude: number; longitude: number; timestamp: string; source: string };
+  distance_km: number;
+  hours: number;
+  implied_kmh: number;
+  severity: "high" | "medium";
+  interpretation: string;
+  requires_verification: boolean;
 }
 
 export interface MediaItem {
@@ -539,6 +653,19 @@ export interface TelegramMediaItem {
   sha256: string;
   parent_message_ts: string | null;
   confidence: Confidence;
+}
+
+/** Honest "what happened" record for Tier-2 Telegram — written on every exit path. */
+export interface TelegramPresence {
+  attempted: boolean;
+  available: boolean;
+  reason?: string | null;
+  package?: string;
+  db_path?: string;
+  counts?: Record<string, number>;
+  sidecars_present?: string[];
+  media_pulled?: number;
+  conversations?: number;
 }
 
 // --- Expanded Tier-1 Collector datasets ------------------------------------

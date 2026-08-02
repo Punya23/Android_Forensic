@@ -137,6 +137,150 @@ def _geotagged_section(locations: list) -> str:
 """
 
 
+_TRACE_CATEGORY_LABELS = {
+    "device_fix": ("Device position fix", ("#0b4f2c", "#d4f5e0")),
+    "media_capture": ("Photo / video captured here", ("#0b3d6b", "#d8ebff")),
+    "shared_location": ("Location shared in a conversation", ("#5a3a00", "#ffeccc")),
+    "network_inferred": ("Inferred from cell / WiFi", ("#4a3a6b", "#e8e0ff")),
+    "navigation": ("Navigation destination / origin", ("#6b3a00", "#ffe4cc")),
+    "interest": ("Looked up — not a position", ("#5c5c5c", "#ececec")),
+}
+
+
+def _osm_link(lat: Any, lon: Any) -> str:
+    """Coordinate cell linking to OpenStreetMap, or a plain dash when there is no point."""
+    if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+        return '<span style="color:#999">no coordinate</span>'
+    return (
+        f'<a href="https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=15/{lat}/{lon}" '
+        f'style="font-family:monospace;color:#2258a8">{lat:.6f}, {lon:.6f}</a>'
+    )
+
+
+def _location_trace_section(traces: list, summary: dict, anomalies: list) -> str:
+    """Render the unified location trace: every source, categorised by what it proves.
+
+    The categories are the point of this section. A single "Locations: 47" figure invites the
+    reading that the device was at 47 places, when most rows are commonly map links the user
+    browsed. Presence and interest are therefore counted separately in the header, colour-coded
+    per row, and the disclaimer states the distinction in terms a non-technical reader can use.
+    """
+    if not traces:
+        return ""
+
+    rows = ""
+    for t in sorted(
+        (t for t in traces if isinstance(t, dict)),
+        key=lambda r: (r.get("timestamp") is None, r.get("timestamp") or ""),
+    )[:750]:
+        label, colors = _TRACE_CATEGORY_LABELS.get(
+            t.get("category", "interest"), ("Unclassified", ("#5c5c5c", "#ececec"))
+        )
+        detail = t.get("place_name") or t.get("label") or t.get("address") or "—"
+        flags = t.get("flags") or []
+        flag_html = ""
+        if "counterparty-position" in flags:
+            flag_html += " " + _badge("OTHER PARTY", ("#7a2020", "#ffdede"))
+        if "live-location" in flags:
+            flag_html += " " + _badge("LIVE", ("#5a3a00", "#ffeccc"))
+        if any("MOCK" in str(f).upper() for f in flags) or "MOCK" in str(
+            t.get("label", "")
+        ).upper():
+            flag_html += " " + _badge("MOCK GPS", ("#7a2020", "#ffdede"))
+        rows += (
+            "<tr>"
+            f'<td style="font-family:monospace;font-size:11px;white-space:nowrap">'
+            f'{_esc(t.get("timestamp") or "undated")}</td>'
+            f"<td>{_badge(label, colors)}{flag_html}</td>"
+            f'<td>{_osm_link(t.get("latitude"), t.get("longitude"))}</td>'
+            f"<td>{_esc(detail)}</td>"
+            f'<td style="font-size:11px;color:#666">{_esc(t.get("source_label") or t.get("source"))}</td>'
+            f'<td style="font-size:11px;color:#666">{_esc(t.get("tier"))}</td>'
+            f'<td style="font-size:10px;color:#888">{_esc(t.get("provenance"))}</td>'
+            "</tr>"
+        )
+
+    total = summary.get("total", len(traces))
+    presence = summary.get("presence_points", 0)
+    interest = summary.get("interest_points", 0)
+    shown = min(len(traces), 750)
+    cap_note = (
+        f" Showing the first {shown} of {total} rows in time order."
+        if total > shown
+        else ""
+    )
+
+    by_source = summary.get("by_source") or {}
+    source_rows = "".join(
+        f"<tr><td>{_esc(name)}</td><td style='text-align:right'>{int(count)}</td></tr>"
+        for name, count in sorted(by_source.items(), key=lambda kv: -kv[1])
+    )
+
+    anomaly_html = ""
+    if anomalies:
+        anomaly_rows = "".join(
+            "<tr>"
+            f'<td style="font-family:monospace;font-size:11px">{_esc(a.get("from", {}).get("timestamp"))}'
+            f' → {_esc(a.get("to", {}).get("timestamp"))}</td>'
+            f'<td style="text-align:right">{_esc(a.get("distance_km"))} km</td>'
+            f'<td style="text-align:right">{_esc(a.get("implied_kmh"))} km/h</td>'
+            f'<td style="font-size:11px">{_esc(a.get("from", {}).get("source"))}'
+            f' → {_esc(a.get("to", {}).get("source"))}</td>'
+            "</tr>"
+            for a in anomalies[:50]
+            if isinstance(a, dict)
+        )
+        anomaly_html = f"""
+<h3>Impossible-travel anomalies</h3>
+<p class="note">
+  These pairs of readings imply travel faster than is physically plausible, so at least one of
+  them is wrong or was not produced by this device. Common explanations are a location-spoofing
+  app, an incorrectly parsed or non-UTC timestamp, media copied onto the device from elsewhere,
+  or the device being used by more than one person. <strong>Each requires verification; none is
+  a finding on its own.</strong>
+</p>
+<table>
+  <tr><th>Between</th><th>Distance</th><th>Implied speed</th><th>Sources</th></tr>
+  {anomaly_rows}
+</table>
+"""
+
+    return f"""
+<h2>Location Trace</h2>
+<p class="note">
+  <strong>Read the category before the coordinate.</strong> This table merges every location
+  source recovered in this acquisition — photo and video metadata, the OS's own position fixes,
+  cell and WiFi inference, locations shared in conversations, navigation history, and map links
+  opened in a browser. They do not carry equal weight.
+  <strong>{int(presence)} row(s) place this device at a coordinate.</strong>
+  {int(interest)} row(s) record a place that was looked at, searched for or saved, which
+  evidences interest in a location and <em>not</em> the device's presence there. An incoming
+  location share records where the <em>other party</em> said they were.
+  Absence of a location is not evidence the device was never somewhere — it means no artifact
+  reachable at the tiers used recorded one. Coordinates should be independently verified before
+  reliance in legal proceedings.{_esc(cap_note)}
+</p>
+<table>
+  <tr>
+    <th>Timestamp (UTC)</th>
+    <th>What it evidences</th>
+    <th>Coordinates</th>
+    <th>Place / detail</th>
+    <th>Source</th>
+    <th>Tier</th>
+    <th>Provenance</th>
+  </tr>
+  {rows}
+</table>
+<h3>Sources contributing to the trace</h3>
+<table>
+  <tr><th>Source</th><th style="text-align:right">Rows</th></tr>
+  {source_rows}
+</table>
+{anomaly_html}
+"""
+
+
 def generate_report(case_dir: str | Path) -> Path:
     """Render report.html inside a case folder from its persisted JSON artifacts."""
     from ..custody import Case  # local import to avoid a cycle
@@ -167,10 +311,15 @@ def generate_report(case_dir: str | Path) -> Path:
     tg_media = case.read_derived("telegram_media") or []
     tg_convs = case.read_derived("telegram_conversations") or {}
     tg_present = bool(tg_messages or tg_users or tg_chats)
+    tg_presence = case.read_derived("telegram_presence") or {}
     # --- Expanded Tier-1 + app-chat datasets (absent unless the relevant capture ran) ---
     apps = case.read_derived("apps") or []
     accounts = case.read_derived("accounts") or []
     media_inv_sum = case.read_derived("media_inventory_summary") or {}
+    # --- Unified location trace (absent on older cases acquired before it existed) ---
+    location_traces = case.read_derived("location_traces") or []
+    location_trace_summary = case.read_derived("location_trace_summary") or {}
+    location_anomalies = case.read_derived("location_impossible_travel") or []
     ig_messages = case.read_derived("instagram") or []
     sc_messages = case.read_derived("snapchat") or []
     discovered = case.read_derived("discovered_chats") or {}
@@ -542,6 +691,24 @@ def generate_report(case_dir: str | Path) -> Path:
             len((case.read_derived("mediastore_trash") or {}).get("items", [])),
         ),
         ("Locations", len(locations)),
+        # Split out deliberately: a single location total invites the reading that the device
+        # was at every one of those coordinates, when most are commonly places the user only
+        # looked up. The trace tiles appear only when the trace was actually built.
+        *(
+            [
+                (
+                    "Location trace rows",
+                    location_trace_summary.get("total", len(location_traces)),
+                ),
+                (
+                    "— placing the device",
+                    location_trace_summary.get("presence_points", 0),
+                ),
+                ("— interest only", location_trace_summary.get("interest_points", 0)),
+            ]
+            if location_traces
+            else []
+        ),
         ("Browser URLs", len(browser)),
         ("Flags", len(flags)),
         ("Audit events", summary["audit_event_count"]),
@@ -589,6 +756,15 @@ def generate_report(case_dir: str | Path) -> Path:
             )
         parts.append("</table>")
 
+    # --- Unified location trace (every source, categorised by evidential meaning) ---
+    # Placed before the photo-only section so a reader meets the full picture — and the
+    # presence/interest distinction — before the narrower EXIF table.
+    trace_html = _location_trace_section(
+        location_traces, location_trace_summary, location_anomalies
+    )
+    if trace_html:
+        parts.append(trace_html)
+
     # --- Geotagged Images (EXIF GPS from photos) ---
     if locations:
         geo_html = _geotagged_section(locations)
@@ -624,6 +800,10 @@ def generate_report(case_dir: str | Path) -> Path:
     # --- Telegram Recovered Data ---
     if tg_present:
         parts.append(_telegram_section(tg_messages, tg_users, tg_chats, tg_media))
+    elif tg_presence.get("attempted"):
+        # Tier-2 Telegram was requested but recovered nothing — render the honest reason
+        # instead of silently omitting the section, which would read as "not on device".
+        parts.append(_telegram_presence_section(tg_presence))
 
     # --- Instagram / Snapchat app-chat recovery ---
     if ig_messages:
@@ -719,11 +899,13 @@ def generate_report(case_dir: str | Path) -> Path:
     if browser:
         parts.append("<h2>Browser history</h2>")
         parts.append(
-            "<table><tr><th>Last visit</th><th>Title</th><th>URL</th><th>Visits</th></tr>"
+            "<table><tr><th>Last visit</th><th>Browser</th><th>Title</th><th>URL</th>"
+            "<th>Visits</th></tr>"
         )
         for h in browser[:100]:
             parts.append(
                 f'<tr><td class="mono">{_esc(h.get("last_visit") or "")}</td>'
+                f'<td>{_esc(h.get("browser_app") or "")}</td>'
                 f'<td>{_esc(h.get("title"))}</td>'
                 f'<td class="mono" style="word-break:break-all">{_esc(h.get("url"))}</td>'
                 f'<td>{_esc(h.get("visit_count"))}</td></tr>'
@@ -1688,6 +1870,25 @@ def _wifi_section(wifi_networks: list[dict]) -> str:
             f"</tr>"
         )
     parts.append("</table>")
+    return "\n".join(parts)
+
+
+def _telegram_presence_section(presence: dict) -> str:
+    """Render why Tier-2 Telegram recovered nothing — never silently omit this.
+
+    Rendered only when ``telegram_presence`` records an attempt (``attempted: True``)
+    that did not yield any messages/users/chats. The distinct point of this section is
+    that "no Telegram section in the report" must never be the examiner's only signal —
+    that reads identically to "Telegram was not on the device", which may be false.
+    """
+    reason = presence.get("reason") or "unknown"
+    parts = [
+        "<h2>Telegram (Tier&nbsp;2 — Root Acquisition Attempted)</h2>",
+        '<p class="note"><b>No Telegram chat content was recovered in this run.</b> '
+        f"Reason: {_esc(reason)}. This is <b>not</b> evidence that Telegram is absent "
+        "from the device — only that this acquisition attempt could not read "
+        f"<code>{_esc(presence.get('db_path', ''))}</code>.</p>",
+    ]
     return "\n".join(parts)
 
 

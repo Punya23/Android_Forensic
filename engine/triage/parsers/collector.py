@@ -7,7 +7,12 @@ The v0.2 Collector emits, in addition to contacts/calls/SMS:
     accounts.json          device accounts (Google / WhatsApp / Telegram / …)
     calendar.json          calendar events
     usage.json             per-app foreground-usage telemetry
-    collector_manifest.json summary of what ran (parsed opportunistically, not modelled)
+    location.json          last-known GPS fix per provider (the only direct coordinate a
+                           non-root helper can get from Android)
+    wifi.json              current association, saved networks, scan results (BSSIDs are
+                           geolocatable, so this is a location trail as well as a network one)
+    bluetooth.json         adapter identity + bonded devices
+    collector_manifest.json per-run audit record: which collectors ran, what was denied
 
 Each parser is tolerant of both a bare JSON array and a ``{"key": [...]}`` wrapper, and of
 missing fields, so an OEM quirk degrades to fewer fields rather than an exception.
@@ -20,7 +25,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from ..models import Account, AppUsage, CalendarEvent, InstalledApp, MediaInventoryItem
+from ..models import (
+    Account,
+    AppUsage,
+    CalendarEvent,
+    InstalledApp,
+    LocationPoint,
+    MediaInventoryItem,
+)
 
 # --- timestamp helpers ------------------------------------------------------
 
@@ -281,4 +293,186 @@ def media_inventory_summary(items: list[MediaInventoryItem]) -> dict[str, Any]:
         "favorite": favorite,
         "with_gps": with_gps,
         "total_bytes": total_bytes,
+    }
+
+
+# --- location.json ----------------------------------------------------------
+
+
+def parse_location(path: str | Path) -> list[LocationPoint]:
+    """Parse the Collector's ``location.json`` into :class:`LocationPoint` rows.
+
+    The APK records the OS's last-known fix for every location provider it can name
+    (``gps`` / ``network`` / ``passive`` / ``fused``). This is the only *direct* coordinate a
+    non-root, non-privileged helper can obtain from Android — everything else the engine
+    reports as a location is inferred from media EXIF, cell towers, WiFi BSSIDs or app
+    databases. It is therefore high-value and worth surfacing distinctly.
+
+    A ``_meta`` row (written by the APK to record which providers were queried) carries no
+    coordinate and is skipped here; :func:`location_collection_meta` reads it instead so the
+    report can distinguish "no fix was cached" from "we never asked".
+    """
+    src = Path(path).name
+    out: list[LocationPoint] = []
+    for r in _load(path, "locations", "data"):
+        provider = str(r.get("provider") or "")
+        if provider == "_meta":
+            continue
+        lat, lon = _coord_pair(r.get("latitude"), r.get("longitude"))
+        if lat is None or lon is None:
+            continue
+        label_bits = [f"last-known fix ({provider or 'unknown provider'})"]
+        acc = r.get("accuracy")
+        if isinstance(acc, (int, float)):
+            label_bits.append(f"±{acc:.0f}m")
+        if r.get("is_mock"):
+            # A mocked fix means a location-spoofing app supplied this coordinate. It is
+            # still evidence — of spoofing — but must never be presented as a real position.
+            label_bits.append("MOCK PROVIDER")
+        out.append(
+            LocationPoint(
+                latitude=lat,
+                longitude=lon,
+                source=f"collector:{provider}" if provider else "collector",
+                timestamp=_ms_to_iso(r.get("time")),
+                label=" ".join(label_bits),
+                source_file=src,
+            )
+        )
+    return out
+
+
+def location_collection_meta(path: str | Path) -> dict[str, Any]:
+    """Return the ``_meta`` row from ``location.json`` (providers queried, permission held).
+
+    Kept separate from :func:`parse_location` so an empty coordinate list stays explainable:
+    zero fixes with ``providers_seen`` populated means the device held no cached position,
+    which is a different finding from the collector never having run.
+    """
+    for r in _load(path, "locations", "data"):
+        if str(r.get("provider") or "") == "_meta":
+            seen = r.get("providers_seen")
+            return {
+                "providers_seen": [str(p) for p in seen] if isinstance(seen, list) else [],
+                "permission": str(r.get("permission") or ""),
+                "collected_at": _ms_to_iso(r.get("collected_at_ms")),
+            }
+    return {"providers_seen": [], "permission": "", "collected_at": None}
+
+
+def _coord_pair(lat: Any, lon: Any) -> tuple[Optional[float], Optional[float]]:
+    """Coerce a lat/long pair, rejecting out-of-range values and the 0,0 null-island sentinel."""
+    try:
+        la, lo = float(lat), float(lon)
+    except (TypeError, ValueError):
+        return None, None
+    if not (-90.0 <= la <= 90.0) or not (-180.0 <= lo <= 180.0):
+        return None, None
+    if la == 0.0 and lo == 0.0:
+        return None, None
+    return la, lo
+
+
+# --- wifi.json / bluetooth.json ---------------------------------------------
+
+
+def parse_wifi_json(path: str | Path) -> list[dict[str, Any]]:
+    """Parse the Collector's ``wifi.json`` (current association, saved networks, scan results).
+
+    Returned rows keep the APK's ``type`` discriminator so downstream code can tell a *saved*
+    network (historic presence at that location) from a *scan result* (the device is in range
+    of that AP right now). BSSIDs are normalised to lower-case colon form because the same
+    radio is reported in mixed case by different Android versions, and the geolocation lookup
+    keys on an exact string match.
+    """
+    src = Path(path).name
+    out: list[dict[str, Any]] = []
+    for r in _load(path, "wifi", "networks", "data"):
+        row_type = str(r.get("type") or "unknown")
+        bssid = _norm_mac(r.get("bssid"))
+        out.append(
+            {
+                "type": row_type,
+                "ssid": str(r.get("ssid") or ""),
+                "bssid": bssid,
+                "hidden": bool(r.get("hidden", False)),
+                "frequency_mhz": r.get("frequency_mhz"),
+                "level_dbm": r.get("level_dbm", r.get("rssi")),
+                "capabilities": str(r.get("capabilities") or ""),
+                "status": str(r.get("status") or ""),
+                "network_id": r.get("network_id"),
+                "ip_address": str(r.get("ip_address") or ""),
+                "source_file": src,
+            }
+        )
+    return out
+
+
+def parse_bluetooth_json(path: str | Path) -> list[dict[str, Any]]:
+    """Parse the Collector's ``bluetooth.json`` (adapter identity + bonded devices)."""
+    src = Path(path).name
+    out: list[dict[str, Any]] = []
+    for r in _load(path, "bluetooth", "devices", "data"):
+        out.append(
+            {
+                "type": str(r.get("type") or "unknown"),
+                "name": str(r.get("name") or ""),
+                "address": _norm_mac(r.get("address")),
+                "bond_state": str(r.get("bond_state") or ""),
+                "device_type": str(r.get("device_type") or ""),
+                "device_class": r.get("device_class"),
+                "enabled": r.get("enabled"),
+                "state": str(r.get("state") or ""),
+                "uuids": [str(u) for u in r.get("uuids", []) if u]
+                if isinstance(r.get("uuids"), list)
+                else [],
+                "source_file": src,
+            }
+        )
+    return out
+
+
+def _norm_mac(value: Any) -> str:
+    """Normalise a MAC/BSSID to lower-case colon form; pass through anything unrecognised."""
+    s = str(value or "").strip()
+    if not s or s.startswith("["):  # "[permission_denied]" placeholder
+        return s
+    return s.lower()
+
+
+# --- collector_manifest.json ------------------------------------------------
+
+
+def parse_collector_manifest(path: str | Path) -> dict[str, Any]:
+    """Parse the per-run audit record the Collector writes alongside its data files.
+
+    The manifest is what makes a zero-row artifact interpretable: for each collector it
+    records ``ok`` / ``empty`` / ``denied`` / ``unsupported`` / ``error`` plus the reason, and
+    lists the grant state of every permission the helper asked for. Without it, "0 SMS" and
+    "READ_SMS was refused" would be indistinguishable in the report.
+    """
+    p = Path(path)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    collectors = [c for c in data.get("collectors", []) if isinstance(c, dict)]
+    perms = [c for c in data.get("permissions", []) if isinstance(c, dict)]
+    return {
+        "action": str(data.get("action") or ""),
+        "collected_at": _ms_to_iso(data.get("collected_at_ms")),
+        "sdk_int": data.get("sdk_int"),
+        "manufacturer": str(data.get("manufacturer") or ""),
+        "model": str(data.get("model") or ""),
+        "collectors": collectors,
+        "denied": [c for c in collectors if c.get("status") == "denied"],
+        "permissions_granted": [
+            str(c.get("permission") or "") for c in perms if c.get("granted")
+        ],
+        "permissions_denied": [
+            str(c.get("permission") or "") for c in perms if not c.get("granted")
+        ],
+        "source_file": p.name,
     }

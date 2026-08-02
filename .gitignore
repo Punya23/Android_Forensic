@@ -52,3 +52,8 @@ htmlcov/
 /calllog.json
 /contacts.json
 /sms.json
+# Ad-hoc dumpsys captures taken while testing against a real handset. Same hazard as the
+# JSON above: they are real device data that lands in the repo root during a session.
+/bt_dump.txt
+/*_dump.txt
+/dumpsys_*.txt

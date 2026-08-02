@@ -2,6 +2,7 @@ import type { Health } from "../lib/types";
 
 export type ViewKey =
   | "acquire"
+  | "cases"
   | "overview"
   | "intel"
   | "knowledge"
@@ -26,6 +27,7 @@ export type ViewKey =
   | "search"
   | "gaccounts"
   | "locations"
+  | "loctrace"
   | "browser"
   | "timeline"
   | "recovered"
@@ -43,6 +45,7 @@ export type ViewKey =
   | "report";
 
 const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
+  { key: "cases", label: "Case History", icon: "🗄" },
   { key: "overview", label: "Overview", icon: "▤" },
   { key: "intel", label: "Case Intelligence", icon: "✦" },
   { key: "messages", label: "Messages", icon: "💬", group: "Communications" },
@@ -63,7 +66,8 @@ const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
   { key: "screentime", label: "Screen & App Usage", icon: "⏳" },
   { key: "search", label: "Search History", icon: "🔍" },
   { key: "gaccounts", label: "Registered Accounts", icon: "👥" },
-  { key: "locations", label: "Location Tracing", icon: "🗺" },
+  { key: "loctrace", label: "Location Trace (all sources)", icon: "🌍" },
+  { key: "locations", label: "Location Tracing (photos)", icon: "🗺" },
   { key: "browser", label: "Browser History", icon: "🌐" },
   { key: "wifi_live", label: "Wi-Fi (live, non-root)", icon: "📡", group: "Connectivity" },
   { key: "bluetooth", label: "Bluetooth", icon: "🔵" },
@@ -85,7 +89,7 @@ const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
 ];
 
 /** Views that work without a case loaded — they read installation-wide state. */
-const CASE_INDEPENDENT: ReadonlySet<ViewKey> = new Set<ViewKey>(["acquire", "knowledge"]);
+const CASE_INDEPENDENT: ReadonlySet<ViewKey> = new Set<ViewKey>(["acquire", "knowledge", "cases"]);
 
 export function isCaseIndependent(view: ViewKey): boolean {
   return CASE_INDEPENDENT.has(view);

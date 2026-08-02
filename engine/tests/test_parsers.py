@@ -717,6 +717,158 @@ def test_telegram_counts_dict_structure(tmp_path):
     )
 
 
+# --- Telegram Desktop "Export Telegram data" ingest (non-root path) ---------
+
+from triage.parsers import parse_telegram_export, build_conversations  # noqa: E402
+
+
+def test_telegram_export_full_account_json(tmp_path):
+    """Full-account export shape: top-level chats.list, mixed plain/entity-run text."""
+    doc = {
+        "about": "Telegram export",
+        "chats": {
+            "list": [
+                {
+                    "name": "Alice",
+                    "type": "personal_chat",
+                    "id": 111,
+                    "messages": [
+                        {
+                            "id": 1,
+                            "type": "message",
+                            "date": "2023-01-01T12:00:00",
+                            "date_unixtime": "1672574400",
+                            "from": "Alice",
+                            "from_id": "user111",
+                            "text": "meet at the docks",
+                        },
+                        {
+                            "id": 2,
+                            "type": "message",
+                            "date": "2023-01-01T12:01:00",
+                            "date_unixtime": "1672574460",
+                            "from": "Me",
+                            "from_id": "user222",
+                            "text": [
+                                "bring the ",
+                                {"type": "bold", "text": "package"},
+                            ],
+                        },
+                        {
+                            "id": 3,
+                            "type": "service",
+                            "action": "pin_message",
+                            "date_unixtime": "1672574500",
+                        },
+                    ],
+                }
+            ]
+        },
+    }
+    p = tmp_path / "result.json"
+    p.write_text(json.dumps(doc), encoding="utf-8")
+
+    result = parse_telegram_export(p)
+    assert result["available"] is True
+    assert result["error"] is None
+    msgs = result["messages"]
+    # Service message must be excluded — it carries no chat content.
+    assert len(msgs) == 2
+    assert msgs[0]["body"] == "meet at the docks"
+    assert msgs[1]["body"] == "bring the package"  # entity-run text flattened
+    assert all(m["confidence"] == Confidence.LIVE.value for m in msgs)
+    assert all(m["chat_id"] == "111" for m in msgs)
+    assert msgs[0]["timestamp"] == "2023-01-01T12:00:00Z"
+
+    uids = {u["_id"] for u in result["users"]}
+    assert uids == {"111", "222"}
+    assert result["chats"][0]["_name"] == "Alice"
+    assert result["counts"]["live"] == 2
+    assert result["counts"]["total"] == 2
+
+    # Feeds build_conversations exactly like the Tier-2 root path does.
+    convs = build_conversations(
+        messages=result["messages"], users=result["users"], chats=result["chats"]
+    )
+    assert convs["111"]["title"] == "Alice"
+    assert convs["111"]["message_count"] == 2
+
+
+def test_telegram_export_single_chat_json(tmp_path):
+    """Single-chat 'Export chat history' shape: no chats.list wrapper."""
+    doc = {
+        "name": "Bob",
+        "type": "personal_chat",
+        "id": 555,
+        "messages": [
+            {
+                "id": 1,
+                "type": "message",
+                "date_unixtime": "1672574400",
+                "from": "Bob",
+                "from_id": "user555",
+                "text": "",
+                "photo": "photos/photo_1.jpg",
+            }
+        ],
+    }
+    p = tmp_path / "result.json"
+    p.write_text(json.dumps(doc), encoding="utf-8")
+
+    result = parse_telegram_export(p)
+    assert result["available"] is True
+    assert len(result["messages"]) == 1
+    assert result["messages"][0]["body"] == "[photo]"  # no media ingest, honest placeholder
+    assert result["messages"][0]["chat_id"] == "555"
+
+
+def test_telegram_export_zip(tmp_path):
+    """A ZIP export (result.json nested under an export folder) is unwrapped."""
+    import zipfile
+
+    doc = {
+        "chats": {
+            "list": [
+                {
+                    "name": "Carol",
+                    "id": 9,
+                    "messages": [
+                        {
+                            "id": 1,
+                            "type": "message",
+                            "date_unixtime": "1672574400",
+                            "from": "Carol",
+                            "from_id": "user9",
+                            "text": "hello from zip",
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+    zpath = tmp_path / "export.zip"
+    with zipfile.ZipFile(zpath, "w") as z:
+        z.writestr("Telegram Desktop/result.json", json.dumps(doc))
+
+    result = parse_telegram_export(zpath)
+    assert result["available"] is True
+    assert result["messages"][0]["body"] == "hello from zip"
+
+
+def test_telegram_export_missing_file(tmp_path):
+    result = parse_telegram_export(tmp_path / "does_not_exist.json")
+    assert result["available"] is False
+    assert result["messages"] == []
+
+
+def test_telegram_export_malformed_json(tmp_path):
+    p = tmp_path / "result.json"
+    p.write_text("{not valid json", encoding="utf-8")
+    result = parse_telegram_export(p)
+    assert result["available"] is False
+    assert result["error"] and "parse error" in result["error"]
+
+
 # ===========================================================================
 # Task 5 — Telegram deep recovery (schema, users/chats, media, conversations,
 #           timeline)

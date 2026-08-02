@@ -18,7 +18,7 @@ from .contacts import parse_contacts_json
 from .calllog import parse_calllog_json
 from .appdb import parse_app_db
 from .sms import parse_sms_json
-from .browser import parse_browser_history
+from .browser import parse_browser_history, parse_firefox_places, CHROMIUM_BROWSER_PACKAGES
 from .telegram import (
     parse_telegram_db,
     recover_telegram_messages,
@@ -28,6 +28,7 @@ from .telegram import (
     recover_users_and_chats,
     extract_media_paths_from_blob,
     build_conversations,
+    parse_telegram_export,
     TelegramPaths,
 )
 from .signal import parse_signal_backup, parse_signal_plaintext_db
@@ -42,12 +43,23 @@ from .whatsapp_e2e import (  # NEW — E2E recovery
     analyze_e2e_encryption,
     simulate_e2e_decryption_workflow,
 )
+from .video_gps import (  # video location — MP4/MOV `udta` box, no EXIF equivalent
+    extract_video_gps,
+    extract_video_location,
+    parse_iso6709,
+    is_video,
+)
 from .collector import (  # NEW — expanded Collector-APK outputs (Tier 1)
     parse_media_inventory,
     parse_apps,
     parse_accounts,
     parse_calendar,
     parse_usage,
+    parse_location,
+    parse_wifi_json,
+    parse_bluetooth_json,
+    parse_collector_manifest,
+    location_collection_meta,
     media_inventory_summary,
     app_from_package,
 )
@@ -116,10 +128,37 @@ from .google_maps import (  # NEW — Google Maps location history
     get_current_location,
     parse_google_takeout_location,
     parse_maps_cache,
+    # App-private Maps / Play-services stores (Tier 2): navigation history, saved places,
+    # map searches, and the cell/WiFi geolocation cache.
+    parse_maps_app_data,
+    parse_maps_destination_history,
+    parse_maps_myplaces,
+    parse_maps_search_history,
+    parse_gms_network_location,
     build_location_timeline,
     build_location_points,
     get_location_summary,
     detect_location_anomalies,
+)
+from .app_location import (  # location shares inside messaging-app databases (Tier 2)
+    SharedLocation,
+    extract_app_locations,
+    extract_sqlite_locations,
+    parse_whatsapp_locations,
+    parse_telegram_locations,
+    parse_instagram_locations,
+    parse_snapchat_locations,
+    carve_telegram_geopoints,
+    coordinates_in_text,
+    summarise_shared_locations,
+)
+from .url_location import (  # coordinates and map searches encoded in URLs
+    UrlLocation,
+    extract_url_coordinates,
+    extract_map_query,
+    locations_from_urls,
+    locations_from_text,
+    summarise_url_locations,
 )
 from .whatsapp_backup import (  # NEW — WhatsApp backup recovery (Tier 2)
     discover_backups,
@@ -143,6 +182,11 @@ __all__ = [
     "extract_orientation",
     "extract_software",
     "extract_all_gps_data",
+    # Video location (MP4/MOV `udta` box)
+    "extract_video_gps",
+    "extract_video_location",
+    "parse_iso6709",
+    "is_video",
     "parse_whatsapp_export",
     "stream_whatsapp_export",
     "parse_whatsapp_db",
@@ -151,6 +195,8 @@ __all__ = [
     "parse_app_db",
     "parse_sms_json",
     "parse_browser_history",
+    "parse_firefox_places",
+    "CHROMIUM_BROWSER_PACKAGES",
     "parse_telegram_db",
     "recover_telegram_messages",
     "export_recovered_messages_json",
@@ -159,6 +205,7 @@ __all__ = [
     "recover_users_and_chats",
     "extract_media_paths_from_blob",
     "build_conversations",
+    "parse_telegram_export",
     "TelegramPaths",
     "parse_signal_backup",
     "parse_signal_plaintext_db",
@@ -177,6 +224,11 @@ __all__ = [
     "parse_accounts",
     "parse_calendar",
     "parse_usage",
+    "parse_location",
+    "parse_wifi_json",
+    "parse_bluetooth_json",
+    "parse_collector_manifest",
+    "location_collection_meta",
     "media_inventory_summary",
     "app_from_package",
     # Instagram (Tier 2)
@@ -242,6 +294,30 @@ __all__ = [
     "build_location_points",
     "get_location_summary",
     "detect_location_anomalies",
+    # App-private Maps / Play-services location stores (Tier 2)
+    "parse_maps_app_data",
+    "parse_maps_destination_history",
+    "parse_maps_myplaces",
+    "parse_maps_search_history",
+    "parse_gms_network_location",
+    # Location shares inside messaging-app databases (Tier 2)
+    "SharedLocation",
+    "extract_app_locations",
+    "extract_sqlite_locations",
+    "parse_whatsapp_locations",
+    "parse_telegram_locations",
+    "parse_instagram_locations",
+    "parse_snapchat_locations",
+    "carve_telegram_geopoints",
+    "coordinates_in_text",
+    "summarise_shared_locations",
+    # Coordinates and map searches encoded in URLs
+    "UrlLocation",
+    "extract_url_coordinates",
+    "extract_map_query",
+    "locations_from_urls",
+    "locations_from_text",
+    "summarise_url_locations",
     # WhatsApp backup recovery (Tier 2)
     "discover_backups",
     "extract_key",

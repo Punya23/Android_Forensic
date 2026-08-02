@@ -142,6 +142,7 @@ from .parsers import (
     extract_gps,
     parse_app_db,
     parse_browser_history,
+    parse_firefox_places,
     parse_calllog_json,
     parse_contacts_json,
     parse_sms_json,
@@ -185,18 +186,34 @@ from .parsers.google_maps import (
     parse_current_location,
     parse_google_takeout_location,
     parse_maps_cache,
+    parse_maps_app_data,
+    parse_maps_destination_history,
+    parse_maps_myplaces,
+    parse_maps_search_history,
+    parse_gms_network_location,
     build_location_points,
     get_location_summary as get_maps_location_summary,
     detect_location_anomalies as detect_maps_anomalies,
 )
+from .parsers.app_location import extract_app_locations, summarise_shared_locations
+from .parsers.url_location import (
+    locations_from_urls,
+    locations_from_text,
+    summarise_url_locations,
+)
 from .parsers.signal import parse_signal_plaintext_db
 from .parsers.exif import extract_datetime
+from .parsers.video_gps import extract_video_location
 from .parsers.collector import (
     parse_media_inventory,
     parse_apps,
     parse_accounts,
     parse_calendar,
     parse_usage,
+    parse_location,
+    parse_wifi_json,
+    parse_bluetooth_json,
+    parse_collector_manifest,
     media_inventory_summary,
 )
 from .parsers.instagram import recover_instagram_messages, InstagramPaths
@@ -229,6 +246,12 @@ from .forensics import (
     detect_location_anomalies,
     generate_location_summary,
     generate_location_html_summary,
+)
+from .forensics.location_aggregate import (
+    build_location_traces,
+    summarise_traces,
+    detect_impossible_travel,
+    traces_to_geojson,
 )
 
 ProgressFn = Callable[[str, float, str], None]
@@ -281,6 +304,15 @@ class PipelineConfig:
     )
     tier2_wifi: bool = (
         False  # root-required: recover stored Wi-Fi credentials from system config
+    )
+    tier2_browser_history: bool = (
+        False  # root-required: pull Chromium-family + Firefox History/places.sqlite
+    )
+    tier2_maps_location: bool = (
+        # root-required: Maps navigation history, saved places, map searches and the
+        # Play-services cell/WiFi geolocation cache (which holds positions from periods
+        # when GPS was switched off entirely).
+        False
     )
     # -- Deep artifact stages ------------------------------------------------
     wifi_live: bool = True  # Tier 0: dumpsys wifi/netstats/connectivity (volatile)
@@ -516,6 +548,8 @@ def run_acquisition(
     google_accounts: list[dict] = []  # dumpsys account — signed-in Google accounts
     search_history: list[dict] = []  # Google + browser search queries
     maps_locations: list[dict] = []  # Google Maps / location-history points
+    shared_locations: list = []  # location shares from app DBs (WhatsApp/Telegram/IG/Snap)
+    url_locations: list = []  # coordinates and map searches parsed out of URLs
     signal_result: dict = {}  # Signal: plaintext rows OR encrypted-present report
     bluetooth_bonds: list[dict] = []  # bt_config.conf persistent bonds (Tier 2, P1-3)
     bluetooth_bond_result: dict = {}  # adapter + bonds + caveats
@@ -539,6 +573,11 @@ def run_acquisition(
     accounts: list = []  # device accounts (Tier-1)
     calendar_events: list = []  # calendar events (Tier-1)
     app_usage: list = []  # app-usage telemetry (Tier-1)
+    # Kept separate from `wifi_networks` (Tier-2 root credentials) and `bluetooth_devices`
+    # (dumpsys output): the helper's JSON has a different shape, and merging the two would
+    # mean a row's fields no longer imply how it was obtained.
+    collector_wifi: list = []  # wifi.json — association/saved/scan (Tier-1)
+    collector_bluetooth: list = []  # bluetooth.json — adapter + bonded devices (Tier-1)
     instagram_result: dict = {}  # Instagram recovery result (Tier-2 / corpus)
     snapchat_result: dict = {}  # Snapchat recovery result (Tier-2 / corpus)
     discovered_chats: dict = {"tables": [], "messages": []}  # generic app-finder output
@@ -631,6 +670,9 @@ def run_acquisition(
                 calendar_events=calendar_events,
                 app_usage=app_usage,
                 contacts=contacts,
+                locations=locations,
+                wifi_networks=collector_wifi,
+                bluetooth_devices=collector_bluetooth,
                 skip_paths=tier1_skip_paths,
             )
         else:
@@ -1064,6 +1106,13 @@ def run_acquisition(
         _maps_cache = staging / "maps_cache"
         if _maps_cache.exists():
             maps_locations.extend(parse_maps_cache(_maps_cache))
+        # App-private Maps / Play-services databases. These carry meaning the generic cache
+        # sniff cannot recover: a navigation destination is a stated intent to travel, a saved
+        # place labelled "Home" is an address, and the GMS geolocation cache holds positions
+        # for periods when GPS was switched off entirely.
+        for _root in (staging, case.artifacts_dir):
+            if _root.exists():
+                maps_locations.extend(parse_maps_app_data(_root))
         if maps_locations:
             case.write_derived("maps_locations", maps_locations)
             case.write_derived(
@@ -1083,6 +1132,90 @@ def run_acquisition(
         case.log(
             "parse.maps",
             f"Maps location parse error: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+
+    # -- Shared locations from app databases ---------------------------------
+    # A "here's where I am" pin sent in a chat is often the only artifact placing a device
+    # somewhere at a stated time, and it has no message text — so the chat parsers, which read
+    # message bodies, walk straight past it. Every acquired database is swept: the app-specific
+    # readers first (they know a WhatsApp live share from a one-shot pin), then a generic
+    # coordinate-column scan that catches the long tail of dating, ride-hailing and delivery
+    # apps nobody has written a parser for.
+    progress("app_locations", 0.5893, "Extracting shared locations from app databases")
+    try:
+        _seen_db: set[str] = set()
+        for _stored, _rec in db_artifacts:
+            key = str(_stored)
+            if key in _seen_db:
+                continue
+            _seen_db.add(key)
+            try:
+                shared_locations.extend(
+                    extract_app_locations(_stored, app_hint=getattr(_rec, "app", "") or "")
+                )
+            except Exception:
+                # One malformed database must not stop the sweep over the others.
+                continue
+        if shared_locations:
+            case.write_derived(
+                "shared_locations", [s.to_dict() for s in shared_locations]
+            )
+            case.write_derived(
+                "shared_location_summary", summarise_shared_locations(shared_locations)
+            )
+            _live = sum(1 for s in shared_locations if s.kind in ("live", "live_final"))
+            case.log(
+                "parse.shared_locations",
+                f"{len(shared_locations)} location(s) shared in app databases "
+                f"({_live} from live-location shares)",
+                tier=Tier.TIER2.value,
+            )
+    except Exception as exc:
+        case.log(
+            "parse.shared_locations",
+            f"shared-location parse error: {exc}",
+            result="error",
+            tier=Tier.TIER2.value,
+        )
+
+    # -- Map links in browser history and message text -----------------------
+    # A map URL is a location record that survives in browser history long after the map app's
+    # own cache is gone, and browser history is reachable on acquisitions where app-private
+    # Maps databases are not. These are claims about places the user *looked at*, so they are
+    # kept strictly separate from device fixes downstream.
+    progress("url_locations", 0.5894, "Extracting locations from map links")
+    try:
+        if browser_history:
+            url_locations.extend(
+                locations_from_urls(browser_history, source_file="browser history")
+            )
+        for _msg in app_messages:
+            _body = getattr(_msg, "body", "") or ""
+            if "http" in _body or "geo:" in _body:
+                url_locations.extend(
+                    locations_from_text(
+                        _body,
+                        source_file=getattr(_msg, "source_file", "") or "",
+                        timestamp=getattr(_msg, "timestamp", None),
+                    )
+                )
+        if url_locations:
+            case.write_derived("url_locations", [u.to_dict() for u in url_locations])
+            case.write_derived(
+                "url_location_summary", summarise_url_locations(url_locations)
+            )
+            case.log(
+                "parse.url_locations",
+                f"{len(url_locations)} location(s) from map links "
+                f"({sum(1 for u in url_locations if u.latitude is not None)} with coordinates)",
+                tier=Tier.TIER0.value,
+            )
+    except Exception as exc:
+        case.log(
+            "parse.url_locations",
+            f"map-link location parse error: {exc}",
             result="error",
             tier=Tier.TIER0.value,
         )
@@ -1208,6 +1341,16 @@ def run_acquisition(
                 result="skipped",
                 tier=Tier.TIER2.value,
             )
+            _write_case_derived(
+                case,
+                "telegram_presence",
+                {
+                    "attempted": True,
+                    "available": False,
+                    "reason": "mock/synthetic source — no real device to pull cache4.db from",
+                    "package": "org.telegram.messenger",
+                },
+            )
 
     if cfg.tier2_instagram and _tier2_battery_ok():
         progress("tier2", 0.61, "Running Tier-2 Instagram recovery (root)")
@@ -1249,6 +1392,37 @@ def run_acquisition(
             case.log(
                 "tier2.wifi",
                 "Tier-2 Wi-Fi requested on non-real (mock) source; skipped",
+                result="skipped",
+                tier=Tier.TIER2.value,
+            )
+
+    if cfg.tier2_browser_history and _tier2_battery_ok():
+        progress("tier2", 0.636, "Running Tier-2 browser history recovery (root)")
+        if isinstance(source, RealDeviceSource):
+            _run_tier2_browser_history(
+                source, case, staging, browser_history, search_history, recovered_rows
+            )
+        else:
+            case.log(
+                "tier2.browser_history",
+                "Tier-2 browser history requested on non-real (mock) source; skipped",
+                result="skipped",
+                tier=Tier.TIER2.value,
+            )
+
+    # -- Tier 2: Google Maps / Play-services location stores -------------------
+    # Navigation history, saved places, map searches and the cell/WiFi geolocation cache all
+    # live under /data/data/, so nothing below is reachable without root. The GMS cache is the
+    # one that matters most in practice: it holds positions for periods when GPS was off, which
+    # is exactly when every other location source comes up empty.
+    if cfg.tier2_maps_location and _tier2_battery_ok():
+        progress("tier2", 0.6355, "Pulling Google Maps / location stores (root)")
+        if isinstance(source, RealDeviceSource):
+            _run_tier2_maps_location(source, case, staging, maps_locations)
+        else:
+            case.log(
+                "tier2.maps_location",
+                "Tier-2 Maps location stores requested on non-real (mock) source; skipped",
                 result="skipped",
                 tier=Tier.TIER2.value,
             )
@@ -1702,6 +1876,54 @@ def run_acquisition(
             tier=Tier.TIER0.value,
         )
 
+    # -- Unified location trace ---------------------------------------------
+    # Every location source the run touched, merged into one time-ordered dataset where each
+    # row states where, when, and how it was obtained. Without this the examiner reconciles a
+    # dozen differently-shaped lists by hand. Deduplication is within evidential category only,
+    # so a GPS fix and a map link at the same coordinate stay as two independent facts rather
+    # than being collapsed into one — corroboration is the point, not noise.
+    progress("location_trace", 0.885, "Building unified location trace")
+    try:
+        location_traces = build_location_traces(
+            location_points=locations,
+            shared_locations=shared_locations,
+            url_locations=url_locations,
+            maps_rows=maps_locations,
+            cell_towers=cell_towers,
+            media_inventory=media_inventory,
+        )
+        _trace_summary = summarise_traces(location_traces)
+        _impossible = detect_impossible_travel(location_traces)
+        case.write_derived("location_traces", [t.to_dict() for t in location_traces])
+        case.write_derived("location_trace_summary", _trace_summary)
+        case.write_derived("location_trace_geojson", traces_to_geojson(location_traces))
+        case.write_derived("location_impossible_travel", _impossible)
+        case.log(
+            "analysis.location_trace",
+            f"{_trace_summary['total']} location trace row(s) from "
+            f"{len(_trace_summary['sources_present'])} source(s); "
+            f"{_trace_summary['presence_points']} place the device, "
+            f"{_trace_summary['interest_points']} record interest only",
+            tier=Tier.TIER0.value,
+        )
+        if _impossible:
+            case.log(
+                "analysis.location_trace",
+                f"{len(_impossible)} impossible-travel anomaly(ies) between consecutive "
+                f"presence points — requires verification (spoofed fix, wrong timestamp, "
+                f"imported media, or shared device)",
+                result="partial",
+                tier=Tier.TIER0.value,
+            )
+    except Exception as exc:
+        location_traces = []
+        case.log(
+            "analysis.location_trace",
+            f"location trace build error: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+
     case.write_derived("messages", all_messages)
     case.write_derived("contacts", contacts)
     case.write_derived("calls", calls)
@@ -1801,6 +2023,11 @@ def run_acquisition(
         "media_inventory_summary", media_inventory_summary(media_inventory)
     )
     case.write_derived("wifi", wifi_networks)  # Wi-Fi credentials (Tier 2)
+    # Helper-APK radio artifacts. Separate datasets from the Tier-2 `wifi` credentials and the
+    # dumpsys-derived `bluetooth` list because they were obtained a different way and carry
+    # different fields — a reader must be able to tell which is which.
+    case.write_derived("collector_wifi", collector_wifi)
+    case.write_derived("collector_bluetooth", collector_bluetooth)
     case.write_derived(
         "whatsapp_backup_messages", wa_backup_messages
     )  # WA backup (Tier 2)
@@ -2266,10 +2493,27 @@ def _process_pulled_file(
     app = rec.app
     name = stored.name
 
-    # Media → catalogue + EXIF GPS/date
+    # Media → catalogue + GPS/date. Photos carry GPS in EXIF; videos carry it in the MP4/MOV
+    # `udta` location box instead, which the EXIF reader cannot see — gating the whole block on
+    # `category == "image"` meant every geotagged clip on the device was silently dropped.
     if category in ("image", "video", "audio"):
-        gps = extract_gps(stored) if category == "image" else None
-        dt = extract_datetime(stored) if category == "image" else None
+        gps = None
+        dt = None
+        loc_source = "exif"
+        loc_label = f"photo {name}"
+        if category == "image":
+            gps = extract_gps(stored)
+            dt = _iso_or_none(extract_datetime(stored))
+        elif category == "video":
+            vid = extract_video_location(stored)
+            if vid:
+                dt = vid.get("created")
+                if "lat" in vid:
+                    gps = {"lat": vid["lat"], "lon": vid["lon"]}
+                    loc_source = "video"
+                    box = vid.get("box", "udta")
+                    place = vid.get("place_name")
+                    loc_label = f"video {name} ({box})" + (f" — {place}" if place else "")
         mi = MediaItem(
             artifact_id=rec.artifact_id,
             stored_path=rec.stored_path,
@@ -2277,7 +2521,7 @@ def _process_pulled_file(
             size_bytes=rec.size_bytes,
             app=app,
             trashed="trashed" in rec.flags,
-            timestamp=_iso_or_none(dt),
+            timestamp=dt,
             gps=gps,
             sha256=rec.sha256,
         )
@@ -2287,9 +2531,9 @@ def _process_pulled_file(
                 LocationPoint(
                     latitude=gps["lat"],
                     longitude=gps["lon"],
-                    source="exif",
-                    timestamp=_iso_or_none(dt),
-                    label=f"photo {name}",
+                    source=loc_source,
+                    timestamp=dt,
+                    label=loc_label,
                     source_file=rec.stored_path,
                 )
             )
@@ -3068,15 +3312,32 @@ def _run_tier2_telegram(
     """
     REMOTE_DB = "/data/data/org.telegram.messenger/files/cache4.db"
     REMOTE_STAGING = "/sdcard/Download/tg_cache4_triage.db"
+    PACKAGE = "org.telegram.messenger"
+
+    def _presence(available: bool, reason: Optional[str] = None, **extra: Any) -> None:
+        # Every exit from this function — success or failure — leaves a first-class,
+        # dashboard-visible record of what happened. Without this, a non-rooted device
+        # or a failed su cp produced only a buried audit-log line, and the report
+        # section is skipped entirely when nothing was recovered — which reads exactly
+        # like "Telegram was not on the device" (see erakshak-honesty-invariants #2).
+        _write_case_derived(
+            case,
+            "telegram_presence",
+            {
+                "attempted": True,
+                "available": available,
+                "reason": reason,
+                "package": PACKAGE,
+                "db_path": REMOTE_DB,
+                **extra,
+            },
+        )
 
     # 0. Encryption gate (P1-1). On a BFU device this path is ciphertext; copying it
     #    would yield an unreadable file and the run would report "not found".
     if not _ce_gate(case, REMOTE_DB, "Telegram cache4.db"):
-        return {
-            "skipped": True,
-            "reason": "credential-encrypted storage inaccessible (BFU)",
-            "messages": [],
-        }
+        _presence(False, "credential-encrypted storage inaccessible (BFU)")
+        return
 
     # 1. Copy to accessible location via su.
     cp_result = source.adb.shell(f'su -c "cp {REMOTE_DB} {REMOTE_STAGING}"')
@@ -3089,13 +3350,12 @@ def _run_tier2_telegram(
         tier=Tier.TIER2.value,
     )
     if not cp_result.ok:
-        case.log(
-            "tier2.telegram",
-            f"su cp failed (device may not be rooted or Telegram not installed): "
-            f"{cp_result.stderr[:200]}",
-            result="error",
-            tier=Tier.TIER2.value,
+        reason = (
+            "su cp failed (device may not be rooted or Telegram not installed): "
+            f"{cp_result.stderr[:200]}"
         )
+        case.log("tier2.telegram", reason, result="error", tier=Tier.TIER2.value)
+        _presence(False, reason)
         return
 
     # 2. Pull to local staging.
@@ -3116,6 +3376,7 @@ def _run_tier2_telegram(
             result="error",
             tier=Tier.TIER2.value,
         )
+        _presence(False, "adb pull of cache4.db failed after a successful su cp")
         return
 
     # 3. Ingest into case manifest (Tier 2).
@@ -3131,6 +3392,33 @@ def _run_tier2_telegram(
     )
     stored = case.root / rec.stored_path
 
+    # 3b. WAL/SHM/rollback-journal sidecars (P0 data-loss fix, see test_wal_sidecar.py).
+    # cache4.db is held open by a live app in WAL mode; copying the .db alone silently
+    # drops the newest committed rows AND every deleted/edited row image still sitting in
+    # the WAL. Reuses the well-tested `_root_pull_paths` probe+cp+pull path, then
+    # co-locates each sidecar under the EXACT `<stored>-wal`/`-shm`/`-journal` name so
+    # `recover_deleted_rows` (which looks for `db_path.with_name(db_path.name + "-wal")`)
+    # picks it up. A missing sidecar is normal (a fully checkpointed DB has none) and is
+    # not itself a finding — only genuinely unreadable ones are logged as errors.
+    sidecar_specs = [
+        (REMOTE_DB + suf, f"tg_cache4.db{suf}") for suf in ("-wal", "-shm", "-journal")
+    ]
+    sidecars_pulled = _root_pull_paths(
+        source, case, staging, sidecar_specs, label="telegram.sidecar", category="database", app="telegram"
+    )
+    sidecars_present: list[str] = []
+    for remote_path, _local_name in sidecar_specs:
+        local_file = sidecars_pulled.get(remote_path)
+        if local_file and local_file.exists():
+            suffix = "-" + remote_path.rsplit("-", 1)[-1]
+            shutil.copy2(local_file, Path(str(stored) + suffix))
+            sidecars_present.append(suffix.lstrip("-"))
+    case.log(
+        "tier2.telegram.sidecars",
+        f"WAL/journal sidecars co-located: {sidecars_present or 'none (checkpointed or absent)'}",
+        tier=Tier.TIER2.value,
+    )
+
     # 4. Run full forensic recovery.
     case.log(
         "tier2.telegram.recover",
@@ -3140,12 +3428,9 @@ def _run_tier2_telegram(
     result = recover_telegram_messages(stored)
 
     if not result.get("available"):
-        case.log(
-            "tier2.telegram",
-            result.get("error", "recovery unavailable"),
-            result="error",
-            tier=Tier.TIER2.value,
-        )
+        reason = result.get("error", "recovery unavailable")
+        case.log("tier2.telegram", reason, result="error", tier=Tier.TIER2.value)
+        _presence(False, reason, sidecars_present=sidecars_present)
         return
 
     counts = result.get("counts", {})
@@ -3289,6 +3574,14 @@ def _run_tier2_telegram(
         "tier2.telegram.conversations.done",
         f"{len(conversations)} conversation threads built",
         tier=Tier.TIER2.value,
+    )
+
+    _presence(
+        True,
+        counts=counts,
+        sidecars_present=sidecars_present,
+        media_pulled=len(media_pulled),
+        conversations=len(conversations),
     )
 
 
@@ -3528,6 +3821,121 @@ def _root_pull_paths(
             tier=Tier.TIER2.value,
         )
     return out
+
+
+#: Root-only location stores, as (device path, local name). Both Maps package ids are tried —
+#: `com.google.android.apps.maps` is the app, `com.google.android.gms` is Play services, and the
+#: geolocation cache lives in the latter.
+_TIER2_LOCATION_PATHS: list[tuple[str, str]] = [
+    (
+        "/data/data/com.google.android.apps.maps/databases/da_destination_history",
+        "da_destination_history",
+    ),
+    (
+        "/data/data/com.google.android.apps.maps/databases/gmm_myplaces.db",
+        "gmm_myplaces.db",
+    ),
+    (
+        "/data/data/com.google.android.apps.maps/databases/search_history.db",
+        "search_history.db",
+    ),
+    (
+        "/data/data/com.google.android.apps.maps/databases/gmm_storage.db",
+        "gmm_storage.db",
+    ),
+    (
+        "/data/data/com.google.android.gms/databases/NetworkLocation.db",
+        "NetworkLocation.db",
+    ),
+    (
+        "/data/data/com.google.android.gms/databases/herrevad",
+        "herrevad",
+    ),
+    (
+        "/data/data/com.google.android.gms/databases/location_history.db",
+        "location_history.db",
+    ),
+]
+
+
+def _run_tier2_maps_location(
+    source: "RealDeviceSource", case: "Case", staging: "Path", maps_locations: list
+) -> None:
+    """Pull and parse the root-only Google Maps / Play-services location stores.
+
+    These carry meaning no other location source does. A navigation destination is something
+    the user *chose* — evidence of intent to travel, not merely of presence. A place labelled
+    "Home" in saved places routinely identifies an address outright. And the Play-services
+    geolocation cache records where the device asked "where am I", which survives periods when
+    GPS was switched off and every other source is silent.
+
+    A path that is absent is logged as absent, and one that exists but cannot be read is logged
+    as unreadable — on an FBE device the latter means "present, encrypted", which is a finding,
+    not a blank.
+    """
+    pulled = _root_pull_paths(
+        source,
+        case,
+        staging,
+        _TIER2_LOCATION_PATHS,
+        label="maps_location",
+        category="database",
+        app="google-maps",
+    )
+    if not pulled:
+        case.log(
+            "tier2.maps_location",
+            "no Google Maps / Play-services location store was readable "
+            "(absent, or root not available)",
+            result="skipped",
+            tier=Tier.TIER2.value,
+        )
+        return
+
+    before = len(maps_locations)
+    for device_path, local in pulled.items():
+        try:
+            # `local` may be a file or a pulled directory; parse_maps_app_data handles both.
+            rows = (
+                parse_maps_app_data(local)
+                if local.is_dir()
+                else _parse_single_maps_db(local)
+            )
+            maps_locations.extend(rows)
+            case.log(
+                "tier2.maps_location",
+                f"{len(rows)} location row(s) from {Path(device_path).name}",
+                tier=Tier.TIER2.value,
+            )
+        except Exception as exc:
+            case.log(
+                "tier2.maps_location",
+                f"{Path(device_path).name} parse error: {exc}",
+                result="error",
+                tier=Tier.TIER2.value,
+            )
+    case.log(
+        "tier2.maps_location",
+        f"Maps/Play-services location stores contributed "
+        f"{len(maps_locations) - before} row(s)",
+        tier=Tier.TIER2.value,
+    )
+
+
+def _parse_single_maps_db(path: "Path") -> list[dict]:
+    """Route one pulled Maps database to its reader (mirrors parse_maps_app_data's dispatch)."""
+    name = path.name.lower()
+    if "destination_history" in name:
+        return parse_maps_destination_history(path)
+    if "myplaces" in name:
+        return parse_maps_myplaces(path)
+    if "search_history" in name:
+        return parse_maps_search_history(path)
+    if "networklocation" in name or "herrevad" in name or "location_history" in name:
+        return parse_gms_network_location(path)
+    # gmm_storage.db and anything Google renames between releases: fall back to the walk,
+    # which applies the generic coordinate-column sniff rather than skipping the file.
+    return parse_maps_app_data(path.parent)
 
 
 def _run_tier2_app_presence(
@@ -3930,6 +4338,166 @@ def _run_tier2_wifi(
     )
 
     return wifi_networks
+
+
+# Chromium-family browsers that store history in the same ``urls``-table schema under
+# ``app_chrome/Default/History`` (Samsung Internet uses ``app_sbrowser`` instead).
+_CHROMIUM_HISTORY_TARGETS: list[tuple[str, str, str]] = [
+    (
+        "com.android.chrome",
+        "Chrome",
+        "/data/data/com.android.chrome/app_chrome/Default/History",
+    ),
+    (
+        "com.brave.browser",
+        "Brave",
+        "/data/data/com.brave.browser/app_chrome/Default/History",
+    ),
+    (
+        "com.sec.android.app.sbrowser",
+        "Samsung Internet",
+        "/data/data/com.sec.android.app.sbrowser/app_sbrowser/Default/History",
+    ),
+    (
+        "com.microsoft.emmx",
+        "Edge",
+        "/data/data/com.microsoft.emmx/app_chrome/Default/History",
+    ),
+]
+
+
+def _run_tier2_browser_history(
+    source: "RealDeviceSource",
+    case: "Case",
+    staging: "Path",
+    browser_history: list,
+    search_history: list,
+    recovered_rows: list,
+) -> dict:
+    """Root-pull the real per-browser History DB and recover deleted rows.  Tier 2.
+
+    Browser history lives in app-private storage (``/data/data/<pkg>/...``), which a
+    non-rooted device cannot reach — the Tier-0 code path that calls
+    :func:`~.parsers.browser.parse_browser_history` only fires when a History file happens
+    to already sit in shared storage (e.g. our synthetic corpus). This is the honest
+    root-required replacement: it tries every known Chromium-family browser package plus
+    Firefox (different schema, ``places.sqlite``), copies whichever are actually installed
+    via ``su -c cp`` the same way every other Tier-2 app pull works, and runs the same
+    deleted-row carver used everywhere else in the tool so cleared history shows up as
+    :class:`~triage.config.Confidence.DELETION_DETECTED`, not silence.
+    """
+    specs: list[tuple[str, str]] = []
+    label_by_path: dict[str, str] = {}
+    for _pkg, label, dev_path in _CHROMIUM_HISTORY_TARGETS:
+        if not _ce_gate(case, dev_path, f"{label} history"):
+            continue
+        specs.append((dev_path, f"browser_{_pkg}_History"))
+        label_by_path[dev_path] = label
+
+    # Firefox's profile directory has a randomised suffix (e.g. ``xxxxxxxx.default``), so it
+    # cannot be probed as a static path the way the Chromium targets above are — list the
+    # profile root first and build the real path from whatever is actually there.
+    ff_root = "/data/data/org.mozilla.firefox/files/mozilla"
+    listing = source.adb.shell(f"su -c 'ls -1 {ff_root}'")
+    ff_profile = next(
+        (ln.strip() for ln in (listing.stdout or "").splitlines() if ".default" in ln),
+        None,
+    )
+    if ff_profile:
+        ff_dev_path = f"{ff_root}/{ff_profile}/places.sqlite"
+        if _ce_gate(case, ff_dev_path, "Firefox history"):
+            specs.append((ff_dev_path, "browser_org.mozilla.firefox_places.sqlite"))
+            label_by_path[ff_dev_path] = "Firefox"
+
+    if not specs:
+        case.log(
+            "tier2.browser_history",
+            "no known browser packages found on device (or all gated by BFU encryption)",
+            result="skipped",
+            tier=Tier.TIER2.value,
+        )
+        return {"browsers_found": 0, "rows": 0}
+
+    pulled = _root_pull_paths(
+        source,
+        case,
+        staging,
+        specs,
+        label="browser_history",
+        category="browser_history",
+    )
+
+    seen_search: set = {
+        (str(r.get("query", "")).lower(), str(r.get("timestamp", "")))
+        for r in search_history
+    }
+    total_rows = 0
+    for dev_path, local in pulled.items():
+        label = label_by_path.get(dev_path, "")
+        is_firefox = dev_path.endswith("places.sqlite")
+        try:
+            rows = (
+                parse_firefox_places(local, browser_app=label)
+                if is_firefox
+                else parse_browser_history(local, browser_app=label)
+            )
+        except Exception as exc:
+            case.log(
+                "tier2.browser_history.parse",
+                f"{label}: parse error: {exc}",
+                result="error",
+                tier=Tier.TIER2.value,
+            )
+            rows = []
+        if rows:
+            total_rows += len(rows)
+            browser_history.extend(rows)
+
+        try:
+            carved = recover_deleted_rows(local)
+        except Exception as exc:
+            case.log(
+                "tier2.browser_history.recover",
+                f"{label}: recovery error: {exc}",
+                result="error",
+                tier=Tier.TIER2.value,
+            )
+            carved = []
+        for r in carved:
+            d = r.to_dict()
+            d["_source_app"] = f"browser:{label.lower().replace(' ', '_')}"
+            d["_browser"] = label
+            recovered_rows.append(d)
+
+        # Chromium's ``urls`` table doubles as the search-query source elsewhere in the
+        # pipeline (see the Tier-0 search-history stage); Firefox's schema isn't covered by
+        # that helper, so only Chromium-family rows feed the search-history dataset here.
+        if not is_firefox:
+            try:
+                for row in parse_browser_search_history(local):
+                    key = (row.get("query", "").lower(), row.get("timestamp", ""))
+                    if key in seen_search:
+                        continue
+                    seen_search.add(key)
+                    row["source"] = f"{label.lower().replace(' ', '_')}_history_db"
+                    search_history.append(row)
+            except Exception:
+                pass
+
+        case.log(
+            "tier2.browser_history.done",
+            f"{label}: {len(rows)} history row(s), {len(carved)} deleted/carved row(s) "
+            f"from {Path(local).name}",
+            tier=Tier.TIER2.value,
+        )
+
+    case.log(
+        "tier2.browser_history",
+        f"browser history: {total_rows} row(s) across {len(pulled)} browser database(s) "
+        f"found on device",
+        tier=Tier.TIER2.value,
+    )
+    return {"browsers_found": len(pulled), "rows": total_rows}
 
 
 def _run_tier2_whatsapp_backup(
@@ -4631,6 +5199,9 @@ def _run_tier1_collect_all(
     calendar_events: list,
     app_usage: list,
     contacts: list,
+    locations: list,
+    wifi_networks: list,
+    bluetooth_devices: list,
     skip_paths: set[str],
 ) -> None:
     """Drive the Collector helper's ``dump_all`` action and ingest every output.
@@ -4674,6 +5245,13 @@ def _run_tier1_collect_all(
         "android.permission.ACCESS_MEDIA_LOCATION",
         "android.permission.READ_CALENDAR",
         "android.permission.GET_ACCOUNTS",
+        # Location + radio. ACCESS_FINE_LOCATION is what unlocks the last-known GPS fix, and
+        # is also the gate Android 8.1+ puts in front of WiFi SSIDs and scan results — without
+        # it wifi.json comes back with blank SSIDs, which reads like an empty network history.
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN",
     ]
     for perm in grants:
         res = source.adb.shell(f"pm grant {package} {perm}")
@@ -4713,6 +5291,9 @@ def _run_tier1_collect_all(
             "calendar.json",
             "usage.json",
             "contacts.json",
+            "location.json",
+            "wifi.json",
+            "bluetooth.json",
             "collector_manifest.json",
             "device_extra.json",
         ):
@@ -4735,6 +5316,12 @@ def _run_tier1_collect_all(
         ("calendar.json", parse_calendar, calendar_events, "calendar"),
         ("usage.json", parse_usage, app_usage, "usage"),
         ("contacts.json", parse_contacts_json, contacts, "contacts"),
+        # Location-bearing outputs. The helper has written these since the dump_location /
+        # dump_wifi / dump_bluetooth actions landed, but nothing pulled them, so the only
+        # direct GPS fix the tool can obtain without root was being discarded on every run.
+        ("location.json", parse_location, locations, "location"),
+        ("wifi.json", parse_wifi_json, wifi_networks, "wifi"),
+        ("bluetooth.json", parse_bluetooth_json, bluetooth_devices, "bluetooth"),
     ]
     for fname, parser, target, label in outputs:
         remote = f"/sdcard/Download/{fname}"
@@ -4768,12 +5355,15 @@ def _run_tier1_collect_all(
             artifact_id=rec.artifact_id,
         )
 
-    # Pull the collector's own manifest for the audit trail (not parsed into a dataset).
+    # Pull the collector's own manifest and device block. The manifest is what keeps an empty
+    # dataset interpretable — it records, per collector, whether the run was ok/empty/denied and
+    # the grant state of every permission requested. Without it "0 rows" and "refused" look the
+    # same in the report, which the honesty model forbids.
     for meta_file in ("collector_manifest.json", "device_extra.json"):
         remote = f"/sdcard/Download/{meta_file}"
         local = staging / f"tier1_{meta_file}"
         if source.adb.pull(remote, local).ok and local.exists():
-            case.ingest_file(
+            rec = case.ingest_file(
                 local,
                 source_path=remote,
                 tier=Tier.TIER1,
@@ -4783,6 +5373,31 @@ def _run_tier1_collect_all(
                 move=True,
             )
             skip_paths.add(remote)
+            if meta_file == "collector_manifest.json":
+                try:
+                    manifest = parse_collector_manifest(case.root / rec.stored_path)
+                    if manifest:
+                        case.write_derived("collector_manifest", manifest)
+                        denied = manifest.get("denied") or []
+                        if denied:
+                            case.log(
+                                "tier1.helper.denied",
+                                "collector(s) denied: "
+                                + ", ".join(
+                                    f"{d.get('collector')} ({d.get('error') or 'no detail'})"
+                                    for d in denied
+                                ),
+                                result="partial",
+                                tier=Tier.TIER1.value,
+                                artifact_id=rec.artifact_id,
+                            )
+                except Exception as exc:
+                    case.log(
+                        "tier1.helper.manifest",
+                        f"collector manifest parse error: {exc}",
+                        result="error",
+                        tier=Tier.TIER1.value,
+                    )
 
     _best_effort_uninstall(source, case, package)
 

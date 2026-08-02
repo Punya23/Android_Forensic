@@ -2,24 +2,14 @@ package io.erakshak.collector
 
 import android.Manifest
 import android.app.Activity
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
-import android.location.Location
-import android.location.LocationManager
-import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.provider.CallLog
-import android.provider.ContactsContract
-import android.provider.Telephony
 import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -28,7 +18,6 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
 
 /**
  * eRakshak Collector — Tier-1 forensic helper.
@@ -37,9 +26,20 @@ import java.io.File
  *   dump_contacts    → contacts.json
  *   dump_calllog     → calllog.json
  *   dump_sms         → sms.json
- *   dump_wifi        → wifi.json   (saved networks + current association)
- *   dump_bluetooth   → bluetooth.json (bonded + recently seen devices)
- *   dump_all         → all of the above
+ *   dump_media       → media_inventory.json (MediaStore catalogue + EXIF/MP4 GPS)
+ *   dump_apps        → apps.json
+ *   dump_accounts    → accounts.json
+ *   dump_calendar    → calendar.json
+ *   dump_usage       → usage.json
+ *   dump_device      → device_extra.json
+ *   dump_wifi        → wifi.json      (saved networks + current association + scan)
+ *   dump_bluetooth   → bluetooth.json (adapter + bonded devices)
+ *   dump_location    → location.json  (last-known fix per provider)
+ *   dump_all         → all of the above + collector_manifest.json
+ *
+ * Every action routes through the same [CollectionResult] registry, so a denied permission is
+ * recorded as a `denied` row in `collector_manifest.json` rather than silently producing an
+ * empty file. "Nothing was there" and "we were not allowed to look" are different findings.
  *
  * Install with:
  *   adb install -r app-debug.apk
@@ -62,7 +62,11 @@ class MainActivity : Activity() {
             add(Manifest.permission.READ_CONTACTS)
             add(Manifest.permission.READ_CALL_LOG)
             add(Manifest.permission.READ_SMS)
-            add(Manifest.permission.ACCESS_FINE_LOCATION)   // needed for WiFi SSID on Android 8.1+
+            add(Manifest.permission.READ_CALENDAR)
+            add(Manifest.permission.GET_ACCOUNTS)
+            // Fine location doubles as the gate for WiFi SSID/scan results on Android 8.1+.
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
+            add(Manifest.permission.ACCESS_COARSE_LOCATION)
             add(Manifest.permission.ACCESS_WIFI_STATE)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 add(Manifest.permission.BLUETOOTH_CONNECT)
@@ -80,7 +84,11 @@ class MainActivity : Activity() {
             } else {
                 add(Manifest.permission.READ_EXTERNAL_STORAGE)
             }
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Runtime-gated from Android 10: without it MediaStore hands back EXIF with the
+                // GPS tags stripped, which would look identical to a photo that never had any.
+                add(Manifest.permission.ACCESS_MEDIA_LOCATION)
+            } else {
                 add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             }
         }.toTypedArray()
@@ -108,287 +116,161 @@ class MainActivity : Activity() {
         requestCode: Int, permissions: Array<out String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ_CODE) {
-            val denied = permissions.zip(grantResults.toTypedArray())
-                .filter { it.second != PackageManager.PERMISSION_GRANTED }
-                .map { it.first.substringAfterLast(".") }
-            if (denied.isEmpty()) executeAction(pendingAction)
-            else showResultScreen(pendingAction ?: "setup",
-                "DENIED: ${denied.joinToString(", ")}\n\nPlease grant permissions and try again.")
-        }
+        if (requestCode != REQ_CODE) return
+        // Collect regardless of what was denied. Refusing to run because one permission was
+        // withheld would throw away every artifact the granted permissions still reach — a
+        // denied READ_SMS is no reason to skip location, media or the app inventory. Each
+        // collector reports its own `denied` status, and `collector_manifest.json` records the
+        // full grant state so the report can say exactly what was out of reach and why.
+        executeAction(pendingAction)
     }
+
+    // ── Collector registry ────────────────────────────────────────────────
+
+    /**
+     * Every collector, keyed by the suffix of its `dump_<name>` action and listed in the order
+     * `dump_all` runs them. Cheap content-provider reads come first so a device that dies or is
+     * unplugged mid-run still yields the high-value comms artifacts; MediaStore enumeration —
+     * the slowest stage by far — sits in the middle, and the location/radio artifacts follow.
+     */
+    private val registry: LinkedHashMap<String, (Context) -> CollectionResult> = linkedMapOf(
+        "contacts" to { c: Context -> ContactsCollector.collect(c) },
+        "calllog" to { c: Context -> CallLogCollector.collect(c) },
+        "sms" to { c: Context -> SmsCollector.collect(c) },
+        "calendar" to { c: Context -> CalendarCollector.collect(c) },
+        "accounts" to { c: Context -> AccountsCollector.collect(c) },
+        "apps" to { c: Context -> AppsCollector.collect(c) },
+        "usage" to { c: Context -> UsageCollector.collect(c) },
+        "media" to { c: Context -> MediaCollector.collect(c) },
+        "location" to { c: Context -> LocationCollector.collect(c) },
+        "wifi" to { c: Context -> WifiCollector.collect(c) },
+        "bluetooth" to { c: Context -> BluetoothCollector.collect(c) },
+        "device" to { c: Context -> DeviceCollector.collect(c) },
+    )
 
     // ── Action dispatcher ─────────────────────────────────────────────────
 
     private fun executeAction(action: String?) {
         if (action == null) { showStatusScreen(); return }
 
-        val results = mutableListOf<String>()
-        var hasError = false
-
-        fun run(name: String, block: () -> Pair<String, JSONArray>) {
-            try {
-                val (file, data) = block()
-                writeJson(file, data)
-                results += "✓ $file (${data.length()} records)"
-            } catch (e: SecurityException) {
-                writeErrorJson("$name.error.json", "SecurityException", e.message, action)
-                results += "✗ $name: permission denied"
-                hasError = true
-            } catch (e: Exception) {
-                writeErrorJson("$name.error.json", e.javaClass.simpleName, e.message, action)
-                results += "✗ $name: ${e.message}"
-                hasError = true
-            }
+        val wanted: List<String> = when {
+            action == "dump_all" -> registry.keys.toList()
+            action.startsWith("dump_") -> listOf(action.removePrefix("dump_"))
+            else -> emptyList()
+        }
+        if (wanted.isEmpty() || wanted.any { it !in registry }) {
+            showResultScreen(
+                action,
+                "✗ Unknown action: $action\n\nKnown: dump_all, " +
+                    registry.keys.joinToString(", ") { "dump_$it" },
+                hasError = true,
+            )
+            return
         }
 
-        when (action) {
-            "dump_contacts"  -> run("contacts")  { "contacts.json"  to dumpContacts() }
-            "dump_calllog"   -> run("calllog")   { "calllog.json"   to dumpCallLog() }
-            "dump_sms"       -> run("sms")       { "sms.json"       to dumpSms() }
-            "dump_wifi"      -> run("wifi")      { "wifi.json"      to dumpWifi() }
-            "dump_bluetooth" -> run("bluetooth") { "bluetooth.json" to dumpBluetooth() }
-            "dump_location"  -> run("location")  { "location.json"  to dumpLocation() }
-            "dump_all" -> {
-                run("contacts")  { "contacts.json"  to dumpContacts() }
-                run("calllog")   { "calllog.json"   to dumpCallLog() }
-                run("sms")       { "sms.json"       to dumpSms() }
-                run("wifi")      { "wifi.json"      to dumpWifi() }
-                run("bluetooth") { "bluetooth.json" to dumpBluetooth() }
-                run("location")  { "location.json"  to dumpLocation() }
+        showProgressScreen(wanted.size)
+        // MediaStore enumeration plus per-file EXIF/MP4 GPS reads can run for tens of seconds.
+        // Running that on the main thread risks an ANR kill mid-collection, which would leave a
+        // half-written evidence set, so collection happens on a worker and only the result
+        // screen is posted back.
+        Thread {
+            val results = wanted.map { name -> runCollector(name) }
+            val manifest = writeManifest(action, results)
+            Handler(Looper.getMainLooper()).post {
+                val hasError = results.any {
+                    it.status == CollectionResult.ERROR || it.status == CollectionResult.DENIED
+                }
+                showResultScreen(action, renderSummary(results, manifest), hasError)
+                Handler(Looper.getMainLooper()).postDelayed({ finish() }, 3000)
             }
-            else -> {
-                writeErrorJson("unknown_action.error.json", "UnknownAction", "unknown action: $action", action)
-                results += "✗ Unknown action: $action"
-                hasError = true
-            }
-        }
-
-        showResultScreen(action, results.joinToString("\n"), hasError)
-        Handler(Looper.getMainLooper()).postDelayed({ finish() }, 2500)
+        }.apply { name = "erakshak-collect"; isDaemon = false }.start()
     }
 
-    // ── Content-provider dumps ────────────────────────────────────────────
-
-    private fun dumpContacts(): JSONArray {
-        val out = JSONArray()
-        contentResolver.query(
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            arrayOf(
-                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                ContactsContract.CommonDataKinds.Phone.NUMBER
-            ), null, null, null
-        )?.use { cur ->
-            val nameIdx = cur.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-            val numIdx  = cur.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-            while (cur.moveToNext()) {
-                out.put(JSONObject()
-                    .put("name",   cur.getString(nameIdx) ?: "")
-                    .put("number", cur.getString(numIdx)  ?: ""))
-            }
+    /**
+     * Run one collector and persist its payload.
+     *
+     * A denied or failed collector still writes its (empty) output file. The engine treats a
+     * missing file as "not produced" and cannot tell that apart from "produced, but empty" —
+     * writing the file plus a manifest row with the reason keeps the two distinguishable, which
+     * is the whole point of the honesty model.
+     */
+    private fun runCollector(name: String): CollectionResult {
+        val result = try {
+            registry.getValue(name)(this)
+        } catch (e: SecurityException) {
+            CollectionResult(name, "$name.json", JSONArray(), 0, CollectionResult.DENIED, e.message)
+        } catch (e: Exception) {
+            CollectionResult(name, "$name.json", JSONArray(), 0, CollectionResult.ERROR, e.message)
         }
-        return out
+        return try {
+            StorageWriter.write(this, result.fileName, payloadText(result.payload))
+            result
+        } catch (e: Exception) {
+            // The collection itself worked; only persistence failed. Say so precisely.
+            result.copy(
+                status = CollectionResult.ERROR,
+                error = "collected ${result.count} record(s) but write failed: ${e.message}",
+            )
+        }
     }
 
-    private fun dumpCallLog(): JSONArray {
-        val out = JSONArray()
-        contentResolver.query(
-            CallLog.Calls.CONTENT_URI,
-            arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME,
-                    CallLog.Calls.TYPE,   CallLog.Calls.DATE, CallLog.Calls.DURATION),
-            null, null, "${CallLog.Calls.DATE} DESC"
-        )?.use { cur ->
-            while (cur.moveToNext()) {
-                out.put(JSONObject()
-                    .put("number",   cur.getString(0) ?: "")
-                    .put("name",     cur.getString(1) ?: "")
-                    .put("type",     cur.getInt(2))
-                    .put("date",     cur.getLong(3))
-                    .put("duration", cur.getInt(4)))
-            }
-        }
-        return out
+    private fun payloadText(payload: Any): String = when (payload) {
+        is JSONArray -> payload.toString(2)
+        is JSONObject -> payload.toString(2)
+        else -> JSONArray().put(payload.toString()).toString(2)
     }
 
-    private fun dumpSms(): JSONArray {
-        val out = JSONArray()
-        contentResolver.query(
-            Telephony.Sms.CONTENT_URI,
-            arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY,
-                    Telephony.Sms.DATE,    Telephony.Sms.TYPE),
-            null, null, "${Telephony.Sms.DATE} DESC"
-        )?.use { cur ->
-            while (cur.moveToNext()) {
-                out.put(JSONObject()
-                    .put("address", cur.getString(0) ?: "")
-                    .put("body",    cur.getString(1) ?: "")
-                    .put("date",    cur.getLong(2))
-                    .put("type",    cur.getInt(3)))
-            }
-        }
-        return out
+    /**
+     * Write `collector_manifest.json` — the per-run audit record.
+     *
+     * The engine ingests this alongside the data files so the case log can state, for each
+     * collector, whether it ran, what it was denied, and how many records it produced.
+     */
+    private fun writeManifest(action: String, results: List<CollectionResult>): String? {
+        val manifest = JSONObject()
+            .put("action", action)
+            .put("collected_at_ms", System.currentTimeMillis())
+            .put("package", packageName)
+            .put("sdk_int", Build.VERSION.SDK_INT)
+            .put("manufacturer", Build.MANUFACTURER)
+            .put("model", Build.MODEL)
+            .put("collectors", JSONArray().also { arr -> results.forEach { arr.put(it.summary()) } })
+            .put("permissions", JSONArray().also { arr ->
+                ALL_PERMISSIONS.forEach { p ->
+                    arr.put(
+                        JSONObject()
+                            .put("permission", p)
+                            .put(
+                                "granted",
+                                ContextCompat.checkSelfPermission(this, p) ==
+                                    PackageManager.PERMISSION_GRANTED,
+                            )
+                    )
+                }
+            })
+        return runCatching {
+            StorageWriter.write(this, "collector_manifest.json", manifest.toString(2))
+        }.getOrNull()
     }
 
-    private fun dumpLocation(): JSONArray {
-        val out = JSONArray()
-        val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && 
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            return out
-        }
-        
-        val providers = lm.getProviders(true)
-        for (provider in providers) {
-            val location = lm.getLastKnownLocation(provider)
-            if (location != null) {
-                out.put(JSONObject()
-                    .put("provider", provider)
-                    .put("latitude", location.latitude)
-                    .put("longitude", location.longitude)
-                    .put("altitude", location.altitude)
-                    .put("accuracy", location.accuracy)
-                    .put("bearing", location.bearing)
-                    .put("speed", location.speed)
-                    .put("time", location.time)
-                )
+    private fun renderSummary(results: List<CollectionResult>, manifest: String?): String {
+        val body = results.joinToString("\n") { r ->
+            val mark = when (r.status) {
+                CollectionResult.OK -> "✓"
+                CollectionResult.EMPTY -> "○"
+                CollectionResult.DENIED -> "✗"
+                CollectionResult.UNSUPPORTED -> "–"
+                else -> "!"
             }
-        }
-        return out
-    }
-
-    // ── WiFi dump ─────────────────────────────────────────────────────────
-
-    private fun dumpWifi(): JSONArray {
-        val out = JSONArray()
-        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-
-        // 1. Currently connected network
-        @Suppress("DEPRECATION")
-        val info = wm.connectionInfo
-        if (info != null && info.networkId != -1) {
-            val ssid = info.ssid.trim('"')
-            out.put(JSONObject()
-                .put("type",     "current_connection")
-                .put("ssid",     ssid)
-                .put("bssid",    info.bssid ?: "")
-                .put("rssi",     info.rssi)
-                .put("link_speed_mbps", info.linkSpeed)
-                .put("ip_address", intToIp(info.ipAddress))
-                .put("frequency_mhz", info.frequency)
-                .put("hidden",   ssid.isEmpty()))
-        }
-
-        // 2. Saved / configured networks
-        @Suppress("DEPRECATION")
-        val configured = wm.configuredNetworks
-        if (configured != null) {
-            for (cfg in configured) {
-                val ssid = (cfg.SSID ?: "").trim('"')
-                out.put(JSONObject()
-                    .put("type",     "saved_network")
-                    .put("ssid",     ssid)
-                    .put("bssid",    cfg.BSSID ?: "")
-                    .put("network_id", cfg.networkId)
-                    .put("priority", cfg.priority)
-                    .put("hidden",   cfg.hiddenSSID)
-                    .put("status",   when(cfg.status) {
-                        android.net.wifi.WifiConfiguration.Status.CURRENT  -> "current"
-                        android.net.wifi.WifiConfiguration.Status.ENABLED  -> "enabled"
-                        android.net.wifi.WifiConfiguration.Status.DISABLED -> "disabled"
-                        else -> "unknown"
-                    }))
+            val detail = when (r.status) {
+                CollectionResult.OK -> "${r.count} records"
+                CollectionResult.EMPTY -> "empty"
+                else -> "${r.status}: ${r.error ?: "no detail"}"
             }
+            "$mark ${r.fileName} — $detail"
         }
-
-        // 3. Recent scan results (APs visible right now)
-        @Suppress("DEPRECATION")
-        val scanResults = wm.scanResults
-        if (scanResults != null) {
-            for (sr in scanResults) {
-                out.put(JSONObject()
-                    .put("type",          "scan_result")
-                    .put("ssid",          sr.SSID ?: "")
-                    .put("bssid",         sr.BSSID ?: "")
-                    .put("capabilities",  sr.capabilities ?: "")
-                    .put("frequency_mhz", sr.frequency)
-                    .put("level_dbm",     sr.level)
-                    .put("timestamp_us",  sr.timestamp))
-            }
-        }
-
-        return out
+        return if (manifest == null) body else "$body\n\n→ $manifest"
     }
-
-    private fun intToIp(ip: Int): String {
-        return "${ip and 0xff}.${ip shr 8 and 0xff}.${ip shr 16 and 0xff}.${ip shr 24 and 0xff}"
-    }
-
-    // ── Bluetooth dump ────────────────────────────────────────────────────
-
-    private fun dumpBluetooth(): JSONArray {
-        val out = JSONArray()
-        val btManager = applicationContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-        val adapter   = btManager?.adapter ?: BluetoothAdapter.getDefaultAdapter()
-
-        if (adapter == null) {
-            out.put(JSONObject().put("error", "Bluetooth not available on this device"))
-            return out
-        }
-
-        // Adapter info
-        out.put(JSONObject()
-            .put("type",    "adapter")
-            .put("enabled", adapter.isEnabled)
-            .put("name",    safeBluetoothName(adapter))
-            .put("address", safeBluetoothAddress(adapter))
-            .put("state",   when(adapter.state) {
-                BluetoothAdapter.STATE_ON          -> "on"
-                BluetoothAdapter.STATE_OFF         -> "off"
-                BluetoothAdapter.STATE_TURNING_ON  -> "turning_on"
-                BluetoothAdapter.STATE_TURNING_OFF -> "turning_off"
-                else -> "unknown"
-            }))
-
-        // Bonded (paired) devices — persisted across sessions
-        val bondedDevices: Set<BluetoothDevice>? = try {
-            adapter.bondedDevices
-        } catch (e: SecurityException) { null }
-
-        bondedDevices?.forEach { dev ->
-            val obj = JSONObject()
-                .put("type",       "bonded_device")
-                .put("bond_state", "bonded")
-            try {
-                obj.put("name",    dev.name ?: "")
-                obj.put("address", dev.address ?: "")
-                obj.put("device_class", dev.bluetoothClass?.deviceClass ?: -1)
-                obj.put("device_type",  when(dev.type) {
-                    BluetoothDevice.DEVICE_TYPE_CLASSIC -> "classic"
-                    BluetoothDevice.DEVICE_TYPE_LE      -> "ble"
-                    BluetoothDevice.DEVICE_TYPE_DUAL    -> "dual"
-                    else -> "unknown"
-                })
-                obj.put("uuids", JSONArray().also { arr ->
-                    dev.uuids?.forEach { uuid -> arr.put(uuid.toString()) }
-                })
-            } catch (e: SecurityException) {
-                obj.put("name", "[permission_denied]")
-                obj.put("address", "[permission_denied]")
-            }
-            out.put(obj)
-        }
-
-        return out
-    }
-
-    private fun safeBluetoothName(adapter: BluetoothAdapter): String = try {
-        adapter.name ?: ""
-    } catch (e: SecurityException) { "[permission_denied]" }
-
-    private fun safeBluetoothAddress(adapter: BluetoothAdapter): String = try {
-        @Suppress("DEPRECATION") adapter.address ?: ""
-    } catch (e: SecurityException) { "[permission_denied]" }
 
     // ── UI screens ────────────────────────────────────────────────────────
 
@@ -479,14 +361,23 @@ class MainActivity : Activity() {
         layout.addView(makeText("eRakshak Collector", 22f, Color.parseColor("#1A237E"), bold = true))
         layout.addView(makeText("✓ All permissions granted — ready", 14f, Color.parseColor("#2E7D32")))
         val info = TextView(this).apply {
-            text = "Actions:\n" +
-                "  dump_contacts\n  dump_calllog\n  dump_sms\n" +
-                "  dump_wifi\n  dump_bluetooth\n  dump_all"
+            text = "Actions:\n  dump_all\n" +
+                registry.keys.joinToString("\n") { "  dump_$it" }
             textSize = 12f; setTextColor(Color.DKGRAY)
             setBackgroundColor(Color.parseColor("#F5F5F5"))
             setPadding(32, 28, 32, 28); typeface = Typeface.MONOSPACE
         }
         layout.addView(info)
+        setContentView(ScrollView(this).apply { setBackgroundColor(Color.WHITE); addView(layout) })
+    }
+
+    private fun showProgressScreen(count: Int) {
+        val layout = buildLayout()
+        layout.addView(makeText("⏳ Collecting", 24f, Color.parseColor("#1A237E"), bold = true))
+        layout.addView(makeText("$count collector(s) running…", 14f, Color.DKGRAY))
+        layout.addView(
+            makeText("Keep this screen in the foreground.", 12f, Color.GRAY)
+        )
         setContentView(layout)
     }
 
@@ -495,8 +386,13 @@ class MainActivity : Activity() {
         val color = if (hasError) Color.parseColor("#C62828") else Color.parseColor("#2E7D32")
         layout.addView(makeText(if (hasError) "⚠ Partial" else "✓ Done", 28f, color, bold = true))
         layout.addView(makeText("Action: $action", 13f, Color.GRAY))
-        layout.addView(makeText("\n$status", 13f, Color.DKGRAY))
-        setContentView(layout)
+        layout.addView(TextView(this).apply {
+            text = status
+            textSize = 12f; setTextColor(Color.DKGRAY)
+            setBackgroundColor(Color.parseColor("#F5F5F5"))
+            setPadding(24, 24, 24, 24); typeface = Typeface.MONOSPACE
+        })
+        setContentView(ScrollView(this).apply { setBackgroundColor(Color.WHITE); addView(layout) })
     }
 
     private fun buildLayout() = LinearLayout(this).apply {
@@ -511,25 +407,7 @@ class MainActivity : Activity() {
             if (bold) setTypeface(typeface, Typeface.BOLD)
         }
 
-    // ── File write ────────────────────────────────────────────────────────
-
-    private fun getOutputDir(): File {
-        val dir = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val pub = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            if (pub.canWrite()) pub else getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: filesDir
-        } else {
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        }
-        dir.mkdirs(); return dir
-    }
-
-    private fun writeJson(fileName: String, data: JSONArray) {
-        File(getOutputDir(), fileName).writeText(data.toString(2), Charsets.UTF_8)
-    }
-
-    private fun writeErrorJson(fileName: String, type: String, msg: String?, action: String) {
-        val arr = JSONArray().put(JSONObject()
-            .put("error", type).put("message", msg ?: "").put("action", action))
-        runCatching { File(getOutputDir(), fileName).writeText(arr.toString(2), Charsets.UTF_8) }
-    }
+    // File output is handled by StorageWriter, which inserts via MediaStore on Android 10+.
+    // A plain File write to public Downloads is blocked by scoped storage there, so the engine
+    // would find nothing at /sdcard/Download/ to pull.
 }

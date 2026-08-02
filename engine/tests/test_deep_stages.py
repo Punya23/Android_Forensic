@@ -79,6 +79,17 @@ class FakeAdb:
             return FakeResult(cmd, 0)
         if cmd.startswith("su -c 'ls -1 /data/user'"):
             return FakeResult(cmd, 0, "0\n10\n")
+        if cmd.startswith("su -c 'ls -1 "):
+            dir_path = cmd.split("su -c 'ls -1 ", 1)[1].split("'", 1)[0]
+            prefix = dir_path.rstrip("/") + "/"
+            children = sorted(
+                {
+                    p[len(prefix) :].split("/", 1)[0]
+                    for p in self.device_files
+                    if p.startswith(prefix)
+                }
+            )
+            return FakeResult(cmd, 0, "\n".join(children))
         return FakeResult(cmd, 0, "")
 
     def run(self, *args: str, timeout: int = 120, binary: bool = False) -> FakeResult:
@@ -458,3 +469,150 @@ def test_encrypted_app_scan_never_emits_message_content(case: Case, tmp_path: Pa
     (sig / "signal.db").write_bytes(b"SECRETPLAINTEXTMESSAGE" * 100)
     result = pipeline._run_encrypted_app_scan(case, root, [])
     assert "SECRETPLAINTEXTMESSAGE" not in json.dumps(result)
+
+
+# ---------------------------------------------------------------------------
+# _run_tier2_browser_history
+# ---------------------------------------------------------------------------
+import sqlite3
+
+_WEBKIT_BASE = 13_360_000_000_000_000  # ~2026, WebKit epoch (microseconds since 1601)
+
+
+def _build_chrome_history_db(path: Path, *, with_deleted: bool = False) -> None:
+    con = sqlite3.connect(path)
+    con.execute(
+        "CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, "
+        "visit_count INTEGER, last_visit_time INTEGER)"
+    )
+    con.execute(
+        "INSERT INTO urls(url,title,visit_count,last_visit_time) VALUES (?,?,?,?)",
+        ("https://example.com/", "Example Domain", 3, _WEBKIT_BASE),
+    )
+    if with_deleted:
+        con.execute(
+            "INSERT INTO urls(url,title,visit_count,last_visit_time) VALUES (?,?,?,?)",
+            ("https://example.com/how-to-wipe-a-phone", "how to wipe a phone", 5,
+             _WEBKIT_BASE + 1000),
+        )
+    con.commit()
+    if with_deleted:
+        con.execute("DELETE FROM urls WHERE url LIKE '%wipe-a-phone%'")
+        con.commit()
+    con.close()
+
+
+def _build_firefox_places_db(path: Path) -> None:
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url TEXT, title TEXT, "
+                "visit_count INTEGER)")
+    con.execute("CREATE TABLE moz_historyvisits (id INTEGER PRIMARY KEY, place_id INTEGER, "
+                "visit_date INTEGER)")
+    con.execute(
+        "INSERT INTO moz_places(url,title,visit_count) VALUES (?,?,?)",
+        ("https://mozilla.org/", "Mozilla", 2),
+    )
+    con.execute(
+        "INSERT INTO moz_historyvisits(place_id,visit_date) VALUES (1, ?)",
+        (1_770_000_000_000_000,),  # microseconds since Unix epoch
+    )
+    con.commit()
+    con.close()
+
+
+def test_browser_history_stage_pulls_and_labels_chrome_history(case: Case, tmp_path: Path):
+    src_db = tmp_path / "src_history.db"
+    _build_chrome_history_db(src_db)
+    adb = FakeAdb(
+        device_files={
+            "/data/data/com.android.chrome/app_chrome/Default/History": src_db.read_bytes(),
+        }
+    )
+    src = RealDeviceSource(adb)  # type: ignore[arg-type]
+    browser_history: list = []
+    search_history: list = []
+    recovered_rows: list = []
+    result = pipeline._run_tier2_browser_history(
+        src, case, tmp_path / "stage", browser_history, search_history, recovered_rows
+    )
+    assert result["browsers_found"] == 1
+    assert len(browser_history) == 1
+    assert browser_history[0]["url"] == "https://example.com/"
+    assert browser_history[0]["browser_app"] == "Chrome"
+    # A pull that produced nothing off the device must still be reflected in the manifest.
+    assert any(
+        r.source_path == "/data/data/com.android.chrome/app_chrome/Default/History"
+        for r in case.manifest
+    )
+
+
+def test_browser_history_stage_discovers_firefox_profile_and_parses_places(
+    case: Case, tmp_path: Path
+):
+    src_db = tmp_path / "places.sqlite"
+    _build_firefox_places_db(src_db)
+    adb = FakeAdb(
+        device_files={
+            "/data/data/org.mozilla.firefox/files/mozilla/abc123xy.default/places.sqlite": (
+                src_db.read_bytes()
+            ),
+        }
+    )
+    src = RealDeviceSource(adb)  # type: ignore[arg-type]
+    browser_history: list = []
+    result = pipeline._run_tier2_browser_history(
+        src, case, tmp_path / "stage", browser_history, [], []
+    )
+    assert result["browsers_found"] == 1
+    assert browser_history[0]["url"] == "https://mozilla.org/"
+    assert browser_history[0]["browser_app"] == "Firefox"
+
+
+def test_browser_history_stage_recovers_deleted_urls(case: Case, tmp_path: Path):
+    src_db = tmp_path / "src_history.db"
+    _build_chrome_history_db(src_db, with_deleted=True)
+    adb = FakeAdb(
+        device_files={
+            "/data/data/com.android.chrome/app_chrome/Default/History": src_db.read_bytes(),
+        }
+    )
+    src = RealDeviceSource(adb)  # type: ignore[arg-type]
+    recovered_rows: list = []
+    pipeline._run_tier2_browser_history(src, case, tmp_path / "stage", [], [], recovered_rows)
+    text = json.dumps(recovered_rows)
+    assert "wipe-a-phone" in text
+    assert any(r.get("_source_app") == "browser:chrome" for r in recovered_rows)
+
+
+def test_browser_history_stage_gated_on_bfu(case: Case, tmp_path: Path):
+    from triage.forensics.encryption_state import EncryptionState
+
+    state = EncryptionState()
+    state.unlock_state = "bfu"
+    pipeline._ENCRYPTION_STATE = state
+
+    src_db = tmp_path / "src_history.db"
+    _build_chrome_history_db(src_db)
+    adb = FakeAdb(
+        device_files={
+            "/data/data/com.android.chrome/app_chrome/Default/History": src_db.read_bytes(),
+        }
+    )
+    src = RealDeviceSource(adb)  # type: ignore[arg-type]
+    browser_history: list = []
+    result = pipeline._run_tier2_browser_history(
+        src, case, tmp_path / "stage", browser_history, [], []
+    )
+    assert result["browsers_found"] == 0
+    assert browser_history == []
+    # Nothing may be pulled off the device once the gate has decided it is unreadable.
+    assert not any("cp -r" in c for c in adb.commands)
+
+
+def test_browser_history_stage_returns_zero_when_no_browser_installed(
+    case: Case, tmp_path: Path
+):
+    adb = FakeAdb(device_files={})
+    src = RealDeviceSource(adb)  # type: ignore[arg-type]
+    result = pipeline._run_tier2_browser_history(src, case, tmp_path / "stage", [], [], [])
+    assert result == {"browsers_found": 0, "rows": 0}

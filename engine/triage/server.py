@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import threading
 from pathlib import Path
@@ -32,6 +33,7 @@ from .adb import Adb
 from .config import ACQUISITION_DISCLAIMER, Tier
 from .custody import Case
 from .pipeline import PipelineConfig, run_acquisition
+from . import registry
 
 
 # Keep this during testing
@@ -45,6 +47,25 @@ def create_app(cases_root: Path = CASES_ROOT):
     CORS(app)
 
     cases_root.mkdir(parents=True, exist_ok=True)
+
+    # Backfill the case registry from any case folders that predate it (or were
+    # created by a build before this feature shipped). Cheap and idempotent — only
+    # un-indexed folders are touched.
+    try:
+        registry.sync_registry(cases_root)
+    except Exception:  # pragma: no cover - the registry must never block startup
+        pass
+
+    def _finalize_report(case: Case, *, trigger: str) -> None:
+        """After (re-)generating a report: snapshot it into history and refresh the
+        case's registry row. Called from every call site that writes report.html so
+        the "previous reports" history and the case list stay live without a full
+        directory rescan on each dashboard request."""
+        try:
+            registry.upsert_case(cases_root, case)
+            registry.record_report(cases_root, case.root, case.meta.case_id, trigger=trigger)
+        except Exception:  # pragma: no cover - report generation must not fail on this
+            pass
 
     socketio = (
         SocketIO(app, cors_allowed_origins="*", async_mode="threading")
@@ -533,6 +554,7 @@ def create_app(cases_root: Path = CASES_ROOT):
             tier2_instagram=bool(body.get("tier2_instagram", False)),
             tier2_snapchat=bool(body.get("tier2_snapchat", False)),
             tier2_wifi=bool(body.get("tier2_wifi", False)),
+            tier2_browser_history=bool(body.get("tier2_browser_history", False)),
             tier2_whatsapp_backup=bool(body.get("tier2_whatsapp_backup", False)),
             tier2_whatsapp_backup_max_files=int(
                 body.get("tier2_whatsapp_backup_max_files", 5)
@@ -547,6 +569,8 @@ def create_app(cases_root: Path = CASES_ROOT):
             tier2_app_presence=bool(body.get("tier2_app_presence", False)),
             tier2_antiforensics=bool(body.get("tier2_antiforensics", False)),
             tier2_recent_tasks=bool(body.get("tier2_recent_tasks", False)),
+            tier2_browser_history=bool(body.get("tier2_browser_history", False)),
+            tier2_maps_location=bool(body.get("tier2_maps_location", False)),
             case_description=str(body.get("case_description", "") or ""),
             run_ai_analysis=bool(body.get("run_ai_analysis", True)),
             llm_provider=str(body.get("llm_provider", "") or ""),
@@ -590,6 +614,8 @@ def create_app(cases_root: Path = CASES_ROOT):
                 if case_path.exists():
 
                     generate_report(case_path)
+
+                    _finalize_report(Case.open(case_path), trigger="acquisition")
 
                 state["last_case"] = case_id
 
@@ -643,6 +669,64 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         return jsonify(out)
 
+    # ---------------------------------------------------------
+    # CASE REGISTRY  (SQLite-backed history of every case + every report generated)
+    # ---------------------------------------------------------
+
+    @app.get("/api/registry/cases")
+    def registry_cases():
+        """The full case history, DB-backed: searchable, sortable, with report counts.
+
+        This is the "just like a database" surface — ``/api/cases`` above stays as the
+        light dropdown source for starting a new acquisition; this one powers the Case
+        History view.
+        """
+        q = str(request.args.get("q", "")).strip()
+        sort = str(request.args.get("sort", "-updated_at")).strip()
+        limit = int(request.args.get("limit", 500))
+        return jsonify(
+            {
+                "cases": registry.list_cases(cases_root, q=q, sort=sort, limit=limit),
+                "stats": registry.registry_stats(cases_root),
+            }
+        )
+
+    @app.get("/api/registry/stats")
+    def registry_stats_endpoint():
+        return jsonify(registry.registry_stats(cases_root))
+
+    @app.get("/api/case/<case_id>/reports")
+    def case_report_history(case_id: str):
+        """Every report ever generated for this case, most recent first."""
+        _open(cases_root, case_id)  # 404s if the case doesn't exist
+        return jsonify(registry.list_reports(cases_root, case_id))
+
+    @app.get("/api/case/<case_id>/reports/<path:report_file>")
+    def case_report_snapshot(case_id: str, report_file: str):
+        """Serve one historical report snapshot from ``<case>/reports/``.
+
+        Cases indexed before the ``reports/`` history existed (see
+        ``registry.sync_registry``'s backfill) have a single entry pointing at the
+        case-root ``report.html`` instead of a snapshot file — fall back to that.
+        """
+        case = _open(cases_root, case_id)
+        name = Path(report_file).name  # strip any directory component — no traversal
+        path = (case.root / "reports" / name).resolve()
+        if case.root.resolve() not in path.parents or not path.exists():
+            if name == "report.html" and (case.root / "report.html").exists():
+                return send_file((case.root / "report.html").resolve(), mimetype="text/html")
+            abort(404)
+        return send_file(path, mimetype="text/html")
+
+    @app.delete("/api/case/<case_id>")
+    def delete_case(case_id: str):
+        """Delete a case folder and its registry rows. Irreversible — the dashboard
+        confirms with the examiner before calling this."""
+        case = _open(cases_root, case_id)
+        shutil.rmtree(case.root)
+        registry.delete_case_row(cases_root, case_id)
+        return jsonify({"deleted": case_id})
+
     @app.get("/api/case/<case_id>")
     def case_overview(case_id: str):
 
@@ -673,6 +757,9 @@ def create_app(cases_root: Path = CASES_ROOT):
                 "wifi",
                 "whatsapp_backup_messages",
                 "whatsapp_backup_media",
+                "location_traces",
+                "shared_locations",
+                "url_locations",
             )
         }
 
@@ -692,6 +779,16 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         summary["media_inventory_summary"] = (
             case.read_derived("media_inventory_summary") or {}
+        )
+
+        # Location roll-up. The overview shows the split, not just a total: "42 locations" is
+        # misleading when 39 of them are map links the user browsed and only 3 place the device.
+        summary["location_trace_summary"] = (
+            case.read_derived("location_trace_summary") or {}
+        )
+
+        summary["location_anomaly_count"] = len(
+            case.read_derived("location_impossible_travel") or []
         )
 
         apps = case.read_derived("apps") or []
@@ -779,6 +876,15 @@ def create_app(cases_root: Path = CASES_ROOT):
             "location_places",
             "location_anomalies",
             "location_timeline",
+            # Unified location trace: every source merged and categorised by evidential
+            # meaning, plus the sources that feed it.
+            "location_traces",
+            "location_impossible_travel",
+            "shared_locations",
+            "url_locations",
+            # Helper-APK radio artifacts (BSSIDs and bonded devices are location trails).
+            "collector_wifi",
+            "collector_bluetooth",
             "whatsapp_media",
             "aleapp",
         }
@@ -813,12 +919,23 @@ def create_app(cases_root: Path = CASES_ROOT):
             "wifi_live",
             "bluetooth_bond_report",
             "signal",
+            # Honest "what happened" record for Tier-2 Telegram — written on every
+            # exit path (success, root unavailable, BFU-gated, mock source) so a run
+            # where nothing was recovered never reads as "Telegram was not there".
+            "telegram_presence",
             "app_presence_summary",
             "antiforensics_summary",
             "encrypted_apps_summary",
             "recent_tasks_summary",
             "deletion_evidence_summary",
             "validation_report",
+            # Unified location trace summaries + a GeoJSON export for mapping tools.
+            "location_trace_summary",
+            "location_trace_geojson",
+            "shared_location_summary",
+            "url_location_summary",
+            # Per-run helper-APK audit record: what ran, what was denied, and why.
+            "collector_manifest",
         }
 
         if dataset not in (list_sets | obj_sets):
@@ -882,13 +999,13 @@ def create_app(cases_root: Path = CASES_ROOT):
         # ---------------------------------------------------------
 
     # DATA EXPORT IMPORT
-    # Instagram / Snapchat
+    # Instagram / Snapchat / Telegram (non-root acquisition path)
     # ---------------------------------------------------------
 
     @app.post("/api/case/<case_id>/import/<app_name>")
     def import_export(case_id: str, app_name: str):
 
-        if app_name not in ("instagram", "snapchat"):
+        if app_name not in ("instagram", "snapchat", "telegram"):
 
             abort(404)
 
@@ -903,7 +1020,9 @@ def create_app(cases_root: Path = CASES_ROOT):
         from .parsers import (
             parse_instagram_export,
             parse_snapchat_export,
+            parse_telegram_export,
             thread_conversations,
+            build_conversations,
         )
 
         from .report import generate_report
@@ -920,39 +1039,74 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         try:
 
-            parser = (
-                parse_instagram_export
-                if app_name == "instagram"
-                else parse_snapchat_export
-            )
+            if app_name == "telegram":
 
-            result = parser(tmp)
+                result = parse_telegram_export(tmp)
 
-            if not result.get("available"):
+                if not result.get("available"):
 
-                return jsonify({"error": result.get("error", "parse failed")}), 400
+                    return jsonify({"error": result.get("error", "parse failed")}), 400
 
-            messages = result.get("messages", [])
+                messages = result.get("messages", [])
 
-            existing = case.read_derived(app_name) or []
+                merged = list(case.read_derived("telegram_recovery") or []) + messages
 
-            merged = list(existing) + messages
+                case.write_derived("telegram_recovery", merged)
 
-            case.write_derived(app_name, merged)
+                users = list(case.read_derived("telegram_users") or []) + result.get(
+                    "users", []
+                )
 
-            users = (case.read_derived(f"{app_name}_users") or []) + result.get(
-                "users", []
-            )
+                case.write_derived("telegram_users", users)
 
-            case.write_derived(f"{app_name}_users", users)
+                chats = list(case.read_derived("telegram_chats") or []) + result.get(
+                    "chats", []
+                )
 
-            case.write_derived(
-                f"{app_name}_conversations", thread_conversations(merged, users)
-            )
+                case.write_derived("telegram_chats", chats)
+
+                case.write_derived(
+                    "telegram_conversations",
+                    build_conversations(messages=merged, users=users, chats=chats),
+                )
+
+            else:
+
+                parser = (
+                    parse_instagram_export
+                    if app_name == "instagram"
+                    else parse_snapchat_export
+                )
+
+                result = parser(tmp)
+
+                if not result.get("available"):
+
+                    return jsonify({"error": result.get("error", "parse failed")}), 400
+
+                messages = result.get("messages", [])
+
+                existing = case.read_derived(app_name) or []
+
+                merged = list(existing) + messages
+
+                case.write_derived(app_name, merged)
+
+                users = (case.read_derived(f"{app_name}_users") or []) + result.get(
+                    "users", []
+                )
+
+                case.write_derived(f"{app_name}_users", users)
+
+                case.write_derived(
+                    f"{app_name}_conversations", thread_conversations(merged, users)
+                )
 
             try:
 
                 generate_report(case.root)
+
+                _finalize_report(case, trigger=f"import:{app_name}")
 
             except Exception:
 
@@ -1066,6 +1220,7 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         try:
             generate_report(case.root)
+            _finalize_report(case, trigger="manual")
             return jsonify({"ok": True, "path": str(case.root / "report.html")})
         except Exception as exc:
             return jsonify({"error": str(exc)}), 500

@@ -83,6 +83,8 @@ def cmd_acquire(args) -> int:
         tier2_instagram=getattr(args, "tier2_instagram", False),
         tier2_snapchat=getattr(args, "tier2_snapchat", False),
         tier2_wifi=getattr(args, "tier2_wifi", False),
+        tier2_browser_history=getattr(args, "tier2_browser_history", False),
+        tier2_maps_location=getattr(args, "tier2_maps_location", False),
         tier2_whatsapp_backup=getattr(args, "tier2_whatsapp_backup", False),
         # Deep artifact stages (see PipelineConfig for what each reads).
         wifi_live=not getattr(args, "no_wifi_live", False),
@@ -202,6 +204,20 @@ def main(argv: list[str] | None = None) -> int:
         "--tier2-whatsapp-backup",
         action="store_true",
         help="Root: decrypt msgstore.db.crypt* backups",
+    )
+    a.add_argument(
+        "--tier2-browser-history",
+        action="store_true",
+        help="Root: pull Chrome/Brave/Samsung Internet/Edge History and Firefox "
+        "places.sqlite from app-private storage and recover deleted rows",
+    )
+    a.add_argument(
+        "--tier2-maps-location",
+        action="store_true",
+        help="Root: pull Google Maps navigation history (da_destination_history), saved "
+        "places (gmm_myplaces.db), map searches, and the Play-services cell/WiFi "
+        "geolocation cache — the last of which holds positions from periods when GPS "
+        "was switched off",
     )
 
     # -- Deep artifact stages --------------------------------------------------

@@ -10,6 +10,8 @@ import type {
   ManifestRecord,
   Message,
   Progress,
+  RegistryCasesResponse,
+  ReportVersion,
 } from "./types";
 
 export const BASE = import.meta.env.DEV ? "" : "http://127.0.0.1:5057";
@@ -41,6 +43,25 @@ export const api = {
   mediaUrl: (id: string, artifactId: string) => `${BASE}/api/case/${id}/media/${artifactId}`,
   exportUrl: (id: string) => `${BASE}/api/case/${id}/export/download`,
 
+  // --- case registry (cross-case history, SQLite-backed) --------------------
+  registryCases: (opts?: { q?: string; sort?: string; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.q) params.set("q", opts.q);
+    if (opts?.sort) params.set("sort", opts.sort);
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    return get<RegistryCasesResponse>(`/api/registry/cases${qs ? `?${qs}` : ""}`);
+  },
+  caseReports: (id: string) => get<ReportVersion[]>(`/api/case/${id}/reports`),
+  reportSnapshotUrl: (id: string, path: string) =>
+    `${BASE}/api/case/${id}/reports/${path.split("/").pop()}`,
+  deleteCase: async (id: string): Promise<{ deleted: string }> => {
+    const res = await fetch(`${BASE}/api/case/${id}`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+    return data as { deleted: string };
+  },
+
   addTag: async (id: string, body: { ref: string; kind: string; label: string; note?: string }) => {
     const res = await fetch(`${BASE}/api/case/${id}/tags`, {
       method: "POST",
@@ -54,10 +75,11 @@ export const api = {
     await fetch(`${BASE}/api/case/${id}/tags/${tagId}`, { method: "DELETE" });
   },
 
-  // Ingest an Instagram/Snapchat "Download Your Data" export (ZIP/JSON) into a case.
+  // Ingest an Instagram/Snapchat "Download Your Data" export or a Telegram Desktop
+  // "Export Telegram data" (ZIP/JSON) into a case — the non-root acquisition path.
   importExport: async (
     id: string,
-    app: "instagram" | "snapchat",
+    app: "instagram" | "snapchat" | "telegram",
     file: File
   ): Promise<{ imported: number; total: number; counts?: Record<string, number> }> => {
     const form = new FormData();
@@ -195,6 +217,7 @@ export const api = {
     tier2_instagram?: boolean;
     tier2_snapchat?: boolean;
     tier2_wifi?: boolean;
+    tier2_browser_history?: boolean;
     tier2_whatsapp_backup?: boolean;
     // Deep system-artifact stages (root). Omitted => the engine's default (all off).
     tier2_bt_config?: boolean;

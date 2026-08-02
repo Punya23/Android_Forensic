@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.Context
 import android.media.ExifInterface
+import android.media.MediaMetadataRetriever
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -17,7 +18,8 @@ import org.json.JSONObject
  * per-file size, timestamps (`date_taken`), dimensions/duration, the owning app
  * (`owner_package_name` — attributes a photo to WhatsApp/Instagram/Camera), the containing
  * bucket, and — crucially — the **trashed** and **favorite** flags Android 11+ exposes. GPS is
- * read from unredacted EXIF (needs ACCESS_MEDIA_LOCATION) for a capped number of images.
+ * read from unredacted EXIF for images and from the MP4 ISO-6709 location atom for videos
+ * (both need ACCESS_MEDIA_LOCATION), for a capped number of files.
  *
  * The engine can then decide which specific files to pull for full extraction. This mirrors
  * how commercial agents surface a media catalogue before selective acquisition.
@@ -127,8 +129,22 @@ object MediaCollector {
                     .put("is_favorite", (with(Cur) { c.intOrNull(MediaStore.MediaColumns.IS_FAVORITE) } ?: 0) == 1)
                     .put("is_trashed", (with(Cur) { c.intOrNull(MediaStore.MediaColumns.IS_TRASHED) } ?: 0) == 1)
 
-                if (kind == "image" && gpsBudget[0] > 0) {
-                    readGps(ctx, uri, id)?.let { (lat, lon) ->
+                if (gpsBudget[0] > 0) {
+                    val fix = when (kind) {
+                        "image" -> readGps(ctx, uri, id)
+                        "video" -> readVideoGps(ctx, uri, id)
+                        // Downloads hold both stills and clips; pick by MIME.
+                        "download" -> {
+                            val mime = with(Cur) { c.strOrNull(MediaStore.MediaColumns.MIME_TYPE) } ?: ""
+                            when {
+                                mime.startsWith("image/") -> readGps(ctx, uri, id)
+                                mime.startsWith("video/") -> readVideoGps(ctx, uri, id)
+                                else -> null
+                            }
+                        }
+                        else -> null
+                    }
+                    fix?.let { (lat, lon) ->
                         o.put("gps_lat", lat).put("gps_lon", lon)
                         gpsBudget[0] = gpsBudget[0] - 1
                     }
@@ -156,4 +172,49 @@ object MediaCollector {
             null
         }
     }
+
+    /**
+     * Read a video's recording location.
+     *
+     * Camera apps stash GPS in the MP4/MOV `udta` box as an ISO-6709 string (`©xyz` atom on
+     * Android, `loci` on some OEMs). [MediaMetadataRetriever] surfaces both through
+     * `METADATA_KEY_LOCATION`, which is the only route a non-root app has — MediaStore's old
+     * `Video.Media.LATITUDE`/`LONGITUDE` columns were removed in Android 10.
+     */
+    private fun readVideoGps(ctx: Context, baseUri: android.net.Uri, id: Long): Pair<Double, Double>? {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            var itemUri = ContentUris.withAppendedId(baseUri, id)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                itemUri = MediaStore.setRequireOriginal(itemUri)
+            }
+            retriever.setDataSource(ctx, itemUri)
+            parseIso6709(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION))
+        } catch (e: Exception) {
+            null
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
+    /**
+     * Parse an ISO-6709 location string such as `+37.7749-122.4194/` or
+     * `+37.7749-122.4194+010.500/` into a lat/long pair.
+     *
+     * Both fields always carry an explicit sign, so splitting on the second sign character is
+     * unambiguous. A trailing altitude field (a third signed group) is discarded.
+     */
+    internal fun parseIso6709(raw: String?): Pair<Double, Double>? {
+        val s = raw?.trim()?.trimEnd('/') ?: return null
+        if (s.length < 2) return null
+        val m = ISO6709.matchEntire(s) ?: return null
+        val lat = m.groupValues[1].toDoubleOrNull() ?: return null
+        val lon = m.groupValues[2].toDoubleOrNull() ?: return null
+        // A 0,0 fix is the "no data" sentinel these atoms are zero-filled with.
+        if (lat == 0.0 && lon == 0.0) return null
+        if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) return null
+        return Pair(lat, lon)
+    }
+
+    private val ISO6709 = Regex("""^([+\-]\d+(?:\.\d+)?)([+\-]\d+(?:\.\d+)?)(?:[+\-]\d+(?:\.\d+)?)?$""")
 }

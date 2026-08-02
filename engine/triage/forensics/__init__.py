@@ -106,12 +106,30 @@ from .location_summary import (
     generate_location_html_summary,
 )
 
+from .location_aggregate import (
+    LocationTraceRow,
+    build_location_traces,
+    dedupe_traces,
+    summarise_traces,
+    presence_track,
+    detect_impossible_travel,
+    traces_to_geojson,
+)
+
 __all__ = [
     # Models
     "MediaLocation",
     "LocationCluster",
     "LocationAnomaly",
     "LocationTrace",
+    # Unified location trace (every source merged, categorised by evidential meaning)
+    "LocationTraceRow",
+    "build_location_traces",
+    "dedupe_traces",
+    "summarise_traces",
+    "presence_track",
+    "detect_impossible_travel",
+    "traces_to_geojson",
     # Media location
     "extract_whatsapp_media_locations",
     "extract_telegram_media_locations",

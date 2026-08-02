@@ -61,6 +61,7 @@ import logging
 import os
 import re
 import sqlite3
+import zipfile
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1223,6 +1224,193 @@ def export_recovered_messages_json(
     )
     log.info("Telegram recovery exported to %s", output_path)
     return output_path
+
+
+# ---------------------------------------------------------------------------
+# Non-root acquisition path: Telegram Desktop "Export Telegram data" (JSON)
+# ---------------------------------------------------------------------------
+# This is data the examiner *obtained from the user/a synced PC*, not a device pull —
+# useful when root is unavailable and the suspect (or a court order) has produced an
+# export. Supports both the full-account export (top-level "chats": {"list": [...]})
+# and a single-chat "Export chat history" (a JSON that IS one chat object). Media
+# referenced by the export is not ingested here — only text, with a placeholder marking
+# where media was — so this stays honest about what it actually recovered.
+
+_EXPORT_ZERO_COUNTS: dict[str, int] = {
+    "live": 0,
+    "recovered_verified": 0,
+    "carved_partial": 0,
+    "deletion_detected": 0,
+    "total": 0,
+}
+
+
+def _export_unavailable(reason: str) -> dict[str, Any]:
+    return {
+        "available": False,
+        "error": reason,
+        "app": "telegram",
+        "messages": [],
+        "users": [],
+        "chats": [],
+        "counts": dict(_EXPORT_ZERO_COUNTS),
+    }
+
+
+def _export_message_text(text: Any) -> str:
+    """Flatten a Desktop-export ``text`` field (plain string or entity-run array)."""
+    if isinstance(text, str):
+        return text
+    if isinstance(text, list):
+        parts: list[str] = []
+        for piece in text:
+            if isinstance(piece, str):
+                parts.append(piece)
+            elif isinstance(piece, dict):
+                parts.append(str(piece.get("text", "")))
+        return "".join(parts)
+    return ""
+
+
+def _export_clean_sender_id(raw: str) -> str:
+    """Strip the Desktop export's ``user``/``channel`` prefix from a from_id."""
+    m = re.match(r"^(?:user|channel)(\d+)$", raw)
+    return m.group(1) if m else raw
+
+
+def _export_timestamp(m: dict[str, Any]) -> Optional[str]:
+    ts = _epoch_to_iso(m.get("date_unixtime"))
+    if ts:
+        return ts
+    raw = m.get("date")
+    if isinstance(raw, str) and raw:
+        try:
+            datetime.fromisoformat(raw)
+            return raw
+        except ValueError:
+            return None
+    return None
+
+
+def _export_find_document(path: Path) -> Optional[dict[str, Any]]:
+    """Locate and parse the export's ``result.json`` from a file, dir, or zip."""
+
+    def _load(data: bytes) -> dict[str, Any]:
+        return json.loads(data.decode("utf-8-sig"))
+
+    if path.is_file() and path.suffix.lower() == ".zip":
+        with zipfile.ZipFile(path) as z:
+            names = [n for n in z.namelist() if n.lower().endswith("result.json")]
+            if not names:
+                names = [n for n in z.namelist() if n.lower().endswith(".json")]
+            if not names:
+                return None
+            names.sort(key=lambda n: n.count("/"))
+            return _load(z.read(names[0]))
+    if path.is_file():
+        return _load(path.read_bytes())
+    if path.is_dir():
+        hits = list(path.rglob("result.json")) or list(path.rglob("*.json"))
+        if not hits:
+            return None
+        hits.sort(key=lambda h: len(h.parts))
+        return _load(hits[0].read_bytes())
+    return None
+
+
+def parse_telegram_export(path: str | Path) -> dict[str, Any]:
+    """Parse a Telegram Desktop "Export Telegram data" JSON (or a ZIP/dir containing it).
+
+    Non-root acquisition path — mirrors :func:`parsers.instagram.parse_instagram_export`
+    and :func:`parsers.snapchat.parse_snapchat_export`. All messages are reported as
+    ``Confidence.LIVE``: this is Telegram's own client view of the conversation at export
+    time, not a forensic recovery pass over ``cache4.db``.
+
+    Returns
+    -------
+    ``{"available", "error", "app", "messages", "users", "chats", "counts"}`` — the
+    ``messages``/``users``/``chats`` triple feeds :func:`build_conversations` directly,
+    the same as the Tier-2 root-recovery path.
+    """
+    p = Path(path)
+    try:
+        doc = _export_find_document(p)
+    except Exception as exc:
+        return _export_unavailable(f"export parse error: {exc}")
+    if not doc:
+        return _export_unavailable("no result.json found in export")
+
+    if isinstance(doc.get("chats"), dict) and isinstance(doc["chats"].get("list"), list):
+        chat_list = doc["chats"]["list"]
+    elif isinstance(doc.get("messages"), list):
+        chat_list = [doc]  # single-chat "Export chat history"
+    else:
+        return _export_unavailable("export JSON has neither chats.list nor messages")
+
+    messages: list[dict[str, Any]] = []
+    chats_out: list[dict[str, Any]] = []
+    users_idx: dict[str, str] = {}
+
+    for i, chat in enumerate(chat_list):
+        if not isinstance(chat, dict):
+            continue
+        chat_id = str(chat.get("id") if chat.get("id") is not None else f"export_chat_{i}")
+        chat_name = str(chat.get("name") or f"Chat {chat_id}")
+        chats_out.append(
+            {"_id": chat_id, "_name": chat_name, "confidence": Confidence.LIVE.value}
+        )
+        for m in chat.get("messages", []):
+            if not isinstance(m, dict) or m.get("type") == "service":
+                continue  # service messages (joins/pins/calls) carry no chat content
+            body = _export_message_text(m.get("text"))
+            if not body:
+                if m.get("photo"):
+                    body = "[photo]"
+                elif m.get("file"):
+                    body = f"[file] {Path(str(m['file'])).name}"
+                elif m.get("media_type"):
+                    body = f"[{m['media_type']}]"
+            sender_raw = str(m.get("from_id") or m.get("from") or "<unknown>")
+            sender_id = _export_clean_sender_id(sender_raw)
+            sender_name = str(m.get("from") or sender_id)
+            users_idx.setdefault(sender_id, sender_name)
+            messages.append(
+                {
+                    "body": body,
+                    "sender": sender_id,
+                    "timestamp": _export_timestamp(m),
+                    "chat_id": chat_id,
+                    "confidence": Confidence.LIVE.value,
+                    "source_file": "telegram_desktop_export",
+                    "page": None,
+                    "offset": None,
+                    "carve_method": "",
+                    "provenance": "Telegram Desktop data export (user-supplied, not a device pull)",
+                    "warnings": [],
+                    "media_artifact_id": None,
+                }
+            )
+
+    if not messages and not chats_out:
+        return _export_unavailable("export contained no chats or messages")
+
+    users_out = [
+        {"_id": uid, "_name": name, "confidence": Confidence.LIVE.value}
+        for uid, name in users_idx.items()
+    ]
+    counts = dict(_EXPORT_ZERO_COUNTS)
+    counts["live"] = len(messages)
+    counts["total"] = len(messages)
+
+    return {
+        "available": True,
+        "error": None,
+        "app": "telegram",
+        "messages": messages,
+        "users": users_out,
+        "chats": chats_out,
+        "counts": counts,
+    }
 
 
 # ---------------------------------------------------------------------------

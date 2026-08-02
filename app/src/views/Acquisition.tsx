@@ -37,6 +37,7 @@ export function AcquisitionView({
   const [tier2Instagram, setTier2Instagram] = useState(false);
   const [tier2Snapchat, setTier2Snapchat] = useState(false);
   const [tier2Wifi, setTier2Wifi] = useState(false);
+  const [tier2BrowserHistory, setTier2BrowserHistory] = useState(false);
   const [tier2WhatsappBackup, setTier2WhatsappBackup] = useState(false);
   // Deep root-tier artifact stages. All default off: each requires root, and the
   // examiner should choose them deliberately rather than inherit them.
@@ -101,6 +102,7 @@ export function AcquisitionView({
       setTier2Instagram(!!ov.tier2_instagram);
       setTier2Snapchat(!!ov.tier2_snapchat);
       setTier2Wifi(!!ov.tier2_wifi);
+      setTier2BrowserHistory(!!ov.tier2_browser_history);
       setTier2WhatsappBackup(!!ov.tier2_whatsapp_backup);
     } catch (e) {
       setPlanError(e instanceof Error ? e.message : String(e));
@@ -120,6 +122,7 @@ export function AcquisitionView({
       tier2_instagram: setTier2Instagram,
       tier2_snapchat: setTier2Snapchat,
       tier2_wifi: setTier2Wifi,
+      tier2_browser_history: setTier2BrowserHistory,
       tier2_whatsapp_backup: setTier2WhatsappBackup,
     };
     setters[flag]?.(true);
@@ -149,6 +152,7 @@ export function AcquisitionView({
         tier2_instagram: target.kind === "real" ? tier2Instagram : false,
         tier2_snapchat: target.kind === "real" ? tier2Snapchat : false,
         tier2_wifi: target.kind === "real" ? tier2Wifi : false,
+        tier2_browser_history: target.kind === "real" ? tier2BrowserHistory : false,
         tier2_whatsapp_backup: target.kind === "real" ? tier2WhatsappBackup : false,
         tier2_bt_config: target.kind === "real" ? tier2BtConfig : false,
         tier2_app_presence: target.kind === "real" ? tier2AppPresence : false,
@@ -576,6 +580,32 @@ export function AcquisitionView({
                 (Android ≤8) to recover stored SSID/password pairs. No
                 cracking — verbatim plaintext from OS storage. Logged as
                 non-device-altering.
+              </div>
+            </div>
+          </label>
+
+          {/* Browser History Recovery */}
+          <label className="flex items-start gap-3 cursor-pointer border-t border-line pt-3">
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={!target || target.kind !== "real"}
+              checked={target?.kind === "real" ? tier2BrowserHistory : false}
+              onChange={(e) => setTier2BrowserHistory(e.target.checked)}
+            />
+            <div>
+              <div className="text-sm font-medium flex items-center gap-1.5">
+                <span>🌐</span> Browser History
+              </div>
+              <div className="text-xs text-muted mt-1">
+                Root-pull the real per-browser{" "}
+                <code className="text-accent">History</code> DB from Chrome,
+                Brave, Samsung Internet and Edge, plus Firefox's{" "}
+                <code className="text-accent">places.sqlite</code>. History
+                lives in app-private storage, so this is unreachable without
+                root. Runs the same deleted-row carver as everything else, so
+                cleared history shows up as a deletion finding rather than
+                silence.
               </div>
             </div>
           </label>

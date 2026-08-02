@@ -13,11 +13,12 @@
  *               with a coloured confidence ring around each bubble and
  *               media thumbnails served by the existing media endpoint.
  */
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef, type ChangeEvent } from "react";
 import type {
   TelegramConversation,
   TelegramConversationsMap,
   TelegramMessage,
+  TelegramPresence,
 } from "../lib/types";
 import { ConfidenceBadge } from "../components/Badges";
 import { SectionHeader, EmptyState } from "../components/common";
@@ -166,15 +167,63 @@ function ConversationDetail({
   );
 }
 
+// Non-root fallback: ingest a Telegram Desktop "Export Telegram data" JSON/ZIP.
+function ImportControl({
+  caseId,
+  onImported,
+  compact,
+}: {
+  caseId: string;
+  onImported: () => void;
+  compact?: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  async function onFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await api.importExport(caseId, "telegram", file);
+      setMsg(`Imported ${res.imported} message(s).`);
+      onImported();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className={compact ? "flex items-center gap-2" : "mt-4 flex flex-col items-center gap-2"}>
+      <input ref={inputRef} type="file" accept=".zip,.json" className="hidden" onChange={onFile} />
+      <button
+        className={compact ? "btn-ghost text-xs py-1" : "btn-accent text-sm"}
+        disabled={busy}
+        onClick={() => inputRef.current?.click()}
+      >
+        {busy ? "Importing…" : "Import Telegram Desktop data export"}
+      </button>
+      {msg && <span className="text-xs text-muted">{msg}</span>}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main view
 // ---------------------------------------------------------------------------
 
 export function TelegramView({ caseId }: { caseId: string }) {
   const [convs, setConvs] = useState<TelegramConversationsMap | null>(null);
+  const [presence, setPresence] = useState<TelegramPresence | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     setLoading(true);
@@ -187,7 +236,11 @@ export function TelegramView({ caseId }: { caseId: string }) {
       })
       .catch(() => setConvs({}))
       .finally(() => setLoading(false));
-  }, [caseId]);
+    fetch(`${BASE}/api/case/${caseId}/telegram_presence`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: TelegramPresence | null) => setPresence(data && data.attempted ? data : null))
+      .catch(() => setPresence(null));
+  }, [caseId, reloadKey]);
 
   const sortedConvs = useMemo(() => {
     if (!convs) return [];
@@ -215,15 +268,18 @@ export function TelegramView({ caseId }: { caseId: string }) {
     return <div className="p-8 text-muted">Loading Telegram conversations…</div>;
 
   if (!convs || Object.keys(convs).length === 0) {
+    const detail = presence
+      ? `Tier-2 root acquisition did not recover any Telegram content. Reason: ${
+          presence.reason || "unknown"
+        }. This does not mean Telegram is absent from the device.`
+      : "Telegram full chat history requires Tier-2 (root) access and " +
+        "tier2_telegram=true in PipelineConfig. " +
+        "If acquisition was Tier-0 only, only gallery media is available.";
     return (
-      <EmptyState
-        title="No Telegram conversations"
-        detail={
-          "Telegram full chat history requires Tier-2 (root) access and " +
-          "tier2_telegram=true in PipelineConfig. " +
-          "If acquisition was Tier-0 only, only gallery media is available."
-        }
-      />
+      <div className="flex flex-col items-center justify-center h-full text-center py-16 px-6">
+        <EmptyState title="No Telegram conversations" detail={detail} />
+        <ImportControl caseId={caseId} onImported={() => setReloadKey((k) => k + 1)} />
+      </div>
     );
   }
 
@@ -231,10 +287,15 @@ export function TelegramView({ caseId }: { caseId: string }) {
     <div className="flex h-full overflow-hidden">
       {/* Left: conversation list */}
       <aside className="w-72 shrink-0 border-r border-line flex flex-col">
-        <SectionHeader
-          title="Telegram"
-          sub={`${sortedConvs.length} conversation(s)`}
-        />
+        <div className="flex items-center justify-between px-1">
+          <SectionHeader
+            title="Telegram"
+            sub={`${sortedConvs.length} conversation(s)`}
+          />
+        </div>
+        <div className="px-4 pb-2">
+          <ImportControl caseId={caseId} onImported={() => setReloadKey((k) => k + 1)} compact />
+        </div>
         <div className="px-3 py-2 border-b border-line">
           <input
             className="w-full bg-panel border border-line rounded px-2.5 py-1.5 text-sm outline-none focus:border-accent"

@@ -12,6 +12,13 @@ Consent-based (no root required):
 Root-enhanced (Tier 2):
   * Google Maps cache                  -- recent place lookups and routes
     (/data/data/com.google.android.apps.maps/cache/)
+  * ``da_destination_history``         -- every destination entered into Directions, with the
+    trip's origin. Evidences *intent* (the user chose to go there), not just presence.
+  * ``gmm_myplaces.db``                -- starred/saved/labelled places; Home and Work labels
+    routinely identify a suspect's address.
+  * ``search_history.db``              -- map search queries (kept even when no coordinate).
+  * ``NetworkLocation.db`` / herrevad  -- the Play-services cell+WiFi geolocation cache, which
+    records positions even for periods when GPS was switched off.
 
 Forensic value:
 * Proves physical location at specific times.
@@ -308,6 +315,28 @@ def parse_google_takeout_location(export_path: Path) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def _connect_ro(db_path: Path) -> Optional[sqlite3.Connection]:
+    """Open an evidence database strictly read-only.
+
+    A plain ``sqlite3.connect(path)`` opens read-write. On a database with an unclean WAL that
+    is enough for SQLite to checkpoint and *rewrite the evidence file* on connect, changing its
+    hash. ``mode=ro&immutable=1`` forbids any write and tells SQLite not to attempt recovery,
+    which is also what lets it read a forensic copy whose ``-wal``/``-shm`` sidecars are absent.
+    """
+    try:
+        if not db_path.is_file():
+            return None
+        if db_path.open("rb").read(16) != b"SQLite format 3\x00":
+            return None
+        con = sqlite3.connect(
+            f"file:{db_path}?mode=ro&immutable=1", uri=True, check_same_thread=False
+        )
+        con.text_factory = lambda b: b.decode("utf-8", "replace")
+        return con
+    except (OSError, sqlite3.Error):
+        return None
+
+
 def parse_maps_cache(cache_dir: Path) -> List[Dict[str, Any]]:
     """Parse Google Maps cache for location data (root access required).
 
@@ -329,7 +358,9 @@ def parse_maps_cache(cache_dir: Path) -> List[Dict[str, Any]]:
     # Scan SQLite databases in the cache tree
     for db_path in cache_dir.rglob("*.db"):
         try:
-            con = sqlite3.connect(str(db_path), check_same_thread=False)
+            con = _connect_ro(db_path)
+            if con is None:
+                continue
             cur = con.cursor()
             # Enumerate all tables and look for lat/lon columns
             cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -390,6 +421,435 @@ def parse_maps_cache(cache_dir: Path) -> List[Dict[str, Any]]:
             continue
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Google Maps app-private databases (Tier 2 — root or full filesystem image)
+# ---------------------------------------------------------------------------
+#
+# `parse_maps_cache` above is a generic column sniff over whatever `.db` files happen to sit in
+# the cache tree. It finds coordinates but cannot say what they *mean*. The readers below know
+# the specific schemas, so a row can be reported as "the user navigated here at 19:42" rather
+# than an anonymous point — which is the difference between a coordinate and evidence.
+#
+# Locations under /data/data/com.google.android.apps.maps/databases/:
+#   da_destination_history   every destination entered into Directions, with the trip's origin
+#   gmm_myplaces.db          starred / saved / labelled places (Home and Work live here)
+#   search_history.db        map search queries, some carrying the viewport centre
+# and under /data/data/com.google.android.gms/databases/:
+#   NetworkLocation.db       the GMS cell/WiFi geolocation cache — where the device asked
+#                            "where am I" and what Google answered
+
+_MAPS_DB_DIRS = (
+    "com.google.android.apps.maps/databases",
+    "com.google.android.gms/databases",
+)
+
+
+def _table_names(con: sqlite3.Connection) -> List[str]:
+    try:
+        return [
+            r[0]
+            for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        ]
+    except sqlite3.Error:
+        return []
+
+
+def _cols(con: sqlite3.Connection, table: str) -> Dict[str, str]:
+    """Return ``{lowercase_name: real_name}`` for *table*."""
+    try:
+        return {r[1].lower(): r[1] for r in con.execute(f'PRAGMA table_info("{table}")')}
+    except sqlite3.Error:
+        return {}
+
+
+def _first(cols: Dict[str, str], *candidates: str) -> Optional[str]:
+    for c in candidates:
+        if c in cols:
+            return cols[c]
+    return None
+
+
+def _coord(value: Any) -> Optional[float]:
+    """Coerce a coordinate, handling Google's ``E7`` fixed-point convention."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if v != v:
+        return None
+    if abs(v) > 180.0:
+        v /= 1e7
+    return v if -180.0 <= v <= 180.0 else None
+
+
+def _point_ok(lat: Optional[float], lon: Optional[float]) -> bool:
+    if lat is None or lon is None:
+        return False
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return False
+    return not (abs(lat) < 1e-9 and abs(lon) < 1e-9)
+
+
+def parse_maps_destination_history(db_path: Path) -> List[Dict[str, Any]]:
+    """Parse ``da_destination_history`` — every destination typed into Maps Directions.
+
+    This is one of the highest-value Maps artifacts: unlike passive location history, a
+    destination is something the user *chose*, so it evidences intent rather than presence.
+    Rows carry the destination coordinate and title, and many builds also record the trip's
+    origin, which is emitted as its own ``maps_directions_origin`` point.
+    """
+    con = _connect_ro(db_path)
+    if con is None:
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        for table in _table_names(con):
+            cols = _cols(con, table)
+            dest_lat = _first(cols, "dest_lat", "destination_lat", "latitude", "lat")
+            dest_lon = _first(cols, "dest_lng", "dest_lon", "destination_lng", "longitude", "lng")
+            if not dest_lat or not dest_lon:
+                continue
+            ts_col = _first(cols, "time", "timestamp", "date", "last_used")
+            title_col = _first(cols, "dest_title", "title", "name")
+            addr_col = _first(cols, "dest_address", "address")
+            src_lat = _first(cols, "source_lat", "src_lat", "start_lat")
+            src_lon = _first(cols, "source_lng", "source_lon", "src_lng", "start_lng")
+
+            select = [f'"{dest_lat}"', f'"{dest_lon}"']
+            select.append(f'"{ts_col}"' if ts_col else "NULL")
+            select.append(f'"{title_col}"' if title_col else "''")
+            select.append(f'"{addr_col}"' if addr_col else "''")
+            select.append(f'"{src_lat}"' if src_lat else "NULL")
+            select.append(f'"{src_lon}"' if src_lon else "NULL")
+            try:
+                rows = con.execute(
+                    f'SELECT {", ".join(select)} FROM "{table}" LIMIT 5000'
+                ).fetchall()
+            except sqlite3.Error:
+                continue
+            for row in rows:
+                lat, lon = _coord(row[0]), _coord(row[1])
+                ts = _parse_timestamp(str(row[2])) if row[2] is not None else ""
+                title = str(row[3] or "")
+                address = str(row[4] or "")
+                if _point_ok(lat, lon):
+                    out.append(
+                        {
+                            "latitude": lat,
+                            "longitude": lon,
+                            "timestamp": ts or "",
+                            "place_name": title,
+                            "address": address,
+                            "source": "maps_destination_history",
+                            "provenance": f"{db_path.name}:{table} (navigation destination)",
+                        }
+                    )
+                slat, slon = _coord(row[5]), _coord(row[6])
+                if _point_ok(slat, slon):
+                    out.append(
+                        {
+                            "latitude": slat,
+                            "longitude": slon,
+                            "timestamp": ts or "",
+                            "place_name": f"origin of trip to {title}" if title else "trip origin",
+                            "source": "maps_directions_origin",
+                            "provenance": f"{db_path.name}:{table} (navigation origin)",
+                        }
+                    )
+    finally:
+        con.close()
+    return out
+
+
+def parse_maps_myplaces(db_path: Path) -> List[Dict[str, Any]]:
+    """Parse ``gmm_myplaces.db`` — starred, saved and labelled places.
+
+    Home and Work labels live here, which routinely identify a suspect's address without any
+    other artifact. These are *saved* places, not positions the device occupied: they prove
+    the user bookmarked a location, not that they were ever at it. The ``source`` value keeps
+    that distinction explicit so the map view can style them differently.
+    """
+    con = _connect_ro(db_path)
+    if con is None:
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        for table in _table_names(con):
+            cols = _cols(con, table)
+            lat_col = _first(cols, "latitude", "lat", "lat_e7", "latitude_e7")
+            lon_col = _first(cols, "longitude", "lng", "lon", "lng_e7", "longitude_e7")
+            if not lat_col or not lon_col:
+                continue
+            name_col = _first(cols, "name", "title", "label", "alias", "display_name")
+            addr_col = _first(cols, "address", "formatted_address", "vicinity")
+            ts_col = _first(cols, "timestamp", "time", "date", "created", "modified")
+            select = [f'"{lat_col}"', f'"{lon_col}"']
+            select.append(f'"{name_col}"' if name_col else "''")
+            select.append(f'"{addr_col}"' if addr_col else "''")
+            select.append(f'"{ts_col}"' if ts_col else "NULL")
+            try:
+                rows = con.execute(
+                    f'SELECT {", ".join(select)} FROM "{table}" LIMIT 5000'
+                ).fetchall()
+            except sqlite3.Error:
+                continue
+            for row in rows:
+                lat, lon = _coord(row[0]), _coord(row[1])
+                if not _point_ok(lat, lon):
+                    continue
+                out.append(
+                    {
+                        "latitude": lat,
+                        "longitude": lon,
+                        "timestamp": (_parse_timestamp(str(row[4])) or "") if row[4] else "",
+                        "place_name": str(row[2] or ""),
+                        "address": str(row[3] or ""),
+                        "source": "maps_saved_place",
+                        "provenance": f"{db_path.name}:{table} (saved place — bookmark, not a visit)",
+                    }
+                )
+    finally:
+        con.close()
+    return out
+
+
+def parse_maps_search_history(db_path: Path) -> List[Dict[str, Any]]:
+    """Parse Maps search history, keeping queries even when they carry no coordinate.
+
+    A search for a place name is evidence of interest in that place regardless of whether the
+    row stored a viewport centre. Rows without coordinates are returned with ``latitude`` and
+    ``longitude`` set to ``None`` and are filtered out by :func:`build_location_points`; the
+    caller can still surface them as searches.
+    """
+    con = _connect_ro(db_path)
+    if con is None:
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        for table in _table_names(con):
+            cols = _cols(con, table)
+            query_col = _first(cols, "query", "search_query", "text", "term", "suggestion")
+            if not query_col:
+                continue
+            lat_col = _first(cols, "latitude", "lat", "lat_e7")
+            lon_col = _first(cols, "longitude", "lng", "lon", "lng_e7")
+            ts_col = _first(cols, "timestamp", "time", "date", "last_used")
+            select = [f'"{query_col}"']
+            select.append(f'"{lat_col}"' if lat_col else "NULL")
+            select.append(f'"{lon_col}"' if lon_col else "NULL")
+            select.append(f'"{ts_col}"' if ts_col else "NULL")
+            try:
+                rows = con.execute(
+                    f'SELECT {", ".join(select)} FROM "{table}" LIMIT 5000'
+                ).fetchall()
+            except sqlite3.Error:
+                continue
+            for row in rows:
+                query = str(row[0] or "").strip()
+                if not query:
+                    continue
+                lat, lon = _coord(row[1]), _coord(row[2])
+                has_point = _point_ok(lat, lon)
+                out.append(
+                    {
+                        "latitude": lat if has_point else None,
+                        "longitude": lon if has_point else None,
+                        "timestamp": (_parse_timestamp(str(row[3])) or "") if row[3] else "",
+                        "place_name": query,
+                        "query": query,
+                        "source": "maps_search",
+                        "provenance": f"{db_path.name}:{table} (map search query)",
+                    }
+                )
+    finally:
+        con.close()
+    return out
+
+
+def parse_gms_network_location(db_path: Path) -> List[Dict[str, Any]]:
+    """Parse the Play-services network-location cache (``NetworkLocation.db`` / ``herrevad``).
+
+    When an app asks for a coarse position, GMS resolves nearby cell towers and WiFi BSSIDs to
+    coordinates and caches the answer. The cache is therefore a record of *where the device
+    asked* — usable even when GPS was off for the whole period, which is exactly the scenario
+    where every other location source comes up empty.
+    """
+    con = _connect_ro(db_path)
+    if con is None:
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        for table in _table_names(con):
+            cols = _cols(con, table)
+            lat_col = _first(cols, "latitude", "lat", "lat_e7", "latitude_e7")
+            lon_col = _first(cols, "longitude", "lng", "lon", "lng_e7", "longitude_e7")
+            if not lat_col or not lon_col:
+                continue
+            ts_col = _first(cols, "time", "timestamp", "date", "expires")
+            acc_col = _first(cols, "accuracy", "radius", "accuracy_m")
+            key_col = _first(cols, "cid", "mac", "bssid", "key", "_id")
+            select = [f'"{lat_col}"', f'"{lon_col}"']
+            select.append(f'"{ts_col}"' if ts_col else "NULL")
+            select.append(f'"{acc_col}"' if acc_col else "NULL")
+            select.append(f'"{key_col}"' if key_col else "''")
+            try:
+                rows = con.execute(
+                    f'SELECT {", ".join(select)} FROM "{table}" LIMIT 5000'
+                ).fetchall()
+            except sqlite3.Error:
+                continue
+            kind = "cell tower" if table.lower().startswith(("ncell", "cell")) else "WiFi AP"
+            for row in rows:
+                lat, lon = _coord(row[0]), _coord(row[1])
+                if not _point_ok(lat, lon):
+                    continue
+                try:
+                    accuracy = float(row[3]) if row[3] is not None else None
+                except (TypeError, ValueError):
+                    accuracy = None
+                out.append(
+                    {
+                        "latitude": lat,
+                        "longitude": lon,
+                        "timestamp": (_parse_timestamp(str(row[2])) or "") if row[2] else "",
+                        "place_name": f"{kind} {row[4]}".strip(),
+                        "accuracy": accuracy,
+                        "source": "gms_network_location",
+                        "provenance": f"{db_path.name}:{table} (Play-services geolocation cache)",
+                    }
+                )
+    finally:
+        con.close()
+    return out
+
+
+# Filename fragment → reader, checked in order. The first match wins; anything unmatched falls
+# through to the generic column sniff so an unfamiliar Maps database is still read.
+_MAPS_READERS: tuple[tuple[str, Any], ...] = (
+    ("da_destination_history", parse_maps_destination_history),
+    ("destination_history", parse_maps_destination_history),
+    ("gmm_myplaces", parse_maps_myplaces),
+    ("myplaces", parse_maps_myplaces),
+    ("search_history", parse_maps_search_history),
+    ("networklocation", parse_gms_network_location),
+    ("herrevad", parse_gms_network_location),
+)
+
+
+def parse_maps_app_data(root: Path) -> List[Dict[str, Any]]:
+    """Walk a staged tree for Google Maps / Play-services databases and parse each one.
+
+    *root* may be an app data directory, a `databases/` folder, or the whole staging tree —
+    the walk finds the files either way, so the caller does not have to know how the acquisition
+    laid them out.
+
+    Every Maps database is app-private, so reaching any of this requires root or a full
+    filesystem image. On a non-root acquisition this returns an empty list, which means "not
+    reachable at this tier", **not** "the user never navigated anywhere".
+    """
+    if not root.exists():
+        return []
+    out: List[Dict[str, Any]] = []
+    seen: set[Path] = set()
+
+    candidates: List[Path] = []
+    for pattern in ("*.db", "da_destination_history", "*.sqlite", "*.sqlitedb"):
+        candidates.extend(root.rglob(pattern))
+    # Also catch extension-less files that live in a Maps `databases/` directory.
+    for db_dir in _MAPS_DB_DIRS:
+        target = root / db_dir
+        if target.is_dir():
+            candidates.extend(p for p in target.iterdir() if p.is_file())
+
+    for db_path in candidates:
+        resolved = db_path.resolve()
+        if resolved in seen or not db_path.is_file():
+            continue
+        seen.add(resolved)
+        name = db_path.name.lower()
+        reader = next((fn for frag, fn in _MAPS_READERS if frag in name), None)
+        try:
+            if reader is not None:
+                out.extend(reader(db_path))
+            elif "maps" in str(db_path).lower() or "gms" in str(db_path).lower():
+                # Unrecognised database inside a Maps/GMS tree: fall back to the column sniff
+                # rather than skipping it, since Google renames these files between releases.
+                out.extend(_sniff_single_db(db_path))
+        except Exception:
+            # One unreadable database must not abort the sweep over the rest.
+            continue
+    return _dedupe_maps(out)
+
+
+def _sniff_single_db(db_path: Path) -> List[Dict[str, Any]]:
+    """Generic coordinate-column sniff over one database (the `parse_maps_cache` logic)."""
+    con = _connect_ro(db_path)
+    if con is None:
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        for table in _table_names(con):
+            cols = _cols(con, table)
+            lat_col = next((cols[c] for c in cols if c == "lat" or "latitude" in c), None)
+            lon_col = next(
+                (cols[c] for c in cols if c in ("lon", "lng") or "longitude" in c), None
+            )
+            if not lat_col or not lon_col:
+                continue
+            ts_col = next((cols[c] for c in cols if "time" in c or "date" in c), None)
+            name_col = next(
+                (cols[c] for c in cols if "name" in c or "place" in c or "title" in c), None
+            )
+            select = [f'"{lat_col}"', f'"{lon_col}"']
+            select.append(f'"{ts_col}"' if ts_col else "NULL")
+            select.append(f'"{name_col}"' if name_col else "''")
+            try:
+                rows = con.execute(
+                    f'SELECT {", ".join(select)} FROM "{table}" LIMIT 2000'
+                ).fetchall()
+            except sqlite3.Error:
+                continue
+            for row in rows:
+                lat, lon = _coord(row[0]), _coord(row[1])
+                if not _point_ok(lat, lon):
+                    continue
+                out.append(
+                    {
+                        "latitude": lat,
+                        "longitude": lon,
+                        "timestamp": (_parse_timestamp(str(row[2])) or "") if row[2] else "",
+                        "place_name": str(row[3] or ""),
+                        "source": "maps_cache",
+                        "provenance": f"{db_path.name}:{table} (generic schema scan)",
+                    }
+                )
+    finally:
+        con.close()
+    return out
+
+
+def _dedupe_maps(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop rows repeating the same point/time/source, keeping the first (most specific) one."""
+    seen: set[tuple] = set()
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        lat, lon = r.get("latitude"), r.get("longitude")
+        key = (
+            round(lat, 6) if isinstance(lat, float) else lat,
+            round(lon, 6) if isinstance(lon, float) else lon,
+            r.get("timestamp") or "",
+            r.get("source") or "",
+            r.get("place_name") or "",
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
 
 
 # ---------------------------------------------------------------------------

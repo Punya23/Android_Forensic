@@ -521,6 +521,13 @@ def _try_carve_cell(
             # freeblock recoveries come from. Do not "fix" this without re-baselining.
             advance = payload_len
             payload_complete = take == payload_len
+            if payload_complete and _record_declared_size(record) != payload_len:
+                # The record header's own serial-type sum doesn't add up to the
+                # declared payload length: this offset is not a genuine cell
+                # boundary, just bytes that happen to parse as a plausible-looking
+                # header (common right after a freeblock header clobbers the real
+                # one). Reject rather than emit a garbled/misaligned row.
+                return None
         else:
             # The record spilled: [local payload][4-byte big-endian overflow page no].
             take = min(local, avail)
@@ -641,6 +648,17 @@ def _carve_text_runs(
     i = region_off
     run_start = -1
     run = bytearray()
+    # Start offset (within `run`) of a multi-byte UTF-8 sequence still being
+    # assembled, and how many continuation bytes it still needs. A raw byte-slide
+    # carver walks straight through a freed cell's trailing binary columns (e.g. a
+    # 4-byte big-endian timestamp) right after the text column ends; naively
+    # accepting "any byte >= 0x80" as text lets a few of those numeric bytes leak
+    # onto the end of an otherwise-correct value. Requiring each multi-byte
+    # sequence to be STRUCTURALLY valid UTF-8 (a lead byte followed by exactly the
+    # right count of 0x80-0xBF continuation bytes) rejects that noise without any
+    # risk of cutting real text short — genuine UTF-8 content always validates.
+    pending_start = -1
+    pending_needed = 0
 
     def _flush(rstart: int) -> None:
         if len(run) < min_len:
@@ -675,16 +693,48 @@ def _carve_text_runs(
 
     while i < end:
         b = page[i]
-        is_text = b in (0x09, 0x0A, 0x0D) or 0x20 <= b <= 0x7E or b >= 0x80
-        if is_text:
+        if pending_needed:
+            if 0x80 <= b <= 0xBF:
+                run.append(b)
+                pending_needed -= 1
+                if pending_needed == 0:
+                    pending_start = -1
+                i += 1
+                continue
+            # Broken multi-byte sequence: the lead byte (and any partial
+            # continuations already appended) were never real text. Drop them,
+            # end the run there, and reprocess this byte fresh below.
+            del run[pending_start:]
+            pending_needed = 0
+            pending_start = -1
+            _flush(run_start)
+            run = bytearray()
+            run_start = -1
+            continue
+        if b in (0x09, 0x0A, 0x0D) or 0x20 <= b <= 0x7E:
             if run_start < 0:
                 run_start = i
             run.append(b)
+        elif 0xC2 <= b <= 0xF4:
+            # Valid UTF-8 lead byte: 0xC2-0xDF (2-byte), 0xE0-0xEF (3-byte),
+            # 0xF0-0xF4 (4-byte). Provisionally accepted; verified by the
+            # continuation-byte check above before it's kept.
+            if run_start < 0:
+                run_start = i
+            pending_start = len(run)
+            pending_needed = 1 if b <= 0xDF else (2 if b <= 0xEF else 3)
+            run.append(b)
         else:
+            # Control byte, or 0x80-0xC1/0xF5-0xFF — never valid outside a
+            # continuation. Ends the run.
             _flush(run_start)
             run = bytearray()
             run_start = -1
         i += 1
+    if pending_needed:
+        # Region ended mid-sequence: incomplete, so drop it rather than emit a
+        # truncated multi-byte character.
+        del run[pending_start:]
     _flush(run_start)
     return rows
 

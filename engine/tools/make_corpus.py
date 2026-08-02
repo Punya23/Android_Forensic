@@ -195,7 +195,66 @@ def _build_messages_db(path: Path, deleted_ids: list[int], bulk: bool = False) -
             deleted_ids,
         )
         con.commit()
+    _add_whatsapp_location_shares(con)
     con.close()
+
+
+def _add_whatsapp_location_shares(con: sqlite3.Connection) -> None:
+    """Add the modern WhatsApp location schema (`message` + `message_location`).
+
+    Location shares carry no message text, so they are invisible to a parser that reads message
+    bodies — which is exactly why the corpus needs them: without these rows the shared-location
+    path is never exercised end to end.
+
+    Three cases are represented, because they mean different things: an outgoing pin (the
+    device's own position), an incoming pin (where the *other party* claimed to be), and an
+    expired live share, which also records the final position the sharer reached.
+    """
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS jid (_id INTEGER PRIMARY KEY, raw_string TEXT)"
+    )
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS chat (_id INTEGER PRIMARY KEY, jid_row_id INTEGER)"
+    )
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS message (_id INTEGER PRIMARY KEY, chat_row_id INTEGER, "
+        "from_me INTEGER, timestamp INTEGER)"
+    )
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS message_location ("
+        "message_row_id INTEGER, latitude REAL, longitude REAL, place_name TEXT, "
+        "place_address TEXT, url TEXT, live_location_share_duration INTEGER, "
+        "live_location_final_latitude REAL, live_location_final_longitude REAL, "
+        "live_location_final_timestamp INTEGER)"
+    )
+    con.execute("INSERT INTO jid(_id, raw_string) VALUES (1, '919820011223@s.whatsapp.net')")
+    con.execute("INSERT INTO chat(_id, jid_row_id) VALUES (1, 1)")
+    con.executemany(
+        "INSERT INTO message(_id, chat_row_id, from_me, timestamp) VALUES (?,?,?,?)",
+        [
+            (101, 1, 1, 1751826100000),  # outgoing pin
+            (102, 1, 0, 1751826400000),  # incoming pin — counterparty's position
+            (103, 1, 1, 1751826700000),  # outgoing live share, since expired
+        ],
+    )
+    con.executemany(
+        "INSERT INTO message_location VALUES (?,?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                101, 18.9220, 72.8347, "Mumbai Docks", "Dockyard Road, Mumbai",
+                "https://maps.google.com/?q=18.9220,72.8347", 0, None, None, None,
+            ),
+            (
+                102, 19.0330, 72.8570, "Warehouse 9", "Dharavi, Mumbai", "", 0,
+                None, None, None,
+            ),
+            (
+                103, 19.0176, 72.8562, "", "", "", 3600,
+                18.9500, 72.8400, 1751830300000,
+            ),
+        ],
+    )
+    con.commit()
 
 
 def _contacts_json() -> list[dict]:
@@ -265,7 +324,50 @@ def _build_telegram_db(path: Path) -> None:
     con.commit()
     con.execute("DELETE FROM messages WHERE mid IN (3, 4, 5)")  # deleted secret chats
     con.commit()
+    _add_telegram_geo_messages(con)
     con.close()
+
+
+def _add_telegram_geo_messages(con: sqlite3.Connection) -> None:
+    """Add a `messages_v2` table holding real TL-serialised ``geoPoint`` blobs.
+
+    Telegram has no coordinate columns — a shared location is bytes inside the message blob, so
+    the only way to recover it is to carve the ``geoPoint`` constructor. The blobs here are
+    byte-accurate (little-endian constructor id, then **longitude before latitude** as two
+    doubles), so the carver is exercised against the real wire format rather than a stand-in
+    that would let a byte-order bug pass unnoticed.
+    """
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS messages_v2 (mid INTEGER PRIMARY KEY, uid INTEGER, "
+        "date INTEGER, out INTEGER, data BLOB)"
+    )
+
+    def geo_blob(lat: float, lon: float, legacy: bool = False) -> bytes:
+        if legacy:
+            # geoPoint#2049d70c long:double lat:double access_hash:long
+            return (
+                b"\x0f\x00\x00\x00"
+                + struct.pack("<I", 0x2049D70C)
+                + struct.pack("<dd", lon, lat)
+                + struct.pack("<q", 0)
+            )
+        # geoPoint#b2a2f663 flags:# long:double lat:double access_hash:long
+        return (
+            b"\x0f\x00\x00\x00"
+            + struct.pack("<I", 0xB2A2F663)
+            + struct.pack("<I", 0)
+            + struct.pack("<dd", lon, lat)
+            + struct.pack("<q", 0)
+        )
+
+    con.executemany(
+        "INSERT INTO messages_v2(mid, uid, date, out, data) VALUES (?,?,?,?,?)",
+        [
+            (901, 77001, 1751826800, 1, geo_blob(18.9500, 72.8400)),
+            (902, 77001, 1751826900, 0, geo_blob(19.0176, 72.8562, legacy=True)),
+        ],
+    )
+    con.commit()
 
 
 def _build_instagram_db(path: Path) -> None:
@@ -691,6 +793,40 @@ def _build_browser_history(path: Path) -> None:
             "Hawala - Wikipedia",
             2,
             base + 5_000_000_000,
+        ),
+        # Map links. Each exercises a different URL pattern and, more importantly, a different
+        # evidential meaning — a navigation destination is intent to travel, a viewport is only
+        # a place that was looked at, and a Street View is reconnaissance of an address.
+        (
+            "https://www.google.com/maps/dir/?api=1&destination=18.9220,72.8347",
+            "Directions to Mumbai Docks - Google Maps",
+            6,
+            base + 6_000_000_000,
+        ),
+        (
+            "https://www.google.com/maps/place/Warehouse+9/@19.0330,72.8570,17z/"
+            "data=!3m1!4b1!4m5!3m4!8m2!3d19.0335!4d72.8575",
+            "Warehouse 9 - Google Maps",
+            9,
+            base + 7_000_000_000,
+        ),
+        (
+            "https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=19.0176,72.8562",
+            "Street View - Google Maps",
+            2,
+            base + 8_000_000_000,
+        ),
+        (
+            "https://www.openstreetmap.org/#map=16/18.9500/72.8400",
+            "OpenStreetMap",
+            1,
+            base + 9_000_000_000,
+        ),
+        (
+            "https://www.google.com/maps/search/scrap+dealers+near+dockyard+road/",
+            "scrap dealers near dockyard road - Google Maps",
+            3,
+            base + 10_000_000_000,
         ),
     ]
     for u in urls:

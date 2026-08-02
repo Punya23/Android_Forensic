@@ -32,6 +32,7 @@ export function BrowserView({ caseId }: { caseId: string }) {
             <tr>
               <th className="th w-8"></th>
               <th className="th w-40">Last visit</th>
+              <th className="th w-32">Browser</th>
               <th className="th">Title / URL</th>
               <th className="th w-20">Visits</th>
             </tr>
@@ -41,6 +42,7 @@ export function BrowserView({ caseId }: { caseId: string }) {
               <tr key={i}>
                 <td className="td"><TagButton refId={`browser:${i}`} kind="browser" label={h.title || h.url} /></td>
                 <td className="td font-mono text-xs text-muted whitespace-nowrap">{fmtTs(h.last_visit)}</td>
+                <td className="td text-xs text-muted">{h.browser_app || "—"}</td>
                 <td className="td">
                   <div className="font-medium">{h.title || "(untitled)"}</div>
                   <a href={h.url} target="_blank" rel="noreferrer" className="text-xs text-recovered/80 hover:underline break-all font-mono">
