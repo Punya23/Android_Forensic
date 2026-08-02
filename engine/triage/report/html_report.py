@@ -210,6 +210,9 @@ def generate_report(case_dir: str | Path) -> Path:
     validation_report = case.read_derived("validation_report") or {}
     deletion_evidence = case.read_derived("deletion_evidence") or []
     deletion_evidence_summary = case.read_derived("deletion_evidence_summary") or {}
+    # --- New artifact datasets: call recordings + notification history ---
+    call_recordings = case.read_derived("recordings") or []
+    notifications   = case.read_derived("notifications") or []
 
     parts: list[str] = []
     parts.append(_HEAD)
@@ -543,6 +546,8 @@ def generate_report(case_dir: str | Path) -> Path:
         ),
         ("Locations", len(locations)),
         ("Browser URLs", len(browser)),
+        ("Call recordings", len(call_recordings)),
+        ("Notifications", len(notifications)),
         ("Flags", len(flags)),
         ("Audit events", summary["audit_event_count"]),
         ("Device-altering actions", summary["device_altering_actions"]),
@@ -730,6 +735,14 @@ def generate_report(case_dir: str | Path) -> Path:
             )
         parts.append("</table>")
 
+    # --- Call Recordings ---
+    if call_recordings:
+        parts.append(_call_recordings_section(call_recordings))
+
+    # --- Notification History ---
+    if notifications:
+        parts.append(_notifications_section(notifications))
+
     # Hash manifest
     parts.append("<h2>Hash manifest (per-artifact SHA-256)</h2>")
     parts.append(
@@ -847,6 +860,101 @@ def _fmt_val(v: Any) -> str:
     if isinstance(v, dict) and "__blob__" in v:
         return f'<blob {v.get("len",0)}B>'
     return str(v)
+
+
+def _call_recordings_section(recordings: list[dict]) -> str:
+    """Render the Call Recordings index section."""
+    if not recordings:
+        return ""
+
+    import datetime
+
+    def _fmt_size(b: int) -> str:
+        if b >= 1_048_576:
+            return f"{b / 1_048_576:.1f} MB"
+        if b >= 1024:
+            return f"{b / 1024:.0f} KB"
+        return f"{b} B"
+
+    def _fmt_dur(ms: int | None) -> str:
+        if not ms:
+            return "—"
+        s = ms // 1000
+        return f"{s // 60}m {s % 60}s"
+
+    def _fmt_date(ts_ms: int | None) -> str:
+        if not ts_ms:
+            return "—"
+        try:
+            return datetime.datetime.fromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return str(ts_ms)
+
+    rows = "".join(
+        f'<tr>'
+        f'<td class="mono">{_esc(_fmt_date(r.get("date_ms")))}</td>'
+        f'<td>{_esc(r.get("contact_hint") or r.get("title") or "—")}</td>'
+        f'<td class="mono">{_esc(_fmt_dur(r.get("duration_ms")))}</td>'
+        f'<td>{_esc(_fmt_size(r.get("size_bytes", 0)))}</td>'
+        f'<td>{_esc(r.get("extension", "").upper())}</td>'
+        f'<td class="mono" style="font-size:10px;word-break:break-all">{_esc(r.get("path", ""))}</td>'
+        f'</tr>'
+        for r in sorted(recordings, key=lambda x: x.get("date_ms") or 0, reverse=True)[:500]
+    )
+
+    return (
+        "<h2>Call Recordings</h2>"
+        '<p class="note">Audio files found in OEM call-recording paths on the device. '
+        "Files are indexed by path; pull the audio with "
+        "<code>adb pull &lt;path&gt;</code>.</p>"
+        "<table><tr>"
+        "<th>Date/Time</th><th>Contact Hint</th><th>Duration</th>"
+        "<th>Size</th><th>Format</th><th>Path</th>"
+        f"</tr>{rows}</table>"
+    )
+
+
+def _notifications_section(notifications: list[dict]) -> str:
+    """Render the Notification History section."""
+    if not notifications:
+        return ""
+
+    import datetime
+
+    def _fmt_ts(ts_ms: int | None) -> str:
+        if not ts_ms:
+            return "—"
+        try:
+            return datetime.datetime.fromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return str(ts_ms)
+
+    rows = "".join(
+        f'<tr>'
+        f'<td class="mono">{_esc(_fmt_ts(n.get("post_time")))}</td>'
+        f'<td>{_esc(n.get("app_label") or n.get("package") or "—")}</td>'
+        f'<td>{_esc(n.get("title") or "—")}</td>'
+        f'<td>{_esc((n.get("text") or n.get("big_text") or "")[:300])}</td>'
+        f'<td style="font-size:10px">{_esc(n.get("channel_id") or "—")}</td>'
+        f'<td style="font-size:10px">{_esc(n.get("source") or "—")}</td>'
+        f'</tr>'
+        for n in sorted(notifications, key=lambda x: x.get("post_time") or 0, reverse=True)[:500]
+    )
+
+    sources = {n.get("source") for n in notifications if n.get("source")}
+    source_note = ", ".join(sorted(sources))
+
+    return (
+        "<h2>Notification History</h2>"
+        f'<p class="note">{_esc(len(notifications))} notification records collected '
+        f"from: {_esc(source_note)}. Requires Notification Access to be granted to the "
+        "collector app in device Settings. OTP codes, banking alerts, and app messages "
+        "are visible here if the device user had not cleared notification history.</p>"
+        "<table><tr>"
+        "<th>Date/Time</th><th>App</th><th>Title</th>"
+        "<th>Body</th><th>Channel</th><th>Source</th>"
+        f"</tr>{rows}</table>"
+    )
 
 
 def _generate_hash_verification_section(case_dir: Path) -> str:
