@@ -29,8 +29,12 @@ import {
   useMap,
 } from "react-leaflet";
 import L from "leaflet";
-// @ts-ignore — leaflet.markercluster ships its own typings via @types/leaflet.markercluster
-import MarkerClusterGroup from "react-leaflet-markercluster";
+// @ts-ignore — ships no bundled types; leaflet.markercluster's own types via
+// @types/leaflet.markercluster cover the underlying L.markerClusterGroup() call.
+// react-leaflet-markercluster (the older, unmaintained package) targets
+// react-leaflet v3's context API and crashes under v4 with "No context provided:
+// useLeafletContext()"; this fork is built on @react-leaflet/core for v4.
+import MarkerClusterGroup from "@changey/react-leaflet-markercluster";
 import type { LocationPoint } from "../lib/types";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { api } from "../lib/api";

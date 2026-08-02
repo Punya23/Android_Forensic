@@ -43,6 +43,19 @@ export interface CoverageRow {
   source?: string;
 }
 
+/** The self-test's execution environment — recorded so a validation run is reproducible. */
+export interface ValidationEnvironment {
+  platform?: string;
+  python_version?: string;
+  sqlite_library_version?: string;
+  engine_version?: string;
+  testing_type?: string;
+  network_used?: boolean;
+  device_attached?: boolean;
+  fixture_root?: string;
+  fixtures_retained?: boolean;
+}
+
 export interface ValidationReport {
   tool_name?: string;
   tool_version?: string;
@@ -53,7 +66,7 @@ export interface ValidationReport {
   dataset_name?: string;
   dataset_provenance?: string;
   dataset_hash?: string;
-  environment?: string;
+  environment?: ValidationEnvironment | string;
   cases?: ValidationCase[];
   limitations?: string[];
   anomalies?: string[];
@@ -283,7 +296,6 @@ export function ValidationView({ caseId }: { caseId: string }) {
               )
             }
           />
-          <Field label="Environment" value={report.environment || <Missing />} />
           <Field label="Test dataset" value={report.dataset_name || <Missing />} />
           <Field
             label="Dataset SHA-256"
@@ -330,6 +342,24 @@ export function ValidationView({ caseId }: { caseId: string }) {
             }
           />
         </div>
+        {report.environment && (
+          <div className="mt-3 pt-3 border-t border-line">
+            <div className="text-[10px] uppercase tracking-wider text-muted mb-2">Environment</div>
+            {typeof report.environment === "string" ? (
+              <span className="text-sm">{report.environment}</span>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {Object.entries(report.environment).map(([k, v]) => (
+                  <Field
+                    key={k}
+                    label={k.replace(/_/g, " ")}
+                    value={v === null || v === undefined || v === "" ? <Missing /> : String(v)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       {/* ---- Limitations: above the pass counts, deliberately ---- */}

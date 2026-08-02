@@ -554,7 +554,6 @@ def create_app(cases_root: Path = CASES_ROOT):
             tier2_instagram=bool(body.get("tier2_instagram", False)),
             tier2_snapchat=bool(body.get("tier2_snapchat", False)),
             tier2_wifi=bool(body.get("tier2_wifi", False)),
-            tier2_browser_history=bool(body.get("tier2_browser_history", False)),
             tier2_whatsapp_backup=bool(body.get("tier2_whatsapp_backup", False)),
             tier2_whatsapp_backup_max_files=int(
                 body.get("tier2_whatsapp_backup_max_files", 5)

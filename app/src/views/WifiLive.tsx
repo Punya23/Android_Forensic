@@ -74,13 +74,21 @@ export interface WifiLiveUsageBucket {
 /** dumpsys connectivity is a flat property bag; values are scalars only. */
 export type WifiLiveConnectivity = Record<string, string | number | boolean | null>;
 
+/** One shell command the collector ran — always recorded, success or failure. */
+export interface WifiLiveCommand {
+  command: string;
+  ok: boolean;
+  bytes: number;
+  error: string;
+}
+
 export interface WifiLiveReport {
   current?: WifiLiveCurrent | null;
   saved?: WifiLiveSavedNetwork[];
   scan_results?: WifiLiveScanResult[];
   usage?: WifiLiveUsageBucket[];
   connectivity?: WifiLiveConnectivity;
-  commands?: string[];
+  commands?: WifiLiveCommand[];
   caveats?: string[];
 }
 
@@ -697,10 +705,21 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
           count={commands.length}
           note="Exact shell commands this dataset was derived from. All are read-only; none modify device state. The same list is recorded in the chain-of-custody audit trail."
         >
-          <div className="card p-3 space-y-1">
+          <div className="card p-3 space-y-1.5">
             {commands.map((c, i) => (
-              <div key={i} className="font-mono text-[11px] text-muted break-all">
-                <span className="text-accent">$</span> {c}
+              <div key={i} className="flex items-start gap-2 font-mono text-[11px]">
+                <span
+                  className={`shrink-0 px-1 rounded text-[10px] font-semibold uppercase ${
+                    c.ok ? "text-live" : "text-deletion"
+                  }`}
+                >
+                  {c.ok ? "ok" : "failed"}
+                </span>
+                <span className="text-accent shrink-0">$</span>
+                <span className="text-muted break-all">{c.command}</span>
+                <span className="text-muted/70 shrink-0 ml-auto">
+                  {c.ok ? `${c.bytes} B` : c.error || "no output"}
+                </span>
               </div>
             ))}
           </div>
