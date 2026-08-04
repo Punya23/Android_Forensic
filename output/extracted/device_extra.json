@@ -1,0 +1,18 @@
+﻿{
+    "ro.build.fingerprint":  "realme/RMX3660/RE588BL1:15/AP3A.240617.008/T.R4T2.2287362_e7de-4c18:user/release-keys",
+    "source":  "getprop",
+    "ro.boot.hardware":  "qcom",
+    "ro.product.model":  "RMX3660",
+    "battery":  "Charger voltage : 5010; ChargerTechnology: 0; UsbHwStatus: 0; BatteryHwStatus: 1; HwStatusIsSet: 1; BatteryIcStatus: 1; IcStatusIsSet: 1; mUsbStatus: 0; Max charging voltage: 0; status: 2; health: 2; level: 42; voltage: 3934; temperature: 312; technology: Li-ion",
+    "ro.product.brand":  "realme",
+    "ro.build.version.sdk":  "35",
+    "ro.product.manufacturer":  "realme",
+    "ro.build.version.release":  "15",
+    "ro.product.cpu.abi":  "arm64-v8a",
+    "ro.product.name":  "RMX3660",
+    "gsm.operator.alpha":  ",",
+    "imei_raw":  "Result: Parcel(\tfffffffc ffffffff 00000000  \u0027............\u0027)",
+    "dalvik.vm.heapsize":  "512m",
+    "ro.serialno":  "3c0bf2d6",
+    "extracted_at":  "2026-08-04T21:16:27"
+}

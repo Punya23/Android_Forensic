@@ -1,0 +1,4 @@
+﻿{
+    "raw":  "Account {name=dishantpipare@gmail.com, type=com.google}\nAccount {name=cyanid24@gmail.com, type=com.google}\nAccount {name=dishant.pipare24@pcu.edu.in, type=com.google}\nAccount {name=Truecaller, type=com.truecaller.account}\nAccount {name=WhatsApp, type=com.whatsapp}\nAccount {name=dishantpipare@outlook.com, type=com.microsoft.msa.ltw}\nAccount {name=5151668932, type=org.telegram.messenger}\nAccount {name=DishantPipare, type=com.github.android}\nAccount {name=44658438381, type=www.instagram.com}",
+    "source":  "dumpsys_account"
+}

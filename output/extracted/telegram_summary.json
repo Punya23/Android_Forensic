@@ -1,0 +1,53 @@
+{
+  "extracted_at": "2026-08-04T21:06:08.179499",
+  "device_serial": "3c0bf2d6",
+  "telegram": {
+    "package": "org.telegram.messenger",
+    "version": "12.9.1",
+    "first_install": "2024-12-19",
+    "rooted": false,
+    "db_accessible": false
+  },
+  "media_count": 5,
+  "media_files": [
+    {
+      "filename": "-5215486251909555457_1109.jpg",
+      "category": "story",
+      "size_bytes": 12909,
+      "path": "C:\\Users\\Vaishnavi\\Desktop\\Android_Forensic\\telegram_media\\Telegram\\Telegram Stories\\-5215486251909555457_1109.jpg",
+      "extension": "jpg"
+    },
+    {
+      "filename": "-5217738051723241712_1109.jpg",
+      "category": "story",
+      "size_bytes": 13763,
+      "path": "C:\\Users\\Vaishnavi\\Desktop\\Android_Forensic\\telegram_media\\Telegram\\Telegram Stories\\-5217738051723241712_1109.jpg",
+      "extension": "jpg"
+    },
+    {
+      "filename": "-5411444289408379330_1109.jpg",
+      "category": "story",
+      "size_bytes": 13248,
+      "path": "C:\\Users\\Vaishnavi\\Desktop\\Android_Forensic\\telegram_media\\Telegram\\Telegram Stories\\-5411444289408379330_1109.jpg",
+      "extension": "jpg"
+    },
+    {
+      "filename": "-6012765897263947806_1109.jpg",
+      "category": "story",
+      "size_bytes": 18360,
+      "path": "C:\\Users\\Vaishnavi\\Desktop\\Android_Forensic\\telegram_media\\Telegram\\Telegram Stories\\-6012765897263947806_1109.jpg",
+      "extension": "jpg"
+    },
+    {
+      "filename": "-6300784003246990285_1109.jpg",
+      "category": "story",
+      "size_bytes": 14425,
+      "path": "C:\\Users\\Vaishnavi\\Desktop\\Android_Forensic\\telegram_media\\Telegram\\Telegram Stories\\-6300784003246990285_1109.jpg",
+      "extension": "jpg"
+    }
+  ],
+  "notifications": [],
+  "db_extraction": {
+    "status": "not_rooted"
+  }
+}

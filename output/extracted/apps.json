@@ -1,0 +1,187 @@
+﻿[
+    {
+        "apk_path":  "/data/app/~~rw6gF6xgSODnKRP0QC95PQ==/com.grofers.customerapp-f1f7ntN8Rr9dZlyuRRU5uA==/base.apk=com.grofers.customerapp  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~b_99SpphmrG7b8duvD_wRw==/com.cris.utsmobile-bxgJPRZR7wUctRvC3qYNBQ==/base.apk=com.cris.utsmobile  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~z-TEpGP43GN6jCRuLiNm-A==/com.jio.myjio-aD_qs4x9i2yzAmY8QVT_HQ==/base.apk=com.jio.myjio  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~9jQ_iR60isrtXsAQmzHGQw==/com.github.android-bGInjoRoJBaU5dB65yRLOw==/base.apk=com.github.android  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~-Is3Cl3j8NIG9anrP7IKLg==/com.asus.rog.roggamingcenter3-EmCETlTvywZmR5noA7RbMw==/base.apk=com.asus.rog.roggamingcenter3  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~ZELAP9Ks3FjfyZQoUsbQKg==/in.swiggy.android-UbrKOoqsluQLkXjUEsjX8w==/base.apk=in.swiggy.android  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~-xqvyxHvO8QEwwvCahwXBQ==/com.digilocker.android-xZ59ke0ZnxBgCJLFc1B7NA==/base.apk=com.digilocker.android  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~Q7h8wcXSN98rwlFwvb8EKg==/com.google.android.safetycore-uQNrIj8c8rPxB8omOpdd4Q==/base.apk=com.google.android.safetycore  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~rIc42oh4-FKlJyWUeGEm1A==/org.telegram.messenger-xNHuaM947XgFq3fXNmY2XA==/base.apk=org.telegram.messenger  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/OppoNote2/OppoNote2.apk=com.coloros.note  installer",
+        "type":  "user",
+        "package":  "null"
+    },
+    {
+        "apk_path":  "/data/app/~~RJr8OMqu5J0-Z6aPngZAvA==/com.iexceed.ib.digitalbankingprod-hVrbxzD-TNLXWB0zfq9TzQ==/base.apk=com.iexceed.ib.digitalbankingprod  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/OplusDocumentsReader/OplusDocumentsReader.apk=andes.oplus.documentsreader  installer",
+        "type":  "user",
+        "package":  "null"
+    },
+    {
+        "apk_path":  "/data/app/~~An17Zdyge0jjwiZcR1LilQ==/com.google.android.apps.classroom-VYdvIqqXFpYi5TIx7oHz9g==/base.apk=com.google.android.apps.classroom  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~E6ycg74qE3Betawn1NiKKw==/com.naver.linewebtoon-RqDMHjPw5NGYRpk6XNhmXQ==/base.apk=com.naver.linewebtoon  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~UkRU7cdlz-736fojdkoGPQ==/com.application.zomato-PL9havQfBrv_V5hNtMhj-Q==/base.apk=com.application.zomato  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~YeAagy3hPFZNqzGHtVfQsg==/com.hyperbolic.app-Wg6HDnLq0xsJBfX1WxAOAA==/base.apk=com.hyperbolic.app  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~oDXRc8hQj2_KA9hRwOPiUw==/com.edupluscampus.erp_student_pcet-p8lnsqiwbcr2FeB6rLbydQ==/base.apk=com.edupluscampus.erp_student_pcet  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~YrMoKiQ8U5OzcJmSonJB7w==/com.spotify.music-NFKTQiZjnaO2kU7sDRv9WQ==/base.apk=com.spotify.music  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~TIoet1fJRRaNrbVPosf43w==/com.msf.angelmobile-oJIubq3Z-WRxK0b0MQh4AQ==/base.apk=com.msf.angelmobile  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~YOgYp2ihl7yXQGvbaNA1lA==/io.erakshak.collector-cv7N5beKJYXDyhZ_WZE8GA==/base.apk=io.erakshak.collector  installer",
+        "type":  "user",
+        "package":  "null"
+    },
+    {
+        "apk_path":  "/data/app/~~RN6CT1Km72fUF8xmJQ19bA==/com.truecaller-TR9N9_WZrrzOdRbiS4GUIQ==/base.apk=com.truecaller  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~Rlj6ILVDErqBedliaUpZOg==/com.brave.browser-0mHd16HrgJPedYRwxjr1cA==/base.apk=com.brave.browser  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~5Hmt343dJoWrdjx0KytAkw==/in.gov.scholarships.nspotr-dIUp7Cwv7OoahqOi2NcpVQ==/base.apk=in.gov.scholarships.nspotr  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~UcT4dsq9QtvmWKdRP-bUMw==/com.google.android.apps.tachyon-Fpvl8fXOGKBMBwcooCtcfw==/base.apk=com.google.android.apps.tachyon  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~HRt3gnryYLRB2BW0St-ISg==/com.instagram.android-wo-qMeXHDOkV8HlSjGR9XA==/base.apk=com.instagram.android  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~tdBoNb7r32rHjPEkIpRlTg==/com.linkedin.android-lSkg7_PUSEMAHev3IVtV7g==/base.apk=com.linkedin.android  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~FgrTC51H_snLpDSOcgL3LA==/com.google.android.contactkeys--g95Yje0cMrGBim_YfuMRA==/base.apk=com.google.android.contactkeys  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~WTrItf3ExU6rgPm55gv5kw==/com.google.android.apps.docs-Dwx_7Cjluwvficx39GGCjA==/base.apk=com.google.android.apps.docs  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~u9XqiyiL6eiWY6Ar8k28wg==/com.whereismytrain.android-M8hUC2BzpgCsRXSGG-ncow==/base.apk=com.whereismytrain.android  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~yPyFN-2AXIIEvu-bujmufw==/com.google.android.ims-g4nPwfBOtsMIVb_Uh5Nbaw==/base.apk=com.google.android.ims  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~RyinbP57PmIBR05BFe11IA==/in.gov.uidai.facerd-tmC4TBoSKQf6kvT5q9BkNQ==/base.apk=in.gov.uidai.facerd  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~Xt9VYyjlMwX2wtqVFF4HmQ==/in.amazon.mShop.android.shopping-cJDW-EBaZggZlzHHEi-JjQ==/base.apk=in.amazon.mShop.android.shopping  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~DcGjp-H_VNdIU5VEwYM__g==/in.redbus.android-0UEeI8f410zXWCTulefULw==/base.apk=in.redbus.android  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~8X-iJxt1QDNGVJrQNQZM4Q==/com.whatsapp-Kj3dlhKGJ8Jwb8NnM0D0hg==/base.apk=com.whatsapp  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~UdSiJS92qbmIQK_DCFy2FQ==/com.anthropic.claude-WyP1QIvwLnENIOaszWegqw==/base.apk=com.anthropic.claude  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~q6L5b2GieJHPdgiUDD6jkg==/com.flipkart.android-ZTvs1AmE6TQokNnXm1NnKw==/base.apk=com.flipkart.android  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    },
+    {
+        "apk_path":  "/data/app/~~z0cyAJVFEQgx3S4B2VOX1A==/com.Dominos-Yf6hYyNNoy_EQCPZoNqOdA==/base.apk=com.Dominos  installer",
+        "type":  "user",
+        "package":  "com.android.vending"
+    }
+]

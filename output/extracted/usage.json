@@ -1,0 +1,100 @@
+﻿Flags:
+    android.app.usage.user_interaction_type_api: true
+    android.app.usage.use_parceled_list: true
+    android.app.usage.filter_based_event_query_api: true
+    android.app.usage.disable_idle_check: false
+user=0 
+  Last 24 hour events (timeRange="3/8/2026, 21:16ΓÇëΓÇôΓÇë4/8/2026, 21:16" )
+    time="2026-08-03 21:20:35" type=SCREEN_INTERACTIVE package=android flags=0x0 
+    time="2026-08-03 21:20:35" type=NOTIFICATION_SEEN package=com.android.vending flags=0x0 
+    time="2026-08-03 21:20:35" type=NOTIFICATION_SEEN package=com.android.vending flags=0x0 
+    time="2026-08-03 21:20:35" type=NOTIFICATION_SEEN package=com.msf.angelmobile flags=0x0 
+    time="2026-08-03 21:20:35" type=NOTIFICATION_SEEN package=com.msf.angelmobile flags=0x0 
+    time="2026-08-03 21:20:35" type=NOTIFICATION_INTERRUPTION package=com.msf.angelmobile channelId=PROMOTION flags=0x0 
+    time="2026-08-03 21:20:35" type=NOTIFICATION_SEEN package=com.Dominos flags=0x0 
+    time="2026-08-03 21:20:35" type=NOTIFICATION_INTERRUPTION package=com.Dominos channelId=moe_default_channel flags=0x0 
+    time="2026-08-03 21:20:35" type=NOTIFICATION_SEEN package=com.grofers.customerapp flags=0x0 
+    time="2026-08-03 21:20:35" type=NOTIFICATION_SEEN package=com.Dominos flags=0x0 
+    time="2026-08-03 21:20:35" type=NOTIFICATION_SEEN package=com.whatsapp flags=0x0 
+    time="2026-08-03 21:20:36" type=ACTIVITY_RESUMED package=com.android.launcher class=com.android.launcher.Launcher instanceId=122649596 taskRootPackage=com.android.launcher taskRootClass=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:20:36" type=KEYGUARD_HIDDEN package=android flags=0x0 
+    time="2026-08-03 21:20:37" type=NOTIFICATION_SEEN package=com.msf.angelmobile flags=0x0 
+    time="2026-08-03 21:20:37" type=NOTIFICATION_SEEN package=com.Dominos flags=0x0 
+    time="2026-08-03 21:20:37" type=NOTIFICATION_INTERRUPTION package=com.Dominos channelId=moe_default_channel flags=0x0 
+    time="2026-08-03 21:20:37" type=NOTIFICATION_SEEN package=com.Dominos flags=0x0 
+    time="2026-08-03 21:20:37" type=NOTIFICATION_INTERRUPTION package=com.Dominos channelId=moe_default_channel flags=0x0 
+    time="2026-08-03 21:20:37" type=NOTIFICATION_SEEN package=com.android.vending flags=0x0 
+    time="2026-08-03 21:20:37" type=NOTIFICATION_INTERRUPTION package=com.android.vending channelId=follow-genres flags=0x0 
+    time="2026-08-03 21:20:37" type=NOTIFICATION_SEEN package=com.msf.angelmobile flags=0x0 
+    time="2026-08-03 21:20:39" type=SHORTCUT_INVOCATION package=com.google.android.gm shortcutId=dishantpipare@gmail.com flags=0x0 
+    time="2026-08-03 21:20:40" type=NOTIFICATION_INTERRUPTION package=com.Dominos channelId=moe_default_channel flags=0x0 
+    time="2026-08-03 21:20:45" type=NOTIFICATION_SEEN package=com.Dominos flags=0x0 
+    time="2026-08-03 21:20:45" type=NOTIFICATION_SEEN package=com.truecaller flags=0x0 
+    time="2026-08-03 21:20:46" type=NOTIFICATION_SEEN package=com.Dominos flags=0x0 
+    time="2026-08-03 21:20:46" type=NOTIFICATION_INTERRUPTION package=com.Dominos channelId=moe_default_channel flags=0x0 
+    time="2026-08-03 21:20:48" type=ACTIVITY_PAUSED package=com.android.launcher class=com.android.launcher.Launcher instanceId=122649596 taskRootPackage=com.android.launcher taskRootClass=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:20:48" type=ACTIVITY_RESUMED package=com.google.android.dialer class=com.android.dialer.main.impl.MainActivity instanceId=84153110 taskRootPackage=com.google.android.dialer taskRootClass=com.android.dialer.main.impl.MainActivity flags=0x0 
+    time="2026-08-03 21:20:49" type=LOCUS_ID_SET package=com.android.launcher class=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:20:49" type=ACTIVITY_RESUMED package=com.android.launcher class=com.android.launcher.Launcher instanceId=122649596 taskRootPackage=com.android.launcher taskRootClass=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:20:49" type=STANDBY_BUCKET_CHANGED package=com.google.android.apps.tachyon standbyBucket=10 reason=u-si flags=0x0 
+    time="2026-08-03 21:20:49" type=STANDBY_BUCKET_CHANGED package=com.google.android.safetycore standbyBucket=10 reason=u-si flags=0x0 
+    time="2026-08-03 21:20:49" type=LOCUS_ID_SET package=com.android.launcher class=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:20:49" type=ACTIVITY_PAUSED package=com.google.android.dialer class=com.android.dialer.main.impl.MainActivity instanceId=84153110 taskRootPackage=com.google.android.dialer taskRootClass=com.android.dialer.main.impl.MainActivity flags=0x0 
+    time="2026-08-03 21:20:49" type=ACTIVITY_STOPPED package=com.google.android.dialer class=com.android.dialer.main.impl.MainActivity instanceId=84153110 taskRootPackage=com.google.android.dialer taskRootClass=com.android.dialer.main.impl.MainActivity flags=0x0 
+    time="2026-08-03 21:20:50" type=LOCUS_ID_SET package=com.android.launcher class=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:20:54" type=LOCUS_ID_SET package=com.android.launcher class=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:20:54" type=LOCUS_ID_SET package=com.android.launcher class=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:20:55" type=ACTIVITY_PAUSED package=com.android.launcher class=com.android.launcher.Launcher instanceId=122649596 taskRootPackage=com.android.launcher taskRootClass=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:20:55" type=ACTIVITY_RESUMED package=com.instagram.android class=com.instagram.mainactivity.InstagramMainActivity instanceId=234433573 taskRootPackage=com.instagram.android taskRootClass=com.instagram.mainactivity.InstagramMainActivity flags=0x0 
+    time="2026-08-03 21:20:57" type=ACTIVITY_STOPPED package=com.android.launcher class=com.android.launcher.Launcher instanceId=122649596 taskRootPackage=com.android.launcher taskRootClass=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:27:10" type=STANDBY_BUCKET_CHANGED package=com.google.android.calendar standbyBucket=20 reason=t flags=0x0 
+    time="2026-08-03 21:30:49" type=STANDBY_BUCKET_CHANGED package=com.google.android.apps.tachyon standbyBucket=20 reason=t flags=0x0 
+    time="2026-08-03 21:30:49" type=STANDBY_BUCKET_CHANGED package=com.google.android.safetycore standbyBucket=50 reason=t flags=0x0 
+    time="2026-08-03 21:31:02" type=ACTIVITY_RESUMED package=com.android.launcher class=com.android.launcher.Launcher instanceId=122649596 taskRootPackage=com.android.launcher taskRootClass=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:31:02" type=LOCUS_ID_SET package=com.android.launcher class=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:31:02" type=LOCUS_ID_SET package=com.android.launcher class=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:31:03" type=SCREEN_NON_INTERACTIVE package=android flags=0x0 
+    time="2026-08-03 21:31:03" type=ACTIVITY_PAUSED package=com.android.launcher class=com.android.launcher.Launcher instanceId=122649596 taskRootPackage=com.android.launcher taskRootClass=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:31:03" type=LOCUS_ID_SET package=com.android.launcher class=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:31:03" type=ACTIVITY_PAUSED package=com.instagram.android class=com.instagram.mainactivity.InstagramMainActivity instanceId=234433573 taskRootPackage=com.instagram.android taskRootClass=com.instagram.mainactivity.InstagramMainActivity flags=0x0 
+    time="2026-08-03 21:31:03" type=LOCUS_ID_SET package=com.android.launcher class=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:31:03" type=ACTIVITY_STOPPED package=com.android.launcher class=com.android.launcher.Launcher instanceId=122649596 taskRootPackage=com.android.launcher taskRootClass=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:31:03" type=KEYGUARD_SHOWN package=android flags=0x0 
+    time="2026-08-03 21:31:04" type=ACTIVITY_STOPPED package=com.instagram.android class=com.instagram.mainactivity.InstagramMainActivity instanceId=234433573 taskRootPackage=com.instagram.android taskRootClass=com.instagram.mainactivity.InstagramMainActivity flags=0x0 
+    time="2026-08-03 21:31:13" type=SCREEN_INTERACTIVE package=android flags=0x0 
+    time="2026-08-03 21:31:14" type=SCREEN_NON_INTERACTIVE package=android flags=0x0 
+    time="2026-08-03 21:36:52" type=SHORTCUT_INVOCATION package=com.google.android.gm shortcutId=dishantpipare@gmail.com flags=0x0 
+    time="2026-08-03 21:37:41" type=STANDBY_BUCKET_CHANGED package=com.spotify.music standbyBucket=20 reason=t flags=0x0 
+    time="2026-08-03 21:37:41" type=STANDBY_BUCKET_CHANGED package=com.application.zomato standbyBucket=30 reason=t flags=0x0 
+    time="2026-08-03 21:37:41" type=STANDBY_BUCKET_CHANGED package=in.swiggy.android standbyBucket=30 reason=t flags=0x0 
+    time="2026-08-03 21:44:45" type=SCREEN_INTERACTIVE package=android flags=0x0 
+    time="2026-08-03 21:44:46" type=ACTIVITY_RESUMED package=com.android.launcher class=com.android.launcher.Launcher instanceId=122649596 taskRootPackage=com.android.launcher taskRootClass=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:44:46" type=KEYGUARD_HIDDEN package=android flags=0x0 
+    time="2026-08-03 21:44:49" type=SCREEN_NON_INTERACTIVE package=android flags=0x0 
+    time="2026-08-03 21:44:50" type=ACTIVITY_PAUSED package=com.android.launcher class=com.android.launcher.Launcher instanceId=122649596 taskRootPackage=com.android.launcher taskRootClass=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:44:50" type=ACTIVITY_STOPPED package=com.android.launcher class=com.android.launcher.Launcher instanceId=122649596 taskRootPackage=com.android.launcher taskRootClass=com.android.launcher.Launcher flags=0x0 
+    time="2026-08-03 21:44:50" type=KEYGUARD_SHOWN package=android flags=0x0 
+    time="2026-08-03 21:44:53" type=NOTIFICATION_INTERRUPTION package=com.whatsapp channelId=critical_app_alerts@1 flags=0x0 
+    time="2026-08-03 22:07:20" type=SHORTCUT_INVOCATION package=com.google.android.gm shortcutId=dishantpipare@gmail.com flags=0x0 
+    time="2026-08-03 22:07:31" type=STANDBY_BUCKET_CHANGED package=com.google.android.calendar standbyBucket=10 reason=u-sa flags=0x0 
+    time="2026-08-03 23:38:36" type=SHORTCUT_INVOCATION package=com.google.android.gm shortcutId=dishantpipare@gmail.com flags=0x0 
+    time="2026-08-04 06:41:31" type=SHORTCUT_INVOCATION package=com.android.vending shortcutId=cubes_activity_shortcut flags=0x0 
+    time="2026-08-04 06:43:37" type=STANDBY_BUCKET_CHANGED package=com.google.android.calendar standbyBucket=20 reason=t flags=0x0 
+    time="2026-08-04 08:15:50" type=NOTIFICATION_INTERRUPTION package=com.truecaller channelId=profile_views flags=0x0 
+    time="2026-08-04 09:08:20" type=NOTIFICATION_INTERRUPTION package=com.grofers.customerapp channelId=others flags=0x0 
+    time="2026-08-04 10:06:51" type=STANDBY_BUCKET_CHANGED package=com.truecaller standbyBucket=45 reason=t flags=0x0 
+    time="2026-08-04 10:06:51" type=STANDBY_BUCKET_CHANGED package=com.instagram.android standbyBucket=20 reason=t flags=0x0 
+    time="2026-08-04 10:06:51" type=STANDBY_BUCKET_CHANGED package=com.msf.angelmobile standbyBucket=45 reason=t flags=0x0 
+    time="2026-08-04 10:06:51" type=STANDBY_BUCKET_CHANGED package=com.Dominos standbyBucket=45 reason=t flags=0x0 
+    time="2026-08-04 10:06:51" type=STANDBY_BUCKET_CHANGED package=com.oplus.metis standbyBucket=20 reason=t flags=0x0 
+    time="2026-08-04 10:06:51" type=STANDBY_BUCKET_CHANGED package=com.grofers.customerapp standbyBucket=30 reason=t flags=0x0 
+    time="2026-08-04 10:47:49" type=NOTIFICATION_INTERRUPTION package=com.truecaller channelId=miscellaneous_channel flags=0x0 
+    time="2026-08-04 11:18:04" type=NOTIFICATION_INTERRUPTION package=com.truecaller channelId=push_caller_id flags=0x0 
+    time="2026-08-04 11:40:09" type=STANDBY_BUCKET_CHANGED package=com.oplus.metis standbyBucket=10 reason=u-si flags=0x0 
+    time="2026-08-04 11:40:14" type=NOTIFICATION_INTERRUPTION package=com.Dominos channelId=moe_default_channel flags=0x0 
+    time="2026-08-04 11:40:14" type=SHORTCUT_INVOCATION package=com.google.android.gm shortcutId=dishantpipare@gmail.com flags=0x0 
+    time="2026-08-04 11:40:15" type=USER_INTERACTION package=com.spotify.music PersistableBundle[{android.app.usage.extra.EVENT_ACTION=start, android.app.usage.extra.EVENT_CATEGORY=android.media}]flags=0x0 
+    time="2026-08-04 11:40:15" type=STANDBY_BUCKET_CHANGED package=com.spotify.music standbyBucket=10 reason=u-ui flags=0x0 
+    time="2026-08-04 11:40:17" type=USER_INTERACTION package=com.spotify.music PersistableBundle[{android.app.usage.extra.EVENT_ACTION=stop, android.app.usage.extra.EVENT_CATEGORY=android.media}]flags=0x0 
+    time="2026-08-04 11:40:19" type=NOTIFICATION_INTERRUPTION package=com.msf.angelmobile channelId=PROMOTION flags=0x0 
+    time="2026-08-04 11:40:20" type=NOTIFICATION_INTERRUPTION package=com.msf.angelmobile channelId=ALERTS flags=0x0 

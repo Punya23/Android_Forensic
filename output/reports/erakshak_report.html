@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>eRakshak — Forensic Report</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#0a0c12;--s1:#111520;--s2:#161b28;--s3:#1e2436;
+    --border:#252d42;--accent:#3b82f6;--accent2:#1d4ed8;
+    --green:#22c55e;--red:#ef4444;--yellow:#f59e0b;--purple:#a855f7;
+    --text:#e2e8f0;--muted:#64748b;--dim:#334155;
+  }
+  body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-height:100vh}
+  a{color:var(--accent);text-decoration:none}
+
+  /* ── Top nav ── */
+  .topnav{
+    position:sticky;top:0;z-index:100;
+    background:rgba(10,12,18,.95);backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--border);
+    display:flex;align-items:center;gap:0;padding:0;
+  }
+  .brand{display:flex;align-items:center;gap:12px;padding:14px 24px;border-right:1px solid var(--border)}
+  .brand-logo{width:34px;height:34px;border-radius:9px;
+    background:linear-gradient(135deg,#3b82f6,#8b5cf6);
+    display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff}
+  .brand-name{font-size:14px;font-weight:700;letter-spacing:.02em}
+  .brand-sub{font-size:11px;color:var(--muted)}
+  .nav-links{display:flex;gap:0;flex:1;overflow-x:auto}
+  .nav-link{padding:16px 18px;font-size:12px;font-weight:600;color:var(--muted);
+    cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:color .15s,border-color .15s}
+  .nav-link:hover,.nav-link.active{color:var(--text);border-color:var(--accent)}
+  .nav-device{padding:14px 20px;margin-left:auto;font-size:11px;color:var(--muted);border-left:1px solid var(--border);white-space:nowrap}
+  .nav-device b{color:var(--text)}
+
+  /* ── Sections ── */
+  .section{display:none;padding:28px 32px 40px;max-width:1400px;margin:0 auto}
+  .section.active{display:block}
+  .section-title{font-size:20px;font-weight:700;margin-bottom:20px;display:flex;align-items:center;gap:10px}
+  .section-title .icon{font-size:22px}
+
+  /* ── Stat cards ── */
+  .stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px;margin-bottom:28px}
+  .stat-card{background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:18px 20px;transition:border-color .2s}
+  .stat-card:hover{border-color:var(--accent)}
+  .stat-num{font-size:28px;font-weight:700;color:var(--accent);margin-bottom:4px}
+  .stat-lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+  .stat-card.green .stat-num{color:var(--green)}
+  .stat-card.yellow .stat-num{color:var(--yellow)}
+  .stat-card.purple .stat-num{color:var(--purple)}
+  .stat-card.red .stat-num{color:var(--red)}
+
+  /* ── Device info card ── */
+  .device-card{background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:20px 24px;margin-bottom:24px}
+  .device-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;margin-top:14px}
+  .device-item{display:flex;flex-direction:column;gap:2px}
+  .device-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+  .device-value{font-size:13px;font-weight:500}
+
+  /* ── Tables ── */
+  .table-wrap{background:var(--s2);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:20px}
+  .table-header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+  .table-title{font-size:13px;font-weight:600}
+  .table-count{font-size:11px;color:var(--muted);background:var(--s3);border-radius:20px;padding:2px 10px}
+  table{width:100%;border-collapse:collapse}
+  th{padding:10px 14px;font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;
+    letter-spacing:.07em;text-align:left;border-bottom:1px solid var(--border);background:var(--s3)}
+  td{padding:10px 14px;font-size:12px;border-bottom:1px solid var(--border);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:rgba(59,130,246,.05)}
+
+  /* ── Badges ── */
+  .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.05em}
+  .badge-in{background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.3)}
+  .badge-out{background:rgba(59,130,246,.15);color:var(--accent);border:1px solid rgba(59,130,246,.3)}
+  .badge-miss{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.3)}
+
+  /* ── Two-col layout ── */
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:20px}
+  @media(max-width:900px){.two-col{grid-template-columns:1fr}}
+
+  /* ── Raw data ── */
+  .raw-data{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);
+    background:var(--s3);padding:14px;border-radius:8px;overflow-x:auto;white-space:pre-wrap;
+    max-height:300px;overflow-y:auto;line-height:1.6}
+
+  /* ── Bar chart ── */
+  .bar-chart{display:flex;flex-direction:column;gap:8px;padding:14px}
+  .bar-row{display:flex;align-items:center;gap:10px}
+  .bar-label{width:130px;font-size:11px;color:var(--muted);text-align:right;flex-shrink:0}
+  .bar-track{flex:1;background:var(--s3);border-radius:4px;height:18px;overflow:hidden}
+  .bar-fill{height:100%;border-radius:4px;transition:width .6s ease;display:flex;align-items:center;padding-left:8px;font-size:10px;font-weight:700;color:#fff}
+  .bar-val{width:50px;font-size:11px;font-weight:600;color:var(--text)}
+
+  /* ── Empty state ── */
+  .empty{padding:28px;text-align:center;color:var(--muted);font-size:13px}
+  .muted{color:var(--muted);font-size:13px}
+
+  /* ── Footer ── */
+  footer{text-align:center;padding:24px;font-size:11px;color:var(--muted);border-top:1px solid var(--border);margin-top:20px}
+
+  ::-webkit-scrollbar{width:5px;height:5px}
+  ::-webkit-scrollbar-track{background:var(--s1)}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="brand">
+    <div class="brand-logo">eR</div>
+    <div><div class="brand-name">eRakshak</div><div class="brand-sub">Forensic Dashboard</div></div>
+  </div>
+  <div class="nav-links">
+    <div class="nav-link active" onclick="show('overview',this)">Overview</div>
+    <div class="nav-link" onclick="show('contacts',this)">Contacts</div>
+    <div class="nav-link" onclick="show('calllog',this)">Call Log</div>
+    <div class="nav-link" onclick="show('sms',this)">SMS</div>
+    <div class="nav-link" onclick="show('wifi',this)">WiFi</div>
+    <div class="nav-link" onclick="show('bluetooth',this)">Bluetooth</div>
+    <div class="nav-link" onclick="show('notifications',this)">Notifications</div>
+    <div class="nav-link" onclick="show('apps',this)">Apps</div>
+    <div class="nav-link" onclick="show('device',this)">Device</div>
+  </div>
+  <div class="nav-device">Device: <b>— —</b> &nbsp;·&nbsp; Android <b>—</b></div>
+</nav>
+
+<!-- ══ OVERVIEW ══════════════════════════════════════════════════════════════ -->
+<div class="section active" id="sec-overview">
+  <div class="section-title"><span class="icon">📊</span> Forensic Overview</div>
+
+  <div class="stats-grid">
+    <div class="stat-card"><div class="stat-num">282</div><div class="stat-lbl">Contacts</div></div>
+    <div class="stat-card green"><div class="stat-num">3,000</div><div class="stat-lbl">Call Records</div></div>
+    <div class="stat-card yellow"><div class="stat-num">4,396</div><div class="stat-lbl">SMS Messages</div></div>
+    <div class="stat-card purple"><div class="stat-num">0</div><div class="stat-lbl">Apps Installed</div></div>
+    <div class="stat-card"><div class="stat-num">7</div><div class="stat-lbl">Notifications</div></div>
+    <div class="stat-card green"><div class="stat-num">5</div><div class="stat-lbl">TG Media Files</div></div>
+  </div>
+
+  <div class="two-col">
+    <div class="table-wrap">
+      <div class="table-header"><span class="table-title">📞 Call Type Breakdown</span></div>
+      <div class="bar-chart">
+        <div class="bar-row"><div class="bar-label">{"1":"Incoming","2":"Outgoing","3":"Missed","4":"Voicemail","5":"Rejected"}.get("2","2")</div><div class="bar-track"><div class="bar-fill" style="width:100%;background:#ef4444">1434</div></div></div><div class="bar-row"><div class="bar-label">{"1":"Incoming","2":"Outgoing","3":"Missed","4":"Voicemail","5":"Rejected"}.get("1","1")</div><div class="bar-track"><div class="bar-fill" style="width:82%;background:#ef4444">1170</div></div></div><div class="bar-row"><div class="bar-label">{"1":"Incoming","2":"Outgoing","3":"Missed","4":"Voicemail","5":"Rejected"}.get("3","3")</div><div class="bar-track"><div class="bar-fill" style="width:19%;background:#ef4444">279</div></div></div><div class="bar-row"><div class="bar-label">{"1":"Incoming","2":"Outgoing","3":"Missed","4":"Voicemail","5":"Rejected"}.get("6","6")</div><div class="bar-track"><div class="bar-fill" style="width:5%;background:#ef4444">65</div></div></div><div class="bar-row"><div class="bar-label">{"1":"Incoming","2":"Outgoing","3":"Missed","4":"Voicemail","5":"Rejected"}.get("5","5")</div><div class="bar-track"><div class="bar-fill" style="width:4%;background:#ef4444">52</div></div></div>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <div class="table-header"><span class="table-title">💬 SMS Breakdown</span></div>
+      <div class="bar-chart">
+        <div class="bar-row"><div class="bar-label">1</div><div class="bar-track"><div class="bar-fill" style="width:100%;background:#f59e0b">4338</div></div></div><div class="bar-row"><div class="bar-label">2</div><div class="bar-track"><div class="bar-fill" style="width:1%;background:#f59e0b">58</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <div class="table-header"><span class="table-title">📱 Top Callers</span><span class="table-count">by frequency</span></div>
+    <table><thead><tr><th>#</th><th>Number</th><th>Call Count</th></tr></thead><tbody>
+    <tr><td>1</td><td>+917498709922</td><td><div class='bar-fill' style='width:100%;background:#3b82f6;border-radius:4px;padding:2px 8px;display:inline-block'>688</div></td></tr><tr><td>2</td><td>+919359862762</td><td><div class='bar-fill' style='width:65%;background:#3b82f6;border-radius:4px;padding:2px 8px;display:inline-block'>448</div></td></tr><tr><td>3</td><td>+919889861359</td><td><div class='bar-fill' style='width:48%;background:#3b82f6;border-radius:4px;padding:2px 8px;display:inline-block'>330</div></td></tr><tr><td>4</td><td>+919975118721</td><td><div class='bar-fill' style='width:27%;background:#3b82f6;border-radius:4px;padding:2px 8px;display:inline-block'>186</div></td></tr><tr><td>5</td><td>+919130654616</td><td><div class='bar-fill' style='width:21%;background:#3b82f6;border-radius:4px;padding:2px 8px;display:inline-block'>145</div></td></tr>
+    </tbody></table>
+  </div>
+</div>
+
+<!-- ══ CONTACTS ══════════════════════════════════════════════════════════════ -->
+<div class="section" id="sec-contacts">
+  <div class="section-title"><span class="icon">👥</span> Contacts <span style="font-size:14px;color:var(--muted);font-weight:400">(282 total)</span></div>
+  <div class="table-wrap">
+    <div class="table-header"><span class="table-title">Contact List</span><span class="table-count">showing first 50</span></div>
+    <table><thead><tr><th>Name</th><th>Phone(s)</th><th>Email</th></tr></thead>
+    <tbody><tr><td>Rajat</td><td>['+91 63766 63199']</td><td></td></tr><tr><td>Balu Driver</td><td>['+91 74475 42035']</td><td></td></tr><tr><td>Parth Kitanu 2</td><td>['+91 74987 09922']</td><td></td></tr><tr><td>Arush</td><td>['+91 74988 74545']</td><td></td></tr><tr><td>Siddharth Rachawar</td><td>['+91 75884 68860']</td><td></td></tr><tr><td>Aman Gohane</td><td>['+91 76667 99024']</td><td></td></tr><tr><td>Vicky Dada Nagour</td><td>['+91 77092 91565']</td><td></td></tr><tr><td>Pranil</td><td>['+91 77190 08512']</td><td></td></tr><tr><td>Ayush (Pcu)</td><td>['+91 77580 76955']</td><td></td></tr><tr><td>Ranjit Dada</td><td>['+91 79723 69907']</td><td></td></tr><tr><td>Satrangi Chutiye</td><td>['+91 80105 29530']</td><td></td></tr><tr><td>Aniket Gabhane ( PUC_K)</td><td>['+91 80800 72214']</td><td></td></tr><tr><td>ASUS Exclusive Store - Silver Gadget House</td><td>['+91 80878 09980']</td><td></td></tr><tr><td>Vinay Belekar</td><td>['+91 81494 29016']</td><td></td></tr><tr><td>Prasad PCU</td><td>['+91 82084 14377']</td><td></td></tr><tr><td>Sanket Chalakh</td><td>['+91 82371 90768']</td><td></td></tr><tr><td>Rohit Gourkar</td><td>['+91 82650 31513']</td><td></td></tr><tr><td>Archu Tai</td><td>['+91 83298 99819']</td><td></td></tr><tr><td>Aniket Gabhane</td><td>['+91 83299 12422']</td><td></td></tr><tr><td>Raju Kohade</td><td>['+91 83299 88114']</td><td></td></tr><tr><td>Warden</td><td>['+91 84216 17395']</td><td></td></tr><tr><td>Utkarsh Volleyball</td><td>['+91 86689 19203']</td><td></td></tr><tr><td>Samidha</td><td>['+91 87668 72092']</td><td></td></tr><tr><td>Ritesh Kotrange</td><td>['+91 87671 03687']</td><td></td></tr><tr><td>Flipkart</td><td>['+91 88051 03583']</td><td></td></tr><tr><td>Nived (PCU)</td><td>['+91 88485 09828']</td><td></td></tr><tr><td>Print Pombhurna</td><td>['+91 89759 49601']</td><td></td></tr><tr><td>Ajit Dada</td><td>['+91 89995 62713']</td><td></td></tr><tr><td>Dilivery Flipkart</td><td>['+91 90279 32228']</td><td></td></tr><tr><td>P D Pipare</td><td>['+91 90491 36189']</td><td></td></tr><tr><td>Namish Dhar</td><td>['+91 91034 49292']</td><td></td></tr><tr><td>Ram Lambat</td><td>['+91 92720 43363']</td><td></td></tr><tr><td>Madhavi 2</td><td>['+91 92843 57097']</td><td></td></tr><tr><td>Ayush Bgmi</td><td>['+91 93023 99204']</td><td></td></tr><tr><td>Padki Ke Papa</td><td>['+91 93073 12856']</td><td></td></tr><tr><td>Mayank Kitanu</td><td>['+91 93561 95273']</td><td></td></tr><tr><td>Akash</td><td>['+91 93568 65397']</td><td></td></tr><tr><td>Chingu Chinese Lucky</td><td>['+91 93598 62762']</td><td></td></tr><tr><td>Abhishek</td><td>['+91 93708 92856']</td><td></td></tr><tr><td>Adarsh Nikure</td><td>['+91 94031 11928']</td><td></td></tr><tr><td>Archu Tai</td><td>['+91 94032 86595']</td><td></td></tr><tr><td>Mahati Nagulwar</td><td>['+91 94050 32745']</td><td></td></tr><tr><td>Mothi Aai BSNL</td><td>['+91 94053 65963']</td><td></td></tr><tr><td>Yogesh Mama</td><td>['+91 94214 85390']</td><td></td></tr><tr><td>Nilima Tai Husband</td><td>['+91 94233 04036']</td><td></td></tr><tr><td>Om (K1)</td><td>['+91 95277 76033']</td><td></td></tr><tr><td>Vansh Malik</td><td>['+91 95588 56821']</td><td></td></tr><tr><td>Warden</td><td>['+91 96078 90966']</td><td></td></tr><tr><td>Aryan Nakade</td><td>['+91 96733 70654']</td><td></td></tr><tr><td>Bapu Dada Chandrapur</td><td>['+91 97639 96889']</td><td></td></tr></tbody></table>
+  </div>
+</div>
+
+<!-- ══ CALL LOG ══════════════════════════════════════════════════════════════ -->
+<div class="section" id="sec-calllog">
+  <div class="section-title"><span class="icon">📞</span> Call Log <span style="font-size:14px;color:var(--muted);font-weight:400">(3,000 records)</span></div>
+  <div class="table-wrap">
+    <div class="table-header"><span class="table-title">Call History</span><span class="table-count">showing first 60</span></div>
+    <table><thead><tr><th>Type</th><th>Name / Number</th><th>Number</th><th>Date</th><th>Duration</th></tr></thead>
+    <tbody><tr>
+      <td>📵 Missed</td>
+      <td>Shoto</td>
+      <td>+916350122526</td>
+      <td>2026-05-22 11:07</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-22 09:42</td>
+      <td>0m20s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Mummy</td>
+      <td>+919130654616</td>
+      <td>2026-05-22 08:29</td>
+      <td>1m10s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Mummy</td>
+      <td>+919130654616</td>
+      <td>2026-05-22 07:50</td>
+      <td>1m20s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Mummy</td>
+      <td>+919130654616</td>
+      <td>2026-05-22 06:35</td>
+      <td>0m31s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Mummy</td>
+      <td>+919130654616</td>
+      <td>2026-05-21 20:18</td>
+      <td>0m40s</td>
+    </tr><tr>
+      <td>📵 Missed</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-21 16:09</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📵 Missed</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-21 14:10</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Rohit Da</td>
+      <td>+919834378539</td>
+      <td>2026-05-21 13:28</td>
+      <td>0m21s</td>
+    </tr><tr>
+      <td>🚫 Rejected</td>
+      <td>+918037055398</td>
+      <td>+918037055398</td>
+      <td>2026-05-21 12:30</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Nishant Mutton Rassa</td>
+      <td>+919889861359</td>
+      <td>2026-05-21 10:04</td>
+      <td>9m38s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Mummy</td>
+      <td>+919130654616</td>
+      <td>2026-05-20 21:47</td>
+      <td>5m51s</td>
+    </tr><tr>
+      <td>📵 Missed</td>
+      <td>Mummy</td>
+      <td>+919130654616</td>
+      <td>2026-05-20 21:42</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Nishant Mutton Rassa</td>
+      <td>+919889861359</td>
+      <td>2026-05-20 18:05</td>
+      <td>0m17s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Nishant Mutton Rassa</td>
+      <td>+919889861359</td>
+      <td>2026-05-20 17:26</td>
+      <td>1m13s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Sumedh Mascot</td>
+      <td>8329152623</td>
+      <td>2026-05-20 17:24</td>
+      <td>1m44s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Nishant Mutton Rassa</td>
+      <td>+919889861359</td>
+      <td>2026-05-20 15:54</td>
+      <td>1m41s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Nishant Mutton Rassa</td>
+      <td>+919889861359</td>
+      <td>2026-05-20 15:45</td>
+      <td>0m10s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Nishant Mutton Rassa</td>
+      <td>+919889861359</td>
+      <td>2026-05-20 15:44</td>
+      <td>0m10s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-20 15:21</td>
+      <td>0m42s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Niyant Ukhalkar</td>
+      <td>+917620335301</td>
+      <td>2026-05-20 12:42</td>
+      <td>0m10s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-20 11:59</td>
+      <td>0m21s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Druvv</td>
+      <td>+918840403645</td>
+      <td>2026-05-20 09:50</td>
+      <td>0m39s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-20 09:35</td>
+      <td>1m6s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-20 09:33</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-20 09:17</td>
+      <td>12m34s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Satrangi Chutiye</td>
+      <td>+918010529530</td>
+      <td>2026-05-20 09:11</td>
+      <td>0m55s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Satrangi Chutiye</td>
+      <td>+918010529530</td>
+      <td>2026-05-20 09:04</td>
+      <td>1m14s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-20 08:57</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-20 08:47</td>
+      <td>0m43s</td>
+    </tr><tr>
+      <td>📵 Missed</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-20 08:21</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-19 22:21</td>
+      <td>0m7s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Mummy</td>
+      <td>+919130654616</td>
+      <td>2026-05-19 22:00</td>
+      <td>0m11s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Mummy</td>
+      <td>+919130654616</td>
+      <td>2026-05-19 21:48</td>
+      <td>0m14s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-19 21:41</td>
+      <td>0m38s</td>
+    </tr><tr>
+      <td>📵 Missed</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-19 21:14</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📵 Missed</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-19 21:14</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📵 Missed</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-19 21:13</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Druvv</td>
+      <td>8840403645</td>
+      <td>2026-05-19 21:13</td>
+      <td>8m13s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-19 21:13</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Abhishek</td>
+      <td>+919370892856</td>
+      <td>2026-05-19 19:34</td>
+      <td>2m51s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-19 19:12</td>
+      <td>1m5s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-19 19:03</td>
+      <td>0m31s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-19 18:34</td>
+      <td>5m52s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-19 17:05</td>
+      <td>2m20s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-19 15:55</td>
+      <td>3m2s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-19 15:33</td>
+      <td>0m25s</td>
+    </tr><tr>
+      <td>📵 Missed</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-19 15:30</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-19 13:12</td>
+      <td>0m11s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-19 13:09</td>
+      <td>0m22s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-19 12:57</td>
+      <td>0m50s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-19 11:57</td>
+      <td>0m53s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-19 11:21</td>
+      <td>0m42s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-19 10:55</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-19 10:55</td>
+      <td>—</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Chingu Chinese Lucky</td>
+      <td>+919359862762</td>
+      <td>2026-05-19 09:07</td>
+      <td>2m23s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Parth Kitanu 2</td>
+      <td>+917498709922</td>
+      <td>2026-05-18 21:59</td>
+      <td>2m22s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Nishant Mutton Rassa</td>
+      <td>+919889861359</td>
+      <td>2026-05-18 21:05</td>
+      <td>1m24s</td>
+    </tr><tr>
+      <td>📥 Incoming</td>
+      <td>Nishant Mutton Rassa</td>
+      <td>+919889861359</td>
+      <td>2026-05-18 21:03</td>
+      <td>1m17s</td>
+    </tr><tr>
+      <td>📤 Outgoing</td>
+      <td>Nishant Mutton Rassa</td>
+      <td>+919889861359</td>
+      <td>2026-05-18 21:02</td>
+      <td>—</td>
+    </tr></tbody></table>
+  </div>
+</div>
+
+<!-- ══ SMS ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="sec-sms">
+  <div class="section-title"><span class="icon">💬</span> SMS Messages <span style="font-size:14px;color:var(--muted);font-weight:400">(4,396 messages)</span></div>
+  <div class="table-wrap">
+    <div class="table-header"><span class="table-title">Message History</span><span class="table-count">showing first 60</span></div>
+    <table><thead><tr><th>Type</th><th>Address</th><th>Date</th><th>Body</th></tr></thead>
+    <tbody><tr>
+      <td>📨 Received</td>
+      <td>919359862762</td>
+      <td>2026-05-22 09:42</td>
+      <td>Dear Customer, You have a missed call from +919359862762 The…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>919359862762</td>
+      <td>2026-05-22 09:42</td>
+      <td>Dear Customer, You have a missed call from +919359862762 The…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-22 08:43</td>
+      <td>A/c *8490 debited Rs. 100.00 on 22-05-26 to Nadim Shah K. UP…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>919130654616</td>
+      <td>2026-05-22 07:50</td>
+      <td>Dear Customer, You have a missed call from +919130654616 The…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>JM-NSESMS-S</td>
+      <td>2026-05-22 07:19</td>
+      <td>ANGELONELIMITED on 16-05-2026 reported your Fund bal Rs.0.59…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BZ-INDBNK-S</td>
+      <td>2026-05-21 22:37</td>
+      <td>A/c *8490 debited Rs. 20.00 on 21-05-26 to MR SAGAR SUR. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-21 22:34</td>
+      <td>A/c *8490 debited Rs. 210.00 on 21-05-26 to MR SAGAR SUR. UP…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BZ-INDBNK-S</td>
+      <td>2026-05-21 16:41</td>
+      <td>A/c *8490 debited Rs. 165.00 on 21-05-26 to SUBHASH THAV. UP…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BT-INDBNK-S</td>
+      <td>2026-05-21 15:13</td>
+      <td>A/c *8490 debited Rs. 10.00 on 21-05-26 to Indian Railw. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-21 14:15</td>
+      <td>A/c *8490 debited Rs. 408.00 on 21-05-26 to AVENUE SUPER. UP…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-21 14:01</td>
+      <td>A/c *8490 debited Rs. 160.00 on 21-05-26 to PAYAL DHANRA. UP…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BT-INDBNK-S</td>
+      <td>2026-05-21 14:01</td>
+      <td>Rs.80.00 credited to a/c *0925 on 21/05/2026 by a/c linked t…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-21 13:30</td>
+      <td>A/c *8490 debited Rs. 1000.00 on 21-05-26 to Lucky Omprak. U…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-21 13:29</td>
+      <td>Rs.3000.00 credited to a/c *7038 on 21/05/2026 by a/c linked…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>AX-SQDLTD-P</td>
+      <td>2026-05-21 13:12</td>
+      <td>Big achivement progress in Shakti Pres Ltd RIGHTS ISSUE , ge…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>CP-UTOMOB-S</td>
+      <td>2026-05-20 15:53</td>
+      <td>6003 is your one time password (OTP) for user authentication…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-20 09:57</td>
+      <td>A/c *8490 debited Rs. 10.00 on 20-05-26 to JC PCU MAIN . UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-19 18:36</td>
+      <td>A/c *8490 debited Rs. 21.00 on 19-05-26 to JAGDISH SING. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>JZ-ISATHI-G</td>
+      <td>2026-05-19 18:16</td>
+      <td>Is someone misusing your name for a mobile connection? Downl…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BT-INDBNK-S</td>
+      <td>2026-05-19 16:01</td>
+      <td>A/c *8490 debited Rs. 40.00 on 19-05-26 to Umang Medica. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-19 12:00</td>
+      <td>A/c *8490 debited Rs. 10.00 on 19-05-26 to DYP SMART ST. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-19 11:59</td>
+      <td>A/c *8490 debited Rs. 10.00 on 19-05-26 to JC PCU MAIN . UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-18 20:27</td>
+      <td>A/c *8490 debited Rs. 60.00 on 18-05-26 to ANITA KISANR. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-18 18:29</td>
+      <td>A/c *8490 debited Rs. 76.00 on 18-05-26 to JAGDISH SING. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>JX-620046-P</td>
+      <td>2026-05-18 15:07</td>
+      <td>Your road to esports glory starts now! Join India Rising: Ro…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BT-INDBNK-S</td>
+      <td>2026-05-18 13:22</td>
+      <td>A/c *8490 debited Rs. 60.00 on 18-05-26 to AKHIL FRUITS. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-18 13:20</td>
+      <td>A/c *8490 debited Rs. 70.00 on 18-05-26 to PAYAL DHANRA. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>VM-LUPINP-P</td>
+      <td>2026-05-18 10:20</td>
+      <td>Product/Batch Recall/Market Withdrawal Notice. Please downlo…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BT-INDBNK-S</td>
+      <td>2026-05-17 21:54</td>
+      <td>A/c *8490 debited Rs. 35.00 on 17-05-26 to JAGDISH SING. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>JZ-JIOVOC-S</td>
+      <td>2026-05-17 13:05</td>
+      <td>प्रिय ग्राहक, आम्ही तुमचा Jio नेटवर्कवरील अनुभव आणखी चांगला …</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-17 11:18</td>
+      <td>Rs.200.00 credited to a/c *8490 on 17/05/2026 by a/c linked …</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BT-INDBNK-S</td>
+      <td>2026-05-17 11:16</td>
+      <td>A/c *8490 debited Rs. 135.00 on 17-05-26 to Blinkit. UPI:123…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-16 19:23</td>
+      <td>A/c *8490 debited Rs. 30.00 on 16-05-26 to JAGDISH SING. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BT-INDBNK-S</td>
+      <td>2026-05-16 19:23</td>
+      <td>A/c *8490 debited Rs. 40.00 on 16-05-26 to JAGDISH SING. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-16 18:57</td>
+      <td>A/c *8490 debited Rs. 200.00 on 16-05-26 to Bhosle Petro. UP…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-16 12:45</td>
+      <td>A/c *8490 debited Rs. 60.00 on 16-05-26 to PAYAL DHANRA. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>JM-RTRNDS-P</td>
+      <td>2026-05-16 11:09</td>
+      <td>EXCLUSIVELY FOR YOU! Get Rs.500 OFF on shopping of Rs.1500 @…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>AD-INDBNK-S</td>
+      <td>2026-05-15 20:59</td>
+      <td>A/c *8490 debited Rs. 21.00 on 15-05-26 to JAGDISH SING. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BT-INDBNK-S</td>
+      <td>2026-05-15 20:36</td>
+      <td>A/c *8490 debited Rs. 65.00 on 15-05-26 to AKHIL FRUITS. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>AD-INDBNK-S</td>
+      <td>2026-05-15 20:34</td>
+      <td>A/c *8490 debited Rs. 60.00 on 15-05-26 to ANITA KISANR. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>AX-INDBNK-S</td>
+      <td>2026-05-15 10:42</td>
+      <td>Rs.10.00 credited to a/c *8490 on 15/05/2026 by a/c linked t…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>AX-INDBNK-S</td>
+      <td>2026-05-15 10:27</td>
+      <td>A/c *8490 debited Rs. 5851.20 on 15-05-26 to GP SOLUTIONS. U…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BT-INDBNK-S</td>
+      <td>2026-05-15 10:26</td>
+      <td>Rs.1300.00 credited to a/c *8490 on 15/05/2026 by a/c linked…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>AX-INDBNK-S</td>
+      <td>2026-05-15 10:22</td>
+      <td>Rs.300.00 credited to a/c *8490 on 15/05/2026 by a/c linked …</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>CP-UTOMOB-S</td>
+      <td>2026-05-15 09:54</td>
+      <td>1404 is your one time password (OTP) for user authentication…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-14 21:31</td>
+      <td>A/c *8490 debited Rs. 20.00 on 14-05-26 to JAGDISH SING. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>AX-INDBNK-S</td>
+      <td>2026-05-14 20:29</td>
+      <td>A/c *8490 debited Rs. 217.00 on 14-05-26 to AVENUE SUPER. UP…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BZ-INDBNK-S</td>
+      <td>2026-05-14 18:57</td>
+      <td>A/c *8490 debited Rs. 30.00 on 14-05-26 to JAGDISH SING. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BT-INDBNK-S</td>
+      <td>2026-05-14 17:08</td>
+      <td>A/c *8490 debited Rs. 120.00 on 14-05-26 to PERFECT CUT . UP…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BT-INDBNK-S</td>
+      <td>2026-05-14 14:53</td>
+      <td>Mandate With UMRN IDIB0XX00013   returned due to Insufficien…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BT-INDBNK-S</td>
+      <td>2026-05-14 13:26</td>
+      <td>A/c *8490 debited Rs. 80.00 on 14-05-26 to AJMERI BIRYA. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-13 23:10</td>
+      <td>A/c *8490 debited Rs. 1000.00 on 13-05-26 to Pimpri Chinc. U…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BZ-INDBNK-S</td>
+      <td>2026-05-13 22:50</td>
+      <td>Rs.2000.00 credited to a/c *8490 on 13/05/2026 by a/c linked…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>VA-SBIUPI-S</td>
+      <td>2026-05-13 22:50</td>
+      <td>Dear SBI User, your A/c X8490-credited by Rs.2000 on 13May26…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-13 21:31</td>
+      <td>A/c *8490 debited Rs. 41.00 on 13-05-26 to JAGDISH SING. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BV-INDBNK-S</td>
+      <td>2026-05-13 17:27</td>
+      <td>A/c *8490 debited Rs. 31.00 on 13-05-26 to JAGDISH SING. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>JD-620046-P</td>
+      <td>2026-05-13 17:18</td>
+      <td>Play Rollerdrome on JioGames 🎮
+www.jio.com/r/DySQ4nTto</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>JX-620040-P</td>
+      <td>2026-05-13 15:40</td>
+      <td>🌟 तुम्हाला आवश्यक सर्वकाही— फक्त MyJio मध्ये ! 🌟
+
+📲 अतिरिक्त…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>BT-INDBNK-S</td>
+      <td>2026-05-12 17:27</td>
+      <td>A/c *8490 debited Rs. 51.00 on 12-05-26 to JAGDISH SING. UPI…</td>
+    </tr><tr>
+      <td>📨 Received</td>
+      <td>VA-INDBNK-S</td>
+      <td>2026-05-12 10:39</td>
+      <td>OTP for IndSMART Mobile Registration/Re-registration is 8220…</td>
+    </tr></tbody></table>
+  </div>
+</div>
+
+<!-- ══ WIFI ══════════════════════════════════════════════════════════════════ -->
+<div class="section" id="sec-wifi">
+  <div class="section-title"><span class="icon">📶</span> WiFi Networks</div>
+  <div class="table-wrap">
+    <div class="table-header"><span class="table-title">Current WiFi State (via dumpsys)</span></div>
+    <div style="padding:14px"><p class='muted'>No WiFi data</p></div>
+  </div>
+</div>
+
+<!-- ══ BLUETOOTH ══════════════════════════════════════════════════════════════ -->
+<div class="section" id="sec-bluetooth">
+  <div class="section-title"><span class="icon">🔵</span> Bluetooth Devices</div>
+  <div class="table-wrap">
+    <div class="table-header"><span class="table-title">Bonded / Paired Devices</span></div>
+    <table><thead><tr><th>Name</th><th>Address</th><th>Type</th></tr></thead>
+    <tbody><tr><td>realme 10 Pro 5G</td><td>02:00:00:00:00:00</td><td>adapter</td></tr></tbody></table>
+  </div>
+  <div class="table-wrap">
+    <div class="table-header"><span class="table-title">Raw Bluetooth Data</span></div>
+    <div style="padding:14px"><pre class="raw-data">[{'type': 'adapter', 'enabled': False, 'name': 'realme 10 Pro 5G', 'address': '02:00:00:00:00:00', 'state': 'off'}]</pre></div>
+  </div>
+</div>
+
+<!-- ══ NOTIFICATIONS ══════════════════════════════════════════════════════════ -->
+<div class="section" id="sec-notifications">
+  <div class="section-title"><span class="icon">🔔</span> Notifications <span style="font-size:14px;color:var(--muted);font-weight:400">(7 records)</span></div>
+  <div class="table-wrap">
+    <div class="table-header"><span class="table-title">Active Notifications</span></div>
+    <table><thead><tr><th>App Package</th><th>Title</th><th>Body</th><th>Time</th></tr></thead>
+    <tbody><tr><td>com.msf.angelmobile</td><td>—</td><td>—</td><td>2026-08-04 11:40</td></tr><tr><td>com.msf.angelmobile</td><td>📊 Nifty 24,633 | Sensex 🔼 216 pts</td><td>—</td><td>2026-08-04 11:40</td></tr><tr><td>com.whatsapp</td><td>Logged out of WhatsApp</td><td>Your phone number is no longer registered on this phone. Tap…</td><td>2026-08-04 20:40</td></tr><tr><td>com.Dominos</td><td>—</td><td>—</td><td>2026-08-04 19:39</td></tr><tr><td>com.android.vending</td><td>Don't lose your streak!</td><td>Keep your gaming streak alive! Play for five minutes before …</td><td>2026-08-04 20:30</td></tr><tr><td>com.android.systemui</td><td>Charging this device via USB</td><td>Tap for more options</td><td>2026-08-04 19:21</td></tr><tr><td>com.android.systemui</td><td>USB debugging enabled</td><td>Disable USB debugging</td><td>2026-08-04 19:26</td></tr></tbody></table>
+  </div>
+</div>
+
+<!-- ══ APPS ══════════════════════════════════════════════════════════════════ -->
+<div class="section" id="sec-apps">
+  <div class="section-title"><span class="icon">📦</span> Installed Apps <span style="font-size:14px;color:var(--muted);font-weight:400">(0 user apps)</span></div>
+  <div class="table-wrap">
+    <div class="table-header"><span class="table-title">User-installed Packages</span><span class="table-count">showing first 50</span></div>
+    <table><thead><tr><th>Package Name</th><th>APK Path</th></tr></thead>
+    <tbody><tr><td colspan='2' class='empty'>No app data</td></tr></tbody></table>
+  </div>
+</div>
+
+<!-- ══ DEVICE ══════════════════════════════════════════════════════════════════ -->
+<div class="section" id="sec-device">
+  <div class="section-title"><span class="icon">📱</span> Device Information</div>
+  <div class="device-card">
+    <div style="font-size:16px;font-weight:700;margin-bottom:4px">— —</div>
+    <div style="font-size:12px;color:var(--muted)">Serial: 3c0bf2d6</div>
+    <div class="device-grid">
+      <div class="device-item"><div class="device-label">OS Version</div><div class="device-value">Android — (SDK —)</div></div>
+      <div class="device-item"><div class="device-label">CPU</div><div class="device-value">—</div></div>
+      <div class="device-item"><div class="device-label">Battery</div><div class="device-value">—</div></div>
+      <div class="device-item"><div class="device-label">Extracted</div><div class="device-value">2026-08-04 21:22</div></div>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <div class="table-header"><span class="table-title">Raw Device Properties</span></div>
+    <div style="padding:14px"><pre class="raw-data">{}</pre></div>
+  </div>
+</div>
+
+<footer>eRakshak Forensic Tool &nbsp;·&nbsp; Report Generated: 2026-08-04 21:22:27 &nbsp;·&nbsp; Do not alter this file.</footer>
+
+<script>
+  function show(id, el) {
+    document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+    document.querySelectorAll('.nav-link').forEach(l=>l.classList.remove('active'));
+    document.getElementById('sec-'+id).classList.add('active');
+    el.classList.add('active');
+  }
+</script>
+</body>
+</html>

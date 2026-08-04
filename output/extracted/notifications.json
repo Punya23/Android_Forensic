@@ -1,0 +1,68 @@
+[
+  {
+    "source": "dumpsys",
+    "package": "com.msf.angelmobile",
+    "post_time": 1785823820246,
+    "channel_id": "ALERTS",
+    "importance": 5,
+    "app_label": "com.msf.angelmobile"
+  },
+  {
+    "source": "dumpsys",
+    "package": "com.msf.angelmobile",
+    "post_time": 1785823821321,
+    "channel_id": "Primary",
+    "title": "📊 Nifty 24,633 | Sensex 🔼 216 pts",
+    "importance": 3,
+    "app_label": "com.msf.angelmobile"
+  },
+  {
+    "source": "dumpsys",
+    "package": "com.whatsapp",
+    "post_time": 1785856250796,
+    "channel_id": "critical_app_alerts@1",
+    "title": "Logged out of WhatsApp",
+    "text": "Your phone number is no longer registered on this phone. Tap to view.",
+    "big_text": "Your phone number is no longer registered on this phone. Tap to view.",
+    "importance": 4,
+    "app_label": "com.whatsapp"
+  },
+  {
+    "source": "dumpsys",
+    "package": "com.Dominos",
+    "post_time": 1785852599981,
+    "channel_id": "moe_default_channel",
+    "importance": 3,
+    "app_label": "com.Dominos"
+  },
+  {
+    "source": "dumpsys",
+    "package": "com.android.vending",
+    "post_time": 1785855643541,
+    "channel_id": "game-streaks",
+    "title": "Don't lose your streak!",
+    "text": "Keep your gaming streak alive! Play for five minutes before the end of the day.",
+    "importance": 3,
+    "app_label": "com.android.vending"
+  },
+  {
+    "source": "dumpsys",
+    "package": "com.android.systemui",
+    "post_time": 1785851492729,
+    "channel_id": "INS",
+    "title": "Charging this device via USB",
+    "text": "Tap for more options",
+    "importance": 1,
+    "app_label": "com.android.systemui"
+  },
+  {
+    "source": "dumpsys",
+    "package": "com.android.systemui",
+    "post_time": 1785851790911,
+    "channel_id": "INS",
+    "title": "USB debugging enabled",
+    "text": "Disable USB debugging",
+    "importance": 1,
+    "app_label": "com.android.systemui"
+  }
+]
