@@ -222,36 +222,90 @@ def step_dump_recordings(serial: str, out_dir: Path) -> list[dict]:
     return recs
 
 
+
+
+def _parse_dumpsys_notifications(raw: str) -> list[dict]:
+    """Parse `dumpsys notification --noredact` output into structured records."""
+    import re
+    records = []
+    blocks = re.split(r'NotificationRecord\(', raw)
+    for block in blocks[1:]:
+        rec: dict = {"source": "dumpsys"}
+        pkg_m   = re.search(r'pkg=(\S+)',                      block)
+        when_m  = re.search(r'when=(\d{10,})',                 block)
+        ch_m    = re.search(r'channel=(\S+)',                  block)
+        title_m = re.search(r'android\.title=String \((.+?)\)',   block)
+        text_m  = re.search(r'android\.text=String \((.+?)\)',    block)
+        big_m   = re.search(r'android\.bigText=String \((.+?)\)', block)
+        sub_m   = re.search(r'android\.subText=String \((.+?)\)', block)
+        imp_m   = re.search(r'importance=(\d+)',               block)
+        if pkg_m:   rec["package"]    = pkg_m.group(1)
+        if when_m:  rec["post_time"]  = int(when_m.group(1))
+        if ch_m:    rec["channel_id"] = ch_m.group(1).rstrip(')')
+        if title_m: rec["title"]      = title_m.group(1)
+        if text_m:  rec["text"]       = text_m.group(1)[:500]
+        if big_m:   rec["big_text"]   = big_m.group(1)[:500]
+        if sub_m:   rec["sub_text"]   = sub_m.group(1)
+        if imp_m:   rec["importance"] = int(imp_m.group(1))
+        if rec.get("package"):
+            rec.setdefault("app_label", rec["package"])
+            records.append(rec)
+    return records
+
+
 def step_dump_notifications(serial: str, out_dir: Path) -> list[dict]:
     print(f"\n{BOLD('[ 5/6 ]  Dumping notification history...')}")
 
-    # Check notification listener
-    r = _adb(serial, "shell", "settings", "get", "secure", "enabled_notification_listeners")
-    if _APK_PKG not in (r.stdout or ""):
-        print(YELLOW("  !  Notification Access NOT granted."))
-        print(YELLOW("     Settings -> Apps -> Special app access -> Notification access"))
-        print(YELLOW(f"     Enable: eRakshak Collector -- then re-run."))
-        print(DIM("     Continuing anyway (Android 11+ history API may still work)..."))
+    # Method 1: dumpsys notification (no permission required -- reads live notifications)
+    print(DIM("     [1] Trying dumpsys notification (no permission needed)..."))
+    r = _adb(serial, "shell", "dumpsys", "notification", "--noredact", timeout=15)
+    dumpsys_notifs: list[dict] = []
+    if r.returncode == 0 and r.stdout:
+        dumpsys_notifs = _parse_dumpsys_notifications(r.stdout)
+        print(GREEN(f"  OK  {len(dumpsys_notifs)} live notification(s) via dumpsys"))
+    else:
+        print(YELLOW("  !  dumpsys notification failed"))
 
-    _adb(serial, "shell", "am", "start", "-n", _APK_ACTIVITY, "--es", "action", "dump_notifications")
-    print(DIM("     Collector running on device, waiting 6s..."))
-    time.sleep(6)
+    # Method 2: APK history API (requires Notification Access grant in Settings)
+    apk_notifs: list[dict] = []
+    r2 = _adb(serial, "shell", "settings", "get", "secure", "enabled_notification_listeners")
+    listener_granted = _APK_PKG in (r2.stdout or "")
+    if listener_granted:
+        print(DIM("     [2] Notification Access granted -- pulling history via APK..."))
+        _adb(serial, "shell", "am", "start", "-n", _APK_ACTIVITY, "--es", "action", "dump_notifications")
+        time.sleep(6)
+        tmp = out_dir / "_notifications_apk_tmp.json"
+        r3 = _adb(serial, "pull", "/sdcard/Download/notifications.json", str(tmp))
+        if r3.returncode == 0 and tmp.exists():
+            try:
+                data = json.loads(tmp.read_text(encoding="utf-8"))
+                if isinstance(data, list) and data:
+                    apk_notifs = data
+                    print(GREEN(f"  OK  {len(apk_notifs)} historical notification(s) via APK"))
+            except Exception:
+                pass
+    else:
+        print(YELLOW("  !  Notification Access NOT granted -- APK history skipped."))
+        print(YELLOW("     To get full history: Settings -> Apps -> Special app access"))
+        print(YELLOW("     -> Notification access -> eRakshak Collector -> ON"))
+
+    # Merge, de-duplicate by (package, post_time, title)
+    seen: set[tuple] = set()
+    merged: list[dict] = []
+    for n in dumpsys_notifs + apk_notifs:
+        key = (n.get("package",""), n.get("post_time",0), n.get("title",""))
+        if key not in seen:
+            seen.add(key)
+            merged.append(n)
 
     local = out_dir / "notifications.json"
-    r = _adb(serial, "pull", "/sdcard/Download/notifications.json", str(local))
-    if r.returncode != 0 or not local.exists():
-        print(YELLOW("  !  notifications.json not pulled -- grant Notification Access first"))
-        return []
+    local.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    try:
-        notifs = json.loads(local.read_text(encoding="utf-8"))
-        notifs = notifs if isinstance(notifs, list) else []
-    except Exception as e:
-        print(YELLOW(f"  !  Parse error: {e}"))
-        return []
-
-    print(GREEN(f"  OK  {len(notifs)} notification(s) found  ->  {local}"))
-    return notifs
+    if merged:
+        print(GREEN(f"  OK  {len(merged)} total notification(s) saved -> {local}"))
+    else:
+        print(YELLOW("  !  No notifications found on device right now."))
+    return merged
 
 
 def step_pull_audio(serial: str, recordings: list[dict], out_dir: Path) -> int:

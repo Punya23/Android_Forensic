@@ -8,6 +8,10 @@ import android.provider.ContactsContract
 import android.provider.Telephony
 import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 /** Small helpers shared by the content-provider collectors. */
 internal object Cur {
@@ -119,12 +123,17 @@ object CallLogCollector {
                     CallLog.Calls.GEOCODED_LOCATION, CallLog.Calls.IS_READ,
                 ), null, null, "${CallLog.Calls.DATE} DESC"
             )?.use { c ->
+                val istFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss 'IST'", Locale.ENGLISH).apply {
+                    timeZone = TimeZone.getTimeZone("Asia/Kolkata")
+                }
                 while (c.moveToNext()) {
+                    val epochMs = with(Cur) { c.longOrNull(CallLog.Calls.DATE) } ?: 0L
                     out.put(JSONObject()
                         .put("number", with(Cur) { c.strOrNull(CallLog.Calls.NUMBER) } ?: "")
                         .put("name", with(Cur) { c.strOrNull(CallLog.Calls.CACHED_NAME) } ?: "")
                         .put("type", with(Cur) { c.intOrNull(CallLog.Calls.TYPE) } ?: 0)
-                        .put("date", with(Cur) { c.longOrNull(CallLog.Calls.DATE) } ?: 0L)
+                        .put("date", epochMs)
+                        .put("date_ist", istFmt.format(Date(epochMs)))
                         .put("duration", with(Cur) { c.intOrNull(CallLog.Calls.DURATION) } ?: 0)
                         .put("geocoded_location", with(Cur) { c.strOrNull(CallLog.Calls.GEOCODED_LOCATION) } ?: "")
                         .put("is_read", with(Cur) { c.intOrNull(CallLog.Calls.IS_READ) } ?: 0))
