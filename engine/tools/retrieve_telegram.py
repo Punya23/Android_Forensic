@@ -378,6 +378,195 @@ def print_report(media: list[dict], notifs: list[dict], db_result: dict, out_dir
     print(BOLD(_sep('=')))
 
 
+# ---- HTML Gallery ------------------------------------------------------------
+
+def generate_html_gallery(media: list[dict], tg_info: dict, out_dir: Path,
+                           device_serial: str, ext_at: str) -> Path | None:
+    """Generate a self-contained HTML gallery with base64-embedded images."""
+    import base64
+
+    images = [m for m in media if m.get("extension", "") in ("jpg","jpeg","png","gif","webp","bmp")]
+    if not images:
+        return None
+
+    print(f"\n{BOLD('Generating HTML media gallery...')}")
+
+    cat_color = {
+        "image":    ("#2ca5e0", "rgba(44,165,224,.18)", "rgba(44,165,224,.3)"),
+        "story":    ("#e040fb", "rgba(224,64,251,.16)",  "rgba(224,64,251,.28)"),
+        "video":    ("#00e676", "rgba(0,230,118,.16)",   "rgba(0,230,118,.28)"),
+        "document": ("#f5c842", "rgba(245,200,66,.16)",  "rgba(245,200,66,.28)"),
+        "other":    ("#8890a6", "rgba(136,144,166,.16)", "rgba(136,144,166,.28)"),
+    }
+
+    cards_html = ""
+    for f in sorted(images, key=lambda x: x.get("size_bytes", 0), reverse=True):
+        fp = Path(f["path"])
+        if not fp.exists():
+            continue
+        b64  = base64.b64encode(fp.read_bytes()).decode()
+        ext  = f.get("extension", "jpg")
+        cat  = f.get("category", "other")
+        sz   = _fmt_size(f.get("size_bytes", 0))
+        name = f["filename"]
+        fg, bg, bd = cat_color.get(cat, cat_color["other"])
+        mime = "jpeg" if ext in ("jpg","jpeg") else ext
+        data_uri = f"data:image/{mime};base64,{b64}"
+        cards_html += f"""
+    <div class="card" onclick="openModal('{data_uri}','{name}','{sz}')">
+      <div class="img-wrap">
+        <img src="{data_uri}" alt="{name}" loading="lazy"/>
+        <div class="overlay"><span class="zoom-icon">&#128269;</span></div>
+      </div>
+      <div class="card-info">
+        <span class="cat-badge" style="color:{fg};background:{bg};border-color:{bd}">{cat.upper()}</span>
+        <div class="fname">{name}</div>
+        <div class="fsize">{sz}</div>
+      </div>
+    </div>"""
+
+    version     = tg_info.get("version", "—")
+    installed   = tg_info.get("first_install", "—")
+    root_badge  = '<span class="badge badge-ok">ROOTED</span>' if tg_info.get("rooted") else '<span class="badge badge-warn">NOT ROOTED</span>'
+    db_badge    = '<span class="badge badge-ok">ACCESSIBLE</span>' if tg_info.get("db_accessible") else '<span class="badge badge-warn">INACCESSIBLE</span>'
+    total_sz    = _fmt_size(sum(m.get("size_bytes",0) for m in images))
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>eRakshak — Telegram Media Gallery</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+  *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+  :root{{
+    --bg:#0d0f14;--surface:#161a23;--surface2:#1e2330;--border:#2a2f3e;
+    --accent:#2ca5e0;--accent2:#1a7fb5;--text:#e8eaf0;--muted:#8890a6;
+    --gold:#f5c842;--ok:#1c7d3f;--ok-bg:#e4f4ea;
+  }}
+  body{{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-height:100vh}}
+  .header{{background:linear-gradient(135deg,#0f172a 0%,#1a1f35 50%,#0f1a2e 100%);
+    border-bottom:1px solid var(--border);padding:24px 40px;display:flex;align-items:center;gap:20px}}
+  .tg-logo{{width:52px;height:52px;border-radius:14px;flex-shrink:0;
+    background:linear-gradient(135deg,#2ca5e0,#1a7fb5);
+    display:flex;align-items:center;justify-content:center;
+    font-size:28px;box-shadow:0 4px 20px rgba(44,165,224,.4)}}
+  .header-text h1{{font-size:22px;font-weight:700}}
+  .header-text .sub{{font-size:13px;color:var(--muted);margin-top:3px}}
+  .meta-bar{{background:var(--surface);border-bottom:1px solid var(--border);
+    padding:14px 40px;display:flex;gap:32px;flex-wrap:wrap}}
+  .meta-item{{display:flex;flex-direction:column}}
+  .meta-label{{font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}}
+  .meta-value{{font-size:13px;font-weight:500;margin-top:2px}}
+  .badge{{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.06em}}
+  .badge-warn{{background:rgba(245,200,66,.14);color:var(--gold);border:1px solid rgba(245,200,66,.3)}}
+  .badge-ok{{background:rgba(28,125,63,.18);color:#3dba6f;border:1px solid rgba(28,125,63,.35)}}
+  .stats-strip{{background:var(--surface2);border-bottom:1px solid var(--border);
+    padding:14px 40px;display:flex;gap:32px;flex-wrap:wrap;align-items:center}}
+  .stat{{display:flex;align-items:center;gap:10px}}
+  .stat-num{{font-size:24px;font-weight:700;color:var(--accent)}}
+  .stat-lbl{{font-size:11px;color:var(--muted);line-height:1.4}}
+  .warn-banner{{margin:20px 40px 0;background:rgba(245,200,66,.07);
+    border:1px solid rgba(245,200,66,.28);border-left:4px solid var(--gold);
+    border-radius:6px;padding:12px 18px;font-size:13px;color:#d4b84a}}
+  .warn-banner b{{color:var(--gold)}}
+  .gallery-header{{padding:28px 40px 14px;display:flex;align-items:center;justify-content:space-between}}
+  .gallery-header h2{{font-size:17px;font-weight:600}}
+  .gallery-header .count{{font-size:13px;color:var(--muted)}}
+  .gallery{{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
+    gap:18px;padding:0 40px 48px}}
+  .card{{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    overflow:hidden;cursor:pointer;transition:transform .2s,box-shadow .2s,border-color .2s}}
+  .card:hover{{transform:translateY(-5px);box-shadow:0 14px 36px rgba(0,0,0,.55);border-color:var(--accent)}}
+  .img-wrap{{position:relative;aspect-ratio:9/16;overflow:hidden;background:#0a0c12}}
+  .img-wrap img{{width:100%;height:100%;object-fit:cover;display:block;transition:transform .3s}}
+  .card:hover .img-wrap img{{transform:scale(1.05)}}
+  .overlay{{position:absolute;inset:0;background:rgba(44,165,224,0);
+    display:flex;align-items:center;justify-content:center;transition:background .2s}}
+  .card:hover .overlay{{background:rgba(44,165,224,.18)}}
+  .zoom-icon{{font-size:34px;opacity:0;transition:opacity .2s}}
+  .card:hover .zoom-icon{{opacity:1}}
+  .card-info{{padding:12px 14px 14px}}
+  .cat-badge{{display:inline-block;margin-bottom:6px;padding:2px 8px;border-radius:4px;
+    font-size:9px;font-weight:700;letter-spacing:.08em}}
+  .fname{{font-size:11px;color:var(--muted);word-break:break-all;line-height:1.4;margin-top:2px}}
+  .fsize{{font-size:12px;color:var(--accent);margin-top:5px;font-weight:600}}
+  .modal{{display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.92);
+    backdrop-filter:blur(10px);align-items:center;justify-content:center;flex-direction:column}}
+  .modal.open{{display:flex}}
+  .modal img{{max-height:82vh;max-width:88vw;border-radius:10px;box-shadow:0 0 80px rgba(44,165,224,.35)}}
+  .modal-meta{{margin-top:14px;display:flex;gap:20px;align-items:center}}
+  .modal-fname{{font-size:12px;color:var(--muted)}}
+  .modal-sz{{font-size:12px;color:var(--accent);font-weight:600}}
+  .modal-close{{position:absolute;top:20px;right:28px;background:var(--surface2);
+    border:1px solid var(--border);color:var(--text);font-size:20px;width:38px;height:38px;
+    border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s}}
+  .modal-close:hover{{background:var(--accent2)}}
+  footer{{text-align:center;padding:20px 40px;font-size:11px;color:var(--muted);
+    border-top:1px solid var(--border)}}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="tg-logo">&#9992;</div>
+  <div class="header-text">
+    <h1>Telegram Media Gallery</h1>
+    <div class="sub">eRakshak Forensic Triage &nbsp;&middot;&nbsp; Device: {device_serial}</div>
+  </div>
+</div>
+<div class="meta-bar">
+  <div class="meta-item"><span class="meta-label">Extracted</span><span class="meta-value">{ext_at}</span></div>
+  <div class="meta-item"><span class="meta-label">Telegram Version</span><span class="meta-value">{version}</span></div>
+  <div class="meta-item"><span class="meta-label">First Installed</span><span class="meta-value">{installed}</span></div>
+  <div class="meta-item"><span class="meta-label">Root Access</span><span class="meta-value">{root_badge}</span></div>
+  <div class="meta-item"><span class="meta-label">Message DB</span><span class="meta-value">{db_badge}</span></div>
+</div>
+<div class="stats-strip">
+  <div class="stat"><div class="stat-num">{len(images)}</div><div class="stat-lbl">Images<br>Pulled</div></div>
+  <div class="stat"><div class="stat-num">{total_sz}</div><div class="stat-lbl">Total<br>Size</div></div>
+  <div class="stat"><div class="stat-num">{len(set(m['category'] for m in images))}</div><div class="stat-lbl">Media<br>Types</div></div>
+</div>
+<div class="warn-banner">
+  <b>&#9888; Forensic Note:</b> Only media accessible without root is shown.
+  Full chat history requires root access to <code>/data/data/org.telegram.messenger/files/cache4.db</code>.
+</div>
+<div class="gallery-header">
+  <h2>&#128247; Retrieved Media Files</h2>
+  <span class="count">{len(images)} image(s)</span>
+</div>
+<div class="gallery">{cards_html}</div>
+<div class="modal" id="modal" onclick="closeModal()">
+  <button class="modal-close" onclick="closeModal()">&#10005;</button>
+  <img id="modal-img" src="" alt=""/>
+  <div class="modal-meta">
+    <span class="modal-fname" id="modal-fname"></span>
+    <span class="modal-sz"    id="modal-sz"></span>
+  </div>
+</div>
+<footer>eRakshak Forensic Tool &nbsp;&middot;&nbsp; Triage Preview &nbsp;&middot;&nbsp; {ext_at} &nbsp;&middot;&nbsp; Do not alter.</footer>
+<script>
+  function openModal(src,name,sz){{
+    document.getElementById('modal-img').src=src;
+    document.getElementById('modal-fname').textContent=name;
+    document.getElementById('modal-sz').textContent=sz;
+    document.getElementById('modal').classList.add('open');
+    event.stopPropagation();
+  }}
+  function closeModal(){{
+    document.getElementById('modal').classList.remove('open');
+    document.getElementById('modal-img').src='';
+  }}
+  document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeModal();}});
+</script>
+</body>
+</html>"""
+
+    gallery_path = out_dir / "telegram_media_gallery.html"
+    gallery_path.write_text(html, encoding="utf-8")
+    print(GREEN(f"  OK  Gallery -> {gallery_path}  ({_fmt_size(gallery_path.stat().st_size)})"))
+    return gallery_path
+
+
 # ---- Main --------------------------------------------------------------------
 
 def main() -> None:
@@ -427,6 +616,13 @@ def main() -> None:
     summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
 
     print_report(media, notifs, db_result, out_dir)
+
+    gallery = generate_html_gallery(
+        media, tg_info, out_dir, serial,
+        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+    if gallery:
+        print(GREEN(f"  Gallery: {gallery}"))
 
     print(f"\n{GREEN(BOLD('  Session complete!'))}")
     print(BOLD("=" * 78))
