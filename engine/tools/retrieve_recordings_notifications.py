@@ -66,6 +66,19 @@ CYAN   = lambda t: _c("36;1", t)
 BOLD   = lambda t: _c("1", t)
 DIM    = lambda t: _c("2", t)
 
+def safe_print(*args, **kwargs):
+    """Print to terminal, replacing emoji/chars that Windows cp1252 cannot encode."""
+    enc = getattr(sys.stdout, "encoding", "utf-8") or "utf-8"
+    safe_args = []
+    for a in args:
+        s = str(a)
+        try:
+            s.encode(enc)
+        except (UnicodeEncodeError, LookupError):
+            s = s.encode(enc, errors="replace").decode(enc, errors="replace")
+        safe_args.append(s)
+    print(*safe_args, **kwargs)
+
 _ADB: str = "adb"  # set in main()
 
 # ---- ADB helpers -------------------------------------------------------------
@@ -87,7 +100,12 @@ def _find_adb() -> str:
 
 def _adb(serial: str | None, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
     cmd = [_ADB] + (["-s", serial] if serial else []) + list(args)
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    # Use encoding='utf-8' with errors='replace' so emoji/Unicode from Android
+    # doesn't crash on Windows cp1252 terminals.
+    return subprocess.run(
+        cmd, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=timeout
+    )
 
 
 def _adb_out(serial: str | None, *args: str, timeout: int = 30) -> str:
@@ -397,7 +415,7 @@ def print_notifications_report(notifications: list[dict]) -> None:
         app   = (n.get("app_label") or n.get("package") or "--")[:18]
         title = (n.get("title") or "--")[:22]
         body  = (n.get("text") or n.get("big_text") or "--")[:50]
-        print(f"  {ts:<22} {app:<18} {title:<22} {body}")
+        safe_print(f"  {ts:<22} {app:<18} {title:<22} {body}")
 
     if len(notifications) > 50:
         print(DIM(f"  ... +{len(notifications)-50} more in notifications.json"))
