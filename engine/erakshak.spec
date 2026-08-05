@@ -16,7 +16,7 @@
 import sys
 from pathlib import Path
 
-ROOT = Path(SPECPATH)          # engine/
+ROOT = Path(SPECPATH)           # engine/
 PROJECT = ROOT.parent           # Android_Forensic/
 
 # ---------------------------------------------------------------------------
