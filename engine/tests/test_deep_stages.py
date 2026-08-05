@@ -489,8 +489,24 @@ import sqlite3
 _WEBKIT_BASE = 13_360_000_000_000_000  # ~2026, WebKit epoch (microseconds since 1601)
 
 
-def _build_chrome_history_db(path: Path, *, with_deleted: bool = False) -> None:
+def _build_chrome_history_db(
+    path: Path, *, with_deleted: bool = False
+) -> sqlite3.Connection | None:
+    """Build a minimal Chrome History SQLite DB.
+
+    When *with_deleted* is True the DB is opened in WAL mode with
+    ``wal_autocheckpoint=0`` (mirrors real Android behaviour). The deleted row
+    is inserted, committed, then deleted — leaving its old page image in the
+    WAL sidecar. The **open connection is returned** so the WAL file persists
+    on disk; callers must close it after all assertions (``try/finally``).
+
+    When *with_deleted* is False the connection is closed before returning and
+    ``None`` is returned (no WAL file needed).
+    """
     con = sqlite3.connect(path)
+    if with_deleted:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA wal_autocheckpoint=0")
     con.execute(
         "CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, "
         "visit_count INTEGER, last_visit_time INTEGER)"
@@ -500,6 +516,13 @@ def _build_chrome_history_db(path: Path, *, with_deleted: bool = False) -> None:
         ("https://example.com/", "Example Domain", 3, _WEBKIT_BASE),
     )
     if with_deleted:
+        # Fill extra rows so the target URL lands on a data page that the WAL
+        # captures before the DELETE overwrites it.
+        for i in range(60):
+            con.execute(
+                "INSERT INTO urls(url,title,visit_count,last_visit_time) VALUES (?,?,?,?)",
+                (f"https://example.com/filler-{i}", f"Filler {i}", 1, _WEBKIT_BASE + i),
+            )
         con.execute(
             "INSERT INTO urls(url,title,visit_count,last_visit_time) VALUES (?,?,?,?)",
             ("https://example.com/how-to-wipe-a-phone", "how to wipe a phone", 5,
@@ -509,7 +532,10 @@ def _build_chrome_history_db(path: Path, *, with_deleted: bool = False) -> None:
     if with_deleted:
         con.execute("DELETE FROM urls WHERE url LIKE '%wipe-a-phone%'")
         con.commit()
+        return con  # keep open so WAL persists
     con.close()
+    return None
+
 
 
 def _build_firefox_places_db(path: Path) -> None:
@@ -580,18 +606,30 @@ def test_browser_history_stage_discovers_firefox_profile_and_parses_places(
 
 def test_browser_history_stage_recovers_deleted_urls(case: Case, tmp_path: Path):
     src_db = tmp_path / "src_history.db"
-    _build_chrome_history_db(src_db, with_deleted=True)
-    adb = FakeAdb(
-        device_files={
+    # Keep the WAL connection open so the -wal sidecar is not auto-checkpointed.
+    wal_con = _build_chrome_history_db(src_db, with_deleted=True)
+    wal_file = tmp_path / "src_history.db-wal"
+    try:
+        # FakeAdb must serve BOTH the main DB and its WAL sidecar so that
+        # recover_deleted_rows can read the pre-deletion page image.
+        device_files = {
             "/data/data/com.android.chrome/app_chrome/Default/History": src_db.read_bytes(),
         }
-    )
-    src = RealDeviceSource(adb)  # type: ignore[arg-type]
-    recovered_rows: list = []
-    pipeline._run_tier2_browser_history(src, case, tmp_path / "stage", [], [], recovered_rows)
-    text = json.dumps(recovered_rows)
-    assert "wipe-a-phone" in text
-    assert any(r.get("_source_app") == "browser:chrome" for r in recovered_rows)
+        if wal_file.exists():
+            device_files["/data/data/com.android.chrome/app_chrome/Default/History-wal"] = (
+                wal_file.read_bytes()
+            )
+        adb = FakeAdb(device_files=device_files)
+        src = RealDeviceSource(adb)  # type: ignore[arg-type]
+        recovered_rows: list = []
+        pipeline._run_tier2_browser_history(src, case, tmp_path / "stage", [], [], recovered_rows)
+        text = json.dumps(recovered_rows)
+        assert "wipe-a-phone" in text
+        assert any(r.get("_source_app") == "browser:chrome" for r in recovered_rows)
+    finally:
+        if wal_con is not None:
+            wal_con.close()
+
 
 
 def test_browser_history_stage_gated_on_bfu(case: Case, tmp_path: Path):
