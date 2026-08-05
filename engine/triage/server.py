@@ -36,8 +36,8 @@ from .pipeline import PipelineConfig, run_acquisition
 from . import registry
 
 
-# Keep this during testing
-CASES_ROOT = Path("_test_output")
+# Default cases root — change to _test_output if running integration tests
+CASES_ROOT = Path("cases")
 
 
 def create_app(cases_root: Path = CASES_ROOT):
@@ -1266,7 +1266,7 @@ def _open(cases_root: Path, case_id: str):
 
 def _safe(case_id: str):
 
-    return "".join(c for c in case_id if c.isalnum() or c in "-_")
+    return "".join(c for c in case_id if c.isalnum() or c in "-_ ")
 
 
 def _auto_case_id(cases_root: Path):
@@ -1291,7 +1291,7 @@ def main():
 
     parser.add_argument("--port", type=int, default=5057)
 
-    parser.add_argument("--cases", default="_test_output")
+    parser.add_argument("--cases", default="cases")
 
     args = parser.parse_args()
 
