@@ -347,6 +347,14 @@ class PipelineConfig:
     run_ai_analysis: bool = True  # after collection, score artifacts into ranked leads
     use_case_bank: bool = True  # retrieve similar prior cases to inform the plan
     case_bank_paths: list = field(default_factory=list)  # extra JSONL corpora to load
+    # The department's own worked cases, promoted via the outcome API. Loaded from
+    # beside the case store by default so the learning loop actually closes — without
+    # this the pipeline would only ever retrieve the bundled synthetic exemplars.
+    use_local_corpus: bool = True
+    # Whether the plan may switch on root-only (Tier-2) app-private pulls. Collection
+    # scope is the examiner's decision, so a case brief alone must not be able to widen
+    # it without the caller saying so.
+    plan_allow_tier2: bool = True
     learn_from_case: bool = (
         True  # feed this run's outcome back into the knowledge graph
     )
@@ -604,29 +612,71 @@ def run_acquisition(
             )
 
             provider = get_provider(cfg.llm_provider or None)
+            # Only logged when a back-end was actually asked for and could not be
+            # reached. The ordinary offline run is not an event and must not fill the
+            # audit trail with a non-finding.
+            if getattr(provider, "degraded_from", ""):
+                case.log(
+                    "intel.llm",
+                    f"Requested LLM back-end '{provider.degraded_from}' was "
+                    f"unavailable; planning and analysis ran on the deterministic "
+                    f"'{provider.name}' path instead. No model contributed to this case.",
+                    result="warning",
+                    tier=Tier.TIER0.value,
+                )
 
             bank = None
             if cfg.use_case_bank:
-                bank = CaseBank.load(*[Path(p) for p in (cfg.case_bank_paths or [])])
+                corpora = [Path(p) for p in (cfg.case_bank_paths or [])]
+                # The department's promoted cases live beside the case store, next to
+                # the graph. Loading them here is what lets a locally worked case be
+                # cited as precedent by the next similar one.
+                if cfg.use_local_corpus:
+                    local_corpus = Path(case.root).parent / "case_studies.jsonl"
+                    if local_corpus.exists():
+                        corpora.append(local_corpus)
+                bank = CaseBank.load(*corpora)
+                for warn in bank.warnings:
+                    case.log("intel.corpus", warn, result="warning", tier=Tier.TIER0.value)
                 # The learned graph lives beside the case store so it persists across
                 # cases and is shared by every acquisition on this workstation.
                 graph_path = Path(case.root).parent / GRAPH_FILENAME
                 knowledge_graph = KnowledgeGraph.load(graph_path, bootstrap=bank)
+                if knowledge_graph.load_error:
+                    case.log(
+                        "intel.graph",
+                        knowledge_graph.load_error,
+                        result="warning",
+                        tier=Tier.TIER0.value,
+                    )
 
             profile, plan = plan_case(
                 cfg.case_description,
                 provider=provider,
-                allow_tier2=True,
+                allow_tier2=bool(cfg.plan_allow_tier2),
                 case_number=cfg.case_number,
                 bank=bank,
                 graph=knowledge_graph,
                 use_rag=cfg.use_case_bank,
             )
             case_profile_dict = profile.to_dict()
-            collection_plan_dict = plan.to_dict()
             for flag, val in plan.pipeline_overrides.items():
                 if val and hasattr(cfg, flag):
                     setattr(cfg, flag, getattr(cfg, flag) or bool(val))
+            # Overrides only ever turn flags ON, so anything the caller had already
+            # enabled will run whatever the plan ranked it. Correct the plan to say so
+            # before it is stored, or the case record claims a skip and a time saving
+            # that this run does not make.
+            from .intel.planner import reconcile_with_config
+
+            for kept in reconcile_with_config(plan, cfg):
+                case.log(
+                    "intel.deprioritised",
+                    f"{kept['label']} was ranked opt-in ({kept['reason']}) but the "
+                    "examiner had already enabled it, so it was collected.",
+                    tier=Tier.TIER0.value,
+                )
+            collection_plan_dict = plan.to_dict()
             cfg.keywords = list(cfg.keywords) + plan.keyword_rules()
             case.log(
                 "intel.plan",
@@ -646,12 +696,60 @@ def run_acquisition(
                     + ". Used for artifact ranking only — not evidence in this case.",
                     tier=Tier.TIER0.value,
                 )
+            # Every artifact the plan chose not to auto-collect is logged with its
+            # reason. The audit trail has to be able to answer "why was Telegram not
+            # pulled on this run" — a silent non-event cannot be reviewed later.
+            for skip in plan.deprioritised:
+                case.log(
+                    "intel.deprioritised",
+                    f"{skip['label']} not auto-collected: {skip['reason']}",
+                    result="skipped",
+                    tier=Tier.TIER0.value,
+                )
+            # An artifact the Tier-0 stages reach only in part is recorded either way.
+            # With the root stage on, the record says what went after the app-private
+            # store; with it off, the unreached remainder is a skip, and every skip needs
+            # a logged reason — otherwise a partial browser/location record reads as a
+            # complete one and its gaps read as findings.
+            for partial in plan.partial_collection:
+                if partial.get("root_stage_enabled"):
+                    case.log(
+                        "intel.partial_collection",
+                        f"{partial['label']}: Tier-0 collection is partial "
+                        f"({partial['reason']}); the root stage "
+                        f"'{partial['pipeline_flag']}' was enabled to reach the rest.",
+                        tier=Tier.TIER0.value,
+                    )
+                else:
+                    case.log(
+                        "intel.partial_collection",
+                        f"{partial['label']}: collected only in part — "
+                        f"{partial['reason']}. The root stage "
+                        f"'{partial['pipeline_flag']}' that reaches the rest was not "
+                        "enabled on this run, so an empty result here means 'not "
+                        "reached', NOT 'not present'.",
+                        result="skipped",
+                        tier=Tier.TIER0.value,
+                    )
             for rec in plan.recommendations:
                 case.log("intel.recommendation", rec["message"], tier=Tier.TIER0.value)
         except Exception as exc:  # planning must never abort an acquisition
+            # Targeted collection failed, so fall back to the full cheap sweep rather
+            # than leaving the Tier-1 flags at their off defaults — a planning bug must
+            # never quietly shrink what gets collected.
+            for _flag in (
+                "tier1_contacts",
+                "tier1_calllog",
+                "tier1_sms",
+                "tier1_collect_all",
+            ):
+                if hasattr(cfg, _flag):
+                    setattr(cfg, _flag, True)
             case.log(
                 "intel.plan",
-                f"planning error: {exc}",
+                f"planning error: {exc}. Targeted collection was NOT applied to this "
+                "run; all cheap Tier-1 collectors were enabled instead so nothing is "
+                "lost. Artifact ranking and case-brief keywords are absent.",
                 result="error",
                 tier=Tier.TIER0.value,
             )
@@ -2053,9 +2151,14 @@ def run_acquisition(
 
     # -- Case-intelligence: persist profile/plan + rank collected leads -------
     ai_findings: dict = {}
+    plan_obj = None
     if case_profile_dict:
         case.write_derived("case_profile", case_profile_dict)
         case.write_derived("collection_plan", collection_plan_dict)
+        if collection_plan_dict:
+            from .intel.planner import CollectionPlan
+
+            plan_obj = CollectionPlan.from_dict(collection_plan_dict)
         if cfg.run_ai_analysis:
             progress("intel", 0.94, "Scoring artifacts into investigative leads")
             try:
@@ -2063,15 +2166,37 @@ def run_acquisition(
                 from .intel.planner import CaseProfile
 
                 profile = CaseProfile(**case_profile_dict)
+                # Pass the plan so lead ranking uses the same fused priorities that
+                # drove acquisition — otherwise an artifact promoted by precedent
+                # would be collected first and then scored as if it never had been.
                 ai_findings = analyze_case(
-                    case, profile, provider=get_provider(cfg.llm_provider or None)
+                    case,
+                    profile,
+                    plan=plan_obj,
+                    provider=get_provider(cfg.llm_provider or None),
                 )
-                case.log(
-                    "intel.findings",
-                    f"AI leads: {ai_findings.get('counts', {}).get('total', 0)} "
-                    f"({ai_findings.get('analysis_method', 'deterministic')})",
-                    tier=Tier.TIER0.value,
+                # The custody log is the durable record of what the tool did, so it
+                # states the number of leads that MATCHED, not the number that fitted
+                # the display cap, and names anything that could not be read.
+                _shown = int(ai_findings.get("shown", 0))
+                _matched = int(ai_findings.get("total_matched", _shown))
+                _trunc = int(ai_findings.get("truncated", 0))
+                _unread = int(ai_findings.get("unreadable_count", 0))
+                _msg = (
+                    f"AI leads: {_matched} matched "
+                    f"({ai_findings.get('analysis_method', 'deterministic')})"
                 )
+                if _trunc:
+                    _msg += (
+                        f"; {_shown} listed in the report, {_trunc} beyond the display "
+                        "cap and still part of the case"
+                    )
+                if _unread:
+                    _msg += (
+                        f"; {_unread} row(s) could not be decoded and were not examined "
+                        "(not a finding of 'nothing there')"
+                    )
+                case.log("intel.findings", _msg, tier=Tier.TIER0.value)
             except Exception as exc:
                 case.log(
                     "intel.findings",
@@ -2082,26 +2207,50 @@ def run_acquisition(
 
         # -- Close the loop: record which artifacts actually produced leads ---
         # Provisional (unreviewed) grade at reduced weight. The examiner can later
-        # confirm the real outcome via the API, which supersedes this at full weight.
+        # confirm the real outcome via the API, which is recorded at full weight
+        # alongside this one — it outweighs this observation without erasing it.
         if cfg.learn_from_case and knowledge_graph is not None and ai_findings:
             try:
                 from .intel import record_provisional
-                from .intel.planner import CaseProfile, CollectionPlan, ArtifactPlan
+                from .intel.planner import CaseProfile
 
                 profile = CaseProfile(**case_profile_dict)
-                plan_obj = None
-                if collection_plan_dict:
-                    plan_obj = CollectionPlan(
-                        **{
-                            **collection_plan_dict,
-                            "artifacts": [
-                                ArtifactPlan(**a)
-                                for a in collection_plan_dict.get("artifacts", [])
-                            ],
-                        }
-                    )
+                # Grade against what this run actually acquired, not what the plan
+                # intended to acquire. A planned stage that never ran (mock source,
+                # helper-APK failure, no root) is an unobserved artifact, and recording
+                # it as a yield failure would teach the graph to stop collecting an
+                # artifact nobody ever looked at.
+                _observed: dict[str, object] = {
+                    "sms": all_messages,
+                    "contacts": contacts,
+                    "call_logs": calls,
+                    "media": media_items,
+                    "locations": locations,
+                    "deleted": recovered_rows,
+                    "browser": browser_history,
+                    "apps": installed_apps,
+                    "accounts": accounts,
+                    "calendar": calendar_events,
+                    "usage": app_usage,
+                    "telegram": _tg_msgs,
+                    "instagram": ig_msgs,
+                    "snapchat": sc_msgs,
+                    "whatsapp": wa_backup_messages,
+                }
+                collected_artifacts = {
+                    name for name, rows in _observed.items() if rows
+                }
+                # "financial" is derived from message/SMS text rather than collected
+                # directly, so it counts as observed whenever messages were.
+                if all_messages:
+                    collected_artifacts.add("financial")
                 learned = record_provisional(
-                    knowledge_graph, profile, ai_findings, plan_obj, case_id=cfg.case_id
+                    knowledge_graph,
+                    profile,
+                    ai_findings,
+                    plan_obj,
+                    case_id=cfg.case_id,
+                    collected=collected_artifacts,
                 )
                 case.write_derived("case_learning", learned)
                 if learned.get("recorded") and graph_path is not None:
@@ -2315,7 +2464,20 @@ def run_acquisition(
             "encryption_state": encryption_state,
             "device_state": device_state_record.get("summary", {}),
             "case_profile": case_profile_dict,
-            "ai_findings_summary": ai_findings.get("counts", {}) if ai_findings else {},
+            # counts describes the listed leads only; the matched/truncated/unreadable
+            # figures travel with it so a reader of the summary alone is not told that
+            # a capped list was the whole of it.
+            "ai_findings_summary": (
+                {
+                    **ai_findings.get("counts", {}),
+                    "total_matched": ai_findings.get("total_matched", 0),
+                    "listed": ai_findings.get("shown", 0),
+                    "beyond_display_cap": ai_findings.get("truncated", 0),
+                    "unreadable_rows": ai_findings.get("unreadable_count", 0),
+                }
+                if ai_findings
+                else {}
+            ),
             "collection_plan_summary": (
                 {
                     "evidence_basis": collection_plan_dict.get("evidence_basis", ""),

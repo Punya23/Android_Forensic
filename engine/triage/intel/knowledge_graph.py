@@ -30,11 +30,13 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .casebank import YIELD_WEIGHT, CaseBank, CaseStudy
+from .casebank import INACCESSIBLE, YIELD_WEIGHT, CaseBank, CaseStudy
 from .ontology import ARTIFACTS, CRIME_ONTOLOGY, PRIORITY_WEIGHT, priority_for
 
 #: Filename used when a graph is persisted next to the case store.
@@ -66,6 +68,10 @@ class Edge:
     alpha: float = _ALPHA0
     beta: float = _BETA0
     observations: int = 0
+    #: Sum of the weights actually observed. ``observations`` counts cases for the
+    #: reader; this is what trust is computed from, so a 0.35-weight provisional run
+    #: buys about a third of the authority of a confirmed one.
+    evidence: float = 0.0
     decisive: int = 0
     supporting: int = 0
     none: int = 0
@@ -78,14 +84,23 @@ class Edge:
 
     @property
     def strength(self) -> float:
-        """How much to trust the posterior: 0 (no data) .. 1 (well observed)."""
-        return self.observations / (self.observations + _SHRINKAGE_K)
+        """How much to trust the posterior: 0 (no data) .. 1 (well observed).
+
+        Computed from the *weighted* evidence, not the raw count. Automatic feedback is
+        recorded at :data:`~.feedback.PROVISIONAL_WEIGHT`, and with a raw count eight
+        unreviewed heuristic runs would reach the same trust as eight examiner-confirmed
+        cases — enough to clear the "well observed" gate that authorises demoting an
+        artifact out of collection. An unreviewed keyword score must not be able to stop
+        a doctrinally-high artifact from being collected.
+        """
+        return self.evidence / (self.evidence + _SHRINKAGE_K)
 
     def observe(self, yield_: str, case_number: str = "", weight: float = 1.0) -> None:
         y = YIELD_WEIGHT.get(yield_, 0.0)
         self.alpha += weight * y
         self.beta += weight * (1.0 - y)
         self.observations += 1
+        self.evidence += max(0.0, float(weight))
         if yield_ == "decisive":
             self.decisive += 1
         elif yield_ == "supporting":
@@ -102,6 +117,7 @@ class Edge:
             "alpha": round(self.alpha, 4),
             "beta": round(self.beta, 4),
             "observations": self.observations,
+            "evidence": round(self.evidence, 4),
             "decisive": self.decisive,
             "supporting": self.supporting,
             "none": self.none,
@@ -118,6 +134,10 @@ class Edge:
             alpha=float(d.get("alpha", _ALPHA0)),
             beta=float(d.get("beta", _BETA0)),
             observations=int(d.get("observations", 0)),
+            # Graphs written before weighted trust existed carry no "evidence" field.
+            # Falling back to the raw count keeps their priors intact rather than
+            # resetting an installation's accumulated history to zero on upgrade.
+            evidence=float(d.get("evidence", d.get("observations", 0))),
             decisive=int(d.get("decisive", 0)),
             supporting=int(d.get("supporting", 0)),
             none=int(d.get("none", 0)),
@@ -134,6 +154,10 @@ class KnowledgeGraph:
         self._cooccurrence: dict[tuple[str, str], int] = {}
         self._case_count: int = 0
         self._seen_cases: set[str] = set()
+        #: Set by :meth:`load` when a persisted graph existed but could not be read.
+        #: Surfaced in the audit log so a wiped history is never mistaken for a fresh
+        #: installation.
+        self.load_error: str = ""
 
     # --- learning ---------------------------------------------------------
     def observe_case(
@@ -160,6 +184,12 @@ class KnowledgeGraph:
             if not artifact:
                 continue
             y = str(yield_).strip().lower()
+            # An artifact nobody could read updates nothing. A locked database is a
+            # fact about that handset, not evidence the artifact is worthless, and
+            # learning it as a zero steers the planner away from exactly the sources
+            # that are being protected.
+            if y == INACCESSIBLE:
+                continue
             if y not in YIELD_WEIGHT:
                 y = "none"
             edge = self._edges.setdefault(
@@ -178,8 +208,31 @@ class KnowledgeGraph:
 
         if case_number:
             self._seen_cases.add(case_number)
+            # A confirmed outcome reaches the graph by two routes: recorded directly as
+            # ``confirmed:<n>``, and again as the bare ``<n>`` when the same case is
+            # promoted into the corpus and bootstrapped. They are one examiner
+            # judgement, so whichever arrives first blocks the other in both directions
+            # — otherwise the order the examiner happens to click in decides whether the
+            # case counts once or twice at full weight.
+            for twin in self._confirmation_twins(case_number):
+                self._seen_cases.add(twin)
         self._case_count += 1
         return updated
+
+    @staticmethod
+    def _confirmation_twins(case_number: str) -> list[str]:
+        """The other identity the same examiner-confirmed case is recorded under.
+
+        Provisional records are deliberately NOT twinned here: an automatic
+        0.35-weight observation and a later confirmation are two different pieces of
+        evidence, and the provisional one is withdrawn exactly by
+        :meth:`retract_case` when the confirmation arrives rather than being blocked.
+        """
+        if case_number.startswith("confirmed:"):
+            return [case_number.split(":", 1)[1]]
+        if ":" not in case_number:
+            return [f"confirmed:{case_number}"]
+        return []
 
     def bootstrap_from_casebank(self, bank: CaseBank) -> int:
         """Seed the graph from a corpus of case studies. Idempotent by case number."""
@@ -223,6 +276,7 @@ class KnowledgeGraph:
                     "blended": round(doctrine, 3),
                     "decisive": 0,
                     "none": 0,
+                    "cases": [],
                     "source": "doctrine",
                 }
                 continue
@@ -236,6 +290,10 @@ class KnowledgeGraph:
                 "blended": round(blended, 3),
                 "decisive": edge.decisive,
                 "none": edge.none,
+                # The case numbers behind this edge. The planner needs them to tell
+                # whether the graph and the retrieved precedents are two independent
+                # sources or the same corpus rows counted twice.
+                "cases": list(edge.cases),
                 "source": "learned" if edge.strength >= 0.25 else "doctrine+learned",
             }
         return out
@@ -359,29 +417,63 @@ class KnowledgeGraph:
     ) -> "KnowledgeGraph":
         """Load a persisted graph, or build a fresh one seeded from *bootstrap*.
 
-        A corrupt or unreadable graph file is treated as absent rather than fatal —
-        the tool must still run an acquisition.
+        A corrupt or unreadable graph file is treated as absent rather than fatal — the
+        tool must still run an acquisition. But it is never treated as *silence*: the
+        returned graph carries :attr:`load_error`, because an empty graph and a graph
+        whose file could not be read are indistinguishable to the planner, and the
+        second one means an installation's entire learned history has just dropped out
+        of the plan without anyone being told.
         """
         path = Path(path)
+        error = ""
         if path.exists():
             try:
                 kg = cls.from_dict(json.loads(path.read_text(encoding="utf-8")))
                 if bootstrap is not None:
                     kg.bootstrap_from_casebank(bootstrap)  # idempotent by case number
                 return kg
-            except (json.JSONDecodeError, OSError, TypeError, ValueError):
-                pass
+            except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+                error = (
+                    f"{path.name} could not be read ({type(exc).__name__}: {exc}); "
+                    "planning continued without any previously learned priors"
+                )
         kg = cls()
+        kg.load_error = error
         if bootstrap is not None:
             kg.bootstrap_from_casebank(bootstrap)
         return kg
 
     def save(self, path: Path) -> None:
+        """Write the graph atomically.
+
+        The temporary file name is unique per writer. Acquisition runs are threads in
+        the dashboard's own process and every one of them saves this same path, so a
+        shared ``.tmp`` name means two writers share one file: the first ``replace``
+        moves it away and the second fails with ``FileNotFoundError``, losing that
+        examiner's confirmed outcome. A reader arriving mid-write saw partial JSON and,
+        because :meth:`load` treats unreadable as absent, silently got an empty graph
+        in place of the installation's entire case history.
+        """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
-        tmp.replace(path)  # atomic-ish: never leave a half-written graph behind
+        payload = json.dumps(self.to_dict(), indent=2)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=path.name + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+            tmp = Path(fh.name)
+        try:
+            tmp.replace(path)  # atomic within a filesystem
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
 
 
 def _cosine(a: dict[str, float], b: dict[str, float]) -> float:

@@ -36,6 +36,11 @@ class LLMProvider(ABC):
 
     name: str = "base"
     available: bool = False
+    #: Back-end that was asked for but was unreachable, when this provider is standing
+    #: in for it. A degraded run and a deliberately offline one both report themselves
+    #: as "heuristic"; only this separates them, and an examiner reviewing the plan
+    #: later has to be able to tell "no model configured" from "the model was down".
+    degraded_from: str = ""
 
     @abstractmethod
     def extract_json(
@@ -202,11 +207,18 @@ def get_provider(kind: Optional[str] = None) -> LLMProvider:
     kind = (kind or os.environ.get("ERAKSHAK_LLM", "heuristic")).strip().lower()
     if kind == "ollama":
         p = OllamaProvider()
-        return p if p.available else HeuristicProvider()
+        return p if p.available else _degraded("ollama")
     if kind in ("anthropic", "claude"):
         p = AnthropicProvider()
-        return p if p.available else HeuristicProvider()
+        return p if p.available else _degraded(kind)
     return HeuristicProvider()
+
+
+def _degraded(requested: str) -> LLMProvider:
+    """A heuristic provider that remembers which back-end it is standing in for."""
+    provider = HeuristicProvider()
+    provider.degraded_from = requested
+    return provider
 
 
 def _safe_json(raw: Optional[str]) -> Optional[dict]:

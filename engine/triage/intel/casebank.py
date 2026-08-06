@@ -38,6 +38,23 @@ YIELD_WEIGHT: dict[str, float] = {
     "none": 0.0,
 }
 
+#: The artifact could not be read at all — encrypted database, wiped app, no root, app
+#: not installed. This is **not** a yield of zero: "we looked and found nothing" is
+#: evidence about the artifact, while "we could not look" is a fact about that handset.
+#: Conflating them teaches the planner to stop collecting an artifact precisely because
+#: it keeps being locked, which is when it matters most. Recorded for the reader and
+#: excluded from every score.
+INACCESSIBLE = "inaccessible"
+
+#: Everything a corpus row may legitimately say about an artifact.
+VALID_YIELDS: frozenset[str] = frozenset(set(YIELD_WEIGHT) | {INACCESSIBLE})
+
+#: Per-file cap on individually-reported corpus problems. A corrupt or hostile file can
+#: hold thousands of bad rows; every one of them would otherwise become its own audit-log
+#: entry and bury the rest of the acquisition record. Past the cap the count is still
+#: reported in a summary line, so the total is never understated — only the detail is.
+_MAX_FILE_WARNINGS = 10
+
 _STOPWORDS = frozenset(
     """
 a an the and or but if then than that this these those of in on at to for from with
@@ -72,8 +89,13 @@ class ArtifactOutcome:
     """What one artifact class contributed to one solved case."""
 
     artifact: str
-    yield_: str = "none"  # decisive | supporting | none
+    yield_: str = "none"  # decisive | supporting | none | inaccessible
     note: str = ""
+
+    @property
+    def scored(self) -> bool:
+        """Whether this outcome says anything about the artifact's evidential value."""
+        return self.yield_ in YIELD_WEIGHT
 
     @property
     def weight(self) -> float:
@@ -110,7 +132,14 @@ class CaseStudy:
         return [a.artifact for a in self.artifacts if a.yield_ == "decisive"]
 
     def useless_artifacts(self) -> list[str]:
+        """Collected, examined, and produced nothing — a genuine evidential null."""
         return [a.artifact for a in self.artifacts if a.yield_ == "none"]
+
+    def inaccessible_artifacts(self) -> list[str]:
+        """Could not be read at all. Reported separately because it tells the examiner
+        to prepare for the obstacle (root, keys, a second handset), not to skip the
+        artifact."""
+        return [a.artifact for a in self.artifacts if a.yield_ == INACCESSIBLE]
 
     def searchable_text(self) -> str:
         """The text BM25 indexes: narrative + title + lessons + artifact notes."""
@@ -145,6 +174,41 @@ class CaseStudy:
         )
 
 
+def _vocabulary_problems(study: CaseStudy, lineno: int) -> list[str]:
+    """Check a study against the ontology's vocabulary. Returns warning strings.
+
+    A name the ontology does not define is a dead retrieval signal: the row loads, its
+    narrative is still usable BM25 text, but :func:`~.planner.build_plan` only ever keys
+    on the known artifacts, so the outcome silently informs nothing. Imported lazily so
+    this module stays usable standalone.
+    """
+    try:
+        from .ontology import ARTIFACTS, CRIME_ONTOLOGY
+    except ImportError:  # pragma: no cover - defensive
+        return []
+    out: list[str] = []
+    for outcome in study.artifacts:
+        if outcome.artifact not in ARTIFACTS:
+            out.append(
+                f"line {lineno}: study {study.case_number} names artifact "
+                f"'{outcome.artifact}', which is not in the ontology — it will not "
+                "influence any collection plan."
+            )
+        if outcome.yield_ not in VALID_YIELDS:
+            out.append(
+                f"line {lineno}: study {study.case_number} artifact "
+                f"'{outcome.artifact}' has yield '{outcome.yield_}'; expected one of "
+                f"{sorted(VALID_YIELDS)} — treated as 'none'."
+            )
+    if study.crime_type not in CRIME_ONTOLOGY:
+        out.append(
+            f"line {lineno}: study {study.case_number} has crime type "
+            f"'{study.crime_type}', which is not in the ontology — it can only ever "
+            "match on narrative text, never on crime type."
+        )
+    return out
+
+
 @dataclass
 class RetrievedCase:
     """A retrieval hit: the study, its score, and why it matched."""
@@ -166,6 +230,7 @@ class RetrievedCase:
             "matched_terms": self.matched_terms[:12],
             "decisive_artifacts": self.study.decisive_artifacts(),
             "useless_artifacts": self.study.useless_artifacts(),
+            "inaccessible_artifacts": self.study.inaccessible_artifacts(),
             "outcome": self.study.outcome,
             "lessons": self.study.lessons,
             "source": self.study.source,
@@ -178,10 +243,18 @@ class CaseBank:
     Load order: the bundled corpus, then any extra JSONL paths (a department's own
     case history). Later records with a duplicate ``case_number`` replace earlier ones,
     so a department can override a bundled exemplar.
+
+    Loading never raises — one bad row must not stop an acquisition. But a row that is
+    dropped or overwritten is a case study the retrieval will not see, and a plan built
+    on a corpus the examiner believes is larger than it is misstates its own basis. Every
+    such event is therefore appended to :attr:`warnings` for the caller to log.
     """
 
     def __init__(self, studies: Optional[Iterable[CaseStudy]] = None):
         self._studies: dict[str, CaseStudy] = {}
+        #: Human-readable problems found while reading corpus files. Empty for a clean
+        #: load; the pipeline writes each entry to the case audit trail.
+        self.warnings: list[str] = []
         for s in studies or []:
             self.add(s)
         self._index_dirty = True
@@ -196,6 +269,12 @@ class CaseBank:
         sources: list[Path] = []
         if include_default and DEFAULT_CORPUS.exists():
             sources.append(DEFAULT_CORPUS)
+        if include_default and not DEFAULT_CORPUS.exists():
+            bank.warnings.append(
+                f"The bundled case-study corpus is missing from the install "
+                f"({DEFAULT_CORPUS}). Retrieval ran without it, so artifact ranking "
+                "fell back to doctrine and any locally promoted cases alone."
+            )
         sources.extend(p for p in paths if p)
         for path in sources:
             bank.load_file(path)
@@ -203,20 +282,59 @@ class CaseBank:
 
     def load_file(self, path: Path) -> int:
         """Load a JSONL file; returns the number of studies read. Never raises on a
-        malformed line — a bad row is skipped so one typo cannot break intake."""
+        malformed line — a bad row is skipped so one typo cannot break intake.
+
+        Anything skipped or overwritten is appended to :attr:`warnings`. A silent skip
+        would leave the officer believing a case study informed the plan when it never
+        reached the index.
+        """
         path = Path(path)
         if not path.exists():
+            self.warnings.append(
+                f"Case-study corpus '{path}' was requested but does not exist. No "
+                "studies were loaded from it and it did not contribute to any ranking."
+            )
             return 0
         count = 0
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        problems: list[str] = []
+
+        def note(message: str) -> None:
+            # Bounded detail, unbounded count: see _MAX_FILE_WARNINGS.
+            problems.append(message)
+            if len(problems) <= _MAX_FILE_WARNINGS:
+                self.warnings.append(f"{path.name}: {message}")
+
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+        ):
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
             try:
-                self.add(CaseStudy.from_dict(json.loads(line)))
-                count += 1
-            except (json.JSONDecodeError, TypeError, AttributeError):
+                study = CaseStudy.from_dict(json.loads(line))
+            except (json.JSONDecodeError, TypeError, AttributeError) as exc:
+                note(f"line {lineno} is not a readable case study ({exc}); skipped.")
                 continue
+            if not study.case_number:
+                note(f"line {lineno} has no case_number; skipped (nothing to cite it by).")
+                continue
+            existing = self._studies.get(study.case_number)
+            if existing is not None:
+                note(
+                    f"line {lineno} redefines case {study.case_number} "
+                    f"('{existing.title or existing.crime_type}' -> "
+                    f"'{study.title or study.crime_type}'); the earlier study was "
+                    "replaced and is not retrievable."
+                )
+            for problem in _vocabulary_problems(study, lineno):
+                note(problem)
+            self.add(study)
+            count += 1
+        if len(problems) > _MAX_FILE_WARNINGS:
+            self.warnings.append(
+                f"{path.name}: {len(problems)} rows had problems in total; "
+                f"{_MAX_FILE_WARNINGS} are listed above and {count} studies loaded."
+            )
         return count
 
     def add(self, study: CaseStudy) -> None:
@@ -356,10 +474,15 @@ class CaseBank:
     def artifact_evidence(self, hits: list[RetrievedCase]) -> dict[str, dict]:
         """Aggregate retrieved cases into per-artifact evidence.
 
-        Returns ``{artifact: {yield_score, decisive, supporting, none, cases, notes}}``
-        where ``yield_score`` is the retrieval-weighted mean yield in 0..1. This is what
-        the planner consumes: "in cases like this one, how often did this artifact
-        actually produce evidence?"
+        Returns ``{artifact: {yield_score, decisive, supporting, none, inaccessible,
+        cases, notes}}`` where ``yield_score`` is the retrieval-weighted mean yield in
+        0..1. This is what the planner consumes: "in cases like this one, how often did
+        this artifact actually produce evidence?"
+
+        A case where the artifact was :data:`INACCESSIBLE` is withdrawn from that
+        artifact's denominator rather than counted as a zero. It reports nothing about
+        evidential value, and scoring it as a failure would push the planner to stop
+        collecting artifacts that keep coming back locked — the ones most worth trying.
         """
         agg: dict[str, dict] = {}
         total_weight = sum(max(h.score, 0.0) for h in hits) or 1.0
@@ -373,18 +496,31 @@ class CaseBank:
                         "decisive": 0,
                         "supporting": 0,
                         "none": 0,
+                        "inaccessible": 0,
                         "cases": [],
                         "notes": [],
                         "_weighted": 0.0,
+                        "_unscored_weight": 0.0,
                     },
                 )
-                key = outcome.yield_ if outcome.yield_ in YIELD_WEIGHT else "none"
-                slot[key] += 1
+                if not outcome.scored:
+                    slot["inaccessible"] += 1
+                    slot["_unscored_weight"] += w
+                    if outcome.note:
+                        slot["notes"].append(
+                            f"{hit.study.case_number}: could not be accessed — "
+                            f"{outcome.note}"
+                        )
+                    continue
+                slot[outcome.yield_] += 1
                 slot["_weighted"] += w * outcome.weight
                 slot["cases"].append(hit.study.case_number)
                 if outcome.note and outcome.yield_ != "none":
                     slot["notes"].append(f"{hit.study.case_number}: {outcome.note}")
         for slot in agg.values():
-            slot["yield_score"] = round(slot.pop("_weighted") / total_weight, 3)
+            denom = total_weight - slot.pop("_unscored_weight")
+            slot["yield_score"] = (
+                round(slot.pop("_weighted") / denom, 3) if denom > 0 else 0.0
+            )
             slot["notes"] = slot["notes"][:3]
         return agg

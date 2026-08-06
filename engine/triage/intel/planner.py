@@ -28,7 +28,7 @@ flip the recommendation on expensive pulls — they can never silently drop an a
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Optional
 
 from ..flagging import KeywordRule
@@ -55,6 +55,11 @@ from .ontology import (
 _BAND_HIGH = 0.65
 _BAND_MEDIUM = 0.35
 
+#: Bounds on model-suggested keywords. Each one becomes a 'warn' flag rule, so an
+#: unbounded list inflates the flag count and the lead count without adding signal.
+_MAX_LLM_KEYWORDS = 24
+_MAX_KEYWORD_LEN = 60
+
 
 # --- data shapes -------------------------------------------------------------
 @dataclass
@@ -71,6 +76,10 @@ class CaseProfile:
     timeframe: Optional[str] = None
     summary: str = ""
     extraction_method: str = "heuristic"  # heuristic | llm:<name>
+    # Back-end that was requested for this extraction but was unreachable, if any. A
+    # degraded run and a deliberately offline one both read as "heuristic"; only this
+    # field separates them, and the difference matters when the plan is reviewed later.
+    llm_degraded_from: str = ""
     confidence: float = 0.0
     # Forensic-nomenclature layer: every named person with a canonical procedural role.
     roles: list[dict] = field(default_factory=list)  # RoleAssignment.to_dict()
@@ -135,6 +144,10 @@ class CollectionPlan:
         default_factory=list
     )  # serialisable KeywordRule dicts
     deprioritised: list[dict] = field(default_factory=list)  # {artifact, reason}
+    # Artifacts that ARE collected but only in part, because the rest needs a root stage
+    # (see PARTIAL_WITHOUT_ROOT). Recorded whether or not that stage was enabled, so the
+    # case record can never present a partial browser/location record as a complete one.
+    partial_collection: list[dict] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     rationale: str = ""
     # --- RAG / knowledge-graph provenance ---------------------------------
@@ -149,6 +162,29 @@ class CollectionPlan:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CollectionPlan":
+        """Rebuild a plan from its serialised form.
+
+        Unknown keys are dropped and missing ones defaulted rather than raising: a plan
+        read back from a case written by an earlier build would otherwise fail to load,
+        and the caller would silently fall back to unranked scoring instead of the
+        priorities that actually drove the acquisition. Deserialising is kept total for
+        that reason; constructing a plan in code stays strict.
+        """
+        known = {f.name for f in fields(cls)}
+        payload = {k: v for k, v in (data or {}).items() if k in known}
+        art_known = {f.name for f in fields(ArtifactPlan)}
+        payload["artifacts"] = [
+            a
+            if isinstance(a, ArtifactPlan)
+            else ArtifactPlan(**{k: v for k, v in a.items() if k in art_known})
+            for a in (payload.get("artifacts") or [])
+        ]
+        payload.setdefault("crime_type", "")
+        payload.setdefault("crime_label", "")
+        return cls(**payload)
 
     def keyword_rules(self) -> list[KeywordRule]:
         """Rebuild KeywordRule objects for the flagging engine."""
@@ -225,6 +261,7 @@ def extract_profile(
         keywords=matched,
         summary=description[:200],
         extraction_method="heuristic",
+        llm_degraded_from=getattr(provider, "degraded_from", ""),
         confidence=conf,
         roles=[a.to_dict() for a in assignments],
         nomenclature_warnings=validate_description(description),
@@ -250,22 +287,34 @@ def extract_profile(
         regrouped = {}
         for r in base.roles:
             regrouped.setdefault(r.get("role", "third_party"), []).append(r["name"])
-        base.suspects = (
-            _clean_list(llm.get("suspects"))
-            or _names_for(regrouped, ("suspect", "accused", "co_accused", "absconder"))
-            or base.suspects
+        # Union, never replacement. A model that omits a name the deterministic
+        # extractor found would otherwise silently drop that party from the plan's
+        # flag terms and from lead scoring — a named suspect must never be lost to a
+        # model's truncation.
+        base.suspects = _dedup(
+            base.suspects
+            + _names_for(regrouped, ("suspect", "accused", "co_accused", "absconder"))
+            + _clean_list(llm.get("suspects"))
         )
-        base.victims = (
-            _clean_list(llm.get("victims"))
-            or _names_for(regrouped, ("victim", "deceased"))
-            or base.victims
+        base.victims = _dedup(
+            base.victims
+            + _names_for(regrouped, ("victim", "deceased"))
+            + _clean_list(llm.get("victims"))
         )
-        base.other_entities = (
-            _clean_list(llm.get("other_entities")) or base.other_entities
+        base.other_entities = _dedup(
+            base.other_entities + _clean_list(llm.get("other_entities"))
         )
-        base.locations = _clean_list(llm.get("locations")) or base.locations
-        # Merge keywords: ontology-matched + model-suggested.
-        base.keywords = _dedup(base.keywords + _clean_list(llm.get("keywords")))
+        base.locations = _dedup(base.locations + _clean_list(llm.get("locations")))
+        # Merge keywords: ontology-matched + model-suggested. Model terms are bounded
+        # so a verbose or looping model cannot flood the flagging stage with noise.
+        base.keywords = _dedup(
+            base.keywords
+            + [
+                k
+                for k in _clean_list(llm.get("keywords"))
+                if 2 <= len(k) <= _MAX_KEYWORD_LEN
+            ][:_MAX_LLM_KEYWORDS]
+        )
         base.timeframe = llm.get("timeframe") or None
         base.summary = str(llm.get("summary") or base.summary)[:300]
         base.extraction_method = f"llm:{provider.name}"
@@ -304,14 +353,18 @@ def retrieve_precedents(
 
 
 # --- stage 2: plan building --------------------------------------------------
-# Which pipeline flag turns each artifact on. None → collected implicitly by Tier-0.
+# Which pipeline flag turns each artifact on. ``None`` means no flag gates it — see
+# :data:`ALWAYS_COLLECTED` for why, which is a different claim from "not collected".
 PIPELINE_FLAG_MAP: dict[str, Optional[str]] = {
     "contacts": "tier1_contacts",
     "call_logs": "tier1_calllog",
     "sms": "tier1_sms",
     "media": None,  # Tier-0 shared-storage pull (always runs)
-    "locations": None,  # Tier-0 dumpsys + EXIF
-    "browser": None,  # Tier-0
+    # Tier-0 reaches only part of these two — the real browser/Maps stores are
+    # app-private. The flag below is the stage that reaches the rest; leaving it
+    # unwired made the plan promise a collection a non-rooted run never makes.
+    "locations": "tier2_maps_location",
+    "browser": "tier2_browser_history",
     "financial": None,  # derived from SMS/messages
     "deleted": None,  # SQLite recovery always runs
     "calendar": "tier1_collect_all",
@@ -321,8 +374,102 @@ PIPELINE_FLAG_MAP: dict[str, Optional[str]] = {
     "telegram": "tier2_telegram",
     "instagram": "tier2_instagram",
     "snapchat": "tier2_snapchat",
-    "whatsapp": None,  # parsed from whatever the pull/root yields
+    "whatsapp": "tier2_whatsapp_backup",
 }
+
+#: Flags in :data:`PIPELINE_FLAG_MAP` whose stage needs root. Widening the collection
+#: scope is the examiner's decision, so the plan may only set one of these when the
+#: caller passed ``allow_tier2`` — a case brief on its own never authorises a root pull.
+ROOT_ONLY_FLAGS: frozenset[str] = frozenset(
+    {
+        "tier2_telegram",
+        "tier2_instagram",
+        "tier2_snapchat",
+        "tier2_whatsapp_backup",
+        "tier2_browser_history",
+        "tier2_maps_location",
+    }
+)
+
+#: Cheap artifacts whose Tier-0 collection is real but *incomplete*: a baseline runs on
+#: every acquisition, and the rest sits in app-private storage only the paired root stage
+#: can read. The plan must say so rather than claim the artifact is always acquired —
+#: on a non-rooted device the remainder is inaccessible, and describing it as collected
+#: turns an unread source into an apparent "produced nothing" (absent != inaccessible).
+PARTIAL_WITHOUT_ROOT: dict[str, str] = {
+    "browser": (
+        "the Tier-0 pass parses a History database only when one happens to sit in "
+        "shared storage; every browser keeps its own copy in app-private storage"
+    ),
+    "locations": (
+        "the Tier-0 pass covers photo EXIF, live dumpsys and map links in messages; "
+        "Maps navigation history, saved places and the Play-services geolocation cache "
+        "are app-private"
+    ),
+}
+
+#: Gated pipeline stages (``tier2_*`` / ``run_*``) that no plan can switch on, and why.
+#: A stage that defaults off and is unreachable from :data:`PIPELINE_FLAG_MAP` never runs
+#: at all, so this list is asserted against ``PipelineConfig`` in the tests: adding a
+#: gated stage without either wiring it to an artifact or recording it here fails, rather
+#: than shipping a capability that silently never fires.
+UNPLANNABLE_PIPELINE_FLAGS: dict[str, str] = {
+    "run_aleapp": (
+        "runs a third-party parser over the whole acquisition instead of collecting one "
+        "artifact class, and needs an ALEAPP install present — a runtime choice, not "
+        "something a case brief can imply."
+    ),
+    "run_self_validation": (
+        "on by default; a known-answer self-test of the tool itself, unrelated to what "
+        "the case is about."
+    ),
+    "run_app_finder": (
+        "on by default; a generic sweep over every otherwise-unrecognised SQLite DB, so "
+        "it belongs to no single artifact class."
+    ),
+    "run_ai_analysis": (
+        "on by default; it scores what was already collected, so letting the plan set it "
+        "would be circular."
+    ),
+    "tier2_wifi": (
+        "recovers stored Wi-Fi passphrases; ARTIFACTS has no Wi-Fi class to rank, and "
+        "pulling credentials is a scope decision the examiner makes explicitly."
+    ),
+    "tier2_bt_config": (
+        "the Bluetooth bond store — device pairing history, which no artifact class in "
+        "the ontology maps to."
+    ),
+    "tier2_app_presence": (
+        "evidence that an app was installed and later removed. PIPELINE_FLAG_MAP carries "
+        "one flag per artifact and 'apps' already maps to the Tier-1 dump, so this root "
+        "supplement has no slot; it stays an explicit examiner choice."
+    ),
+    "tier2_antiforensics": (
+        "looks for wiping, vault apps and hidden work profiles — a question about device "
+        "state rather than one of the case-relevant artifact classes."
+    ),
+    "tier2_recent_tasks": (
+        "recent-task snapshots need root plus an after-first-unlock device; no artifact "
+        "class maps to them."
+    ),
+}
+
+#: Artifacts the Tier-0 stages pull on every run, whatever the plan says. The plan may
+#: still *rank* these — the officer wants to know media matters for this crime — but it
+#: must never report them as deferred or count their acquisition time as "saved":
+#: claiming a saving the run does not make would be a false statement in the case record.
+#: "Collected on every run" is not "collected in full" — the artifacts listed in
+#: :data:`PARTIAL_WITHOUT_ROOT` have a root-only remainder that is gated separately.
+ALWAYS_COLLECTED: frozenset[str] = frozenset(
+    {"media", "locations", "browser", "financial", "deleted"}
+)
+
+#: The two promises a rationale can make about unconditional acquisition. They are
+#: constants because each is an assertion about what the run does, and the guard test
+#: checks that no artifact makes one without either a flag this plan actually set or a
+#: pipeline stage with no gate at all.
+ALWAYS_ACQUIRED_CLAIM = "cheap to collect, so always acquired"
+UNCONDITIONAL_TIER0_CLAIM = "collected unconditionally by the Tier-0 pull"
 
 
 def build_plan(
@@ -357,16 +504,21 @@ def build_plan(
     )
     overrides: dict = {}
     deprioritised: list[dict] = []
+    partial_collection: list[dict] = []
 
     precedents = precedents or []
     artifact_evidence = artifact_evidence or {}
     learned = graph.artifact_priors(crime.key) if graph is not None else {}
+    # artifact_priors always returns a full entry per artifact — placeholders included —
+    # so its truthiness says nothing about whether anything was ever observed. The basis
+    # label must reflect real observations or it misstates the provenance in the log.
+    observed = any((v or {}).get("observations") for v in learned.values())
 
-    if learned and precedents:
+    if observed and precedents:
         plan.evidence_basis = "fused"
     elif precedents:
         plan.evidence_basis = "doctrine+precedent"
-    elif learned:
+    elif observed:
         plan.evidence_basis = "doctrine+observation"
     else:
         plan.evidence_basis = "doctrine"
@@ -397,10 +549,47 @@ def build_plan(
         if cost == "cheap":
             # Always collect cheap artifacts, whatever their priority.
             collect = True
-            if flag:
+            # A cheap artifact can still have a root-only *remainder* (browser history,
+            # Maps/geolocation). Enabling that stage widens the collection scope, which
+            # stays the caller's decision, so the flag is only set when Tier-2 is allowed.
+            root_gated = flag in ROOT_ONLY_FLAGS
+            enabled = bool(flag) and (allow_tier2 or not root_gated)
+            if enabled:
                 overrides[flag] = True
+            partial_reason = PARTIAL_WITHOUT_ROOT.get(name)
+            if partial_reason is None:
+                rationale = f"{prio.title()} relevance; {ALWAYS_ACQUIRED_CLAIM}."
+            elif enabled:
+                rationale = (
+                    f"{prio.title()} relevance; the Tier-0 sources are acquired on every "
+                    f"run and the root stage '{flag}' is enabled to reach the rest "
+                    f"({partial_reason}). Without root that stage records the gap instead "
+                    "of reporting an empty result."
+                )
+            else:
+                rationale = (
+                    f"{prio.title()} relevance; the Tier-0 sources are acquired on every "
+                    f"run, but collection is PARTIAL — {partial_reason}. The root stage "
+                    f"'{flag}' that reaches the rest is not enabled for this run, so an "
+                    "empty result here means 'not reached', not 'not present'."
+                )
+            if partial_reason is not None:
+                partial_collection.append(
+                    {
+                        "artifact": name,
+                        "label": meta["label"],
+                        "pipeline_flag": flag,
+                        "root_stage_enabled": enabled,
+                        "reason": partial_reason,
+                    }
+                )
+        elif name in ALWAYS_COLLECTED:
+            # Expensive, but nothing gates it: the Tier-0 stages pull it on every run.
+            # Rank it honestly and say so — do not pretend it was deferred.
+            collect = True
             rationale = (
-                f"{prio.title()} relevance; cheap to collect, so always acquired."
+                f"{prio.title()} relevance; {UNCONDITIONAL_TIER0_CLAIM} "
+                "(no flag gates it), so the ranking affects review order only."
             )
         else:
             # Expensive / root artifacts: recommend only when the fused relevance is
@@ -468,9 +657,11 @@ def build_plan(
         if kw and not _is_regexy(kw):
             extra.append({"term": kw, "severity": "warn", "is_regex": False})
     # Named parties are flag terms; people under investigation rank above witnesses.
+    # Bounded at both ends: a two-letter fragment matches everything, and a sentence
+    # mis-parsed as a name would be scanned against every message body for nothing.
     adverse = set(profile.adverse_entities())
     for name in profile.entities():
-        if len(name) >= 3:
+        if 3 <= len(name) <= _MAX_KEYWORD_LEN:
             extra.append(
                 {
                     "term": name,
@@ -482,6 +673,7 @@ def build_plan(
 
     plan.pipeline_overrides = overrides
     plan.deprioritised = deprioritised
+    plan.partial_collection = partial_collection
     plan.notes = _build_notes(
         crime, profile, overrides, allow_tier2, precedents=precedents, plan=plan
     )
@@ -601,8 +793,21 @@ def _apply_asymmetry(
     """
     doc_w = PRIORITY_WEIGHT[doctrine_priority]
     new_w = PRIORITY_WEIGHT[band]
-    if new_w >= doc_w:
-        return band, ""  # promotion or no change — always allowed
+    if new_w > doc_w:
+        return band, ""  # the fused score already promoted it
+    if new_w == doc_w:
+        # The weighted mean is anchored by the doctrine floor, so consistent positive
+        # evidence can approach the next band without ever crossing it — which would
+        # make promotion *harder* than demotion and inverts the rule above. Allow one
+        # band of promotion on clear, corroborated evidence that the artifact produces
+        # results in cases like this one. The cost of being wrong here is acquisition
+        # minutes; the cost of being wrong the other way is lost evidence.
+        promoted, why = _positive_evidence_promotion(
+            doctrine_priority, precedent, learned
+        )
+        if promoted:
+            return promoted, why
+        return band, ""
 
     strength = float((learned or {}).get("strength", 0.0))
     learned_low = (learned or {}).get("posterior") is not None and float(
@@ -611,7 +816,19 @@ def _apply_asymmetry(
     precedent_low = bool(precedent) and float(precedent.get("yield_score", 1.0)) < 0.35
     precedent_seen = len(set((precedent or {}).get("cases", [])))
 
-    well_observed = strength >= 0.5 and learned_low
+    # The graph is bootstrapped from the same corpus the precedents are retrieved from,
+    # so the two "sources" routinely rest on the same case numbers. Treating that as
+    # corroboration lets two corpus rows vote twice and clear a gate meant to require
+    # independent agreement — which is how a doctrinally-high artifact ends up dropped
+    # from collection on the strength of a single file.
+    # Corpus studies enter the graph via bootstrap under their bare case number; real
+    # local casework enters it under "confirmed:"/"provisional:". Only the graded ones
+    # are evidence the corpus has not already supplied, so only they can corroborate it.
+    # Counting "corpus rows the retrieval happened not to surface" as independent would
+    # let a large enough corpus clear the gate on its own.
+    observed_locally = [c for c in (learned or {}).get("cases", []) if ":" in c]
+
+    well_observed = strength >= 0.5 and learned_low and len(observed_locally) >= 2
     corpus_agrees = precedent_low and precedent_seen >= 2
 
     if well_observed and corpus_agrees:
@@ -629,6 +846,59 @@ def _apply_asymmetry(
         "Evidence suggested a lower ranking but was too thin to act on "
         f"(fused {fused:.2f}); kept the doctrinal '{doctrine_priority}' ranking because "
         "an artifact not collected cannot be collected later."
+    )
+
+
+#: What counts as "this artifact produces results in cases like this one".
+_PROMOTE_PRECEDENT_YIELD = 0.6  # weighted decisive/supporting rate across retrieved cases
+_PROMOTE_PRECEDENT_CASES = 2  # …seen in at least this many distinct studies
+_PROMOTE_LEARNED_POSTERIOR = 0.6
+_PROMOTE_LEARNED_STRENGTH = 0.25  # ~3 local observations
+
+
+def _positive_evidence_promotion(
+    doctrine_priority: str,
+    precedent: Optional[dict],
+    learned: Optional[dict],
+) -> tuple[str, str]:
+    """One band of promotion when the evidence clearly supports it.
+
+    Returns ``(new_priority, note)`` or ``("", "")`` when the evidence is not strong
+    enough. Capped at a single band so one narrow corpus cannot take an artifact the
+    doctrine ranked 'low' straight to an auto-collected 'high'.
+    """
+    if doctrine_priority == "high":
+        return "", ""
+
+    reasons: list[str] = []
+    yield_score = float((precedent or {}).get("yield_score", 0.0))
+    n_cases = len(set((precedent or {}).get("cases", [])))
+    if (
+        precedent
+        and yield_score >= _PROMOTE_PRECEDENT_YIELD
+        and n_cases >= _PROMOTE_PRECEDENT_CASES
+    ):
+        reasons.append(f"produced evidence in {n_cases} retrieved similar case(s)")
+
+    posterior = (learned or {}).get("posterior")
+    strength = float((learned or {}).get("strength", 0.0))
+    if (
+        posterior is not None
+        and float(posterior) >= _PROMOTE_LEARNED_POSTERIOR
+        and strength >= _PROMOTE_LEARNED_STRENGTH
+    ):
+        reasons.append(
+            f"observed yield {float(posterior):.0%} in local casework "
+            f"(trust {strength:.0%})"
+        )
+
+    if not reasons:
+        return "", ""
+    higher = {"low": "medium", "medium": "high"}[doctrine_priority]
+    return higher, (
+        f"Promoted one band above the doctrinal '{doctrine_priority}': "
+        + "; ".join(reasons)
+        + ". Collecting more costs time; collecting less can lose the case."
     )
 
 
@@ -724,6 +994,57 @@ def _build_recommendations(
     return sorted(out.values(), key=lambda d: -len(d["cases"]))[:3]
 
 
+def reconcile_with_config(plan: CollectionPlan, cfg) -> list[dict]:
+    """Correct *plan* to describe what the run will actually do, and say what changed.
+
+    Overrides are applied additively, so a caller who had already switched a Tier-2
+    pull on keeps it on regardless of how the plan ranked it. Without this the stored
+    plan would record that artifact as deferred, count its minutes as saved, and the
+    audit trail would carry a ``skipped`` entry for a stage that then ran — a custody
+    log contradicting itself.
+
+    Returns the entries that were withdrawn from ``deprioritised``, so the caller can
+    log why each one was collected after all.
+    """
+    withdrawn: list[dict] = []
+    still_deferred: list[dict] = []
+    for skip in plan.deprioritised:
+        flag = PIPELINE_FLAG_MAP.get(skip["artifact"])
+        if flag and getattr(cfg, flag, False):
+            withdrawn.append(skip)
+        else:
+            still_deferred.append(skip)
+
+    if withdrawn:
+        enabled = {w["artifact"] for w in withdrawn}
+        for artifact in plan.artifacts:
+            if artifact.artifact in enabled:
+                artifact.collect = True
+                artifact.rationale += (
+                    " Collected because the examiner had already enabled this pull; "
+                    "the ranking affects review order only."
+                )
+        plan.deprioritised = still_deferred
+        plan.estimated_savings = _estimate_savings(plan)
+
+    # Same correction for the root *supplements*: the examiner may have switched one on
+    # directly (or with plan_allow_tier2 off). Saying the stage was not enabled while it
+    # runs understates the collection exactly as leaving an artifact in `deprioritised`
+    # overstates the skip, and it would tell the reader to discount a result that is real.
+    for partial in plan.partial_collection:
+        flag = partial.get("pipeline_flag")
+        if partial.get("root_stage_enabled") or not flag or not getattr(cfg, flag, False):
+            continue
+        partial["root_stage_enabled"] = True
+        for artifact in plan.artifacts:
+            if artifact.artifact == partial["artifact"]:
+                artifact.rationale += (
+                    f" The examiner had already enabled '{flag}', so the root stage does "
+                    "run and the app-private sources are reached after all."
+                )
+    return withdrawn
+
+
 def _estimate_savings(plan: CollectionPlan) -> dict:
     """Rough acquisition-effort saving from not auto-running the opt-in pulls.
 
@@ -738,16 +1059,23 @@ def _estimate_savings(plan: CollectionPlan) -> dict:
         "instagram": 8,
         "snapchat": 8,
     }
-    skipped = [a for a in plan.artifacts if a.cost == "expensive" and not a.collect]
+    # Only a gated artifact can be skipped. Artifacts in ALWAYS_COLLECTED are pulled by
+    # Tier-0 on every run, so counting their minutes as "saved" would overstate what
+    # targeting actually achieved.
+    gateable = [
+        a
+        for a in plan.artifacts
+        if a.cost == "expensive" and a.artifact not in ALWAYS_COLLECTED
+    ]
+    skipped = [a for a in gateable if not a.collect]
     saved = sum(cost_minutes.get(a.artifact, 6) for a in skipped)
-    total = sum(
-        cost_minutes.get(a.artifact, 6) for a in plan.artifacts if a.cost == "expensive"
-    )
+    total = sum(cost_minutes.get(a.artifact, 6) for a in gateable)
     return {
         "deprioritised_artifacts": [a.artifact for a in skipped],
         "estimated_minutes_saved": saved,
         "estimated_minutes_full_run": total,
-        "basis": "indicative planning estimate, not a measurement",
+        "basis": "indicative planning estimate, not a measurement; counts only "
+        "artifacts a pipeline flag can actually gate",
     }
 
 
@@ -912,6 +1240,13 @@ def _build_notes(
         f"Crime type detected as '{crime.label}' "
         f"({profile.extraction_method}, confidence {profile.confidence:.0%})."
     )
+    if profile.llm_degraded_from:
+        notes.append(
+            f"The '{profile.llm_degraded_from}' LLM back-end was requested but was "
+            "unavailable, so this plan was built by the deterministic extractor alone. "
+            "That is a degradation, not a configuration choice — re-run the planning "
+            "step if the model was expected to contribute."
+        )
     if profile.roles:
         summary = "; ".join(
             f"{r['label']}: {r['name']}"
@@ -956,12 +1291,33 @@ def _build_notes(
                 "priors are shrunk toward doctrine until a link is well observed."
             )
 
-    notes.append(
+    cheap_note = (
         "Cheap artifacts (calls, SMS, contacts, apps, accounts, calendar, usage, "
         "browser, locations) are always collected — skipping them saves nothing and "
         "evidence can only be collected once. Retrieval and the knowledge graph can "
         "reorder priorities but can never drop an artifact."
     )
+    partials = list((plan.partial_collection if plan is not None else []) or [])
+    if partials:
+        # "Collected" must not be read as "collected in full", so the qualification is
+        # attached to the same note that makes the claim.
+        cheap_note += (
+            f" {len(partials)} of them are only partly reachable without root; the "
+            "qualification follows."
+        )
+    notes.append(cheap_note)
+    for partial in partials:
+        notes.append(
+            f"{partial['label']}: collection is partial without root — "
+            f"{partial['reason']}. "
+            + (
+                f"The root stage '{partial['pipeline_flag']}' is enabled for this run, "
+                "and logs whether it could actually read those paths."
+                if partial["root_stage_enabled"]
+                else f"The root stage '{partial['pipeline_flag']}' is NOT enabled, so an "
+                "empty result means 'not reached', not 'not present'."
+            )
+        )
     if any(k.startswith("tier2_") for k in overrides):
         notes.append(
             "Root-only (Tier-2) pulls are recommended for this crime type; they "

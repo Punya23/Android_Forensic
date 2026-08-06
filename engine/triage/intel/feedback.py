@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .casebank import CaseStudy, ArtifactOutcome
+from .casebank import VALID_YIELDS, CaseStudy, ArtifactOutcome
 from .knowledge_graph import KnowledgeGraph
 from .planner import CaseProfile, CollectionPlan
 
@@ -78,15 +78,25 @@ def _artifact_for(finding: dict) -> Optional[str]:
 
 
 def derive_artifact_yields(
-    findings_bundle: dict, plan: Optional[CollectionPlan] = None
+    findings_bundle: dict,
+    plan: Optional[CollectionPlan] = None,
+    *,
+    collected: Optional[set[str]] = None,
 ) -> dict[str, str]:
     """Grade each collected artifact from the analysis output.
 
     Returns ``{artifact: "decisive" | "supporting" | "none"}``.
 
-    An artifact the plan did not collect is **omitted entirely** rather than graded
+    An artifact that was not collected is **omitted entirely** rather than graded
     ``none`` — we have no evidence about it either way, and recording a non-observation
     as a failure would teach the graph to keep skipping it forever.
+
+    *collected* is the set of artifacts the run **actually acquired**, and it is what
+    the caller should pass. Falling back to *plan* is a weaker approximation: the plan
+    records pre-acquisition intent, and an intent to collect is not an observation. A
+    stage can be planned and still never run (mock source, helper-APK failure, device
+    disconnect, missing root), and grading that ``none`` would teach the graph that the
+    artifact failed in a case where nobody looked at it.
     """
     findings = (findings_bundle or {}).get("findings") or []
     best: dict[str, float] = {}
@@ -103,12 +113,14 @@ def derive_artifact_yields(
             score = max(score, _DECISIVE_SCORE)
         best[artifact] = max(best.get(artifact, 0.0), score)
 
-    collected: Optional[set[str]] = None
-    if plan is not None:
-        collected = {a.artifact for a in plan.artifacts if a.collect}
+    universe_src: Optional[set[str]] = None
+    if collected is not None:
+        universe_src = {str(a).strip() for a in collected if str(a).strip()}
+    elif plan is not None:
+        universe_src = {a.artifact for a in plan.artifacts if a.collect}
 
     yields: dict[str, str] = {}
-    universe = collected if collected is not None else set(best)
+    universe = universe_src if universe_src is not None else set(best)
     for artifact in universe:
         score = best.get(artifact, 0.0)
         if score >= _DECISIVE_SCORE:
@@ -135,13 +147,14 @@ def record_provisional(
     plan: Optional[CollectionPlan] = None,
     *,
     case_id: str = "",
+    collected: Optional[set[str]] = None,
 ) -> dict:
     """Record automatic, unreviewed feedback from one completed run.
 
     Returns a summary describing exactly what was learned, so the audit log and the
     report can state it rather than the graph changing invisibly.
     """
-    yields = derive_artifact_yields(findings_bundle, plan)
+    yields = derive_artifact_yields(findings_bundle, plan, collected=collected)
     case_number = profile.case_number or case_id
     if not yields or not case_number:
         return {
@@ -163,6 +176,9 @@ def record_provisional(
         "crime_type": profile.crime_type,
         "edges_updated": updated,
         "yields": yields,
+        "graded_from": (
+            "observed collection" if collected is not None else "plan intent"
+        ),
         "note": (
             "Automatically derived from lead scores, not an examiner's finding. "
             "Recorded at reduced weight and superseded by a confirmed outcome."
@@ -182,7 +198,7 @@ def record_confirmed(
     cleaned = {
         str(k): str(v).lower()
         for k, v in (artifact_yields or {}).items()
-        if str(v).lower() in {"decisive", "supporting", "none"}
+        if str(v).lower() in VALID_YIELDS
     }
     if not cleaned or not case_number:
         return {"recorded": False, "reason": "no valid yields or no case number"}

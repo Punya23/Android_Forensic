@@ -383,6 +383,44 @@ def _extract_printable(data: bytes, min_len: int = MIN_BODY_LEN) -> List[str]:
     return strings
 
 
+def _extract_printable_at(
+    data: bytes, min_len: int = MIN_BODY_LEN
+) -> List[Tuple[int, str]]:
+    """Like :func:`_extract_printable`, but pairs each run with its byte offset.
+
+    The offset is what makes a carve re-derivable: an examiner seeks to it in the image
+    and finds the reported bytes. It is also the only safe dedup key — two freeblocks
+    holding identical text are two deleted rows, not one.
+    """
+    runs: List[Tuple[int, str]] = []
+    i = 0
+    while i < len(data):
+        for end in range(min(i + MAX_BODY_LEN, len(data)), i + min_len, -1):
+            try:
+                s = data[i:end].decode("utf-8")
+                if all(c.isprintable() or c in "\n\t\r" for c in s):
+                    if len(s) >= min_len:
+                        runs.append((i, s))
+                        i = end
+                        break
+            except UnicodeDecodeError:
+                continue
+        else:
+            i += 1
+    return runs
+
+
+def _extract_jids_at(data: bytes) -> List[Tuple[int, str]]:
+    """Find WhatsApp JIDs in raw bytes, each with its byte offset."""
+    try:
+        text = data.decode("utf-8", errors="replace")
+    except Exception:
+        return []
+    # errors="replace" keeps a 1:1 byte-to-character mapping for the ASCII JIDs we
+    # match, so a character index is a byte offset here.
+    return [(m.start(), m.group(0)) for m in JID_PATTERN.finditer(text)]
+
+
 def _extract_jids_from_bytes(data: bytes) -> List[str]:
     """Find all WhatsApp JIDs in raw bytes."""
     try:
@@ -951,8 +989,10 @@ def _carve_from_freeblocks(db_path: Path) -> List[Message]:
     )
 
     n_pages = len(raw) // page_size
-    carved_texts: List[str] = []
-    jid_refs: List[str] = []
+    # (absolute file offset, page number, value). The location is carried all the way
+    # to the Message so the provenance an examiner reads can be seeked to.
+    carved_texts: List[Tuple[int, int, str]] = []
+    jid_refs: List[Tuple[int, int, str]] = []
 
     for pg in range(n_pages):
         page_data = raw[pg * page_size : (pg + 1) * page_size]
@@ -984,15 +1024,27 @@ def _carve_from_freeblocks(db_path: Path) -> List[Message]:
                 fb_offset + FREEBLOCK_DATA_OFFSET : fb_offset + fb_size
             ]
 
-            carved_texts.extend(_extract_printable(fb_content))
-            jid_refs.extend(_extract_jids_from_bytes(fb_content))
+            content_start = pg * page_size + fb_offset + FREEBLOCK_DATA_OFFSET
+            page_number = pg + 1
+            carved_texts.extend(
+                (content_start + rel, page_number, text)
+                for rel, text in _extract_printable_at(fb_content)
+            )
+            jid_refs.extend(
+                (content_start + rel, page_number, jid)
+                for rel, jid in _extract_jids_at(fb_content)
+            )
             fb_offset = next_fb
 
-    seen_bodies: set = set()
-    for text in carved_texts:
-        if text in seen_bodies:
+    # Dedup by physical location, never by text. Overlapping freeblock chains can walk
+    # the same bytes twice and that re-read is one recovery — but the same string found
+    # at two offsets is two deleted rows, and collapsing them would hide how many times
+    # a message was deleted and destroy the offsets that make each carve verifiable.
+    seen_locations: set = set()
+    for offset, page_number, text in carved_texts:
+        if (offset, text) in seen_locations:
             continue
-        seen_bodies.add(text)
+        seen_locations.add((offset, text))
         messages.append(
             Message(
                 app="whatsapp",
@@ -1001,16 +1053,19 @@ def _carve_from_freeblocks(db_path: Path) -> List[Message]:
                 timestamp=None,
                 confidence=Confidence.CARVED_PARTIAL,
                 source_file=db_path.name,
-                provenance=f"freeblock carving from {db_path.name}",
+                provenance=(
+                    f"freeblock carving from {db_path.name} "
+                    f"(page {page_number}@{offset})"
+                ),
                 flags=["freeblock_carved"],
             )
         )
 
-    seen_jids: set = set()
-    for jid in jid_refs:
-        if jid in seen_jids:
+    seen_jid_locations: set = set()
+    for offset, page_number, jid in jid_refs:
+        if (offset, jid) in seen_jid_locations:
             continue
-        seen_jids.add(jid)
+        seen_jid_locations.add((offset, jid))
         messages.append(
             Message(
                 app="whatsapp",
@@ -1019,7 +1074,10 @@ def _carve_from_freeblocks(db_path: Path) -> List[Message]:
                 timestamp=None,
                 confidence=Confidence.DELETION_DETECTED,
                 source_file=db_path.name,
-                provenance=f"JID extracted from freeblock in {db_path.name}",
+                provenance=(
+                    f"JID extracted from freeblock in {db_path.name} "
+                    f"(page {page_number}@{offset})"
+                ),
                 flags=["freeblock_carved", "jid_only"],
             )
         )
@@ -1245,8 +1303,9 @@ def recover_e2e_messages(
     Returns
     -------
     list[Message]
-        All recovered messages across all techniques, deduplicated by body
-        text + sender pair.
+        All recovered messages across all techniques, deduplicated by body text,
+        sender and provenance — so one physical recovery counts once while the same
+        text recovered from two locations stays two pieces of evidence.
     """
     if techniques is None:
         techniques = ("wal", "freeblock", "key_derive", "metadata")
@@ -1270,7 +1329,11 @@ def recover_e2e_messages(
         try:
             msgs = runner()
             for m in msgs:
-                key = (m.body, m.sender)
+                # Provenance is part of the identity, not decoration. Two carves of the
+                # same text from different freeblocks are two deleted rows; merging on
+                # body+sender alone would undo the location-aware dedup the carver just
+                # did and drop the second offset before any report could cite it.
+                key = (m.body, m.sender, m.provenance)
                 if key not in seen_bodies:
                     seen_bodies.add(key)
                     all_messages.append(m)

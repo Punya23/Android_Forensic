@@ -173,6 +173,12 @@ export interface CaseProfile {
   timeframe: string | null;
   summary: string;
   extraction_method: string;
+  /**
+   * Back-end that was requested for this extraction but was unreachable. A degraded
+   * run and a deliberately offline one both read as "heuristic"; only this separates
+   * them, and the difference matters when the plan is reviewed later.
+   */
+  llm_degraded_from?: string;
   confidence: number;
   roles: RoleAssignment[];
   nomenclature_warnings: NomenclatureWarning[];
@@ -206,7 +212,14 @@ export interface Precedent {
   lexical: number;
   matched_terms: string[];
   decisive_artifacts: string[];
+  /** Collected, examined, produced nothing — a genuine evidential null. */
   useless_artifacts: string[];
+  /**
+   * Could not be read at all (encrypted, wiped, no root). Deliberately separate from
+   * `useless_artifacts`: it is a fact about that handset, not evidence the artifact is
+   * worthless, and it never counts against the artifact's ranking.
+   */
+  inaccessible_artifacts?: string[];
   outcome: string;
   lessons: string[];
   /** Provenance — synthetic exemplar vs a real worked case. */
@@ -225,13 +238,32 @@ export interface PlanRecommendation {
   co_occurs_with?: { artifact: string; cases: number }[];
 }
 
+/** An artifact the plan is not auto-collecting, with the reason the planner logged. */
+export interface DeprioritisedArtifact {
+  artifact: string;
+  label: string;
+  reason: string;
+}
+
 export interface CollectionPlan {
   crime_type: string;
   crime_label: string;
   artifacts: ArtifactPlan[];
   pipeline_overrides: Record<string, boolean>;
   extra_keywords: { term: string; severity: string; is_regex: boolean }[];
-  deprioritised: { artifact: string; label: string; reason: string }[];
+  deprioritised: DeprioritisedArtifact[];
+  /**
+   * Artifacts that ARE collected, but only in part, because the rest needs a root
+   * stage. Recorded whether or not that stage ran, so a partial browser or location
+   * record can never be read as a complete one.
+   */
+  partial_collection?: {
+    artifact: string;
+    label: string;
+    pipeline_flag: string | null;
+    root_stage_enabled: boolean;
+    reason: string;
+  }[];
   notes: string[];
   rationale: string;
   precedents: Precedent[];
@@ -329,6 +361,11 @@ export interface CaseLearning {
   crime_type?: string;
   edges_updated?: number;
   yields?: Record<string, ArtifactYield>;
+  /**
+   * Whether the grades came from what the run actually acquired or merely from what
+   * the plan intended to acquire. An intent is not an observation.
+   */
+  graded_from?: "observed collection" | "plan intent";
   note?: string;
   reason?: string;
 }
@@ -357,6 +394,24 @@ export interface AIFindings {
   entities: string[];
   keyword_patterns: string[];
   counts: Record<string, number>;
+  /** Distinct leads that matched, before the display cap was applied. */
+  total_matched?: number;
+  shown?: number;
+  /**
+   * Leads that matched but are not in `findings`. They are not excluded from the case
+   * — showing a capped list without saying so understates the evidence held.
+   */
+  truncated?: number;
+  /** Near-duplicate leads collapsed into a single entry. */
+  deduplicated?: number;
+  /**
+   * Rows the analyser could not decode. Reported separately from "examined and found
+   * irrelevant": absent is not the same as inaccessible.
+   */
+  unreadable_count?: number;
+  unreadable?: { source_type: string; source_file: string; reason: string }[];
+  /** Back-end that was requested for this analysis but was unreachable, if any. */
+  llm_degraded_from?: string;
   findings: Finding[];
   narrative: string;
   disclaimer: string;

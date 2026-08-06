@@ -485,7 +485,15 @@ def create_app(cases_root: Path = CASES_ROOT):
 
             case.write_derived("case_profile", profile.to_dict())
 
-            case.write_derived("collection_plan", build_plan(profile).to_dict())
+            revised = build_plan(profile, graph=_knowledge_graph(cases_root))
+
+            if case.read_derived("collection_plan"):
+
+                case.write_derived("collection_plan_revised", revised.to_dict())
+
+            else:
+
+                case.write_derived("collection_plan", revised.to_dict())
 
         else:
 
@@ -575,6 +583,8 @@ def create_app(cases_root: Path = CASES_ROOT):
             llm_provider=str(body.get("llm_provider", "") or ""),
             case_number=str(body.get("case_number", "") or ""),
             use_case_bank=bool(body.get("use_case_bank", True)),
+            plan_allow_tier2=bool(body.get("plan_allow_tier2", True)),
+            use_local_corpus=bool(body.get("use_local_corpus", True)),
             learn_from_case=bool(body.get("learn_from_case", True)),
         )
 
@@ -899,6 +909,9 @@ def create_app(cases_root: Path = CASES_ROOT):
             "ai_findings",
             "case_profile",
             "collection_plan",
+            # Re-analysis writes its re-ranking here rather than over the plan that
+            # drove the acquisition, so both readings stay available to the dashboard.
+            "collection_plan_revised",
             "case_learning",
             "case_outcome",
             "location_summary",

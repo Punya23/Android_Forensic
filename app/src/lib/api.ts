@@ -208,6 +208,14 @@ export const api = {
     case_number?: string;
     llm_provider?: string;
     use_case_bank?: boolean;
+    /**
+     * Whether the plan may switch on root-only (Tier-2) pulls. Collection scope is the
+     * examiner's decision, so a case brief alone must not be able to widen it.
+     */
+    plan_allow_tier2?: boolean;
+    /** Load this installation's own promoted cases as retrieval precedent. */
+    use_local_corpus?: boolean;
+    run_ai_analysis?: boolean;
     learn_from_case?: boolean;
     tier1_contacts?: boolean;
     tier1_calllog?: boolean;

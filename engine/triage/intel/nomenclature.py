@@ -254,8 +254,11 @@ def role_meta(key: str) -> Role:
 
 
 # --- extraction --------------------------------------------------------------
-# Ordered patterns. Each yields (name, role_word). Earlier = more explicit = higher
-# confidence, so the first match for a given name wins.
+# Ordered patterns, each ``(regex, confidence, role_first)``. Earlier = more explicit =
+# higher confidence, so the first match for a given name wins. ``role_first`` says which
+# capture group holds the role word: guessing from capitalisation instead would misread
+# "Absconder: Ravi", because the role words that are not in ``_NOT_A_NAME`` look exactly
+# like a name at the start of a sentence.
 #
 # The role alternation is wrapped in a scoped ``(?i:…)`` so a sentence-initial
 # "Complainant Meera reported…" matches, while the name group keeps its mandatory
@@ -266,31 +269,43 @@ _ROLE_WORDS = (
     r"prosecutrix|missing\s+person"
 )
 
-_ASSIGNMENT_PATTERNS: tuple[tuple[str, float], ...] = (
+#: What may sit between a role word and the name in the "Role Name" form. The colon and
+#: dash variants matter because the structured intake the tool's own guidance suggests
+#: ("Accused: Laksh. Deceased: Shubham.") uses them; without this the officer's named
+#: accused silently lands on ``third_party`` and the plan stops weighting them at all.
+#: A bare separator must still be adjacent to the role word (no ``\s*`` fallback), or
+#: "accusedLaksh" would parse.
+_ROLE_NAME_GAP = r"(?:\s*[:–—-]\s*|\s+)"
+
+_ASSIGNMENT_PATTERNS: tuple[tuple[str, float, bool], ...] = (
     # "Laksh is a suspect", "Shubham is the deceased"
     (
         rf"\b([A-Z][a-z]{{2,}})\s+(?:is|was)\s+(?:a|the|our|an)?\s*(?:prime\s+)?"
         rf"(?i:({_ROLE_WORDS}))\b",
         0.95,
+        False,
     ),
-    # "the suspect Laksh", "accused named Laksh", "Complainant Meera"
+    # "the suspect Laksh", "accused named Laksh", "Complainant Meera", "Accused: Laksh"
     (
-        rf"\b(?:[Tt]he\s+|[Oo]ur\s+)?(?i:({_ROLE_WORDS}))\s+"
+        rf"\b(?:[Tt]he\s+|[Oo]ur\s+)?(?i:({_ROLE_WORDS})){_ROLE_NAME_GAP}"
         rf"(?:is\s+|named\s+|,\s*)?([A-Z][a-z]{{2,}})\b",
         0.9,
+        True,
     ),
     # "Neha is missing", "Neha has been untraceable since Tuesday"
     (
         r"\b([A-Z][a-z]{2,})\s+(?:is|was|has\s+been|went)\s+(?:reported\s+)?"
         r"(?i:(missing|untraceable|absconding|runaway))\b",
         0.9,
+        False,
     ),
     # "murder of Shubham", "kidnapping of Priya" → deceased / victim
-    (r"\b(?i:(murder|homicide|killing|death))\s+of\s+([A-Z][a-z]{2,})\b", 0.85),
+    (r"\b(?i:(murder|homicide|killing|death))\s+of\s+([A-Z][a-z]{2,})\b", 0.85, True),
     (
         r"\b(?i:(kidnapping|abduction|assault|rape|robbery|cheating|fraud))\s+of\s+"
         r"([A-Z][a-z]{2,})\b",
         0.85,
+        True,
     ),
     # "Laksh murdered Shubham" is handled separately by _ACTION_RE below.
 )
@@ -434,14 +449,13 @@ def extract_roles(description: str) -> list[RoleAssignment]:
         )
 
     # 2. Explicit role statements.
-    for pattern, conf in _ASSIGNMENT_PATTERNS:
+    for pattern, conf, role_first in _ASSIGNMENT_PATTERNS:
         for m in re.finditer(pattern, text):
-            a, b = m.group(1), m.group(2)
-            # Whichever group looks like a name is the person; the other is the role.
-            if re.match(r"^[A-Z][a-z]{2,}$", a) and a not in _NOT_A_NAME:
-                name, role_word = a, b
-            else:
-                name, role_word = b, a
+            # Each pattern declares which group is which. _assign still filters the name
+            # through _NOT_A_NAME, so a mis-typed role word cannot become a party.
+            role_word, name = (
+                (m.group(1), m.group(2)) if role_first else (m.group(2), m.group(1))
+            )
             word = role_word.lower().strip()
             if word in {"murder", "homicide", "killing", "death"}:
                 role_word = "deceased"

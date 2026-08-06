@@ -465,6 +465,23 @@ def generate_report(case_dir: str | Path) -> Path:
 
         count_str = " · ".join(f"{k}: {v}" for k, v in counts.items() if k != "total")
 
+        # A lead count that omits the cap reads as the complete set. State it where the
+        # count is stated, or the report understates the evidence actually held.
+        _truncated = int(ai_findings.get("truncated") or 0)
+        _unreadable = int(ai_findings.get("unreadable_count") or 0)
+        _caveats = ""
+        if _truncated:
+            _caveats += (
+                f' — highest-ranked of {_esc(ai_findings.get("total_matched", 0))} '
+                f"matching; {_esc(_truncated)} further lead(s) are not listed and "
+                "remain part of the case"
+            )
+        if _unreadable:
+            _caveats += (
+                f' · {_esc(_unreadable)} row(s) could not be decoded and were not '
+                "examined (not a finding that they held nothing)"
+            )
+
         # --- parties, in canonical forensic nomenclature ---------------------
         role_rows = ""
         for r in prof.get("roles") or []:
@@ -571,7 +588,7 @@ def generate_report(case_dir: str | Path) -> Path:
             Extraction: {_esc(prof.get("extraction_method"))} ·
             Planning basis: {_esc(collect_plan.get("evidence_basis", "doctrine"))} ·
             Analysis: {_esc(ai_findings.get("analysis_method", "n/a"))} ·
-            {_esc(counts.get("total", 0))} leads ({_esc(count_str)})
+            {_esc(counts.get("total", 0))} leads ({_esc(count_str)}){_caveats}
           </p>
           <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px">
             {role_rows or

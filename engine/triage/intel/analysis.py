@@ -14,6 +14,7 @@ ranking can always be explained from the cited artifact, and the AI never invent
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
@@ -44,6 +45,10 @@ class Finding:
     category: str  # message | call | recovered | location | browser | app
     snippet: str = ""
     source_type: str = ""  # dataset name
+    # Which app the artifact came from ("telegram", "whatsapp", "sms", …). Without it
+    # every message lead is indistinguishable by source, and the feedback loop credits
+    # all of them to whichever artifact the dataset name happens to map to.
+    app: str = ""
     source_file: str = ""
     timestamp: Optional[str] = None
     confidence: str = "live"
@@ -71,6 +76,13 @@ def analyze_derived(
     provider = provider or get_provider()
     crime = CRIME_ONTOLOGY.get(profile.crime_type, CRIME_ONTOLOGY["general"])
 
+    # Artifact weighting follows the plan's fused priority when a plan is supplied, and
+    # the raw ontology otherwise. Without this the ranking would ignore everything
+    # retrieval and the knowledge graph established: an artifact promoted to 'high'
+    # because it broke three closely-matching prior cases would still have its leads
+    # scored at the doctrinal default.
+    artifact_priority = _priority_lookup(crime, plan)
+
     # Compile scoring vocabulary.
     entity_terms = [e for e in profile.entities() if len(e) >= 3]
     entity_res = [
@@ -80,6 +92,11 @@ def analyze_derived(
 
     findings: list[Finding] = []
     n = 0
+    # Rows the analyser could not read at all, as opposed to rows it read and found
+    # irrelevant. Without this an examiner cannot tell "5 artifacts examined, 4
+    # irrelevant" from "4 artifacts could not be decoded" — the same absent-vs-
+    # inaccessible distinction the corpus and the knowledge graph already make.
+    unreadable: list[dict] = []
 
     # -- messages (WhatsApp/Telegram/IG/Snap/SMS/recovered) ----------------
     for m in derived.get("messages", []) or []:
@@ -88,7 +105,17 @@ def analyze_derived(
             continue
         # Recovered/carved messages can carry binary bodies; keep only readable text.
         body = raw if _mostly_printable(raw) else _printable_text([raw])
-        if len(body) < 3:
+        # No minimum length: "बम" (bomb) is a whole word in two characters, and a
+        # character-count floor silently biases the analyser against every non-Latin
+        # script. Relevance is decided by keyword and entity matching below.
+        if not body:
+            unreadable.append(
+                {
+                    "source_type": "messages",
+                    "source_file": m.get("source_file", ""),
+                    "reason": "body could not be decoded as text",
+                }
+            )
             continue
         ents = _match_entities(entity_res, body + " " + str(m.get("sender", "")))
         kws = _match_keywords(kw_res, body)
@@ -97,7 +124,7 @@ def analyze_derived(
         app = m.get("app", "message")
         conf = m.get("confidence", "live")
         sender = m.get("sender")
-        score = _score(conf, ents, kws, app_priority=priority_for(crime, app))
+        score = _score(conf, ents, kws, app_priority=artifact_priority(app))
         # Don't repeat the sender's own name in the "mentioning …" clause.
         mention_ents = [e for e in ents if e.lower() != str(sender or "").lower()]
         n += 1
@@ -110,6 +137,7 @@ def analyze_derived(
                 category="message",
                 snippet=_window(body, mention_ents + kws),
                 source_type="messages",
+                app=app,
                 source_file=m.get("source_file", ""),
                 timestamp=m.get("timestamp"),
                 confidence=conf,
@@ -125,7 +153,16 @@ def analyze_derived(
     # "hits", so we extract readable runs first and skip rows with no real text.
     for r in derived.get("recovered", []) or []:
         text = _printable_text(r.get("values", []))
-        if len(text) < 4:
+        if not text:
+            # A carved row that yielded no decodable text was not examined and found
+            # empty — it could not be read. Recorded rather than dropped.
+            unreadable.append(
+                {
+                    "source_type": "recovered",
+                    "source_file": r.get("source_file", ""),
+                    "reason": "carved row contained no decodable text",
+                }
+            )
             continue
         ents = _match_entities(entity_res, text)
         kws = _match_keywords(kw_res, text)
@@ -161,7 +198,7 @@ def analyze_derived(
             c.get("confidence", "live"),
             ents,
             [],
-            app_priority=priority_for(crime, "call_logs"),
+            app_priority=artifact_priority("call_logs"),
         )
         n += 1
         findings.append(
@@ -189,7 +226,7 @@ def analyze_derived(
         ents = _match_entities(entity_res, hay)
         if not kws and not ents:
             continue
-        score = _score("live", ents, kws, app_priority=priority_for(crime, "browser"))
+        score = _score("live", ents, kws, app_priority=artifact_priority("browser"))
         n += 1
         findings.append(
             Finding(
@@ -211,12 +248,17 @@ def analyze_derived(
 
     # Overlapping carves of the same DB page produce many near-identical leads; collapse
     # them so one readable fragment counts once (keep the highest-scoring instance).
-    findings = _dedupe(findings)
+    findings, deduplicated = _dedupe(findings)
     # Rank: score desc, then severity, then keep only the top *limit*.
     findings.sort(
         key=lambda f: (f.score, _SEVERITY_ORDER.get(f.severity, 0)), reverse=True
     )
+    # The cap keeps the lead list reviewable, but it has to be stated. "12 leads" read
+    # as the complete set when 300 matched is a false account of the evidence, and the
+    # examiner would never know to widen the search.
+    total_matched = len(findings)
     findings = findings[:limit]
+    truncated = total_matched - len(findings)
 
     bundle = {
         "generated_for": profile.crime_label,
@@ -225,14 +267,46 @@ def analyze_derived(
         "entities": entity_terms,
         "keyword_patterns": [k[0] for k in kw_res],
         "counts": _counts(findings),
+        "total_matched": total_matched,
+        "shown": len(findings),
+        "truncated": truncated,
+        # Records merged into a listed lead because they were identical on every field
+        # this analysis scores. total_matched counts *distinct* leads, so it is computed
+        # after the merge and cannot express them: without this number the truncation
+        # line ("0 more were not listed") reads as an assurance that the bundle accounts
+        # for every matching record, which is only true when this is zero.
+        "deduplicated": deduplicated,
+        "unreadable_count": len(unreadable),
+        "unreadable": unreadable[:25],
         "findings": [f.to_dict() for f in findings],
         "narrative": "",
         "disclaimer": (
             "AI-surfaced investigative leads. Each finding must be verified by "
             "a human examiner against its cited source artifact. This is not a "
             "determination of guilt."
+        )
+        + (
+            f" Showing the {len(findings)} highest-ranked of {total_matched} matching "
+            f"leads; {truncated} more were not listed and are not excluded from the "
+            "case — re-run the analysis with a higher limit to see them."
+            if truncated
+            else ""
+        )
+        + (
+            f" A further {deduplicated} record(s) were identical to a listed lead on "
+            "every field this analysis scores (app, source file, timestamp, provenance, "
+            "matched terms and text) and were merged into it; they remain in the derived "
+            "datasets and their merge is not a finding that they did not exist."
+            if deduplicated
+            else ""
         ),
     }
+
+    # A requested-but-unreachable back-end scores identically to no back-end at all, so
+    # the bundle has to say which one happened before anyone reads "deterministic".
+    degraded = getattr(provider, "degraded_from", "")
+    if degraded:
+        bundle["llm_degraded_from"] = degraded
 
     # -- optional LLM narrative (on top of the same, already-cited evidence) --
     narrative = _llm_narrative(provider, profile, findings)
@@ -283,30 +357,54 @@ def _compile_keywords(
     return out
 
 
-_PRINTABLE_RUN = re.compile(r"[ -~\t]{4,}")
+#: A readable run inside a carved row: consecutive characters that are not C0/C1 control
+#: codes. Deliberately not ASCII-only — a carved Hindi or Tamil message is evidence, and
+#: an ASCII-range filter would drop it as though it were blob noise. The minimum length
+#: is two because Indic words are short in characters even when whole words: "बम" (bomb)
+#: and "मार" (kill) are two and three characters, and are precisely the fragments a
+#: freelist carve yields in a Hindi-language case.
+_PRINTABLE_RUN = re.compile(r"[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]{2,}")
+
+#: A run has to contain a letter to be text. This is what still rejects blob noise now
+#: that the run length alone no longer can.
+_HAS_LETTER = re.compile(r"[^\W\d_]", re.UNICODE)
 
 
 def _mostly_printable(s: str, threshold: float = 0.85) -> bool:
-    """True if *s* is predominantly printable ASCII (i.e. real text, not a binary blob)."""
+    """True if *s* is predominantly real text rather than a binary blob.
+
+    Printability is decided per Unicode character, not by ASCII range. An ASCII-only
+    test discards every message written in Devanagari, Tamil, Bengali or any other
+    non-Latin script — which for an Indian law-enforcement tool means discarding the
+    evidence, not the noise. ``str.isprintable`` already excludes the C0/C1 control
+    characters and unassigned code points that actually indicate a binary blob.
+    """
     if not s:
         return False
-    printable = sum(1 for c in s if 32 <= ord(c) < 127 or c in "\t\n\r")
+    printable = sum(1 for c in s if c.isprintable() or c in "\t\n\r")
     return printable / len(s) >= threshold
 
 
 def _printable_text(values) -> str:
-    """Extract only the human-readable ASCII runs (len ≥ 4) from a carved row's values,
+    """Extract the human-readable runs from a carved row's values, in any script,
     dropping binary blob noise. Returns a single space-joined string."""
     runs: list[str] = []
     for v in values:
         if isinstance(v, str):
             runs.extend(_PRINTABLE_RUN.findall(v))
         elif isinstance(v, (bytes, bytearray)):
+            # Message databases store UTF-8, so decode that way first; carved bytes that
+            # are not valid UTF-8 fall back to latin-1, which never fails. Decoding an
+            # Indic message as latin-1 yields mojibake that matches no keyword, so the
+            # order here decides whether non-Latin carved text is recoverable at all.
             try:
-                runs.extend(_PRINTABLE_RUN.findall(v.decode("latin-1", "ignore")))
+                text = v.decode("utf-8")
+            except UnicodeDecodeError:
+                text = v.decode("latin-1", "ignore")
             except Exception:
                 continue
-    return " ".join(runs).strip()
+            runs.extend(_PRINTABLE_RUN.findall(text))
+    return " ".join(r for r in runs if _HAS_LETTER.search(r)).strip()
 
 
 def _window(text: str, terms: list[str], radius: int = 70) -> str:
@@ -327,22 +425,65 @@ def _window(text: str, terms: list[str], radius: int = 70) -> str:
     return ("…" if start > 0 else "") + snip + ("…" if end < len(text) else "")
 
 
-def _dedupe(findings: list["Finding"]) -> list["Finding"]:
-    """Collapse near-duplicate findings (same category + matched terms + normalised
-    snippet), keeping the highest-scoring one."""
+def _dedupe(findings: list["Finding"]) -> tuple[list["Finding"], int]:
+    """Collapse exact-duplicate findings, keeping the highest-scoring one.
+
+    Returns ``(kept, collapsed_count)``. The count is not diagnostics: it is the number
+    of records the bundle stops listing, and a disclosure that omits it tells the
+    examiner nothing was dropped at a point where something was.
+
+    The same row carved repeatedly out of one file is noise worth collapsing. The same
+    text found in two *different* places is not: a threat sent over both WhatsApp and
+    SMS is two artifacts, and a live message with a deleted twin is evidence that
+    someone tried to remove it. Source file and confidence are therefore part of the
+    identity — collapsing across them would drop a citation the report needs.
+    """
     best: dict[tuple, "Finding"] = {}
+    collapsed = 0
     for f in findings:
-        norm = re.sub(r"\s+", " ", f.snippet.lower())[:60]
+        # The FULL normalised text, hashed only to bound the key's size. A prefix is not
+        # an identity: four carved SMS naming four different mule accounts differ only in
+        # the account number at the end of the line, and a 60-character prefix merges
+        # them into one lead with three accounts to trace silently deleted.
+        norm = hashlib.sha256(
+            re.sub(r"\s+", " ", f.snippet.lower()).strip().encode("utf-8")
+        ).hexdigest()
         key = (
             f.category,
+            # source_type and app are the finding's own identity fields. The app does
+            # also reach the title, but only as display text that has been through
+            # ``str.capitalize`` — "Signal" and "signal" render identically — so two
+            # artifacts recovered by two independent routes would merge and the
+            # corroboration between them would be gone. source_file cannot carry this
+            # load either: parsers set it to a bare basename, so a work-profile or cloned
+            # "msgstore.db" collides with the primary one, and it defaults to "" when a
+            # parser omits it entirely. Identity has to be built from every field the
+            # finding actually carries.
+            f.source_type,
+            f.app,
+            f.source_file,
+            f.confidence,
+            # The sender lives in the title. Without it, one threat text sent by thirty
+            # different numbers collapses to a single lead and twenty-nine numbers to
+            # trace are gone — which is exactly the mass-circulation signature.
+            f.title,
+            # Without the timestamp, a threat repeated daily for a fortnight reports as
+            # one message, and the last-contact date that establishes a continuing
+            # offence is replaced by the first. It is also what keeps twenty dated visits
+            # to one URL apart, where the frequency and recency *are* the evidence.
+            f.timestamp,
             tuple(sorted(e.lower() for e in f.entities_matched)),
             tuple(sorted(k.lower() for k in f.keywords_matched)),
             norm,
         )
         cur = best.get(key)
-        if cur is None or f.score > cur.score:
+        if cur is None:
             best[key] = f
-    return list(best.values())
+            continue
+        collapsed += 1
+        if f.score > cur.score:
+            best[key] = f
+    return list(best.values()), collapsed
 
 
 def _match_entities(entity_res, text: str) -> list[str]:
@@ -360,6 +501,40 @@ def _match_keywords(kw_res, text: str) -> list[str]:
     return hits
 
 
+#: Message/dataset labels that name an app rather than a planner artifact key.
+_APP_TO_ARTIFACT = {
+    "sms": "sms",
+    "mms": "sms",
+    "message": "sms",
+    "whatsapp": "whatsapp",
+    "telegram": "telegram",
+    "instagram": "instagram",
+    "snapchat": "snapchat",
+    "signal": "sms",
+}
+
+
+def _priority_lookup(crime, plan: Optional[CollectionPlan]):
+    """Build ``artifact -> priority`` resolution for scoring.
+
+    With a plan, the fused priority is used, so precedent and learned observation reach
+    lead ranking as well as acquisition. Falls back to the pure ontology when no plan
+    was built, which is also what keeps a no-corpus installation scoring identically to
+    the doctrine alone.
+    """
+    planned: dict[str, str] = {}
+    if plan is not None:
+        planned = {a.artifact: a.priority for a in plan.artifacts}
+
+    def resolve(name: str) -> str:
+        key = _APP_TO_ARTIFACT.get(str(name or "").strip().lower(), str(name or ""))
+        if key in planned:
+            return planned[key]
+        return priority_for(crime, key)
+
+    return resolve
+
+
 def _score(
     confidence: str, ents: list[str], kws: list[str], app_priority: str = "medium"
 ) -> float:
@@ -371,24 +546,86 @@ def _score(
     return base * interest
 
 
+#: Terms that can carry a finding to 'critical'. Severity is decided from the *matched
+#: token*, so an English-only list means a Devanagari or Hinglish death threat can never
+#: rate above 'high' while its English twin — same case, same score, same everything but
+#: the script — rates 'critical'. That gap is a property of the vocabulary, not of the
+#: evidence, and it under-reports exactly the cases this tool exists for. Matching is by
+#: substring on purpose: "मार" covers "जान से मार" and "मार डाल", "maar" covers
+#: "jaan se maar", and the tokens themselves come from the ontology's own patterns.
+_CRITICAL_TERMS = (
+    "kill",
+    "murder",
+    "bomb",
+    "weapon",
+    "gun",
+    "ransom",
+    "threat",
+    "blast",
+    "explosive",
+    "nude",
+    "blackmail",
+    # Devanagari
+    "मार",
+    "गोली",
+    "हथियार",
+    "चाकू",
+    "लाश",
+    "हत्या",
+    "कत्ल",
+    "खून",
+    "सुपारी",
+    "टपका",
+    "खत्म कर",
+    "बम",
+    "धमाका",
+    "धमाके",
+    "विस्फोट",
+    "हमला",
+    "हमले",
+    "फिरौती",
+    "अगवा",
+    "अपहरण",
+    "बंधक",
+    "धमकी",
+    "अश्लील",
+    "नंगी",
+    "नंगे",
+    "नग्न",
+    # Romanised Hinglish
+    "maar",
+    "goli",
+    "hathiyar",
+    "chaku",
+    "laash",
+    "katl",
+    "supari",
+    "tapka",
+    "khatam",
+    "dhamaka",
+    "dhamake",
+    "visphot",
+    "hamla",
+    "hamle",
+    "firauti",
+    "firouti",
+    "phirauti",
+    "agwa",
+    "apahran",
+    "bandhak",
+    "dhamki",
+    "ashleel",
+    "ashlil",
+    "nangi",
+    "nange",
+)
+
+
 def _severity(score: float, kws: list[str], ents: Optional[list[str]] = None) -> str:
     """Severity is reserved for genuinely strong signals. A critical *term* alone isn't
     enough (a synthetic corpus mentions 'weapon' hundreds of times); it must co-occur with
     a named case entity or a high aggregate score, otherwise it caps at 'high'."""
-    critical_terms = (
-        "kill",
-        "murder",
-        "bomb",
-        "weapon",
-        "gun",
-        "ransom",
-        "threat",
-        "blast",
-        "explosive",
-        "nude",
-        "blackmail",
-    )
-    has_critical = any(any(ct in k.lower() for ct in critical_terms) for k in kws)
+    has_critical = any(any(ct in k.lower() for ct in _CRITICAL_TERMS) for k in kws)
     if has_critical and ((ents and len(ents) > 0) or score >= 5.0):
         return "critical"
     if has_critical or score >= 5.0:

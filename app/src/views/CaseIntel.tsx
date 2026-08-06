@@ -10,6 +10,12 @@ import type {
 } from "../lib/types";
 import { fmtTs } from "../lib/hooks";
 import { ConfidenceBadge } from "../components/Badges";
+import {
+  AnalysisCaveats,
+  DeprioritisedList,
+  PartialCollectionList,
+  PlanNotes,
+} from "../components/PlanPanels";
 import { SectionHeader, EmptyState } from "../components/common";
 
 const SEV_CLS: Record<string, string> = {
@@ -131,13 +137,27 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
                   <> · knowledge graph holds {plan.knowledge_graph_stats.distinct_cases} case(s)</>
                 )}
               </div>
-              {plan.deprioritised.length > 0 && (
-                <div>
-                  <span className="font-medium">Opt-in / not auto-collected (logged):</span>{" "}
-                  {plan.deprioritised.map((d) => d.label).join(", ")}. Enable in a new
-                  acquisition if the case needs them — evidence can only be collected once.
+              {profile?.llm_degraded_from && (
+                <div className="text-warn">
+                  The '{profile.llm_degraded_from}' LLM back-end was requested for this
+                  case but was unreachable — the profile below is the deterministic
+                  extraction, not a model's.
                 </div>
               )}
+              {plan.deprioritised.length > 0 && (
+                <div className="space-y-1">
+                  <span className="font-medium">
+                    Opt-in / not auto-collected (each reason is in the case log):
+                  </span>
+                  <DeprioritisedList items={plan.deprioritised} />
+                  <div>
+                    Enable in a new acquisition if the case needs them — evidence can
+                    only be collected once.
+                  </div>
+                </div>
+              )}
+              <PartialCollectionList items={plan.partial_collection} />
+              <PlanNotes notes={plan.notes} />
             </div>
           )}
         </div>
@@ -228,6 +248,18 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
             (s) => counts[s] ? <CountPill key={s} label={s} n={counts[s]} cls={SEV_CLS[s]} /> : null
           )}
           <span className="text-xs text-muted ml-1">{findings.analysis_method}</span>
+          {/* A capped, de-duplicated or partially-unreadable lead list read as the
+              complete set understates the evidence held. */}
+          <div className="w-full">
+            <AnalysisCaveats
+              truncated={findings.truncated}
+              totalMatched={findings.total_matched}
+              shown={findings.shown}
+              deduplicated={findings.deduplicated}
+              unreadableCount={findings.unreadable_count}
+              degradedFrom={findings.llm_degraded_from}
+            />
+          </div>
         </div>
       )}
 
@@ -369,8 +401,18 @@ function OutcomePanel({
       {learning?.recorded && (
         <div className="text-[11px] text-muted mt-2 border-t border-line pt-2 leading-relaxed">
           <span className="text-warn">Provisional</span> feedback was recorded automatically
-          at weight {learning.weight} from this run's lead scores. {learning.note} Confirming
-          below supersedes it at full weight.
+          at weight {learning.weight} from this run's lead scores.
+          {learning.graded_from === "observed collection" ? (
+            <> Graded against what this run actually acquired.</>
+          ) : learning.graded_from === "plan intent" ? (
+            <span className="text-warn">
+              {" "}
+              Graded against the plan's intent rather than what was acquired, so an
+              artifact that was planned but never ran may be graded as a null.
+            </span>
+          ) : null}{" "}
+          {learning.note} Confirming below records the examiner's outcome at full
+          weight alongside this one.
         </div>
       )}
 

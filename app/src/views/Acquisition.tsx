@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { api, getSocket } from "../lib/api";
 import type { DeviceListing, PlanResponse, Progress } from "../lib/types";
+import {
+  DeprioritisedList,
+  PartialCollectionList,
+  PlanNotes,
+} from "../components/PlanPanels";
 
 const STAGES = [
   "init", "device", "intel", "tier1", "enumerate", "screenshot", "pull", "location", "recover",
@@ -22,6 +27,9 @@ export function AcquisitionView({
   const [authority, setAuthority] = useState("");
   const [scope, setScope] = useState("");
   const [brief, setBrief] = useState("");
+  // Whether the plan may switch on root-only pulls. Collection scope is the examiner's
+  // decision: a case brief alone must not be able to widen it without them saying so.
+  const [planAllowTier2, setPlanAllowTier2] = useState(true);
   const [caseNumber, setCaseNumber] = useState("");
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [planning, setPlanning] = useState(false);
@@ -88,7 +96,7 @@ export function AcquisitionView({
     setPlanError(null);
     try {
       const p = await api.plan(brief.trim(), {
-        allow_tier2: true,
+        allow_tier2: planAllowTier2,
         case_number: caseNumber.trim() || undefined,
       });
       setPlan(p);
@@ -143,6 +151,7 @@ export function AcquisitionView({
         authority,
         scope,
         case_description: brief.trim() || undefined,
+        plan_allow_tier2: planAllowTier2,
         case_number: caseNumber.trim() || undefined,
         tier1_contacts: target.kind === "real" ? tier1Contacts : false,
         tier1_calllog: target.kind === "real" ? tier1Calllog : false,
@@ -339,6 +348,22 @@ export function AcquisitionView({
               <ProfileChips label="Keywords" items={plan.profile.keywords} tone="text-muted" />
             </div>
 
+            {/* Scope consent: shown beside the plan it constrains. */}
+            <label className="flex items-start gap-2 cursor-pointer rounded-md border border-line p-2 mb-3">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={planAllowTier2}
+                onChange={(e) => setPlanAllowTier2(e.target.checked)}
+              />
+              <span className="text-[11px] text-muted leading-relaxed">
+                Let the case brief recommend root-only (Tier-2) app-database pulls.
+                Untick to keep the plan to what a non-rooted device can reach — the
+                artifacts it would have recommended are still listed, with the reason,
+                so nothing is hidden.
+              </span>
+            </label>
+
             {/* Priority plan */}
             <div className="rounded-md border border-line p-3">
               <div className="text-xs uppercase tracking-wider text-muted mb-2">
@@ -373,7 +398,7 @@ export function AcquisitionView({
               {plan.plan.deprioritised.length > 0 && (
                 <div className="text-[11px] text-muted mt-2 leading-relaxed border-t border-line pt-2">
                   Opt-in (not auto-collected, logged):{" "}
-                  {plan.plan.deprioritised.map((d) => d.label).join(", ")}.
+                  <DeprioritisedList items={plan.plan.deprioritised} />
                   {plan.plan.estimated_savings.estimated_minutes_saved > 0 && (
                     <>
                       {" "}
@@ -385,6 +410,14 @@ export function AcquisitionView({
                   )}
                 </div>
               )}
+              {/* Collected-in-part is the opposite risk to a deferral: the record
+                  exists, and must not be read as a complete one. */}
+              <PartialCollectionList items={plan.plan.partial_collection} />
+              {/* Carries the synthetic-exemplar and prioritise-never-exclude
+                  disclosures the plan is required to state. */}
+              <div className="mt-2 border-t border-line pt-2">
+                <PlanNotes notes={plan.plan.notes} />
+              </div>
             </div>
           </div>
         )}
