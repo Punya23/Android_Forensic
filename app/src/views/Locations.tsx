@@ -397,6 +397,15 @@ export function LocationsView({ caseId }: { caseId: string }) {
     [data]
   );
 
+  /** photoPoints with a real (non-null-island) fix — the only ones plotted or
+   * flown to. Same split as mediaMappable above; null-island rows still appear in
+   * the raw table below, just flagged instead of pinned. */
+  const mappablePoints = useMemo(
+    () => photoPoints.filter((p) => !isNullIsland(p.latitude, p.longitude)),
+    [photoPoints]
+  );
+  const photoNullIslandCount = photoPoints.length - mappablePoints.length;
+
   // --- Date range filter state ---
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
@@ -413,20 +422,24 @@ export function LocationsView({ caseId }: { caseId: string }) {
   const markerRefs = useRef<Map<number, L.Marker>>(new Map());
 
   // --- Derived: sorted, filtered list ---
-  const sorted = useMemo(() => {
-    let pts = [...photoPoints].sort((a, b) => {
+  // Same date-range/source filters applied to two different base sets: `sorted`
+  // (mappable-only — drives the map, bounds-fit, and the fly-to list panel) and
+  // `sortedAll` (everything, including null-island rows — drives the raw table so
+  // a photo with a broken GPS tag doesn't just disappear from it).
+  function sortAndFilter(pts: LocationPoint[]): LocationPoint[] {
+    let out = [...pts].sort((a, b) => {
       const ta = parseTs(a.timestamp)?.getTime() ?? 0;
       const tb = parseTs(b.timestamp)?.getTime() ?? 0;
       return tb - ta; // most recent first
     });
 
     if (sourceFilter !== "all") {
-      pts = pts.filter((p) => p.source === sourceFilter);
+      out = out.filter((p) => p.source === sourceFilter);
     }
 
     if (fromDate) {
       const from = new Date(fromDate).getTime();
-      pts = pts.filter((p) => {
+      out = out.filter((p) => {
         const t = parseTs(p.timestamp);
         return t ? t.getTime() >= from : false;
       });
@@ -434,14 +447,23 @@ export function LocationsView({ caseId }: { caseId: string }) {
     if (toDate) {
       // include the whole day
       const to = new Date(toDate).getTime() + 86_399_999;
-      pts = pts.filter((p) => {
+      out = out.filter((p) => {
         const t = parseTs(p.timestamp);
         return t ? t.getTime() <= to : false;
       });
     }
 
-    return pts;
-  }, [photoPoints, sourceFilter, fromDate, toDate]);
+    return out;
+  }
+
+  const sorted = useMemo(
+    () => sortAndFilter(mappablePoints),
+    [mappablePoints, sourceFilter, fromDate, toDate]
+  );
+  const sortedAll = useMemo(
+    () => sortAndFilter(photoPoints),
+    [photoPoints, sourceFilter, fromDate, toDate]
+  );
 
   /** Points actually rendered on the map (capped for initial performance) */
   const visiblePoints = useMemo(
@@ -499,7 +521,9 @@ export function LocationsView({ caseId }: { caseId: string }) {
     );
 
   // Edge case: data exists but all filtered out
-  const totalGps = photoPoints.length;
+  // "Geotagged" means a real fix — null-island rows aren't a position, so they're
+  // not counted here even though they still show up in the raw table below.
+  const totalGps = mappablePoints.length;
   const filteredCount = sorted.length;
 
   return (
@@ -514,6 +538,15 @@ export function LocationsView({ caseId }: { caseId: string }) {
           </span>
         }
       />
+
+      {photoNullIslandCount > 0 && (
+        <p className="text-xs text-warn bg-warn/5 border border-warn/30 rounded px-3 py-2 shrink-0 leading-relaxed">
+          ⚠ {photoNullIslandCount} photo{photoNullIslandCount === 1 ? "" : "s"} carried EXIF GPS of exactly
+          0.000000, 0.000000 — almost certainly a camera/app writing a placeholder when GPS tagging failed,
+          not a real position. Excluded from the map and count above; still listed in the raw table below,
+          flagged, for completeness.
+        </p>
+      )}
 
       {/* ── Filters bar ────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -904,22 +937,31 @@ export function LocationsView({ caseId }: { caseId: string }) {
               </tr>
             </thead>
             <tbody>
-              {sorted.slice(0, 500).map((p, i) => {
+              {sortedAll.slice(0, 500).map((p, i) => {
                 const filename = p.source_file
                   ? p.source_file.split(/[\\/]/).pop() ?? p.label
                   : p.label;
+                const nullIsland = isNullIsland(p.latitude, p.longitude);
                 return (
                   <tr
                     key={i}
-                    className="hover:bg-panel cursor-pointer"
-                    onClick={() => handleItemClick(p, i)}
+                    className={nullIsland ? "" : "hover:bg-panel cursor-pointer"}
+                    onClick={nullIsland ? undefined : () => handleItemClick(p, i)}
                   >
                     <td className="td text-xs truncate max-w-[200px]" title={filename}>
                       {filename}
                     </td>
                     <td className="td font-mono text-xs">{fmtTs(p.timestamp)}</td>
-                    <td className="td font-mono text-xs">{p.latitude.toFixed(6)}</td>
-                    <td className="td font-mono text-xs">{p.longitude.toFixed(6)}</td>
+                    {nullIsland ? (
+                      <td className="td text-xs text-warn" colSpan={2} title="GPS tag present but zero-filled — no real fix">
+                        ⚠ no GPS fix (0.000000, 0.000000)
+                      </td>
+                    ) : (
+                      <>
+                        <td className="td font-mono text-xs">{p.latitude.toFixed(6)}</td>
+                        <td className="td font-mono text-xs">{p.longitude.toFixed(6)}</td>
+                      </>
+                    )}
                     <td className="td text-xs">
                       <span
                         className={`text-[10px] ${

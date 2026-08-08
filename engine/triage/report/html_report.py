@@ -41,6 +41,17 @@ def _esc(v: Any) -> str:
     return html.escape(str(v if v is not None else ""))
 
 
+def _is_null_island(lat: Any, lon: Any) -> bool:
+    """True for the 0,0 "null island" sentinel — a real point off West Africa, but
+    what a zero-filled/never-written GPS field decodes to (EXIF tag present but
+    unset, an ISO-6709 box that was never written, ...). The parsers are supposed to
+    already exclude this before it reaches the report (see parsers/exif.py,
+    parsers/video_gps.py, location_aggregate.py), but a report is a legal artifact —
+    a second, cheap guard here means a gap in any one upstream source can't put a
+    fabricated coordinate in front of an examiner."""
+    return isinstance(lat, (int, float)) and isinstance(lon, (int, float)) and lat == 0.0 and lon == 0.0
+
+
 def _badge(label: str, colors: tuple[str, str]) -> str:
     fg, bg = colors
     return (
@@ -84,11 +95,19 @@ def _geotagged_section(locations: list) -> str:
         ts = _esc(loc.get("timestamp") or "—")
         lat = loc.get("latitude")
         lon = loc.get("longitude")
+        null_island = _is_null_island(lat, lon)
         lat_str = f"{lat:.6f}" if isinstance(lat, (int, float)) else "—"
         lon_str = f"{lon:.6f}" if isinstance(lon, (int, float)) else "—"
         source = _esc(loc.get("source") or "—")
-        # Coordinates link to OpenStreetMap for court-printable reports.
-        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+        # Coordinates link to OpenStreetMap for court-printable reports. 0,0 is never a
+        # real fix here — see _is_null_island — so it's flagged, not linked.
+        if null_island:
+            coords_cell = (
+                '<span style="font-family:monospace;color:#a6741a" '
+                'title="GPS tag present but zero-filled — the device never got a fix, '
+                'this is not a real position">⚠ no GPS fix</span>'
+            )
+        elif isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
             coords_cell = (
                 f'<a href="https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=15/{lat}/{lon}" '
                 f'style="font-family:monospace;color:#2258a8">'
@@ -151,6 +170,8 @@ def _osm_link(lat: Any, lon: Any) -> str:
     """Coordinate cell linking to OpenStreetMap, or a plain dash when there is no point."""
     if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
         return '<span style="color:#999">no coordinate</span>'
+    if _is_null_island(lat, lon):
+        return '<span style="color:#a6741a">⚠ no GPS fix</span>'
     return (
         f'<a href="https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=15/{lat}/{lon}" '
         f'style="font-family:monospace;color:#2258a8">{lat:.6f}, {lon:.6f}</a>'
