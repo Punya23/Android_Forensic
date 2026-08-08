@@ -247,6 +247,7 @@ from .forensics import (
     generate_location_summary,
     generate_location_html_summary,
 )
+from .forensics.mediastore_trash import analyze_mediastore_trash
 from .forensics.location_aggregate import (
     build_location_traces,
     summarise_traces,
@@ -1898,14 +1899,23 @@ def run_acquisition(
         socketio,
     )
 
-    # NEW: WhatsApp Media folder cataloguing
+    # NEW: WhatsApp/Telegram Media folder cataloguing.
+    #
+    # BUG FIXED: this previously looked in two places that could never hold the pulled
+    # files. `staging` is never a candidate — RealDeviceSource.pull_file() stages every
+    # pull under a flat `uuid4().hex` name (see acquire/real.py), never mirroring the
+    # device path, so `staging/<device-path>` never exists. And `case.root/artifacts/
+    # <app_name>/Media` doesn't match ingest_file()'s actual layout either: it stores
+    # each file at `artifacts_dir / _safe_rel(source_path)`, i.e. the FULL device path
+    # (minus leading slash) mirrored under `artifacts/` — for WhatsApp that's
+    # `artifacts/sdcard/Android/media/com.whatsapp/WhatsApp/Media/...`, not
+    # `artifacts/whatsapp/Media/...`. The dataset was therefore always empty on a real
+    # device even when the media folder was pulled. Mirror the same convention
+    # ingest_file() uses so this actually finds what the Tier-0 media loop already pulled.
     wa_media_items: list[dict] = []
     try:
         for app_name, media_root_str in APP_MEDIA_ROOTS.items():
-            media_root_path = Path(staging) / media_root_str.lstrip("/")
-            if not media_root_path.exists():
-                # Also probe the case root for already-pulled media.
-                media_root_path = case.root / "artifacts" / app_name / "Media"
+            media_root_path = case.root / "artifacts" / media_root_str.lstrip("/")
             wa_media_items.extend(_process_whatsapp_media(media_root_path, case))
     except Exception as exc:
         case.log(
@@ -2120,6 +2130,23 @@ def run_acquisition(
     case.write_derived(
         "media_inventory_summary", media_inventory_summary(media_inventory)
     )
+    # MediaStore trash fusion (non-root): the dashboard (DeletedMedia.tsx) and the HTML
+    # report have both rendered this dataset since it was added, but nothing ever called
+    # analyze_mediastore_trash() to populate it — the highest-yield non-root deleted-media
+    # technique was shipping dead. Fuses the MediaStore catalogue (already-parsed
+    # media_inventory) with the filesystem side (.trashed-*/.pending-* files actually
+    # pulled, found in the case manifest) into a recovered/estimated-deletion-time report.
+    try:
+        case.write_derived(
+            "mediastore_trash", analyze_mediastore_trash(media_inventory, case.manifest)
+        )
+    except Exception as exc:
+        case.log(
+            "analysis.mediastore_trash",
+            f"MediaStore trash analysis error: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
     case.write_derived("wifi", wifi_networks)  # Wi-Fi credentials (Tier 2)
     # Helper-APK radio artifacts. Separate datasets from the Tier-2 `wifi` credentials and the
     # dumpsys-derived `bluetooth` list because they were obtained a different way and carry
@@ -4613,6 +4640,25 @@ def _run_tier2_browser_history(
         label="browser_history",
         category="browser_history",
     )
+
+    # WAL/SHM/rollback-journal sidecars (same fix as Telegram's cache4.db, see
+    # test_wal_sidecar.py). Chrome/Firefox keep History/places.sqlite open in WAL mode
+    # while the browser runs, so the .db file alone is missing the newest commits AND
+    # every deleted/edited row image still sitting in the WAL — copying it in isolation
+    # silently drops exactly the "cleared history" evidence this stage exists to recover.
+    # `recover_deleted_rows` looks for a sibling named `<db_path.name>-wal`, so each
+    # sidecar is co-located under that exact name next to the pulled local file. A missing
+    # sidecar is normal (a fully checkpointed DB has none) and is not itself a finding.
+    for dev_path, local in list(pulled.items()):
+        # Naming the sidecar's local file `<main local name>-wal` etc. means
+        # `_root_pull_paths` already stages it at exactly the sibling path
+        # `recover_deleted_rows` looks for (`local` + suffix) — no extra copy needed.
+        sidecar_specs = [
+            (dev_path + suf, f"{Path(local).name}{suf}") for suf in ("-wal", "-shm", "-journal")
+        ]
+        _root_pull_paths(
+            source, case, staging, sidecar_specs, label="browser_history.sidecar", category="browser_history"
+        )
 
     seen_search: set = {
         (str(r.get("query", "")).lower(), str(r.get("timestamp", "")))

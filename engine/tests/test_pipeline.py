@@ -51,6 +51,26 @@ def test_full_acquisition(corpus, tmp_path):
     assert (case_dir / "manifest.json").exists()
     assert (case_dir / "audit.jsonl").exists()
 
+    # MediaStore trash fusion: analyze_mediastore_trash() must actually be called by the
+    # pipeline (it shipped dead — defined, dashboard-rendered, report-rendered, but never
+    # invoked — until this wiring). The mock corpus plants one item that is trashed in
+    # BOTH the MediaStore catalogue and on disk (.trashed-<epoch>-IMG_evidence.jpg), so a
+    # working fusion must report it recovered, not merely present-but-empty.
+    import json as _json
+
+    mediastore_trash = _json.loads((case_dir / "derived" / "mediastore_trash.json").read_text())
+    assert mediastore_trash["summary"]["total"] >= 1
+    assert mediastore_trash["summary"]["file_recovered"] >= 1
+    assert any(i["file_recoverable"] for i in mediastore_trash["items"])
+
+    # WhatsApp Media-folder cataloguing: `_process_whatsapp_media` used to look in two
+    # locations neither of which the pulled files were ever actually staged/ingested
+    # under, so `whatsapp_media` was always empty on a real device. The mock corpus
+    # plants a file under the real APP_MEDIA_ROOTS["whatsapp"] path — this must now
+    # find it.
+    wa_media = _json.loads((case_dir / "derived" / "whatsapp_media.json").read_text())
+    assert len(wa_media) >= 1
+
     # Chain of custody: at least the device-intake and enumerate actions logged.
     audit_lines = (case_dir / "audit.jsonl").read_text().splitlines()
     actions = {__import__("json").loads(l)["action"] for l in audit_lines}

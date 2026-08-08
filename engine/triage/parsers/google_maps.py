@@ -1000,7 +1000,7 @@ def get_location_summary(locations: List[Dict]) -> Dict[str, Any]:
 
 
 def detect_location_anomalies(locations: List[Dict]) -> List[Dict]:
-    """Detect suspicious location patterns.
+    """Detect suspicious location patterns **in rows that place the device**.
 
     Each returned dict contains:
 
@@ -1008,19 +1008,67 @@ def detect_location_anomalies(locations: List[Dict]) -> List[Dict]:
     * ``description`` -- human-readable explanation
     * ``severity``    -- "info" | "warn" | "critical"
     * ``evidence``    -- supporting data dict
+
+    Presence vs interest
+    --------------------
+    ``maps_locations`` deliberately mixes two kinds of row: positions the OS actually
+    recorded for this device (Takeout history, the Play-services geolocation cache) and
+    places the user merely *looked at* (a search, a saved place, a navigation destination
+    they may never have travelled to). Both heuristics below make claims about where the
+    device physically **was**, so they run over presence rows only.
+
+    This is not a cosmetic distinction. Run over the mixed set, a place searched at 02:00
+    is reported as "Device was at 'X' at 02:xx (late night)", and a distant city looked up
+    once produces a fabricated "Device moved 3000 km at 1200 km/h" flagged **critical** —
+    an assertion about physical movement manufactured out of a map search. Categories come
+    from the same source-of-truth table the unified location trace uses, so a parser that
+    adds a source classifies identically in both places.
     """
+    from ..forensics.location_aggregate import _PRESENCE_CATEGORIES, _SOURCE_MAP
+
     patterns: List[Dict] = []
 
     # Filter to locations with valid lat/lon and timestamp
-    valid = [
+    plotted = [
         loc
         for loc in locations
         if loc.get("latitude") is not None
         and loc.get("longitude") is not None
         and loc.get("timestamp")
     ]
+
+    def _is_presence(loc: Dict) -> bool:
+        # An unmapped source is treated as interest, never promoted to presence — an
+        # unknown provenance must not be able to manufacture a movement finding.
+        entry = _SOURCE_MAP.get(str(loc.get("source", "")))
+        return bool(entry) and entry[0] in _PRESENCE_CATEGORIES
+
+    valid = [loc for loc in plotted if _is_presence(loc)]
+    excluded = len(plotted) - len(valid)
     # Sort chronologically
     valid.sort(key=lambda x: x.get("timestamp", ""))
+
+    # Excluded rows are reported, never silently dropped: "no anomalies" must not be
+    # readable as "nothing was looked up", and an examiner needs to know the movement
+    # analysis deliberately ignored these rather than failing to see them.
+    if excluded:
+        patterns.append(
+            {
+                "pattern": "interest_rows_excluded",
+                "description": (
+                    f"{excluded} plotted Maps row(s) record interest in a place (a search, "
+                    f"a saved place, or a navigation destination) rather than a recorded "
+                    f"device position, and were excluded from the movement and late-night "
+                    f"analysis below. They evidence that the place was looked up — not that "
+                    f"the device was ever there."
+                ),
+                "severity": "info",
+                "evidence": {
+                    "excluded_rows": excluded,
+                    "analysed_rows": len(valid),
+                },
+            }
+        )
 
     # --- Late-night visits ---
     for loc in valid:

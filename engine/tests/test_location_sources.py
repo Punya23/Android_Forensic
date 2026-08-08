@@ -727,3 +727,132 @@ def test_empty_inputs_produce_an_empty_trace_not_an_error():
     s = summarise_traces([])
     assert s["total"] == 0
     assert s["first_seen"] is None
+
+
+# ---------------------------------------------------------------------------
+# The OLD Maps anomaly detector (parsers/google_maps.detect_location_anomalies).
+#
+# The unified trace has enforced presence-vs-interest since it was written, but this
+# older detector — which still feeds the `maps_location_anomalies` dataset — ran both
+# of its heuristics over the raw mixed `maps_locations` list. `maps_locations` contains
+# recorded device positions (Takeout, the Play-services cache) AND places the user only
+# looked at (a search, a saved place, a navigation destination). Both heuristics assert
+# where the device physically WAS, so over the mixed set they fabricated findings:
+# a place searched at 02:00 became "Device was at 'X' at 02:xx", and a city looked up
+# once became a critical "Device moved 3000 km at 1200 km/h".
+# ---------------------------------------------------------------------------
+
+from triage.parsers.google_maps import detect_location_anomalies  # noqa: E402
+
+
+def test_a_place_merely_searched_at_night_is_not_reported_as_the_device_being_there():
+    anomalies = detect_location_anomalies(
+        [
+            {
+                "latitude": 19.0760,
+                "longitude": 72.8777,
+                "timestamp": "2026-03-01T02:30:00Z",
+                "place_name": "Mumbai",
+                "source": "maps_search",
+            }
+        ]
+    )
+    late_night = [a for a in anomalies if a["pattern"] == "late_night_location"]
+    assert late_night == [], (
+        "a searched place must never produce a late-night PRESENCE finding — "
+        "searching a place at 2am evidences interest, not that the device was there"
+    )
+
+
+def test_a_looked_up_distant_city_cannot_fabricate_an_impossible_journey():
+    # A real fix in Delhi, then the user searches for Chennai ~1760 km away 10 minutes
+    # later. Mixing these manufactures a ~10000 km/h "critical" movement finding out of
+    # a map search — the exact false-inculpatory result the honesty model forbids.
+    anomalies = detect_location_anomalies(
+        [
+            {
+                "latitude": 28.6139,
+                "longitude": 77.2090,
+                "timestamp": "2026-03-01T10:00:00Z",
+                "source": "takeout",
+            },
+            {
+                "latitude": 13.0827,
+                "longitude": 80.2707,
+                "timestamp": "2026-03-01T10:10:00Z",
+                "place_name": "Chennai",
+                "source": "maps_search",
+            },
+        ]
+    )
+    movement = [
+        a
+        for a in anomalies
+        if a["pattern"] in ("large_location_jump", "high_speed_movement")
+    ]
+    assert movement == [], (
+        "movement between a recorded fix and a merely-searched place is not travel"
+    )
+
+
+def test_genuine_presence_rows_still_produce_their_findings():
+    # The fix must not silence the detector for rows that DO place the device.
+    anomalies = detect_location_anomalies(
+        [
+            {
+                "latitude": 28.6139,
+                "longitude": 77.2090,
+                "timestamp": "2026-03-01T02:30:00Z",
+                "place_name": "Delhi",
+                "source": "takeout",
+            },
+            {
+                "latitude": 13.0827,
+                "longitude": 80.2707,
+                "timestamp": "2026-03-01T02:40:00Z",
+                "source": "gms_network_location",
+            },
+        ]
+    )
+    patterns = {a["pattern"] for a in anomalies}
+    assert "late_night_location" in patterns
+    assert "large_location_jump" in patterns
+
+
+def test_excluded_interest_rows_are_reported_not_silently_dropped():
+    anomalies = detect_location_anomalies(
+        [
+            {
+                "latitude": 19.0760,
+                "longitude": 72.8777,
+                "timestamp": "2026-03-01T02:30:00Z",
+                "source": "maps_search",
+            },
+            {
+                "latitude": 19.0760,
+                "longitude": 72.8777,
+                "timestamp": "2026-03-01T03:30:00Z",
+                "source": "maps_saved_place",
+            },
+        ]
+    )
+    excluded = [a for a in anomalies if a["pattern"] == "interest_rows_excluded"]
+    assert len(excluded) == 1, "the exclusion must be stated, so silence is never read as 'nothing was looked up'"
+    assert excluded[0]["evidence"]["excluded_rows"] == 2
+    assert excluded[0]["evidence"]["analysed_rows"] == 0
+    assert excluded[0]["severity"] == "info"
+
+
+def test_an_unknown_source_is_treated_as_interest_never_promoted_to_presence():
+    # An unmapped provenance must not be able to manufacture a movement finding.
+    anomalies = detect_location_anomalies(
+        [
+            {
+                "latitude": 28.6139,
+                "longitude": 77.2090,
+                "timestamp": "2026-03-01T02:30:00Z",
+                "source": "some_parser_added_next_year",
+            }
+        ]
+    )
+    assert [a for a in anomalies if a["pattern"] == "late_night_location"] == []
