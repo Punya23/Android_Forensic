@@ -33,6 +33,7 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
   const [learning, setLearning] = useState<CaseLearning | null>(null);
   const [loading, setLoading] = useState(true);
   const [rerunDesc, setRerunDesc] = useState("");
+  const [rerunProvider, setRerunProvider] = useState<"heuristic" | "ollama" | "anthropic">("heuristic");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,7 +69,10 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
     setBusy(true);
     setError(null);
     try {
-      await api.analyze(caseId, rerunDesc.trim() ? { description: rerunDesc.trim() } : undefined);
+      await api.analyze(caseId, {
+        description: rerunDesc.trim() || undefined,
+        llm_provider: rerunProvider,
+      });
       setRerunDesc("");
       await load();
     } catch (e) {
@@ -318,7 +322,19 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
           value={rerunDesc}
           onChange={(e) => setRerunDesc(e.target.value)}
         />
-        <div className="flex items-center gap-3 mt-2">
+        <div className="flex items-center gap-3 mt-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <label className="label mb-0">AI back-end</label>
+            <select
+              className="input w-auto py-1"
+              value={rerunProvider}
+              onChange={(e) => setRerunProvider(e.target.value as typeof rerunProvider)}
+            >
+              <option value="heuristic">Heuristic (offline)</option>
+              <option value="ollama">Ollama (local)</option>
+              <option value="anthropic">Claude API (cloud)</option>
+            </select>
+          </div>
           <button className="btn-accent" disabled={busy} onClick={reanalyze}>
             {busy ? "Analyzing…" : "Run analysis"}
           </button>

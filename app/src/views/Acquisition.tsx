@@ -27,6 +27,11 @@ export function AcquisitionView({
   const [authority, setAuthority] = useState("");
   const [scope, setScope] = useState("");
   const [brief, setBrief] = useState("");
+  // Case-intelligence back-end. "heuristic" (offline, zero-config) is the only safe
+  // default for real evidence — "anthropic" sends case text off-device, so it must
+  // always be a deliberate, visible choice, never silently inherited from a server
+  // env var the examiner never sees.
+  const [llmProvider, setLlmProvider] = useState<"heuristic" | "ollama" | "anthropic">("heuristic");
   // Whether the plan may switch on root-only pulls. Collection scope is the examiner's
   // decision: a case brief alone must not be able to widen it without them saying so.
   const [planAllowTier2, setPlanAllowTier2] = useState(true);
@@ -98,6 +103,7 @@ export function AcquisitionView({
       const p = await api.plan(brief.trim(), {
         allow_tier2: planAllowTier2,
         case_number: caseNumber.trim() || undefined,
+        llm_provider: llmProvider,
       });
       setPlan(p);
       // Reflect the recommended tier flags in the checkboxes (officer can still override).
@@ -153,6 +159,7 @@ export function AcquisitionView({
         case_description: brief.trim() || undefined,
         plan_allow_tier2: planAllowTier2,
         case_number: caseNumber.trim() || undefined,
+        llm_provider: llmProvider,
         tier1_contacts: target.kind === "real" ? tier1Contacts : false,
         tier1_calllog: target.kind === "real" ? tier1Calllog : false,
         tier1_sms: target.kind === "real" ? tier1Sms : false,
@@ -268,15 +275,36 @@ export function AcquisitionView({
               onChange={(e) => setCaseNumber(e.target.value)}
             />
           </div>
-          <div className="sm:col-span-2 flex items-end">
+          <div>
+            <label className="label">AI back-end</label>
+            <select
+              className="input"
+              value={llmProvider}
+              onChange={(e) => setLlmProvider(e.target.value as typeof llmProvider)}
+            >
+              <option value="heuristic">Heuristic (offline, default)</option>
+              <option value="ollama">Ollama (local model)</option>
+              <option value="anthropic">Claude API (cloud — sends case text off-device)</option>
+            </select>
+          </div>
+          <div className="flex items-end">
             <p className="text-[11px] text-muted leading-relaxed">
-              Use forensic nomenclature: <b>accused</b> / <b>suspect</b> for the person
-              under investigation, <b>victim</b> / <b>deceased</b> for the person harmed,
-              plus <b>complainant</b>, <b>witness</b>, <b>panch witness</b>. Avoid
-              “guilty” and “innocent” — those are trial outcomes, not investigative roles.
+              {llmProvider === "heuristic" &&
+                "Deterministic regex/entity extraction, zero network calls. Always available."}
+              {llmProvider === "ollama" &&
+                "Requires Ollama running on this workstation (localhost:11434). Case data never leaves the machine — falls back to heuristic if unreachable."}
+              {llmProvider === "anthropic" &&
+                "Requires ANTHROPIC_API_KEY on the engine server. Sends case text to Claude — do not select for real seized evidence unless that is an accepted part of your workflow. Falls back to heuristic if no key is configured."}
             </p>
           </div>
         </div>
+
+        <p className="text-[11px] text-muted leading-relaxed mb-2">
+          Use forensic nomenclature: <b>accused</b> / <b>suspect</b> for the person
+          under investigation, <b>victim</b> / <b>deceased</b> for the person harmed,
+          plus <b>complainant</b>, <b>witness</b>, <b>panch witness</b>. Avoid
+          “guilty” and “innocent” — those are trial outcomes, not investigative roles.
+        </p>
 
         <textarea
           className="input min-h-[72px] resize-y"
@@ -298,6 +326,14 @@ export function AcquisitionView({
             </span>
           )}
         </div>
+        {plan?.profile.llm_degraded_from && (
+          <p className="text-[11px] text-warn mt-1.5 leading-relaxed">
+            The '{plan.profile.llm_degraded_from}' back-end was requested but unreachable —
+            this plan was extracted with the deterministic heuristic path instead. The
+            acquisition below will attempt the same back-end again and degrade the same way
+            if it is still unreachable.
+          </p>
+        )}
 
         {/* Nomenclature coaching — advisory, never blocking */}
         {plan && plan.profile.nomenclature_warnings.length > 0 && (

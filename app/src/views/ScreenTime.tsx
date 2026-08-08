@@ -268,7 +268,7 @@ function HourChart({ hours }: { hours: RankedHour[] }) {
                 }
                 style={{
                   height: `${pct}%`,
-                  background: hit ? "#d8823c" : "#2b323a",
+                  background: hit ? "#c1651f" : "#dde1de",
                   borderRadius: 2,
                 }}
               />
