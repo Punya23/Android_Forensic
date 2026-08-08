@@ -55,6 +55,34 @@ export interface BluetoothBondReport {
   caveats?: string[];
 }
 
+/**
+ * One row of `collector_bluetooth` — the Tier-1 helper APK's own radio scan
+ * (bluetooth.json, via the Collector's dump_all action). A THIRD, distinct source from
+ * the two above: not dumpsys, not the root bt_config.conf bond store. Per the engine's
+ * own convention (pipeline.py, next to the write_derived call for this dataset):
+ * "Kept separate ... the helper's JSON has a different shape, and merging the two would
+ * mean a row's fields no longer imply how it was obtained."
+ *
+ * Shape verified against engine/triage/parsers/collector.py::parse_bluetooth_json. Rows
+ * keep an APK-assigned `type` ("adapter" | "bonded_device" | "unknown"), and only a
+ * subset of fields is populated per type — `enabled`/`state` come from the adapter row
+ * only, `bond_state`/`device_class`/`device_type`/`uuids` from bonded-device rows only.
+ * On a SecurityException reading device details, the APK writes the literal string
+ * "[permission_denied]" into `name`/`address` rather than omitting the row.
+ */
+export interface CollectorBluetoothItem {
+  type?: string;
+  name?: string;
+  address?: string;
+  bond_state?: string;
+  device_type?: string;
+  device_class?: number | null;
+  enabled?: boolean | null;
+  state?: string;
+  uuids?: string[];
+  source_file?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Small presentational helpers
 // ---------------------------------------------------------------------------
@@ -212,10 +240,15 @@ function adapterRows(adapter: Record<string, unknown> | null | undefined): [stri
 export function BluetoothView({ caseId }: { caseId: string }) {
   const { data: devices, loading: devicesLoading } = useDataset<BluetoothDevice>(caseId, "bluetooth");
   const { data: bonds, loading: bondsLoading } = useDataset<BluetoothBond>(caseId, "bluetooth_bonds");
+  const { data: collectorBt, loading: collectorBtLoading } = useDataset<CollectorBluetoothItem>(
+    caseId,
+    "collector_bluetooth",
+  );
   const [summary, setSummary] = useState<BluetoothSummary | null>(null);
   const [report, setReport] = useState<BluetoothBondReport | null>(null);
   const [deviceFilter, setDeviceFilter] = useState("");
   const [bondFilter, setBondFilter] = useState("");
+  const [collectorBtFilter, setCollectorBtFilter] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -232,7 +265,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
     };
   }, [caseId]);
 
-  if (devicesLoading || bondsLoading || summary === null || report === null) {
+  if (devicesLoading || bondsLoading || collectorBtLoading || summary === null || report === null) {
     return <div className="p-8 text-muted text-sm animate-pulse">Loading Bluetooth artefacts…</div>;
   }
 
@@ -270,6 +303,23 @@ export function BluetoothView({ caseId }: { caseId: string }) {
       (b.dev_class_label || "").toLowerCase().includes(bq) ||
       (b.dev_type_label || "").toLowerCase().includes(bq),
   );
+
+  const cbq = collectorBtFilter.toLowerCase();
+  const filteredCollectorBt = collectorBt.filter(
+    (c) =>
+      !cbq ||
+      (c.name || "").toLowerCase().includes(cbq) ||
+      (c.address || "").toLowerCase().includes(cbq) ||
+      (c.type || "").toLowerCase().includes(cbq) ||
+      (c.bond_state || "").toLowerCase().includes(cbq) ||
+      (c.device_type || "").toLowerCase().includes(cbq),
+  );
+  const collectorBtByType = collectorBt.reduce<Record<string, number>>((acc, c) => {
+    const t = c.type || "unknown";
+    acc[t] = (acc[t] ?? 0) + 1;
+    return acc;
+  }, {});
+  const isPermissionDenied = (v?: string) => (v || "").startsWith("[");
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -617,6 +667,187 @@ export function BluetoothView({ caseId }: { caseId: string }) {
             {filteredBonds.length < allBonds.length && (
               <p className="text-xs text-muted mt-2">
                 Showing {filteredBonds.length} of {allBonds.length} bonds
+              </p>
+            )}
+          </>
+        )}
+      </section>
+
+      {/* ================================================================== */}
+      {/* Section 3 — Tier-1 non-root helper capture                          */}
+      {/* ================================================================== */}
+      <section className="mt-10 pt-8 border-t-2 border-dashed border-line">
+        <SectionHeader
+          title="Non-root helper capture (adapter + bonded devices)"
+          sub="bluetooth.json, via the Collector helper APK's own dump_all action — no root required"
+          right={
+            <span className="text-xs font-normal text-recovered bg-recovered/10 border border-recovered/30 rounded px-2 py-0.5">
+              Tier 1 — Non-root helper
+            </span>
+          }
+        />
+
+        <div className="card p-3 mb-4 border-recovered/40 bg-recovered/5 text-xs text-recovered leading-relaxed">
+          <span className="font-semibold">A third, distinct source — not dumpsys, not bt_config.conf. </span>
+          These rows come from the Collector helper APK's own Android Bluetooth APIs, read
+          without root. Each row keeps the helper's own <code className="font-mono">type</code>{" "}
+          discriminator — <em>adapter</em> (this handset's own radio) or <em>bonded_device</em>{" "}
+          (a paired peer) — and only the fields that apply to that type are populated; a blank
+          cell means the field does not apply to this row's type, not that a value was lost. If
+          the helper's Bluetooth permissions were denied at runtime, the APK writes the literal
+          string <code className="font-mono">[permission_denied]</code> into the name/address
+          fields rather than omitting the row — such rows are flagged below, not silently dropped.
+        </div>
+
+        {collectorBt.length === 0 ? (
+          <div className="card p-8 text-center text-muted">
+            <div className="text-3xl mb-3 opacity-40">📡</div>
+            <div className="text-ink font-medium mb-1">No helper-captured Bluetooth data for this case</div>
+            <p className="text-sm leading-relaxed max-w-lg mx-auto">
+              Absent here means the Tier-1 "collect all" helper stage either never ran on this
+              acquisition, or ran and returned nothing its parser could interpret. This is{" "}
+              <strong>not</strong> a finding that the device has no Bluetooth adapter or bonded
+              peers — check the chain-of-custody audit trail for whether{" "}
+              <em>tier1.helper.collect_all</em> / <em>tier1.helper.dump_all</em> was attempted on
+              this run.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-3 mb-4">
+              {[
+                { label: "Total rows", value: collectorBt.length },
+                { label: "Adapter rows", value: collectorBtByType.adapter ?? 0 },
+                { label: "Bonded-device rows", value: collectorBtByType.bonded_device ?? 0 },
+              ].map(({ label, value }) => (
+                <div key={label} className="card px-4 py-2 flex flex-col items-center min-w-[110px]">
+                  <span className="text-xl font-bold text-recovered">{value}</span>
+                  <span className="text-xs text-muted mt-0.5">{label}</span>
+                </div>
+              ))}
+            </div>
+
+            <input
+              className="input max-w-sm mb-3"
+              placeholder="Filter by name, address, row type or bond state…"
+              value={collectorBtFilter}
+              onChange={(e) => setCollectorBtFilter(e.target.value)}
+            />
+
+            <div className="card overflow-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="th">Row type</th>
+                    <th className="th">Name</th>
+                    <th className="th w-44">Address</th>
+                    <th className="th w-28">Bond state</th>
+                    <th className="th w-36">Device type / class</th>
+                    <th className="th w-36">Adapter enabled / state</th>
+                    <th className="th">UUIDs</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredCollectorBt.length === 0 ? (
+                    <tr>
+                      <td className="td text-center text-muted text-xs py-6" colSpan={7}>
+                        No rows match your filter.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredCollectorBt.map((c, i) => {
+                      const denied = isPermissionDenied(c.name) || isPermissionDenied(c.address);
+                      return (
+                        <tr key={i}>
+                          <td className="td text-xs">
+                            <span
+                              className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide border ${
+                                c.type === "adapter"
+                                  ? "bg-live/10 text-live border-live/30"
+                                  : c.type === "bonded_device"
+                                    ? "bg-recovered/10 text-recovered border-recovered/30"
+                                    : "bg-muted/10 text-muted border-line"
+                              }`}
+                            >
+                              {c.type || "unknown"}
+                            </span>
+                          </td>
+                          <td className="td">
+                            {isPermissionDenied(c.name) ? (
+                              <span className="text-warn text-xs font-semibold">[permission_denied]</span>
+                            ) : (
+                              c.name || <span className="text-muted italic text-xs">— not recorded</span>
+                            )}
+                          </td>
+                          <td className="td">
+                            {isPermissionDenied(c.address) ? (
+                              <span className="text-warn text-xs font-semibold">[permission_denied]</span>
+                            ) : (
+                              <span className="font-mono text-xs">
+                                {c.address || <span className="text-muted italic">— not recorded</span>}
+                              </span>
+                            )}
+                            {denied && (
+                              <span className="block text-[10px] text-warn mt-0.5">
+                                helper's Bluetooth permission was denied at runtime for this row
+                              </span>
+                            )}
+                          </td>
+                          <td className="td text-xs">
+                            {c.bond_state || (
+                              <span className="text-muted italic">
+                                {c.type === "adapter" ? "n/a — adapter row" : "—"}
+                              </span>
+                            )}
+                          </td>
+                          <td className="td text-xs">
+                            {c.device_type || c.device_class != null ? (
+                              <>
+                                {c.device_type || "—"}
+                                {c.device_class != null && (
+                                  <span className="block text-[10px] text-muted">class {c.device_class}</span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-muted italic">
+                                {c.type === "adapter" ? "n/a — adapter row" : "—"}
+                              </span>
+                            )}
+                          </td>
+                          <td className="td text-xs">
+                            {c.enabled != null || c.state ? (
+                              <>
+                                {c.enabled != null && (
+                                  <span className={c.enabled ? "text-live" : "text-muted"}>
+                                    {c.enabled ? "enabled" : "disabled"}
+                                  </span>
+                                )}
+                                {c.state && <span className="block text-[10px] text-muted">{c.state}</span>}
+                              </>
+                            ) : (
+                              <span className="text-muted italic">
+                                {c.type === "bonded_device" ? "n/a — device row" : "—"}
+                              </span>
+                            )}
+                          </td>
+                          <td className="td font-mono text-[11px] text-muted break-all">
+                            {c.uuids && c.uuids.length > 0 ? (
+                              c.uuids.join(", ")
+                            ) : (
+                              <span className="italic">— none reported</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {filteredCollectorBt.length < collectorBt.length && (
+              <p className="text-xs text-muted mt-2">
+                Showing {filteredCollectorBt.length} of {collectorBt.length} rows
               </p>
             )}
           </>

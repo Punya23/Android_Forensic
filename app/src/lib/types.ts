@@ -467,11 +467,40 @@ export interface BrowserEntry {
   source_file: string;
 }
 
+/**
+ * A manual screen capture (Tier 0, read-only framebuffer grab via `exec-out screencap
+ * -p`). At most one per acquisition, taken when `capture_screenshot` is enabled — this
+ * is NOT a scan of screenshot images already on the device; it always carries a real
+ * case-manifest `artifact_id`, so it is workstation-viewable via the same media route
+ * as the Media gallery.
+ */
 export interface Screenshot {
   artifact_id: string;
   stored_path: string;
   sha256: string;
   captured_at: string;
+}
+
+/**
+ * On-device WhatsApp media folder catalogue (Tier 0/1, non-root, from shared storage —
+ * `/sdcard/Android/media/com.whatsapp/WhatsApp/Media` or the legacy `/sdcard/WhatsApp/Media`).
+ * Filenames/sizes/dates as currently stored on the device at scan time. Distinct from
+ * the Tier-2 decrypted-backup media (see `WhatsAppBackupMedia`) recovered from the chat
+ * database — that media may no longer be in this folder, and this folder may hold media
+ * the backup never referenced. These items carry no case-manifest `artifact_id`, so no
+ * in-app thumbnail preview is available — only the on-device path and metadata.
+ */
+export interface WhatsAppMediaItem {
+  filename: string;
+  /** Resolved path at catalogue time — not guaranteed stable across runs. */
+  path: string;
+  /** image | video | voice_note | audio | document | gif | sticker | other */
+  type: string;
+  size_bytes: number;
+  /** YYYY-MM-DD, best-effort — parsed from WhatsApp's own filename date convention. */
+  date: string | null;
+  extension: string;
+  mime_type: string;
 }
 
 export interface Tag {

@@ -155,10 +155,40 @@ function FlyController({ target }: { target: LocationTraceRow | null }) {
 // Main view
 // ---------------------------------------------------------------------------
 
+/** Per-source roll-ups — summarise_shared_locations / summarise_url_locations / get_location_summary. */
+interface SharedLocationSummary {
+  total: number;
+  by_app: Record<string, number>;
+  by_kind: Record<string, number>;
+  live_shares: number;
+  undated: number;
+  first_seen: string | null;
+  last_seen: string | null;
+}
+interface UrlLocationSummary {
+  total: number;
+  with_coordinates: number;
+  searches_only: number;
+  by_provider: Record<string, number>;
+  destinations: number;
+  note: string;
+}
+interface MapsLocationSummary {
+  total: number;
+  with_timestamp: number;
+  unique_places: number;
+  date_range?: { first?: string; last?: string };
+  sources: Record<string, number>;
+}
+
 export function LocationTraceView({ caseId }: { caseId: string }) {
   const { data, loading } = useDataset<LocationTraceRow>(caseId, "location_traces");
   const [summary, setSummary] = useState<LocationTraceSummary | null>(null);
   const [anomalies, setAnomalies] = useState<ImpossibleTravel[]>([]);
+  const [sharedSummary, setSharedSummary] = useState<SharedLocationSummary | null>(null);
+  const [urlSummary, setUrlSummary] = useState<UrlLocationSummary | null>(null);
+  const [mapsSummary, setMapsSummary] = useState<MapsLocationSummary | null>(null);
+  const [showSources, setShowSources] = useState(false);
 
   const [enabled, setEnabled] = useState<Set<LocationCategory>>(
     () => new Set(CATEGORY_ORDER)
@@ -178,6 +208,22 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
       .dataset<ImpossibleTravel[]>(caseId, "location_impossible_travel")
       .then((d) => alive && setAnomalies(Array.isArray(d) ? d : []))
       .catch(() => alive && setAnomalies([]));
+    // Per-source roll-ups feeding this unified trace. The trace already merges these
+    // sources' rows, but these carry fields the merged view doesn't (e.g. shared-location
+    // by-app breakdown, URL-derived by-provider breakdown, Maps' bounding box) — shown as a
+    // collapsed "by source" panel rather than duplicating the map/table above.
+    api
+      .dataset<SharedLocationSummary>(caseId, "shared_location_summary")
+      .then((d) => alive && setSharedSummary(d && d.total > 0 ? d : null))
+      .catch(() => alive && setSharedSummary(null));
+    api
+      .dataset<UrlLocationSummary>(caseId, "url_location_summary")
+      .then((d) => alive && setUrlSummary(d && d.total > 0 ? d : null))
+      .catch(() => alive && setUrlSummary(null));
+    api
+      .dataset<MapsLocationSummary>(caseId, "maps_location_summary")
+      .then((d) => alive && setMapsSummary(d && d.total > 0 ? d : null))
+      .catch(() => alive && setMapsSummary(null));
     return () => {
       alive = false;
     };
@@ -247,13 +293,78 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
 
   return (
     <div className="p-6 space-y-4">
-      <SectionHeader
-        title="Location Trace"
-        sub={
-          `${data.length} row(s) from ${summary?.sources_present?.length ?? "?"} source(s) — ` +
-          `${presence} place the device, ${interest} record interest only`
-        }
-      />
+      <div className="flex items-start justify-between gap-3">
+        <SectionHeader
+          title="Location Trace"
+          sub={
+            `${data.length} row(s) from ${summary?.sources_present?.length ?? "?"} source(s) — ` +
+            `${presence} place the device, ${interest} record interest only`
+          }
+        />
+        <a
+          className="btn-ghost text-xs py-1 shrink-0 mt-1"
+          href={`${api.base}/case/${caseId}/location_trace_geojson`}
+          download={`${caseId}_location_trace.geojson`}
+          title="Every plottable row above, as a GeoJSON FeatureCollection for GIS/mapping tools"
+        >
+          Export GeoJSON
+        </a>
+      </div>
+
+      {(sharedSummary || urlSummary || mapsSummary) && (
+        <div className="rounded-md border border-line px-4 py-3 text-sm">
+          <button
+            className="w-full flex items-center justify-between text-left"
+            onClick={() => setShowSources((o) => !o)}
+          >
+            <span className="font-medium">Per-source breakdown</span>
+            <span className="text-xs opacity-60">{showSources ? "hide" : "show"}</span>
+          </button>
+          {showSources && (
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+              {sharedSummary && (
+                <div>
+                  <div className="font-medium mb-1">Shared in conversations</div>
+                  <div>{sharedSummary.total} share(s) · {sharedSummary.live_shares} live · {sharedSummary.undated} undated</div>
+                  <div className="opacity-70 mt-1">
+                    {Object.entries(sharedSummary.by_app)
+                      .map(([app, n]) => `${app}: ${n}`)
+                      .join(" · ")}
+                  </div>
+                </div>
+              )}
+              {urlSummary && (
+                <div>
+                  <div className="font-medium mb-1">From map links</div>
+                  <div>
+                    {urlSummary.total} link(s) · {urlSummary.with_coordinates} with coordinates ·{" "}
+                    {urlSummary.searches_only} search-only
+                  </div>
+                  <div className="opacity-70 mt-1">
+                    {Object.entries(urlSummary.by_provider)
+                      .map(([p, n]) => `${p}: ${n}`)
+                      .join(" · ")}
+                  </div>
+                  <div className="opacity-60 mt-1">{urlSummary.note}</div>
+                </div>
+              )}
+              {mapsSummary && (
+                <div>
+                  <div className="font-medium mb-1">Google Maps</div>
+                  <div>
+                    {mapsSummary.total} record(s) · {mapsSummary.unique_places} unique place(s)
+                  </div>
+                  {mapsSummary.date_range?.first && (
+                    <div className="opacity-70 mt-1">
+                      {fmtTs(mapsSummary.date_range.first)} → {fmtTs(mapsSummary.date_range.last)}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* The distinction this whole screen exists to preserve. Stated before any map. */}
       <div className="rounded-md border border-amber-300/40 bg-amber-50/60 dark:bg-amber-950/20 px-4 py-3 text-sm leading-relaxed">

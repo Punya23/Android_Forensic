@@ -5,21 +5,38 @@
  * ------------
  * GET /api/case/<id>/whatsapp_backup/messages  → WhatsAppBackupMessage[]
  * GET /api/case/<id>/whatsapp_backup/summary   → WhatsAppBackupSummary
+ * GET /api/case/<id>/whatsapp_backup/media     → WhatsAppBackupMedia[]
+ *
+ * The media route returns files that were actually pulled off the device
+ * while recovering backup messages (msgstore.db.crypt* → media_path
+ * references) — distinct from the on-device `whatsapp_media` folder catalogue
+ * shown elsewhere. Each item carries a real case manifest artifact_id (so it
+ * is workstation-viewable via the same media-serving route as the main Media
+ * view), a sha256, size, and a `recovered` flag (true when the file was found
+ * in a `.trashed-*` location rather than its original path). Items don't
+ * carry `backup_file` directly — they're correlated to the selected backup
+ * via `backup_message_id` (`<chat_id>:<timestamp>`), which is matched against
+ * the messages already loaded for that file.
  *
  * Layout
  * ------
  * Left panel  — list of backup files with per-file confidence breakdown badges.
- * Right panel — messages for the selected backup, grouped by chat_id, rendered
- *               as chat bubbles with per-message confidence rings.
+ * Right panel — Messages/Media tab toggle for the selected backup:
+ *               • Messages — grouped by chat_id, rendered as chat bubbles
+ *                 with per-message confidence rings.
+ *               • Media    — recovered media items, thumbnail when the file
+ *                 is a workstation-viewable image, otherwise a path-only row
+ *                 with a confidence badge and an honest "not previewable" note.
  * Top bar     — global stats (total live / recovered / carved / gaps).
  */
 import { useEffect, useMemo, useState } from "react";
 import type {
+  WhatsAppBackupMedia,
   WhatsAppBackupMessage,
   WhatsAppBackupSummary,
 } from "../lib/types";
 import { ConfidenceBadge } from "../components/Badges";
-import { SectionHeader, EmptyState } from "../components/common";
+import { SectionHeader, EmptyState, bytes } from "../components/common";
 import { fmtTs } from "../lib/hooks";
 import { api } from "../lib/api";
 
@@ -54,6 +71,15 @@ const MEDIA_ICON: Record<string, string> = {
 
 function mediaIcon(mediaType: string): string {
   return MEDIA_ICON[mediaType] ?? "📎";
+}
+
+// WhatsAppBackupMedia carries no media_type — only a file name — so a
+// thumbnail is only ever attempted for extensions the workstation can
+// actually render inline as an <img>.
+const IMAGE_EXT_RE = /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i;
+
+function backupMediaKey(chatId: string, timestamp: string | null): string {
+  return `${chatId}:${timestamp ?? ""}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +212,60 @@ function MessageBubble({ msg }: { msg: WhatsAppBackupMessage }) {
   );
 }
 
+function MediaCard({
+  caseId,
+  item,
+}: {
+  caseId: string;
+  item: WhatsAppBackupMedia;
+}) {
+  const conf = item.recovered ? "recovered" : "live";
+  const bg = CONF_BG[conf];
+  const ring = CONF_RING[conf];
+  const previewable = Boolean(item.artifact_id) && IMAGE_EXT_RE.test(item.file_name);
+
+  return (
+    <div className={`rounded-xl border ring-1 overflow-hidden ${bg} ${ring}`}>
+      <div className="aspect-square bg-panel-2 flex items-center justify-center overflow-hidden">
+        {previewable ? (
+          <img
+            src={api.mediaUrl(caseId, item.artifact_id)}
+            alt={item.file_name}
+            className="w-full h-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center gap-1 px-2 text-center">
+            <span className="text-2xl opacity-40">📎</span>
+            <span className="text-[9px] italic text-muted opacity-70">not previewable on this workstation</span>
+          </div>
+        )}
+      </div>
+      <div className="p-2">
+        <div className="flex items-center justify-between gap-1 mb-1.5">
+          <ConfidenceBadge c={conf} />
+          {item.recovered && (
+            <span className="text-[9px] px-1 rounded bg-deletion/20 text-deletion border border-deletion/30">
+              from trash
+            </span>
+          )}
+        </div>
+        <div className="text-[10px] font-mono truncate" title={item.file_path_on_device || item.file_name}>
+          {item.file_name || "(unnamed)"}
+        </div>
+        <div className="flex items-center justify-between gap-2 mt-0.5">
+          <span className="text-[10px] text-muted/70">{bytes(item.size_bytes)}</span>
+          {item.sha256 && (
+            <span className="text-[9px] font-mono text-muted/50 truncate max-w-[90px]" title={item.sha256}>
+              {item.sha256.slice(0, 10)}…
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ChatGroup({
   chatId,
   messages,
@@ -227,20 +307,24 @@ function ChatGroup({
 
 export function WhatsAppBackupView({ caseId }: { caseId: string }) {
   const [messages, setMessages] = useState<WhatsAppBackupMessage[]>([]);
+  const [media, setMedia] = useState<WhatsAppBackupMedia[]>([]);
   const [summary, setSummary] = useState<WhatsAppBackupSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [tab, setTab] = useState<"messages" | "media">("messages");
 
   useEffect(() => {
     setLoading(true);
     Promise.all([
       fetch(`/api/case/${caseId}/whatsapp_backup/messages`).then((r) => r.json()),
       fetch(`/api/case/${caseId}/whatsapp_backup/summary`).then((r) => r.json()).catch(() => null),
+      fetch(`/api/case/${caseId}/whatsapp_backup/media`).then((r) => r.json()).catch(() => []),
     ])
-      .then(([msgs, sum]) => {
+      .then(([msgs, sum, med]) => {
         setMessages(Array.isArray(msgs) ? msgs : []);
         setSummary(sum && typeof sum === "object" ? sum : null);
+        setMedia(Array.isArray(med) ? med : []);
         // Auto-select the first backup file.
         const files = [...new Set((msgs as WhatsAppBackupMessage[]).map((m) => m.backup_file))];
         if (files.length > 0) setSelectedFile(files[0]);
@@ -278,6 +362,18 @@ export function WhatsAppBackupView({ caseId }: { caseId: string }) {
     }
     return Object.entries(groups).sort(([, a], [, b]) => b.length - a.length);
   }, [filteredMessages]);
+
+  // WhatsAppBackupMedia carries no backup_file of its own — correlate it to
+  // the selected backup via the message(s) it was pulled for. Matches the
+  // exact `chat_id:timestamp` key the engine stamps on backup_message_id.
+  const mediaForFile = useMemo(() => {
+    const keys = new Set(
+      messages
+        .filter((m) => m.backup_file === selectedFile)
+        .map((m) => backupMediaKey(m.chat_id, m.timestamp))
+    );
+    return media.filter((m) => keys.has(m.backup_message_id));
+  }, [media, messages, selectedFile]);
 
   const totals = summary?.totals;
 
@@ -334,40 +430,94 @@ export function WhatsAppBackupView({ caseId }: { caseId: string }) {
           ))}
         </div>
 
-        {/* Right panel — messages */}
+        {/* Right panel — messages / media */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Search bar */}
-          <div className="shrink-0 px-4 py-2 border-b border-line bg-panel-2 flex items-center gap-2">
-            <input
-              type="text"
-              placeholder="Search messages, senders, chats…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted"
-            />
-            {search && (
-              <button onClick={() => setSearch("")} className="text-muted hover:text-fg text-xs">
-                ✕
-              </button>
-            )}
-            <span className="text-xs text-muted shrink-0">
-              {filteredMessages.length.toLocaleString()} message(s)
-            </span>
+          {/* Tab toggle */}
+          <div className="shrink-0 px-4 pt-2 border-b border-line bg-panel-2 flex items-center gap-1">
+            <button
+              onClick={() => setTab("messages")}
+              className={`px-3 py-1.5 text-xs font-medium rounded-t border-b-2 transition-colors ${tab === "messages"
+                ? "border-accent text-accent"
+                : "border-transparent text-muted hover:text-fg"
+                }`}
+            >
+              Messages
+            </button>
+            <button
+              onClick={() => setTab("media")}
+              className={`px-3 py-1.5 text-xs font-medium rounded-t border-b-2 transition-colors ${tab === "media"
+                ? "border-accent text-accent"
+                : "border-transparent text-muted hover:text-fg"
+                }`}
+            >
+              Media ({mediaForFile.length.toLocaleString()})
+            </button>
           </div>
 
-          {/* Chat groups */}
-          <div className="flex-1 overflow-y-auto px-4 py-4">
-            {chatGroups.length === 0 ? (
-              <EmptyState
-                title="No messages match the current filter."
-                detail="Try changing the search term."
-              />
-            ) : (
-              chatGroups.map(([chatId, msgs]) => (
-                <ChatGroup key={chatId} chatId={chatId} messages={msgs} />
-              ))
-            )}
-          </div>
+          {tab === "messages" ? (
+            <>
+              {/* Search bar */}
+              <div className="shrink-0 px-4 py-2 border-b border-line bg-panel-2 flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Search messages, senders, chats…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted"
+                />
+                {search && (
+                  <button onClick={() => setSearch("")} className="text-muted hover:text-fg text-xs">
+                    ✕
+                  </button>
+                )}
+                <span className="text-xs text-muted shrink-0">
+                  {filteredMessages.length.toLocaleString()} message(s)
+                </span>
+              </div>
+
+              {/* Chat groups */}
+              <div className="flex-1 overflow-y-auto px-4 py-4">
+                {chatGroups.length === 0 ? (
+                  <EmptyState
+                    title="No messages match the current filter."
+                    detail="Try changing the search term."
+                  />
+                ) : (
+                  chatGroups.map(([chatId, msgs]) => (
+                    <ChatGroup key={chatId} chatId={chatId} messages={msgs} />
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Media count bar */}
+              <div className="shrink-0 px-4 py-2 border-b border-line bg-panel-2 flex items-center gap-2">
+                <span className="text-xs text-muted">
+                  Media recovered while decrypting this backup file — pulled from the device, not just referenced by a message.
+                </span>
+                <span className="text-xs text-muted shrink-0 ml-auto">
+                  {mediaForFile.length.toLocaleString()} file(s)
+                </span>
+              </div>
+
+              {/* Media grid */}
+              <div className="flex-1 overflow-y-auto px-4 py-4">
+                {mediaForFile.length === 0 ? (
+                  <EmptyState
+                    title="No media recovered for this backup file."
+                    detail="Media is only listed here when the referenced file was actually found and pulled from the device — a media_path in a message with nothing recoverable at that path will not appear."
+                  />
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                    {mediaForFile.map((item) => (
+                      <MediaCard key={item.artifact_id || item.backup_message_id + item.file_name} caseId={caseId} item={item} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

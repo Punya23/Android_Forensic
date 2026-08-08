@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { api } from "../lib/api";
 import type { Confidence, RecoveredRow } from "../lib/types";
 import { useDataset } from "../lib/hooks";
 import { ConfidenceBadge } from "../components/Badges";
@@ -21,6 +22,20 @@ export interface DeletionEvidenceRow {
   caveats?: string[];
 }
 
+/** Aggregate roll-up of deletion_evidence, from deletion_evidence_summary(). */
+export interface DeletionEvidenceSummary {
+  confidence?: string;
+  total_findings?: number;
+  by_mechanism?: Record<string, number>;
+  by_table?: Record<string, number>;
+  tables_affected?: string[];
+  total_missing_rowids?: number;
+  skipped_tables?: string[];
+  recovers_content?: boolean;
+  summary?: string;
+  caveats?: string[];
+}
+
 /**
  * Deletion findings, deliberately rendered ABOVE and APART from carved content.
  *
@@ -31,9 +46,33 @@ export interface DeletionEvidenceRow {
  */
 function DeletionEvidencePanel({ caseId }: { caseId: string }) {
   const { data, loading } = useDataset<DeletionEvidenceRow>(caseId, "deletion_evidence");
+  const [summary, setSummary] = useState<DeletionEvidenceSummary | null>(null);
   const [open, setOpen] = useState(true);
 
-  if (loading || data.length === 0) return null;
+  useEffect(() => {
+    let alive = true;
+    api
+      .dataset<DeletionEvidenceSummary>(caseId, "deletion_evidence_summary")
+      .then((s) => alive && setSummary(s || null))
+      .catch(() => alive && setSummary(null));
+    return () => {
+      alive = false;
+    };
+  }, [caseId]);
+
+  if (loading) return null;
+
+  // Zero carved AND zero structural findings does not mean nothing was deleted — a
+  // rebuilt/vacuumed/WITHOUT ROWID table leaves no rowid signature at all. Say that
+  // honestly instead of rendering nothing, which reads as "clean".
+  if (data.length === 0) {
+    if (!summary || !summary.summary) return null;
+    return (
+      <div className="card border-line p-3 mb-3 text-xs text-muted leading-relaxed">
+        {summary.summary}
+      </div>
+    );
+  }
 
   const causes = Array.from(
     new Set(data.flatMap((d) => d.false_positive_causes ?? [])),
@@ -59,6 +98,20 @@ function DeletionEvidencePanel({ caseId }: { caseId: string }) {
             often stronger finding than a carved fragment — and it is reported separately
             so it is never mistaken for recovered content.
           </p>
+          {summary && (summary.by_mechanism || summary.tables_affected) && (
+            <div className="flex flex-wrap gap-2 mt-2 text-[11px]">
+              {summary.total_missing_rowids != null && (
+                <span className="px-1.5 py-0.5 rounded bg-panel border border-line text-muted">
+                  {summary.total_missing_rowids} missing rowid(s) total
+                </span>
+              )}
+              {Object.entries(summary.by_mechanism ?? {}).map(([mech, n]) => (
+                <span key={mech} className="px-1.5 py-0.5 rounded bg-panel border border-line text-muted">
+                  {mech}: {n}
+                </span>
+              ))}
+            </div>
+          )}
           <div className="overflow-auto mt-3">
             <table className="w-full text-xs border-collapse">
               <thead>
@@ -112,6 +165,91 @@ function DeletionEvidencePanel({ caseId }: { caseId: string }) {
   );
 }
 
+/** One gap in a table's rowid sequence — raw DFIR gap analysis, engine's `rowid_gaps`. */
+interface RowidGap {
+  after_rowid: number;
+  before_rowid: number;
+  missing: number;
+}
+
+/**
+ * Raw rowid-gap analysis across EVERY table of EVERY pulled SQLite database — not just
+ * the messaging-app schemas `deletion_evidence` recognises above. A gap here with no
+ * matching row above is still a real structural signal (e.g. a contacts or call-log
+ * table with a hole in it), so it is surfaced separately rather than silently dropped.
+ */
+function RowidGapsPanel({ caseId }: { caseId: string }) {
+  const [gaps, setGaps] = useState<Record<string, RowidGap[]> | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .dataset<Record<string, RowidGap[]>>(caseId, "rowid_gaps")
+      .then((d) => alive && setGaps(d && typeof d === "object" ? d : null))
+      .catch(() => alive && setGaps(null));
+    return () => {
+      alive = false;
+    };
+  }, [caseId]);
+
+  const entries = Object.entries(gaps ?? {});
+  if (entries.length === 0) return null;
+  const totalGaps = entries.reduce((n, [, g]) => n + g.length, 0);
+  const totalMissing = entries.reduce((n, [, g]) => n + g.reduce((m, x) => m + x.missing, 0), 0);
+
+  return (
+    <div className="card border-line p-3 mb-3">
+      <button
+        className="w-full flex items-center justify-between text-left"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="text-sm font-semibold text-ink">
+          Rowid gaps (raw) — {totalGaps} gap{totalGaps === 1 ? "" : "s"} across{" "}
+          {entries.length} table{entries.length === 1 ? "" : "s"}, {totalMissing} rowid(s) missing
+        </span>
+        <span className="text-xs text-muted">{open ? "hide" : "show"}</span>
+      </button>
+      {open && (
+        <>
+          <p className="text-xs text-muted mt-2 leading-relaxed">
+            A blind pass over every table's rowid sequence, independent of the app-specific
+            deletion analysis above. A gap proves rows once existed at those rowids and are
+            gone from this table now — it does not by itself say why (deletion, a rebuilt/
+            vacuumed table, or `AUTOINCREMENT` skipping values are all possible).
+          </p>
+          <div className="overflow-auto mt-3">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-line text-muted uppercase tracking-wider">
+                  <th className="text-left py-1.5 pr-3 font-semibold">Database :: table</th>
+                  <th className="text-left py-1.5 pr-3 font-semibold">Gaps</th>
+                  <th className="text-left py-1.5 font-semibold">Rowid ranges missing</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map(([key, g]) => (
+                  <tr key={key} className="border-b border-line/50 align-top">
+                    <td className="py-1.5 pr-3 font-mono break-all">{key}</td>
+                    <td className="py-1.5 pr-3 font-mono">{g.length}</td>
+                    <td className="py-1.5 text-muted font-mono">
+                      {g
+                        .slice(0, 12)
+                        .map((x) => `${x.after_rowid}–${x.before_rowid} (${x.missing})`)
+                        .join(", ")}
+                      {g.length > 12 && ` … +${g.length - 12} more`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function RecoveredView({ caseId }: { caseId: string }) {
   const { data, loading } = useDataset<RecoveredRow>(caseId, "recovered");
   const [query, setQuery] = useState("");
@@ -143,6 +281,7 @@ export function RecoveredView({ caseId }: { caseId: string }) {
           sub="Carved from SQLite freelist, freeblocks, unallocated space & WAL"
         />
         <DeletionEvidencePanel caseId={caseId} />
+        <RowidGapsPanel caseId={caseId} />
         <EmptyState
           title="No deleted content recovered"
           detail="No freelist / freeblock / WAL remnants were carved from the acquired databases. That is a statement about content recovery only — see any structural deletion findings above."
@@ -164,6 +303,7 @@ export function RecoveredView({ caseId }: { caseId: string }) {
         sub="Carved from SQLite freelist, freeblocks, unallocated space & WAL — never shown with the same weight as live data"
       />
       <DeletionEvidencePanel caseId={caseId} />
+      <RowidGapsPanel caseId={caseId} />
       <div className="card border-carved/30 bg-carved/5 p-2.5 mb-3 text-xs text-muted">
         <span className="text-carved font-semibold">Analyst note:</span> Carved rows may be
         corrupt, fragmentary, or belong to an overlapping record. Each carries its byte-level

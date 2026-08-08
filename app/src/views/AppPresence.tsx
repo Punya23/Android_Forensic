@@ -9,7 +9,7 @@
  * Nothing here is an assertion about who acted. Presence records are written by the platform,
  * are shared across users on multi-user devices, and inherit the device's clock.
  */
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { StatCard } from "../components/common";
@@ -38,21 +38,52 @@ export interface AppPresenceSummary {
   caveats?: string[];
 }
 
-/** A row of the parsed package database (/data/system/packages.xml). */
+/**
+ * A row of the parsed package database (/data/system/packages.xml) — one <package>
+ * (or <updated-package>) element, exactly as written by PackageManagerService.
+ * Proves the package was known to PackageManager at write time. Never proves execution.
+ * Shape matches PackageRecord.to_dict() in engine/triage/parsers/app_presence.py.
+ */
 export interface PackageEntry {
-  package?: string;
+  package: string;
+  code_path?: string | null;
+  version_code?: number | null;
+  version_name?: string | null;
+  first_install?: string | null; // ISO-Z; legacy ('it') — absent from Android 12+
+  last_update?: string | null; // ISO-Z ('ut')
+  apk_mtime?: string | null; // ISO-Z ('ft') — APK file mtime, NOT an install time
   installer?: string | null;
-  first_install?: string | null;
-  last_update?: string | null;
+  install_initiator?: string | null;
+  uid?: number | null;
   is_system?: boolean;
+  shared_user?: string | null;
+  cert_digest?: string | null; // SHA-256 of the DER signing certificate
+  granted_permissions?: string[];
+  source_file?: string;
+  tier?: string;
+  confidence?: string;
+  caveats?: string[];
 }
 
-/** A single usagestats event. Field presence varies by Android release. */
+/**
+ * A single usagestats event_log record. Field presence varies by Android release, and
+ * only `is_execution: true` event types prove the app's code actually ran — everything
+ * else is bookkeeping, notification or device-level noise. Shape matches
+ * UsageEvent.to_dict() in engine/triage/parsers/app_presence.py.
+ */
 export interface UsageEventEntry {
-  package?: string;
-  event_type?: string;
-  timestamp?: string | null;
-  source?: string;
+  package: string;
+  event_type: number;
+  event_label: string; // e.g. "ACTIVITY_RESUMED", "NOTIFICATION_SEEN"
+  timestamp?: string | null; // ISO-Z
+  class_name?: string | null;
+  source_file?: string;
+  bucket?: string; // daily | weekly | monthly | yearly
+  user_id?: string | null; // Android user id from the path; never merged across users
+  is_execution?: boolean;
+  tier?: string;
+  confidence?: string;
+  caveats?: string[];
 }
 
 const CONF_COLORS: Record<string, { bg: string; text: string; border: string }> = {
@@ -129,6 +160,19 @@ function ApproxTime({ ts }: { ts: string | null }) {
   );
 }
 
+/** An event's type label, coloured to distinguish execution-class events from noise. */
+function EventTypeBadge({ label, isExecution }: { label: string; isExecution?: boolean }) {
+  return (
+    <span
+      className={`text-[10px] px-1.5 py-0.5 rounded font-mono whitespace-nowrap ${
+        isExecution ? "bg-accent/15 text-accent" : "bg-panel text-muted"
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
+
 function StatusPill({ installed }: { installed: boolean }) {
   return installed ? (
     <span className="text-[10px] px-1.5 py-0.5 rounded bg-live/15 text-live">installed now</span>
@@ -143,6 +187,9 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
   const { data: usageEvents } = useDataset<UsageEventEntry>(caseId, "usage_events");
   const [summary, setSummary] = useState<AppPresenceSummary>({});
   const [query, setQuery] = useState("");
+  const [pkgQuery, setPkgQuery] = useState("");
+  const [pkgSortAsc, setPkgSortAsc] = useState(true);
+  const [expandedEventsPkg, setExpandedEventsPkg] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -190,6 +237,33 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
           (b.last_seen || "").localeCompare(a.last_seen || "")
       );
   }, [presence, query]);
+
+  /** Raw packages.xml rows — searchable/sortable by package name, independent of the
+   *  reconstructed presence table above. This is the actual parsed row, not a count. */
+  const filteredPackages = useMemo(() => {
+    const q = pkgQuery.trim().toLowerCase();
+    const rows = packages.filter(
+      (p) =>
+        !q ||
+        (p.package || "").toLowerCase().includes(q) ||
+        (p.installer || "").toLowerCase().includes(q) ||
+        (p.source_file || "").toLowerCase().includes(q)
+    );
+    rows.sort((a, b) => {
+      const cmp = (a.package || "").localeCompare(b.package || "");
+      return pkgSortAsc ? cmp : -cmp;
+    });
+    return rows;
+  }, [packages, pkgQuery, pkgSortAsc]);
+
+  /** Raw usage_events rows for whichever package is currently expanded in the table
+   *  below, newest first. Exposes the actual per-event records, not just the count. */
+  const expandedEvents = useMemo(() => {
+    if (!expandedEventsPkg) return [];
+    return usageEvents
+      .filter((e) => e.package === expandedEventsPkg)
+      .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+  }, [usageEvents, expandedEventsPkg]);
 
   if (loading) return <div className="p-8 text-muted text-sm animate-pulse">Loading app-presence reconstruction…</div>;
 
@@ -382,48 +456,125 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((r, i) => (
-                    <tr key={i}>
-                      <td className="td font-mono text-xs text-ink align-top">
-                        {r.package}
-                        <Caveats items={r.caveats} />
-                      </td>
-                      <td className="td align-top">
-                        <StatusPill installed={r.currently_installed} />
-                      </td>
-                      <td className="td align-top">
-                        <div className="flex flex-col gap-1">
-                          <span
-                            className={`text-[10px] px-1.5 py-0.5 rounded self-start ${
-                              r.ever_installed ? "bg-recovered/15 text-recovered" : "bg-panel text-muted"
-                            }`}
-                          >
-                            {r.ever_installed ? "install record" : "no install record"}
-                          </span>
-                          <span
-                            className={`text-[10px] px-1.5 py-0.5 rounded self-start ${
-                              r.ever_executed ? "bg-accent/15 text-accent" : "bg-panel text-muted"
-                            }`}
-                          >
-                            {r.ever_executed ? "execution record" : "no execution record"}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="td align-top">
-                        <ApproxTime ts={r.first_seen} />
-                      </td>
-                      <td className="td align-top">
-                        <ApproxTime ts={r.last_seen} />
-                      </td>
-                      <td className="td align-top font-mono text-xs">{r.event_count}</td>
-                      <td className="td align-top">
-                        <EvidenceChips sources={r.evidence_sources} />
-                      </td>
-                      <td className="td align-top">
-                        <ConfidenceBadge value={r.confidence} />
-                      </td>
-                    </tr>
-                  ))
+                  filtered.map((r, i) => {
+                    const isExpanded = expandedEventsPkg === r.package;
+                    const caseEventCount = eventsByPackage.get(r.package) ?? 0;
+                    return (
+                      <Fragment key={i}>
+                        <tr>
+                          <td className="td font-mono text-xs text-ink align-top">
+                            {r.package}
+                            <Caveats items={r.caveats} />
+                          </td>
+                          <td className="td align-top">
+                            <StatusPill installed={r.currently_installed} />
+                          </td>
+                          <td className="td align-top">
+                            <div className="flex flex-col gap-1">
+                              <span
+                                className={`text-[10px] px-1.5 py-0.5 rounded self-start ${
+                                  r.ever_installed ? "bg-recovered/15 text-recovered" : "bg-panel text-muted"
+                                }`}
+                              >
+                                {r.ever_installed ? "install record" : "no install record"}
+                              </span>
+                              <span
+                                className={`text-[10px] px-1.5 py-0.5 rounded self-start ${
+                                  r.ever_executed ? "bg-accent/15 text-accent" : "bg-panel text-muted"
+                                }`}
+                              >
+                                {r.ever_executed ? "execution record" : "no execution record"}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="td align-top">
+                            <ApproxTime ts={r.first_seen} />
+                          </td>
+                          <td className="td align-top">
+                            <ApproxTime ts={r.last_seen} />
+                          </td>
+                          <td className="td align-top font-mono text-xs">
+                            <button
+                              className="underline decoration-dotted hover:text-accent disabled:no-underline disabled:cursor-default disabled:opacity-60"
+                              disabled={caseEventCount === 0}
+                              onClick={() => setExpandedEventsPkg(isExpanded ? null : r.package)}
+                              title={
+                                caseEventCount === 0
+                                  ? "No raw usage_events rows recovered in this case for this package"
+                                  : "Show the raw usage_events rows for this package"
+                              }
+                            >
+                              {r.event_count} {caseEventCount > 0 ? (isExpanded ? "▴" : "▾") : ""}
+                            </button>
+                          </td>
+                          <td className="td align-top">
+                            <EvidenceChips sources={r.evidence_sources} />
+                          </td>
+                          <td className="td align-top">
+                            <ConfidenceBadge value={r.confidence} />
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan={8} className="td bg-panel-2 p-0">
+                              <div className="p-3">
+                                <div className="text-[10px] uppercase tracking-wider text-muted mb-2">
+                                  Raw usagestats event_log rows for{" "}
+                                  <span className="font-mono text-ink">{r.package}</span> in this case
+                                  ({expandedEvents.length})
+                                </div>
+                                {expandedEvents.length === 0 ? (
+                                  <p className="text-xs text-muted italic">
+                                    No raw event rows found in this case's usage_events dataset for this
+                                    package, even though {r.event_count} were counted overall — usagestats
+                                    retention is capped and rotates out old interval files, so this is not
+                                    evidence that nothing happened.
+                                  </p>
+                                ) : (
+                                  <div className="overflow-auto max-h-72">
+                                    <table className="w-full text-xs">
+                                      <thead>
+                                        <tr>
+                                          <th className="th">Timestamp</th>
+                                          <th className="th">Event type</th>
+                                          <th className="th">Class</th>
+                                          <th className="th">Bucket</th>
+                                          <th className="th">User</th>
+                                          <th className="th">Source file</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {expandedEvents.map((e, j) => (
+                                          <tr key={j}>
+                                            <td className="td align-top">
+                                              <ApproxTime ts={e.timestamp ?? null} />
+                                            </td>
+                                            <td className="td align-top">
+                                              <EventTypeBadge label={e.event_label} isExecution={e.is_execution} />
+                                            </td>
+                                            <td className="td align-top font-mono text-[11px] text-muted break-all">
+                                              {e.class_name || "—"}
+                                            </td>
+                                            <td className="td align-top text-muted">{e.bucket || "—"}</td>
+                                            <td className="td align-top font-mono text-muted">
+                                              {e.user_id ?? "—"}
+                                            </td>
+                                            <td className="td align-top font-mono text-[11px] text-muted break-all">
+                                              {e.source_file || "—"}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -459,6 +610,151 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
               </div>
               <Caveats items={summary.caveats} />
             </div>
+          )}
+        </>
+      )}
+
+      {/* Raw packages.xml rows — the underlying record, not just the count. Rendered
+          independent of the reconstruction above: packages.xml can be parsed even in
+          cases where no presence reconstruction ends up derived from it. */}
+      <div className="mt-8 mb-5">
+        <h2 className="text-base font-semibold mb-1 flex items-center gap-2">
+          <span>🗂</span> Package database (packages.xml)
+          <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
+            Tier 2 — Root
+          </span>
+        </h2>
+        <p className="text-sm text-muted leading-relaxed">
+          Every <code className="font-mono">&lt;package&gt;</code> /{" "}
+          <code className="font-mono">&lt;updated-package&gt;</code> element PackageManagerService had
+          written to <code className="font-mono">/data/system/packages.xml</code> at acquisition — the
+          raw record the reconstruction above is built from. On many Android versions this entry can
+          survive an uninstall until PackageManager next prunes the file, so a row here is not proof
+          the package is still on the device.
+        </p>
+      </div>
+
+      {packages.length === 0 ? (
+        <div className="card p-6 max-w-3xl mb-8">
+          <div className="text-warn font-semibold mb-2">No packages.xml rows in this case</div>
+          <p className="text-sm text-muted leading-relaxed">
+            This table is written only by the <strong>Tier-2 (root)</strong> collector from{" "}
+            <code className="text-ink">/data/system/packages.xml</code>, which is not readable by any
+            non-root path on a stock Android device. Empty therefore means <strong>not acquired</strong>{" "}
+            (no root, or the file was ABX-encoded and refused rather than guessed), not "device had no
+            packages". On Android 12+ this file is written as binary ABX and must be converted
+            on-device with <code className="text-ink">abx2xml</code> before this parser can read it — a
+            refusal there is recorded as a caveat, never as zero rows.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="mb-3">
+            <input
+              className="input max-w-sm"
+              placeholder="Filter by package, installer or source file…"
+              value={pkgQuery}
+              onChange={(e) => setPkgQuery(e.target.value)}
+            />
+          </div>
+          <div className="card overflow-auto mb-2">
+            <table className="w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="th">
+                    <button
+                      className="flex items-center gap-1 hover:text-accent"
+                      onClick={() => setPkgSortAsc((v) => !v)}
+                      title="Sort by package name"
+                    >
+                      Package {pkgSortAsc ? "▲" : "▼"}
+                    </button>
+                  </th>
+                  <th className="th w-24">Kind</th>
+                  <th className="th w-36">First install (it)</th>
+                  <th className="th w-36">Last update (ut)</th>
+                  <th className="th w-36">APK mtime (ft)</th>
+                  <th className="th">Installer / initiator</th>
+                  <th className="th w-20">UID</th>
+                  <th className="th">Signing cert (SHA-256)</th>
+                  <th className="th w-24">Permissions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredPackages.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="text-center py-8 text-muted text-xs">
+                      No package-database rows match your filter.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredPackages.map((p, i) => (
+                    <tr key={i}>
+                      <td className="td font-mono text-xs text-ink align-top">
+                        {p.package}
+                        <Caveats items={p.caveats || []} />
+                      </td>
+                      <td className="td align-top">
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded ${
+                            p.is_system ? "bg-panel-2 text-muted border border-line" : "bg-live/15 text-live"
+                          }`}
+                        >
+                          {p.is_system ? "system" : "user"}
+                        </span>
+                      </td>
+                      <td className="td align-top">
+                        <span className="font-mono text-xs">{fmtTs(p.first_install)}</span>
+                      </td>
+                      <td className="td align-top">
+                        <span className="font-mono text-xs">{fmtTs(p.last_update)}</span>
+                      </td>
+                      <td className="td align-top">
+                        <span className="font-mono text-xs">{fmtTs(p.apk_mtime)}</span>
+                      </td>
+                      <td className="td align-top text-xs">
+                        <div className="text-ink">{p.installer || "—"}</div>
+                        {p.install_initiator && (
+                          <div className="text-muted text-[10px]">via {p.install_initiator}</div>
+                        )}
+                      </td>
+                      <td className="td align-top font-mono text-xs">
+                        {p.uid ?? "—"}
+                        {p.shared_user && (
+                          <div className="text-muted text-[10px] font-sans">shared: {p.shared_user}</div>
+                        )}
+                      </td>
+                      <td className="td align-top font-mono text-[11px] text-muted break-all">
+                        {p.cert_digest || "—"}
+                      </td>
+                      <td className="td align-top text-xs">
+                        {p.granted_permissions && p.granted_permissions.length > 0 ? (
+                          <details>
+                            <summary className="cursor-pointer text-accent">
+                              {p.granted_permissions.length}
+                            </summary>
+                            <ul className="mt-1 space-y-0.5 max-w-xs">
+                              {p.granted_permissions.map((perm, j) => (
+                                <li key={j} className="font-mono text-[10px] text-muted break-all">
+                                  {perm}
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        ) : (
+                          <span className="text-muted">0</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          {filteredPackages.length < packages.length && (
+            <p className="text-xs text-muted mb-6">
+              Showing {filteredPackages.length} of {packages.length} package-database rows
+            </p>
           )}
         </>
       )}

@@ -47,7 +47,10 @@ import { AppPresenceView } from "./views/AppPresence";
 import { AntiForensicsView } from "./views/AntiForensics";
 import { RecentTasksView } from "./views/RecentTasks";
 import { EncryptedAppsView } from "./views/EncryptedApps";
+import { AleappView } from "./views/Aleapp";
 import { ValidationView } from "./views/Validation";
+import { NotificationsView } from "./views/Notifications";
+import { AdvancedAnalyticsView } from "./views/AdvancedAnalytics";
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
@@ -86,6 +89,7 @@ export default function App() {
           {caseId && view === "messages" && <MessagesView caseId={caseId} />}
           {caseId && view === "contacts" && <ContactsView caseId={caseId} />}
           {caseId && view === "calls" && <CallsView caseId={caseId} />}
+          {caseId && view === "notifications" && <NotificationsView caseId={caseId} />}
           {caseId && view === "media" && <MediaView caseId={caseId} />}
           {caseId && view === "mediainv" && <MediaInventoryView caseId={caseId} />}
           {caseId && view === "deletedmedia" && <DeletedMediaView caseId={caseId} />}
@@ -102,6 +106,7 @@ export default function App() {
           {caseId && view === "timeline" && <TimelineView caseId={caseId} />}
           {caseId && view === "recovered" && <RecoveredView caseId={caseId} />}
           {caseId && view === "graph" && <GraphView caseId={caseId} />}
+          {caseId && view === "advanced" && <AdvancedAnalyticsView caseId={caseId} setView={setView} />}
           {caseId && view === "tagged" && <TaggedView caseId={caseId} setView={setView} />}
           {caseId && view === "custody" && <CustodyView caseId={caseId} />}
           {caseId && view === "report" && <ReportView caseId={caseId} />}
@@ -119,6 +124,7 @@ export default function App() {
           {caseId && view === "antiforensics" && <AntiForensicsView caseId={caseId} />}
           {caseId && view === "recenttasks" && <RecentTasksView caseId={caseId} />}
           {caseId && view === "encryptedapps" && <EncryptedAppsView caseId={caseId} />}
+          {caseId && view === "aleapp" && <AleappView caseId={caseId} />}
           {caseId && view === "validation" && <ValidationView caseId={caseId} />}
         </div>
       </main>

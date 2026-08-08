@@ -40,6 +40,44 @@ export interface ScreenAppUsage {
   warnings?: string[];
 }
 
+/**
+ * Per-package foreground-usage telemetry from the Tier-1 Collector helper APK's
+ * `usage.json` — a DIFFERENT collection method from `ScreenAppUsage` above.
+ *
+ * The helper (`io.erakshak.collector`) calls
+ * `UsageStatsManager.queryUsageStats(INTERVAL_DAILY, now - 30d, now)` and sums
+ * `totalTimeInForeground` per package over that fixed, deterministic 30-day window —
+ * it does not read the OS's own rolling dumpsys buffer. Getting this required
+ * installing the helper APK and granting it the `GET_USAGE_STATS` appop, both
+ * device-altering Tier-1 steps. See engine/triage/parsers/collector.py::parse_usage
+ * and apk/.../SystemCollectors.kt::UsageCollector for the exact source.
+ */
+export interface HelperAppUsage {
+  package: string;
+  total_foreground_ms?: number;
+  total_foreground_min?: number;
+  last_used?: string | null;
+  /** Looked up from a small known-package table by the parser; not device-reported. */
+  friendly_name?: string | null;
+  /** Always "other" in the current parser — no real classification is performed yet. */
+  category?: string;
+  source_file?: string;
+}
+
+/** One `collectors[]` entry from `collector_manifest.json` (per-run helper audit record). */
+interface CollectorRunEntry {
+  collector?: string;
+  file?: string;
+  count?: number;
+  /** ok | denied | error | unsupported | empty */
+  status?: string;
+  error?: string;
+}
+
+interface CollectorManifest {
+  collectors?: CollectorRunEntry[];
+}
+
 /** A heuristic observation raised over the usage rows. */
 export interface UsagePattern {
   pattern?: string;
@@ -257,8 +295,15 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
   const { data: events, loading: loadingEvents } = useDataset<ScreenEvent>(caseId, "screen_events");
   const { data: usage, loading: loadingUsage } = useDataset<ScreenAppUsage>(caseId, "screen_app_usage");
   const { data: patterns } = useDataset<UsagePattern>(caseId, "usage_patterns");
+  // Tier-1 helper-APK usage telemetry — a distinct dataset/collection method from
+  // `screen_app_usage` above (see HelperAppUsage doc comment). Named `helperUsage`
+  // here specifically so it is never confused with the `usage` variable convention
+  // used elsewhere for screen_app_usage-derived data.
+  const { data: helperUsage, loading: loadingHelperUsage } = useDataset<HelperAppUsage>(caseId, "usage");
   const [summary, setSummary] = useState<ScreenTimeSummary>({});
+  const [manifest, setManifest] = useState<CollectorManifest | null>(null);
   const [filter, setFilter] = useState("");
+  const [helperFilter, setHelperFilter] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -266,6 +311,19 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
       .dataset<ScreenTimeSummary>(caseId, "screen_time_summary")
       .then((s) => alive && setSummary(s ?? {}))
       .catch(() => alive && setSummary({}));
+    return () => {
+      alive = false;
+    };
+  }, [caseId]);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .dataset<unknown>(caseId, "collector_manifest")
+      // read_derived() falls back to [] (not {}) when the file was never written, so
+      // guard against an array before trusting this as the manifest object.
+      .then((d) => alive && setManifest(d && typeof d === "object" && !Array.isArray(d) ? (d as CollectorManifest) : {}))
+      .catch(() => alive && setManifest({}));
     return () => {
       alive = false;
     };
@@ -289,9 +347,186 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
 
   const rankedHours = useMemo(() => normalizeHours(summary.most_active_hours), [summary]);
 
-  if (loadingEvents || loadingUsage) {
+  const sortedHelperUsage = useMemo(
+    () => [...helperUsage].sort((a, b) => (b.total_foreground_ms ?? 0) - (a.total_foreground_ms ?? 0)),
+    [helperUsage],
+  );
+
+  const filteredHelperUsage = useMemo(() => {
+    const q = helperFilter.trim().toLowerCase();
+    if (!q) return sortedHelperUsage;
+    return sortedHelperUsage.filter(
+      (a) => (a.package ?? "").toLowerCase().includes(q) || (a.friendly_name ?? "").toLowerCase().includes(q),
+    );
+  }, [sortedHelperUsage, helperFilter]);
+
+  const helperTotalMin = useMemo(
+    () => helperUsage.reduce((sum, a) => sum + (a.total_foreground_min ?? 0), 0),
+    [helperUsage],
+  );
+
+  // Distinguishes "the appop was denied" from "it ran and found nothing" from "it never
+  // ran at all" — three different facts a zero-row table cannot tell apart on its own.
+  const usageCollectorEntry = useMemo(
+    () => (manifest?.collectors ?? []).find((c) => c.collector === "usage") ?? null,
+    [manifest],
+  );
+
+  if (loadingEvents || loadingUsage || loadingHelperUsage || manifest === null) {
     return <div className="p-8 text-muted text-sm animate-pulse">Loading screen and app-usage data…</div>;
   }
+
+  // ------------------------------------------------------------------------
+  // Tier-1 helper-APK usage section — rendered in BOTH the Tier-0-empty early
+  // return below and the full-page return, since it is an independent
+  // collection method and must show up even when dumpsys yielded nothing.
+  // ------------------------------------------------------------------------
+  const helperSection = (
+    <section className="mt-10">
+      <SectionHeader
+        title="App usage — Tier-1 helper APK"
+        sub={`${helperUsage.length} package(s) · UsageStatsManager, 30-day window · io.erakshak.collector`}
+        right={
+          <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5">
+            Tier 1 — Helper APK
+          </span>
+        }
+      />
+
+      <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+        <span className="font-semibold">A different collection method from the section below. </span>
+        These rows come from <code className="font-mono">usage.json</code>, written by the installed
+        Collector helper (<code className="font-mono">io.erakshak.collector</code>) calling{" "}
+        <code className="font-mono">UsageStatsManager.queryUsageStats(INTERVAL_DAILY, …)</code> over a
+        fixed, deterministic <strong>30-day window</strong> ending at collection time — not the OS's own
+        rolling buffer read passively by the Tier-0 section above. Obtaining it required installing the
+        helper APK and granting it the <code className="font-mono">GET_USAGE_STATS</code> appop, both
+        device-altering Tier-1 steps recorded in the chain-of-custody trail. The two sections measure
+        overlapping but distinct things — a different window, a different API — and their figures must{" "}
+        <strong>never be summed together</strong>; treat disagreement between them as expected, not
+        contradictory.
+      </div>
+
+      {helperUsage.length === 0 ? (
+        <div className="card p-8 text-center text-muted">
+          <div className="text-3xl mb-3 opacity-40">📲</div>
+          <div className="text-ink font-medium mb-1">
+            {usageCollectorEntry?.status === "denied"
+              ? "Usage-stats access was denied"
+              : usageCollectorEntry
+                ? "Collected — UsageStatsManager returned no rows"
+                : "Not collected"}
+          </div>
+          <p className="text-sm leading-relaxed max-w-lg mx-auto">
+            {usageCollectorEntry?.status === "denied" ? (
+              <>
+                The helper ran, but the <code className="font-mono">GET_USAGE_STATS</code> appop grant was
+                refused (
+                <code className="font-mono">{usageCollectorEntry?.error || "reason not recorded"}</code>
+                ), so it could not call <code className="font-mono">queryUsageStats</code>. This is a{" "}
+                <strong>denied</strong> read, not evidence the device had no app usage.
+              </>
+            ) : usageCollectorEntry ? (
+              <>
+                The helper successfully queried <code className="font-mono">UsageStatsManager</code> and
+                the 30-day window contained no packages with foreground time or a last-used record. This
+                is a genuine empty result, not a denial.
+              </>
+            ) : (
+              <>
+                No <code className="font-mono">collector_manifest</code> entry for the{" "}
+                <code className="font-mono">usage</code> collector was found for this case, meaning the
+                Collector helper APK was never installed and run for Tier-1 collection. This is an{" "}
+                <strong>un-acquired</strong> artefact, not a finding of no usage.
+              </>
+            )}
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-3 mb-4">
+            <StatTile
+              value={String(helperUsage.length)}
+              label="Packages with usage rows"
+              note="30-day UsageStatsManager window"
+            />
+            <StatTile
+              value={fmtMinutes(helperTotalMin)}
+              label="Total foreground time"
+              note="Summed across all packages, 30 days"
+              tone="text-accent"
+            />
+            <StatTile
+              value={sortedHelperUsage[0]?.friendly_name || sortedHelperUsage[0]?.package || "—"}
+              label="Top app by foreground time"
+            />
+          </div>
+
+          <div className="mb-2 flex items-center justify-between gap-3 flex-wrap">
+            <h3 className="text-sm font-semibold text-ink">Packages by 30-day foreground time</h3>
+            <input
+              className="input max-w-xs"
+              placeholder="Filter by package or app name…"
+              value={helperFilter}
+              onChange={(e) => setHelperFilter(e.target.value)}
+            />
+          </div>
+
+          <div className="card overflow-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="th">Package</th>
+                  <th className="th w-40">App name</th>
+                  <th className="th w-32">Foreground (30d)</th>
+                  <th className="th w-44">Last used</th>
+                  <th className="th w-32">Source file</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredHelperUsage.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="td text-center text-muted text-xs py-6">
+                      No packages match your filter.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredHelperUsage.map((a, i) => (
+                    <tr key={`${a.package}-${i}`}>
+                      <td className="td font-mono text-xs break-all">
+                        {a.package || <span className="text-muted italic">—</span>}
+                      </td>
+                      <td className="td text-xs">
+                        {a.friendly_name || <span className="text-muted italic">— not resolved</span>}
+                      </td>
+                      <td className="td font-mono text-xs">
+                        {fmtMinutes(a.total_foreground_min ?? (a.total_foreground_ms ?? 0) / 60000)}
+                      </td>
+                      <td className="td font-mono text-xs text-muted">{fmtTs(a.last_used)}</td>
+                      <td className="td font-mono text-[11px] text-muted">{a.source_file || "usage.json"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {filteredHelperUsage.length < helperUsage.length && (
+            <p className="text-xs text-muted mt-2">
+              Showing {filteredHelperUsage.length} of {helperUsage.length} packages
+            </p>
+          )}
+
+          <p className="text-[11px] text-muted mt-3 leading-snug">
+            The parser does not yet classify these rows by category — every row currently reports{" "}
+            <code className="text-ink">category: "other"</code>, so no category column is shown here. No
+            keyword/suspicious heuristic is computed for this dataset either; that flag exists only on the
+            Tier-0 table above.
+          </p>
+        </>
+      )}
+    </section>
+  );
 
   // Honest empty state — say which of "not acquired" / "not present" applies and why.
   if (events.length === 0 && usage.length === 0) {
@@ -327,6 +562,8 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
             <code className="text-ink">shell.dumpsys</code> event to confirm whether the step ran.
           </p>
         </div>
+
+        {helperSection}
       </div>
     );
   }
@@ -576,6 +813,8 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
           </table>
         </div>
       )}
+
+      {helperSection}
     </div>
   );
 }

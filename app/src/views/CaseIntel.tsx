@@ -36,16 +36,25 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [planRevised, setPlanRevised] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
-    const [p, pl, f, l] = await Promise.all([
+    const [p, pl, plRev, f, l] = await Promise.all([
       api.dataset<CaseProfile>(caseId, "case_profile").catch(() => null),
       api.dataset<CollectionPlan>(caseId, "collection_plan").catch(() => null),
+      // Re-analysis writes its re-ranking to a separate dataset rather than over the plan
+      // that drove the acquisition, so both stay available — prefer the revised one here
+      // when it exists so a re-run's updated ranking is what the examiner actually sees.
+      api.dataset<CollectionPlan>(caseId, "collection_plan_revised").catch(() => null),
       api.dataset<AIFindings>(caseId, "ai_findings").catch(() => null),
       api.dataset<CaseLearning>(caseId, "case_learning").catch(() => null),
     ]);
     setProfile(p && (p as CaseProfile).crime_type ? (p as CaseProfile) : null);
-    setPlan(pl && (pl as CollectionPlan).crime_type ? (pl as CollectionPlan) : null);
+    const revised = plRev && (plRev as CollectionPlan).crime_type ? (plRev as CollectionPlan) : null;
+    const original = pl && (pl as CollectionPlan).crime_type ? (pl as CollectionPlan) : null;
+    setPlan(revised ?? original);
+    setPlanRevised(!!revised);
     setFindings(f && (f as AIFindings).findings ? (f as AIFindings) : null);
     setLearning(l && typeof (l as CaseLearning).recorded === "boolean" ? (l as CaseLearning) : null);
     setLoading(false);
@@ -128,6 +137,12 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
 
           {plan && (
             <div className="text-[11px] text-muted mt-3 border-t border-line pt-2 leading-relaxed space-y-1">
+              {planRevised && (
+                <div className="text-accent">
+                  Re-ranked after re-analysis — this reflects the collected evidence, not the
+                  plan that drove the original acquisition.
+                </div>
+              )}
               <div>
                 Planning basis: <span className="text-ink">{plan.evidence_basis}</span>
                 {plan.precedents?.length > 0 && (

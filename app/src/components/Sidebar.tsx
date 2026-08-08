@@ -9,6 +9,7 @@ export type ViewKey =
   | "messages"
   | "contacts"
   | "calls"
+  | "notifications"
   | "media"
   | "mediainv"
   | "deletedmedia"
@@ -33,11 +34,13 @@ export type ViewKey =
   | "recovered"
   | "discovered"
   | "graph"
+  | "advanced"
   | "tagged"
   | "apppresence"
   | "antiforensics"
   | "recenttasks"
   | "encryptedapps"
+  | "aleapp"
   | "encryption"
   | "devicestate"
   | "validation"
@@ -56,6 +59,7 @@ const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
   { key: "discovered", label: "Discovered Chats", icon: "🔎" },
   { key: "contacts", label: "Contacts", icon: "👤" },
   { key: "calls", label: "Calls", icon: "📞" },
+  { key: "notifications", label: "Notifications", icon: "🔔" },
   { key: "media", label: "Media", icon: "🖼", group: "Device" },
   { key: "mediainv", label: "Media Inventory", icon: "🗂" },
   { key: "deletedmedia", label: "Deleted Media", icon: "🗑" },
@@ -75,10 +79,12 @@ const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
   { key: "timeline", label: "Timeline", icon: "⏱", group: "Analysis" },
   { key: "recovered", label: "Recovered / Deleted", icon: "♻" },
   { key: "graph", label: "Social Graph", icon: "🕸" },
+  { key: "advanced", label: "Advanced Analytics", icon: "🧠" },
   { key: "apppresence", label: "App Presence", icon: "🧩" },
   { key: "antiforensics", label: "Anti-Forensics", icon: "🕵" },
   { key: "recenttasks", label: "Recent Tasks", icon: "🪟" },
   { key: "encryptedapps", label: "Encrypted Apps", icon: "🔐" },
+  { key: "aleapp", label: "ALEAPP Artifacts", icon: "🧪" },
   { key: "tagged", label: "Tagged Items", icon: "★" },
   { key: "custody", label: "Chain of Custody", icon: "🔒", group: "Forensics" },
   { key: "encryption", label: "Encryption Posture", icon: "🛡" },

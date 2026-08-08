@@ -81,6 +81,250 @@ function PasswordCell({ password }: { password: string }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Non-root helper capture (Tier 1) — dataset "collector_wifi"
+//
+// A DIFFERENT acquisition method from the root credential pull above: this is the
+// Collector helper APK's own WifiManager scan (wifi.json, via the dump_all action),
+// not a read of /data/misc/wifi/. It carries no passwords and cannot carry any.
+// Per the engine's own convention (pipeline.py, next to the write_derived calls for
+// these two datasets): "Kept separate ... the helper's JSON has a different shape,
+// and merging the two would mean a row's fields no longer imply how it was obtained."
+//
+// Shape verified against engine/triage/parsers/collector.py::parse_wifi_json. Rows
+// keep an APK-assigned `type` discriminator, and NOT every field applies to every
+// type — a scan_result row has no ip_address/network_id, a saved_network row has no
+// frequency_mhz/level_dbm, etc. A blank cell therefore means "not applicable to this
+// row type" as often as it means "not reported"; this view does not try to guess
+// which, and says so once, visibly, rather than mislabel every blank cell.
+// ---------------------------------------------------------------------------
+
+interface CollectorWifiItem {
+  type: string; // "current_connection" | "saved_network" | "scan_result" | "unknown"
+  ssid: string;
+  bssid: string;
+  hidden: boolean;
+  frequency_mhz: number | null;
+  level_dbm: number | null; // merged from the APK's level_dbm (scan) or rssi (current)
+  capabilities: string;
+  status: string;
+  network_id: number | string | null;
+  ip_address: string;
+  source_file: string;
+}
+
+const ROW_TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  current_connection: { bg: "#e4f4ea", text: "#1c7d3f", border: "#1c7d3f" },
+  saved_network:       { bg: "#e2ecfa", text: "#2258a8", border: "#2258a8" },
+  scan_result:          { bg: "#f6ecd4", text: "#a6741a", border: "#a6741a" },
+  unknown:               { bg: "#f0f0f0", text: "#555555", border: "#999999" },
+};
+
+function RowTypeBadge({ value }: { value: string }) {
+  const c = ROW_TYPE_COLORS[value] ?? ROW_TYPE_COLORS.unknown;
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "1px 8px",
+        borderRadius: 4,
+        fontSize: 11,
+        fontWeight: 600,
+        color: c.text,
+        background: c.bg,
+        border: `1px solid ${c.border}`,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {value.replace(/_/g, " ")}
+    </span>
+  );
+}
+
+function CollectorWifiSection({ caseId }: { caseId: string }) {
+  const [rows, setRows] = useState<CollectorWifiItem[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .dataset<CollectorWifiItem[]>(caseId, "collector_wifi")
+      .then((d) => alive && setRows(Array.isArray(d) ? d : []))
+      .catch((e) => {
+        if (!alive) return;
+        setError(e instanceof Error ? e.message : String(e));
+        setRows([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [caseId]);
+
+  const q = filter.toLowerCase();
+  const filtered = (rows ?? []).filter(
+    (r) =>
+      !q ||
+      r.ssid.toLowerCase().includes(q) ||
+      r.bssid.toLowerCase().includes(q) ||
+      r.type.toLowerCase().includes(q),
+  );
+
+  const byType = (rows ?? []).reduce<Record<string, number>>((acc, r) => {
+    acc[r.type] = (acc[r.type] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  return (
+    <section className="mt-10 pt-8 border-t-2 border-dashed border-line">
+      <div className="mb-4">
+        <h2 className="text-lg font-semibold text-ink flex items-center gap-2">
+          <span>📡</span> Non-root helper capture (association/saved/scan)
+          <span className="text-xs font-normal text-recovered bg-recovered/10 border border-recovered/30 rounded px-2 py-0.5 ml-1">
+            Tier 1 — Non-root helper
+          </span>
+        </h2>
+        <p className="text-sm text-muted mt-1 leading-relaxed">
+          A separate acquisition, by a separate mechanism, from the root credential pull above.
+          These rows come from the Collector helper APK's own <code className="font-mono">WifiManager</code>{" "}
+          scan (<code className="font-mono">wifi.json</code>, via its <code className="font-mono">dump_all</code>{" "}
+          action) — no root required, and no plaintext passwords are or can be present here.
+        </p>
+      </div>
+
+      <div className="card p-3 mb-4 border-recovered/40 bg-recovered/5 text-xs text-recovered leading-relaxed">
+        <span className="font-semibold">Different method, different fields. </span>
+        Each row keeps the helper's own <code className="font-mono">type</code> discriminator —{" "}
+        <em>current_connection</em>, <em>saved_network</em> or <em>scan_result</em> — and each type
+        populates a different subset of columns by design (e.g. a scan result carries no IP
+        address or network ID; a saved network carries no signal level). A blank cell below
+        therefore often means <strong>not applicable to this row's type</strong>, not that a value
+        was lost. Separately: without <code className="font-mono">ACCESS_FINE_LOCATION</code> granted
+        to the helper, Android 8.1+ hands back these networks with blank SSIDs — an OS
+        restriction on the acquisition, not evidence of an empty network history.
+      </div>
+
+      {error && (
+        <div className="p-4 text-sm text-deletion">
+          Failed to load helper Wi-Fi capture: {error}
+        </div>
+      )}
+
+      {rows === null ? (
+        <div className="p-8 text-muted text-sm animate-pulse">Loading helper capture…</div>
+      ) : rows.length === 0 ? (
+        <div className="card p-10 text-center text-muted">
+          <div className="text-4xl mb-3 opacity-40">📡</div>
+          <div className="font-medium mb-1">No helper-captured Wi-Fi data for this case</div>
+          <div className="text-sm max-w-lg mx-auto leading-relaxed">
+            Absent here means the Tier-1 "collect all" helper stage either never ran on this
+            acquisition, or ran and returned nothing its parser could interpret. This is{" "}
+            <strong>not</strong> a finding that the device has no Wi-Fi configuration — check the
+            chain-of-custody audit trail for whether <em>tier1.helper.collect_all</em> /{" "}
+            <em>tier1.helper.dump_all</em> was attempted on this run.
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-3 mb-4">
+            {[
+              { label: "Total rows", value: rows.length },
+              { label: "Current connection", value: byType.current_connection ?? 0 },
+              { label: "Saved networks", value: byType.saved_network ?? 0 },
+              { label: "Scan results", value: byType.scan_result ?? 0 },
+            ].map(({ label, value }) => (
+              <div
+                key={label}
+                className="card px-4 py-2 flex flex-col items-center min-w-[110px]"
+              >
+                <span className="text-xl font-bold text-recovered">{value}</span>
+                <span className="text-xs text-muted mt-0.5">{label}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="mb-3">
+            <input
+              className="input max-w-sm"
+              placeholder="Filter by SSID, BSSID or row type…"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+          </div>
+
+          <div className="card overflow-auto">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="border-b border-line text-xs uppercase tracking-wider text-muted">
+                  <th className="text-left py-2 px-3 font-semibold">Row type</th>
+                  <th className="text-left py-2 px-3 font-semibold">SSID</th>
+                  <th className="text-left py-2 px-3 font-semibold">BSSID</th>
+                  <th className="text-left py-2 px-3 font-semibold">Freq / level</th>
+                  <th className="text-left py-2 px-3 font-semibold">Network ID</th>
+                  <th className="text-left py-2 px-3 font-semibold">Status / capabilities</th>
+                  <th className="text-left py-2 px-3 font-semibold">IP address</th>
+                  <th className="text-left py-2 px-3 font-semibold">Hidden</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="text-center py-8 text-muted text-xs">
+                      No rows match your filter.
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map((n, i) => (
+                    <tr
+                      key={i}
+                      className="border-b border-line/50 hover:bg-panel-2/50 transition-colors"
+                    >
+                      <td className="py-2.5 px-3">
+                        <RowTypeBadge value={n.type} />
+                      </td>
+                      <td className="py-2.5 px-3 font-medium">
+                        {n.ssid || <span className="text-muted italic">— blank (see notice above)</span>}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-xs">
+                        {n.bssid || <span className="text-muted italic">— not recorded</span>}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-xs text-muted">
+                        {n.frequency_mhz != null ? `${n.frequency_mhz} MHz` : "—"}
+                        {n.level_dbm != null && <span className="block">{n.level_dbm} dBm</span>}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-xs text-muted">
+                        {n.network_id != null ? String(n.network_id) : "—"}
+                      </td>
+                      <td className="py-2.5 px-3 text-xs">
+                        {n.status || <span className="text-muted italic">—</span>}
+                        {n.capabilities && (
+                          <span className="block font-mono text-[11px] text-muted break-all">
+                            {n.capabilities}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-xs text-muted">
+                        {n.ip_address || "—"}
+                      </td>
+                      <td className="py-2.5 px-3 text-xs">{n.hidden ? "yes" : "no"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {filtered.length < rows.length && (
+            <p className="text-xs text-muted mt-2">
+              Showing {filtered.length} of {rows.length} rows
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 export function WifiView({ caseId }: { caseId: string }) {
   const [networks, setNetworks] = useState<WifiNetwork[] | null>(null);
   const [filter, setFilter] = useState("");
@@ -238,6 +482,8 @@ export function WifiView({ caseId }: { caseId: string }) {
           )}
         </>
       )}
+
+      <CollectorWifiSection caseId={caseId} />
     </div>
   );
 }
