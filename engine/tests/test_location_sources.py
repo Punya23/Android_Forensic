@@ -856,3 +856,63 @@ def test_an_unknown_source_is_treated_as_interest_never_promoted_to_presence():
         ]
     )
     assert [a for a in anomalies if a["pattern"] == "late_night_location"] == []
+
+
+def test_takeout_semantic_and_path_rows_are_presence_not_interest():
+    # Google's current (2025+) Takeout export produces ONLY these two source strings —
+    # the legacy top-level locations[] array is gone. Found missing from _SOURCE_MAP by
+    # adversarial review: real recorded positions were silently reclassified as
+    # "looked up, not there" and dropped from the movement/late-night analysis.
+    anomalies = detect_location_anomalies(
+        [
+            {
+                "latitude": 28.6139,
+                "longitude": 77.2090,
+                "timestamp": "2026-03-01T02:30:00Z",
+                "source": "takeout_semantic",
+            },
+            {
+                "latitude": 13.0827,
+                "longitude": 80.2707,
+                "timestamp": "2026-03-01T02:40:00Z",
+                "source": "takeout_path",
+            },
+        ]
+    )
+    patterns = {a["pattern"] for a in anomalies}
+    assert "late_night_location" in patterns
+    assert "large_location_jump" in patterns
+    assert "interest_rows_excluded" not in patterns
+
+
+def test_a_current_location_fix_with_no_source_key_is_treated_as_interest_not_crashed():
+    # parse_current_location() returns a dict with no "source" key at all. Before the
+    # pipeline stamps one on (see pipeline.py's setdefault("source", "current_location")),
+    # this must degrade safely to interest rather than raise — an unknown provenance is
+    # never promoted to presence.
+    anomalies = detect_location_anomalies(
+        [
+            {
+                "latitude": 28.6139,
+                "longitude": 77.2090,
+                "timestamp": "2026-03-01T02:30:00Z",
+                # no "source" key
+            }
+        ]
+    )
+    assert [a for a in anomalies if a["pattern"] == "late_night_location"] == []
+
+
+def test_current_location_source_stamped_by_the_pipeline_is_presence():
+    # This is the shape the row actually has once pipeline.py's fix runs.
+    anomalies = detect_location_anomalies(
+        [
+            {
+                "latitude": 28.6139,
+                "longitude": 77.2090,
+                "timestamp": "2026-03-01T02:30:00Z",
+                "source": "current_location",
+            }
+        ]
+    )
+    assert any(a["pattern"] == "late_night_location" for a in anomalies)

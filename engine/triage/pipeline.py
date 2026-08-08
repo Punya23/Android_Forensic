@@ -1199,6 +1199,11 @@ def run_acquisition(
         if dumpsys:
             cur = parse_current_location(dumpsys)
             if cur and cur.get("latitude") is not None:
+                # parse_current_location() doesn't stamp a "source" — both the location-
+                # trace classifier and the Maps anomaly detector default an unmapped/missing
+                # source to INTEREST, which would silently demote a real live GPS fix to
+                # "merely looked up". Found via adversarial review.
+                cur.setdefault("source", "current_location")
                 maps_locations.append(cur)
         for takeout in list(staging.rglob("*ocation*istory*.json"))[:20]:
             maps_locations.extend(parse_google_takeout_location(takeout))

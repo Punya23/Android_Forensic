@@ -1024,7 +1024,14 @@ def detect_location_anomalies(locations: List[Dict]) -> List[Dict]:
     from the same source-of-truth table the unified location trace uses, so a parser that
     adds a source classifies identically in both places.
     """
-    from ..forensics.location_aggregate import _PRESENCE_CATEGORIES, _SOURCE_MAP
+    # Reuse the unified trace's OWN classifier rather than a second lookup against its
+    # table — a hand-rolled copy here previously missed the `:`-prefix fallback _classify()
+    # applies, and drifted out of sync with _SOURCE_MAP when a source was added to one but
+    # not the other (found via adversarial review: real Takeout `takeout_semantic`/
+    # `takeout_path` rows and source-less `current_location` fixes were silently
+    # reclassified as "interest" and dropped from this very analysis). Calling the same
+    # function the trace builder calls means both code paths can never disagree again.
+    from ..forensics.location_aggregate import _PRESENCE_CATEGORIES, _classify
 
     patterns: List[Dict] = []
 
@@ -1038,10 +1045,8 @@ def detect_location_anomalies(locations: List[Dict]) -> List[Dict]:
     ]
 
     def _is_presence(loc: Dict) -> bool:
-        # An unmapped source is treated as interest, never promoted to presence — an
-        # unknown provenance must not be able to manufacture a movement finding.
-        entry = _SOURCE_MAP.get(str(loc.get("source", "")))
-        return bool(entry) and entry[0] in _PRESENCE_CATEGORIES
+        category, _label, _tier = _classify(str(loc.get("source") or ""))
+        return category in _PRESENCE_CATEGORIES
 
     valid = [loc for loc in plotted if _is_presence(loc)]
     excluded = len(plotted) - len(valid)

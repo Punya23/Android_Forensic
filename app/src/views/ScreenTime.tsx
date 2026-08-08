@@ -413,9 +413,15 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
           <div className="text-ink font-medium mb-1">
             {usageCollectorEntry?.status === "denied"
               ? "Usage-stats access was denied"
-              : usageCollectorEntry
-                ? "Collected — UsageStatsManager returned no rows"
-                : "Not collected"}
+              : usageCollectorEntry?.status === "error"
+                ? "The collector errored — nothing was read"
+                : usageCollectorEntry?.status === "unsupported"
+                  ? "Unsupported on this device — nothing was read"
+                  : usageCollectorEntry?.status === "empty" || usageCollectorEntry?.status === "ok"
+                    ? "Collected — UsageStatsManager returned no rows"
+                    : usageCollectorEntry
+                      ? `Collector status: ${usageCollectorEntry.status || "unrecognised"}`
+                      : "Not collected"}
           </div>
           <p className="text-sm leading-relaxed max-w-lg mx-auto">
             {usageCollectorEntry?.status === "denied" ? (
@@ -426,11 +432,32 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
                 ), so it could not call <code className="font-mono">queryUsageStats</code>. This is a{" "}
                 <strong>denied</strong> read, not evidence the device had no app usage.
               </>
-            ) : usageCollectorEntry ? (
+            ) : usageCollectorEntry?.status === "error" ? (
+              <>
+                The collector threw while querying{" "}
+                <code className="font-mono">UsageStatsManager</code> (
+                <code className="font-mono">{usageCollectorEntry?.error || "no error message recorded"}</code>
+                ). Nothing was read — this is a <strong>failed</strong> collection, not a genuine empty
+                result, and must not be read as "no app usage in the last 30 days".
+              </>
+            ) : usageCollectorEntry?.status === "unsupported" ? (
+              <>
+                This OEM/Android build does not support the query the collector attempted (
+                <code className="font-mono">{usageCollectorEntry?.error || "reason not recorded"}</code>
+                ). This is a <strong>tooling gap</strong> on this device, not evidence of no app usage.
+              </>
+            ) : usageCollectorEntry?.status === "empty" || usageCollectorEntry?.status === "ok" ? (
               <>
                 The helper successfully queried <code className="font-mono">UsageStatsManager</code> and
                 the 30-day window contained no packages with foreground time or a last-used record. This
-                is a genuine empty result, not a denial.
+                is a genuine empty result, not a denial or a failure.
+              </>
+            ) : usageCollectorEntry ? (
+              <>
+                The collector_manifest recorded an unrecognised status (
+                <code className="font-mono">{usageCollectorEntry.status || "—"}</code>
+                {usageCollectorEntry.error ? <>, error: <code className="font-mono">{usageCollectorEntry.error}</code></> : null}
+                ) — this is unhandled and must not be assumed to mean the read succeeded.
               </>
             ) : (
               <>

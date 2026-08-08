@@ -15,9 +15,11 @@ export function MediaView({ caseId }: { caseId: string }) {
 
   if (loading || screenshotsLoading || waLoading) return <div className="p-8 text-muted">Loading media…</div>;
 
-  if (data.length === 0 && screenshots.length === 0 && waMedia.length === 0) {
-    return <EmptyState title="No media pulled" />;
-  }
+  // No combined "nothing here" shortcut: pulled media, screenshots and WhatsApp media are
+  // three independent collection attempts with three different reasons to be empty (Tier-0
+  // pull found nothing / capture_screenshot disabled or failed / WhatsApp media tree
+  // unreachable). Collapsing them into one bare empty state reads as "this device had no
+  // media" — each tab below renders its own specific, honest reason instead.
 
   const tabs: { k: Source; label: string; n: number }[] = [
     { k: "pulled", label: "Pulled Media", n: data.length },

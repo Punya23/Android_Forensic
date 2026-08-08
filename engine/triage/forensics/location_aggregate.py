@@ -71,6 +71,11 @@ _SOURCE_MAP: dict[str, tuple[str, str, str]] = {
     "current_location": (DEVICE_FIX, "Current GPS fix", "tier0"),
     "google_takeout": (DEVICE_FIX, "Google location history (Takeout)", "tier0"),
     "takeout": (DEVICE_FIX, "Google location history (Takeout)", "tier0"),
+    # Google's current (2025+) Takeout export format — the legacy top-level `locations[]`
+    # array is gone, so these two are now the ONLY Takeout sources a real export produces.
+    # Missing them here silently reclassified every real Takeout position as "interest".
+    "takeout_semantic": (DEVICE_FIX, "Google location history (Takeout — semantic visit)", "tier0"),
+    "takeout_path": (DEVICE_FIX, "Google location history (Takeout — timeline path)", "tier0"),
     # --- media
     "exif": (MEDIA_CAPTURE, "Photo EXIF GPS", "tier0"),
     "video": (MEDIA_CAPTURE, "Video location atom", "tier0"),

@@ -632,6 +632,14 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
           survive an uninstall until PackageManager next prunes the file, so a row here is not proof
           the package is still on the device.
         </p>
+        <p className="text-sm text-warn leading-relaxed mt-1.5">
+          <strong>The Perms column is install-time only.</strong> It reflects packages.xml's{" "}
+          <code className="font-mono">&lt;perms&gt;</code> block — permissions granted at install. Every
+          runtime (dangerous) permission a user grants afterwards — camera, microphone, SMS, precise
+          location, and so on — is recorded in{" "}
+          <code className="font-mono">runtime-permissions.xml</code>, which this collector does not
+          parse. "none parsed" here is <strong>not</strong> evidence the app holds no permissions.
+        </p>
       </div>
 
       {packages.length === 0 ? (
@@ -677,7 +685,12 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
                   <th className="th">Installer / initiator</th>
                   <th className="th w-20">UID</th>
                   <th className="th">Signing cert (SHA-256)</th>
-                  <th className="th w-24">Permissions</th>
+                  <th
+                    className="th w-24"
+                    title="Install-time permissions only, parsed from packages.xml's <perms> block. Runtime (dangerous) grants — camera, mic, SMS, location, etc. — live in runtime-permissions.xml, which this collector does not read, and are NOT reflected here."
+                  >
+                    Perms (install-time)
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -742,7 +755,12 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
                             </ul>
                           </details>
                         ) : (
-                          <span className="text-muted">0</span>
+                          <span
+                            className="text-muted italic"
+                            title="No install-time <perms> entries were parsed. This does NOT mean the app holds no permissions — runtime-granted dangerous permissions (camera, mic, SMS, location, ...) are recorded in runtime-permissions.xml, not here."
+                          >
+                            none parsed
+                          </span>
                         )}
                       </td>
                     </tr>

@@ -99,18 +99,32 @@ function DeletionEvidencePanel({ caseId }: { caseId: string }) {
             so it is never mistaken for recovered content.
           </p>
           {summary && (summary.by_mechanism || summary.tables_affected) && (
-            <div className="flex flex-wrap gap-2 mt-2 text-[11px]">
-              {summary.total_missing_rowids != null && (
-                <span className="px-1.5 py-0.5 rounded bg-panel border border-line text-muted">
-                  {summary.total_missing_rowids} missing rowid(s) total
-                </span>
+            <>
+              <div className="flex flex-wrap gap-2 mt-2 text-[11px]">
+                {summary.total_missing_rowids != null && (
+                  <span
+                    className="px-1.5 py-0.5 rounded bg-panel border border-line text-muted"
+                    title="Summed across every mechanism below. The same missing rowid can be counted by more than one mechanism, so this is NOT a count of distinct deleted rows."
+                  >
+                    {summary.total_missing_rowids} missing-rowid mention(s) (mechanisms overlap — not a distinct-row count)
+                  </span>
+                )}
+                {Object.entries(summary.by_mechanism ?? {}).map(([mech, n]) => (
+                  <span key={mech} className="px-1.5 py-0.5 rounded bg-panel border border-line text-muted">
+                    {mech}: {n}
+                  </span>
+                ))}
+              </div>
+              {summary.caveats && summary.caveats.length > 0 && (
+                <ul className="mt-2 space-y-0.5">
+                  {summary.caveats.map((c, i) => (
+                    <li key={i} className="text-[11px] text-warn leading-relaxed">
+                      ⚠ {c}
+                    </li>
+                  ))}
+                </ul>
               )}
-              {Object.entries(summary.by_mechanism ?? {}).map(([mech, n]) => (
-                <span key={mech} className="px-1.5 py-0.5 rounded bg-panel border border-line text-muted">
-                  {mech}: {n}
-                </span>
-              ))}
-            </div>
+            </>
           )}
           <div className="overflow-auto mt-3">
             <table className="w-full text-xs border-collapse">
