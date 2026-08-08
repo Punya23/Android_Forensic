@@ -16,15 +16,81 @@ import type {
 
 export const BASE = import.meta.env.DEV ? "" : "http://127.0.0.1:5057";
 
+// --- auth ---------------------------------------------------------------
+// One examiner session at a time, held as a bearer token. Token lives in
+// localStorage so a page reload doesn't force a re-login; the engine drops it
+// on restart, so a stale token still gets rejected and onUnauthorized fires.
+const TOKEN_KEY = "erakshak_token";
+let authToken: string | null = localStorage.getItem(TOKEN_KEY);
+
+export function setAuthToken(token: string | null) {
+  authToken = token;
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+export function hasAuthToken(): boolean {
+  return !!authToken;
+}
+
+// App registers this once, on mount, to fall back to the login screen the moment
+// any request comes back 401 (expired session, engine restart, wrong token, ...).
+let onUnauthorized: (() => void) | null = null;
+export function setOnUnauthorized(fn: () => void) {
+  onUnauthorized = fn;
+}
+
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  return authToken ? { ...extra, Authorization: `Bearer ${authToken}` } : { ...extra };
+}
+
+/** Shared fetch wrapper: attaches the bearer token, unwraps JSON, and routes 401s
+ * to the login screen instead of letting every call site handle it separately. */
+async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    ...opts,
+    headers: { ...authHeaders(opts.headers as Record<string, string> | undefined) },
+  });
+  if (res.status === 401) {
+    setAuthToken(null);
+    onUnauthorized?.();
+    throw new Error("unauthorized");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || `${path} → HTTP ${res.status}`);
+  return data as T;
+}
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
-  if (!res.ok) throw new Error(`${path} → HTTP ${res.status}`);
-  return res.json() as Promise<T>;
+  return request<T>(path);
 }
 
 export const api = {
   // API root — used by views that fetch directly (e.g. media thumbnails, conversation maps).
   base: `${BASE}/api`,
+
+  // --- auth ---------------------------------------------------------------
+  login: async (username: string, password: string) => {
+    const res = await fetch(`${BASE}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || "invalid credentials");
+    const token = (data as { token: string }).token;
+    setAuthToken(token);
+    return data as { token: string; expires_in: number; username: string };
+  },
+  logout: async () => {
+    try {
+      await request("/api/auth/logout", { method: "POST" });
+    } finally {
+      setAuthToken(null);
+    }
+  },
+  /** Confirms a stored token is still accepted by the (possibly restarted) engine. */
+  me: () => get<{ username: string }>("/api/auth/me"),
+
   health: () => get<Health>("/api/health"),
   devices: () => get<DeviceListing>("/api/devices"),
   cases: () => get<{ case_id: string; examiner: string; created_at: string; device: string }[]>("/api/cases"),
@@ -34,12 +100,8 @@ export const api = {
   audit: (id: string) => get<AuditEvent[]>(`/api/case/${id}/audit`),
   tags: (id: string) => get<import("./types").Tag[]>(`/api/case/${id}/tags`),
   reportUrl: (id: string) => `${BASE}/api/case/${id}/report`,
-  regenerateReport: async (id: string): Promise<{ ok: boolean; error?: string }> => {
-    const res = await fetch(`${BASE}/api/case/${id}/report/regenerate`, { method: "POST" });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
-    return data as { ok: boolean };
-  },
+  regenerateReport: (id: string) =>
+    request<{ ok: boolean; error?: string }>(`/api/case/${id}/report/regenerate`, { method: "POST" }),
   mediaUrl: (id: string, artifactId: string) => `${BASE}/api/case/${id}/media/${artifactId}`,
   exportUrl: (id: string) => `${BASE}/api/case/${id}/export/download`,
 
@@ -55,43 +117,30 @@ export const api = {
   caseReports: (id: string) => get<ReportVersion[]>(`/api/case/${id}/reports`),
   reportSnapshotUrl: (id: string, path: string) =>
     `${BASE}/api/case/${id}/reports/${path.split("/").pop()}`,
-  deleteCase: async (id: string): Promise<{ deleted: string }> => {
-    const res = await fetch(`${BASE}/api/case/${id}`, { method: "DELETE" });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
-    return data as { deleted: string };
-  },
+  deleteCase: (id: string) => request<{ deleted: string }>(`/api/case/${id}`, { method: "DELETE" }),
 
-  addTag: async (id: string, body: { ref: string; kind: string; label: string; note?: string }) => {
-    const res = await fetch(`${BASE}/api/case/${id}/tags`, {
+  addTag: (id: string, body: { ref: string; kind: string; label: string; note?: string }) =>
+    request<import("./types").Tag>(`/api/case/${id}/tags`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json() as Promise<import("./types").Tag>;
-  },
-  removeTag: async (id: string, tagId: string) => {
-    await fetch(`${BASE}/api/case/${id}/tags/${tagId}`, { method: "DELETE" });
-  },
+    }),
+  removeTag: (id: string, tagId: string) =>
+    request(`/api/case/${id}/tags/${tagId}`, { method: "DELETE" }),
 
   // Ingest an Instagram/Snapchat "Download Your Data" export or a Telegram Desktop
   // "Export Telegram data" (ZIP/JSON) into a case — the non-root acquisition path.
-  importExport: async (
-    id: string,
-    app: "instagram" | "snapchat" | "telegram",
-    file: File
-  ): Promise<{ imported: number; total: number; counts?: Record<string, number> }> => {
+  importExport: (id: string, app: "instagram" | "snapchat" | "telegram", file: File) => {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(`${BASE}/api/case/${id}/import/${app}`, { method: "POST", body: form });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
-    return data as { imported: number; total: number; counts?: Record<string, number> };
+    return request<{ imported: number; total: number; counts?: Record<string, number> }>(
+      `/api/case/${id}/import/${app}`,
+      { method: "POST", body: form }
+    );
   },
 
   // Case-intelligence: preview a targeted collection plan from a plain-language brief.
-  plan: async (
+  plan: (
     description: string,
     opts?: {
       llm_provider?: string;
@@ -100,30 +149,20 @@ export const api = {
       /** Set false to preview the pure-ontology plan with no retrieval or learning. */
       use_case_bank?: boolean;
     }
-  ): Promise<import("./types").PlanResponse> => {
-    const res = await fetch(`${BASE}/api/plan`, {
+  ) =>
+    request<import("./types").PlanResponse>("/api/plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ description, ...opts }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
-    return data as import("./types").PlanResponse;
-  },
+    }),
 
   /** Validate a draft description's forensic nomenclature before acquiring. */
-  checkNomenclature: async (
-    description: string
-  ): Promise<import("./types").NomenclatureCheckResponse> => {
-    const res = await fetch(`${BASE}/api/nomenclature/check`, {
+  checkNomenclature: (description: string) =>
+    request<import("./types").NomenclatureCheckResponse>("/api/nomenclature/check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ description }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
-    return data as import("./types").NomenclatureCheckResponse;
-  },
+    }),
 
   nomenclature: () =>
     get<{ roles: import("./types").RoleDefinition[]; note: string }>("/api/nomenclature"),
@@ -140,18 +179,12 @@ export const api = {
         (crimeType ? `&crime_type=${encodeURIComponent(crimeType)}` : "")
     ),
 
-  addCaseStudy: async (
-    study: Partial<import("./types").CaseStudy>
-  ): Promise<{ added: string; corpus_size: number; graph_edges_updated: number }> => {
-    const res = await fetch(`${BASE}/api/casebank`, {
+  addCaseStudy: (study: Partial<import("./types").CaseStudy>) =>
+    request<{ added: string; corpus_size: number; graph_edges_updated: number }>("/api/casebank", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(study),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
-    return data as { added: string; corpus_size: number; graph_edges_updated: number };
-  },
+    }),
 
   // --- knowledge graph (learned artifact priors) ----------------------------
   knowledgeGraph: (crimeType: string) =>
@@ -160,7 +193,7 @@ export const api = {
     ),
 
   /** Record the examiner's confirmed outcome — what actually solved the case. */
-  recordOutcome: async (
+  recordOutcome: (
     id: string,
     body: {
       artifact_yields: Record<string, import("./types").ArtifactYield>;
@@ -171,33 +204,22 @@ export const api = {
       notes?: Record<string, string>;
       add_to_case_bank?: boolean;
     }
-  ): Promise<import("./types").OutcomeResponse> => {
-    const res = await fetch(`${BASE}/api/case/${id}/outcome`, {
+  ) =>
+    request<import("./types").OutcomeResponse>(`/api/case/${id}/outcome`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
-    return data as import("./types").OutcomeResponse;
-  },
+    }),
 
   // Case-intelligence: (re-)run the AI findings analysis over a collected case.
-  analyze: async (
-    id: string,
-    body?: { description?: string; llm_provider?: string }
-  ): Promise<import("./types").AIFindings> => {
-    const res = await fetch(`${BASE}/api/case/${id}/analyze`, {
+  analyze: (id: string, body?: { description?: string; llm_provider?: string }) =>
+    request<import("./types").AIFindings>(`/api/case/${id}/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
-    return data as import("./types").AIFindings;
-  },
+    }),
 
-  acquire: async (body: {
+  acquire: (body: {
     mock?: string;
     serial?: string;
     case_id?: string;
@@ -236,18 +258,12 @@ export const api = {
     wifi_live?: boolean;
     scan_encrypted_apps?: boolean;
     run_self_validation?: boolean;
-  }): Promise<{ case_id: string; started: boolean }> => {
-    const res = await fetch(`${BASE}/api/acquire`, {
+  }) =>
+    request<{ case_id: string; started: boolean }>("/api/acquire", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      throw new Error(err.error || `HTTP ${res.status}`);
-    }
-    return res.json();
-  },
+    }),
 };
 
 let socket: Socket | null = null;
