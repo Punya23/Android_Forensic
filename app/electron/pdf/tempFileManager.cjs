@@ -6,7 +6,7 @@ const crypto = require("crypto");
 // Dedicated subdirectory inside the OS temp folder.
 // Keeping all exported PDFs here allows safe cleanup without touching
 // unrelated temporary files.
-const TEMP_SUBDIR = "erakshak-report-pdf";
+const TEMP_SUBDIR = "snagr-report-pdf";
 
 // Returns the application's managed temporary directory.
 // Creates it automatically if it does not already exist.

@@ -1210,7 +1210,7 @@ def export_recovered_messages_json(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     export = {
-        "tool": "eRakshak Android Triage — Telegram Recovery",
+        "tool": "SNAGR Android Triage — Telegram Recovery",
         "schema_version": result.get("schema", {}).get("version_label", "unknown"),
         "available": result.get("available", False),
         "error": result.get("error"),

@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
-# eRakshak — PyInstaller build spec
+# SNAGR — PyInstaller build spec
 #
 # Usage:
 #   cd engine
-#   pyinstaller erakshak.spec --noconfirm
+#   pyinstaller snagr.spec --noconfirm
 #
 # Output: engine/dist/triage-engine[.exe]
 #

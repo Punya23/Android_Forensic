@@ -3,6 +3,7 @@ flask>=3.0
 flask-cors>=4.0
 flask-socketio>=5.3
 simple-websocket>=1.0
+python-dotenv>=1.0.0    # loads engine/.env (SNAGR_AUTH_USER/PASS) so creds don't need shell export
 
 # ADB orchestration
 adbutils>=2.5.0

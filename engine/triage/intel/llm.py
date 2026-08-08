@@ -1,6 +1,6 @@
 """Pluggable LLM provider for the case-intelligence layer.
 
-Three interchangeable back-ends, selected by the ``ERAKSHAK_LLM`` environment variable:
+Three interchangeable back-ends, selected by the ``SNAGR_LLM`` environment variable:
 
     * ``heuristic`` (default)  — no external calls at all. Pure regex/lexical extraction.
       The tool is fully functional offline with zero configuration, which matters for a
@@ -86,7 +86,7 @@ class OllamaProvider(LLMProvider):
         self.host = (
             host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
         ).rstrip("/")
-        self.model = model or os.environ.get("ERAKSHAK_LLM_MODEL", "llama3.1")
+        self.model = model or os.environ.get("SNAGR_LLM_MODEL", "llama3.1")
         self.timeout = timeout
         self.available = self._ping()
 
@@ -151,7 +151,7 @@ class AnthropicProvider(LLMProvider):
     ) -> None:
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         # Default to a current, capable general model; override via env.
-        self.model = model or os.environ.get("ERAKSHAK_LLM_MODEL", "claude-sonnet-5")
+        self.model = model or os.environ.get("SNAGR_LLM_MODEL", "claude-sonnet-5")
         self.timeout = timeout
         self.available = bool(self.api_key)
 
@@ -200,11 +200,11 @@ class AnthropicProvider(LLMProvider):
 def get_provider(kind: Optional[str] = None) -> LLMProvider:
     """Return the configured provider, falling back to heuristic when unavailable.
 
-    Selection order: explicit *kind* arg → ``ERAKSHAK_LLM`` env → ``heuristic``. If the
+    Selection order: explicit *kind* arg → ``SNAGR_LLM`` env → ``heuristic``. If the
     chosen back-end reports itself unavailable (no key / server down), we degrade to the
     heuristic provider rather than fail — the analysis still runs, just deterministically.
     """
-    kind = (kind or os.environ.get("ERAKSHAK_LLM", "heuristic")).strip().lower()
+    kind = (kind or os.environ.get("SNAGR_LLM", "heuristic")).strip().lower()
     if kind == "ollama":
         p = OllamaProvider()
         return p if p.available else _degraded("ollama")

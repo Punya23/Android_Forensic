@@ -1,4 +1,4 @@
-"""Wi-Fi credential parser for eRakshak.
+"""Wi-Fi credential parser for SNAGR.
 
 Supports two Android Wi-Fi config file formats:
 

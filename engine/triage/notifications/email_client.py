@@ -13,7 +13,7 @@ class EmailClient:
         self.smtp_port = int(os.environ.get('SMTP_PORT', 1025))
         self.smtp_user = os.environ.get('SMTP_USER', '')
         self.smtp_pass = os.environ.get('SMTP_PASS', '')
-        self.sender = os.environ.get('SMTP_SENDER', 'erakshak@example.com')
+        self.sender = os.environ.get('SMTP_SENDER', 'snagr@example.com')
         
     def send_email(self, recipients: List[str], subject: str, html_content: str, text_content: Optional[str] = None):
         """

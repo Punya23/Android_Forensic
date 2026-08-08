@@ -1,4 +1,4 @@
-"""Location forensics package — photo/media location tracing for eRakshak.
+"""Location forensics package — photo/media location tracing for SNAGR.
 
 Sub-modules:
 

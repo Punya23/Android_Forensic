@@ -418,7 +418,7 @@ def known_limitations() -> list[str]:
 
 
 DEFAULT_PURPOSE = (
-    "Establish, by known-answer testing, whether the eRakshak triage engine performs "
+    "Establish, by known-answer testing, whether the SNAGR triage engine performs "
     "as expected for its core evidential functions — cryptographic hashing, "
     "chain-of-custody manifest integrity verification, deleted-record recovery from "
     "SQLite, and timestamp normalisation — and to document the limitations of those "

@@ -2,12 +2,12 @@
 """
 retrieve_recordings_notifications.py
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-eRakshak — Call Recordings & Notification History Retrieval Tool
+SNAGR — Call Recordings & Notification History Retrieval Tool
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 A self-contained forensic session tool that:
   1. Verifies an Android device is connected via ADB
-  2. Installs / updates the eRakshak Collector APK on the device
+  2. Installs / updates the SNAGR Collector APK on the device
   3. Grants required permissions automatically
   4. Triggers the call-recordings dump  -> pulls recordings.json
   5. Triggers the notification-history dump -> pulls notifications.json
@@ -178,7 +178,7 @@ def step_check_device(serial: str | None) -> str:
 
 
 def step_install_apk(serial: str) -> None:
-    print(f"\n{BOLD('[ 2/6 ]  Installing eRakshak Collector APK...')}")
+    print(f"\n{BOLD('[ 2/6 ]  Installing SNAGR Collector APK...')}")
 
     if not _APK_PATH.exists():
         r = _adb(serial, "shell", "pm", "list", "packages", _APK_PKG)
@@ -305,7 +305,7 @@ def step_dump_notifications(serial: str, out_dir: Path) -> list[dict]:
     else:
         print(YELLOW("  !  Notification Access NOT granted -- APK history skipped."))
         print(YELLOW("     To get full history: Settings -> Apps -> Special app access"))
-        print(YELLOW("     -> Notification access -> eRakshak Collector -> ON"))
+        print(YELLOW("     -> Notification access -> SNAGR Collector -> ON"))
 
     # Merge, de-duplicate by (package, post_time, title)
     seen: set[tuple] = set()
@@ -389,7 +389,7 @@ def print_notifications_report(notifications: list[dict]) -> None:
 
     if not notifications:
         print(f"  {YELLOW('No notification history found.')}")
-        print(DIM("  Grant Notification Access to eRakshak Collector and retry."))
+        print(DIM("  Grant Notification Access to SNAGR Collector and retry."))
         print(BOLD(_sep('-')))
         return
 
@@ -427,7 +427,7 @@ def main() -> None:
     global _ADB
 
     parser = argparse.ArgumentParser(
-        description="eRakshak -- Call Recordings & Notification History Retrieval",
+        description="SNAGR -- Call Recordings & Notification History Retrieval",
     )
     parser.add_argument("--serial",              help="Target specific device serial")
     parser.add_argument("--out",                 help="Output directory (default: Desktop/Android_Forensic)")
@@ -443,7 +443,7 @@ def main() -> None:
 
     print()
     print(BOLD("=" * 78))
-    print(BOLD("  eRakshak  Call Recordings & Notification History Retrieval Session"))
+    print(BOLD("  SNAGR  Call Recordings & Notification History Retrieval Session"))
     print(BOLD("=" * 78))
     print(DIM(f"  ADB:        {_ADB}"))
     print(DIM(f"  Output:     {out_dir}"))

@@ -1,4 +1,4 @@
-"""Screen time / device usage history parser for eRakshak.
+"""Screen time / device usage history parser for SNAGR.
 
 Parses screen on/off events and app foreground usage from:
   * ``adb shell dumpsys power``        -- screen wakefulness state transitions

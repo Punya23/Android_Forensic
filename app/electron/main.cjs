@@ -109,7 +109,7 @@ function createWindow() {
 
     backgroundColor: "#161a1f",
 
-    title: "eRakshak — Forensic Preview",
+    title: "SNAGR — Forensic Preview",
 
 
     webPreferences: {

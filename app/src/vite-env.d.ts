@@ -3,7 +3,7 @@ export { };
 
 declare global {
     interface Window {
-        erakshak: {
+        snagr: {
             exportAndPreviewReport: (
                 caseId: string
             ) => Promise<boolean>;

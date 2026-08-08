@@ -6,6 +6,14 @@ import { SectionHeader, EmptyState, Filters, bytes } from "../components/common"
 
 type Source = "pulled" | "screenshots" | "whatsapp";
 
+/** Same "null island" guard as views/Locations.tsx — a zero-filled EXIF GPS tag
+ * decodes to exactly 0,0, a real point off West Africa, not "no data". Treated as
+ * no fix here too so the "Geotagged" filter/badge/count don't count fabricated
+ * positions. */
+function hasRealGps(m: { gps?: { lat: number; lon: number } | null }): boolean {
+  return !!m.gps && !(m.gps.lat === 0 && m.gps.lon === 0);
+}
+
 export function MediaView({ caseId }: { caseId: string }) {
   const { data, loading } = useDataset<MediaItem>(caseId, "media");
   const { data: screenshots, loading: screenshotsLoading } = useDataset<Screenshot>(caseId, "screenshots");
@@ -64,7 +72,7 @@ function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[
     return data.filter((m) => {
       if (filter === "all") return true;
       if (filter === "trashed") return m.trashed;
-      if (filter === "gps") return !!m.gps;
+      if (filter === "gps") return hasRealGps(m);
       return m.kind === filter;
     });
   }, [data, filter]);
@@ -82,7 +90,7 @@ function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[
     { k: "image", label: "Images", n: data.filter((m) => m.kind === "image").length },
     { k: "video", label: "Videos", n: data.filter((m) => m.kind === "video").length },
     { k: "trashed", label: "Recovered from Trash", n: data.filter((m) => m.trashed).length },
-    { k: "gps", label: "Geotagged", n: data.filter((m) => m.gps).length },
+    { k: "gps", label: "Geotagged", n: data.filter(hasRealGps).length },
   ];
 
   return (
@@ -117,7 +125,7 @@ function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[
               {m.trashed && (
                 <span className="absolute top-1 left-1 bg-deletion/90 text-white text-[9px] px-1 rounded">TRASH</span>
               )}
-              {m.gps && (
+              {hasRealGps(m) && (
                 <span className="absolute top-1 right-1 bg-recovered/90 text-white text-[9px] px-1 rounded">GPS</span>
               )}
               {m.app && (
@@ -147,7 +155,16 @@ function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[
               <MetaRow k="Size" v={bytes(selected.size_bytes)} />
               <MetaRow k="App" v={selected.app || "—"} />
               <MetaRow k="Trashed" v={selected.trashed ? "yes (recovered from MediaStore trash)" : "no"} />
-              <MetaRow k="GPS" v={selected.gps ? `${selected.gps.lat}, ${selected.gps.lon}` : "—"} />
+              <MetaRow
+                k="GPS"
+                v={
+                  hasRealGps(selected)
+                    ? `${selected.gps!.lat}, ${selected.gps!.lon}`
+                    : selected.gps
+                    ? "⚠ no GPS fix (0, 0 — EXIF tag zero-filled)"
+                    : "—"
+                }
+              />
               <MetaRow k="SHA-256" v={selected.sha256} mono />
             </div>
           </div>

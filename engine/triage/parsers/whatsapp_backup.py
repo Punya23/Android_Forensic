@@ -1,4 +1,4 @@
-"""WhatsApp backup recovery parser for eRakshak.
+"""WhatsApp backup recovery parser for SNAGR.
 
 Handles the full lifecycle of WhatsApp msgstore backup forensics:
 
@@ -56,7 +56,7 @@ KEY_PATHS: dict[str, str] = {
 }
 
 # Staging area on the device's sdcard (world-writable after root copy).
-STAGE_BASE = "/sdcard/Download/erakshak_wa_backup"
+STAGE_BASE = "/sdcard/Download/snagr_wa_backup"
 
 # SQLite magic header (first 16 bytes of any valid SQLite file).
 _SQLITE_MAGIC = b"SQLite format 3\x00"
@@ -685,7 +685,7 @@ def recover_media_files(
     For each message with a non-empty ``media_path``:
     1. Check the Tier-0 media path (Android scoped storage).
     2. Check the legacy sdcard path.
-    3. Check for ``.trashed-*`` variant (existing eRakshak trash detection).
+    3. Check for ``.trashed-*`` variant (existing SNAGR trash detection).
 
     Returns a list of :class:`WhatsAppBackupMedia` records for pulled files.
     """

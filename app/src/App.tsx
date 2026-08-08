@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { api } from "./lib/api";
+import { api, hasAuthToken, setOnUnauthorized } from "./lib/api";
 import type { Health } from "./lib/types";
 import { TagProvider } from "./lib/tagStore";
 import { Sidebar, isCaseIndependent, type ViewKey } from "./components/Sidebar";
 import { GlobalSearch } from "./components/GlobalSearch";
+import { LoginView } from "./views/Login";
+import { OnboardingView } from "./views/Onboarding";
 import { AcquisitionView } from "./views/Acquisition";
 import { CasesView } from "./views/Cases";
 import { OverviewView } from "./views/Overview";
@@ -57,13 +59,61 @@ export default function App() {
   const [caseId, setCaseId] = useState<string | null>(null);
   const [view, setView] = useState<ViewKey>("acquire");
 
+  // --- auth / onboarding gate ---------------------------------------------
+  // authed starts true if a token survived a page reload; api.me() below confirms
+  // it's still accepted (the engine drops all tokens on restart). onboarded is
+  // deliberately NOT persisted — the welcome screen is a per-session thing, shown
+  // again every time someone signs back in.
+  const [authed, setAuthed] = useState(hasAuthToken());
+  const [onboarded, setOnboarded] = useState(false);
+  const [username, setUsername] = useState<string | null>(null);
+
+  useEffect(() => {
+    setOnUnauthorized(() => {
+      setAuthed(false);
+      setOnboarded(false);
+      setUsername(null);
+    });
+  }, []);
+
   useEffect(() => {
     api.health().then(setHealth).catch(() => setHealth(null));
   }, []);
 
+  // A stored token might be stale (engine restarted since last visit). Confirm it
+  // still works; if not, api.ts's 401 handler already flips authed back to false.
+  useEffect(() => {
+    if (authed) api.me().then((r) => setUsername(r.username)).catch(() => {});
+  }, [authed]);
+
   function onCaseReady(id: string) {
     setCaseId(id);
     setView("overview");
+  }
+
+  function onLogout() {
+    api.logout().finally(() => {
+      setAuthed(false);
+      setOnboarded(false);
+      setUsername(null);
+      setCaseId(null);
+    });
+  }
+
+  if (!authed) {
+    return (
+      <LoginView
+        health={health}
+        onSuccess={(name) => {
+          setUsername(name);
+          setAuthed(true);
+        }}
+      />
+    );
+  }
+
+  if (!onboarded) {
+    return <OnboardingView username={username} onContinue={() => setOnboarded(true)} />;
   }
 
   const body = (
@@ -76,7 +126,7 @@ export default function App() {
         onNewAcquisition={() => setView("acquire")}
       />
       <main className="flex-1 overflow-hidden flex flex-col">
-        <TopBar health={health} caseId={caseId} setView={setView} />
+        <TopBar health={health} caseId={caseId} setView={setView} username={username} onLogout={onLogout} />
         <div className="flex-1 overflow-auto">
           {view === "acquire" && <AcquisitionView onCaseReady={onCaseReady} onOpenCase={onCaseReady} />}
           {view === "cases" && <CasesView onOpenCase={onCaseReady} />}
@@ -145,15 +195,19 @@ function TopBar({
   health,
   caseId,
   setView,
+  username,
+  onLogout,
 }: {
   health: Health | null;
   caseId: string | null;
   setView: (v: ViewKey) => void;
+  username: string | null;
+  onLogout: () => void;
 }) {
   return (
     <header className="h-12 border-b border-line flex items-center justify-between px-5 bg-panel-2 shrink-0 gap-4">
       <div className="flex items-center gap-3 text-sm shrink-0">
-        <span className="font-semibold text-accent">eRakshak</span>
+        <span className="font-semibold text-accent">SNAGR</span>
         <span className="text-muted hidden md:inline">Android Rapid Evidence Triage</span>
         {caseId && (
           <span className="font-mono text-xs bg-panel px-2 py-0.5 rounded border border-line">{caseId}</span>
@@ -168,6 +222,10 @@ function TopBar({
         <span className={health?.adb ? "text-live" : "text-warn"}>
           {health?.adb ? "adb ready" : "adb not found"}
         </span>
+        {username && <span className="text-muted">{username}</span>}
+        <button className="btn-ghost !px-2 !py-1 text-xs" onClick={onLogout}>
+          Sign out
+        </button>
       </div>
     </header>
   );

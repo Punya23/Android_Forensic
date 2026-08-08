@@ -12,7 +12,7 @@ This gives an examiner two things a raw carve never could:
   * a **defensible deletion timestamp** — ``date_expires`` minus the 30-day window is when
     the user trashed it. That is a real recorded time, not an inference from a gap.
 
-This module fuses the two independent signals eRakshak already collects:
+This module fuses the two independent signals SNAGR already collects:
 
   * the **MediaStore catalogue** (``media_inventory.json``) — the database's own record of
     which items are trashed/pending, authoritative even when the file was not pulled; and

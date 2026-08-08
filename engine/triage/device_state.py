@@ -2,7 +2,7 @@
 
 Why this module exists
 ---------------------
-eRakshak's Tier-1 path deliberately *changes the device*: it installs the Collector
+SNAGR's Tier-1 path deliberately *changes the device*: it installs the Collector
 helper APK, grants runtime permissions with ``pm grant``, sets the ``GET_USAGE_STATS``
 appop, and launches activities. Every one of those actions is audited — but until now
 nothing checked that they were actually **undone**. Reversal was a single best-effort

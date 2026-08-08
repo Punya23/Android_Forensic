@@ -1,5 +1,5 @@
 """
-eRakshak — Android Rapid Evidence Triage & Forensic Preview engine.
+SNAGR — Android Rapid Evidence Triage & Forensic Preview engine.
 
 A forensically-minded, minimally-invasive logical acquisition + preview engine for
 Android devices. Every artifact is hashed at the moment of extraction, every action
@@ -11,4 +11,4 @@ the local Flask service (`triage.server`) that the Electron dashboard talks to.
 """
 
 __version__ = "0.1.0"
-TOOL_NAME = "eRakshak Triage Engine"
+TOOL_NAME = "SNAGR Triage Engine"

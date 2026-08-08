@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-eRakshak — Portable Package Build Script
+SNAGR — Portable Package Build Script
 =========================================
 
 Produces a self-contained folder:
 
-  dist/eRakshak-<version>/
+  dist/SNAGR-<version>/
     engine/          ← PyInstaller one-dir bundle (Python not required on target)
     adb/             ← bundled adb binary for the target platform
     app/             ← Electron renderer build (Vite dist/)
@@ -69,9 +69,9 @@ def find_adb() -> Path | None:
 def build_engine() -> Path:
     """Run PyInstaller and return the output directory."""
     print("\n━━━ Step 1/4  Building Python engine ━━━")
-    spec = ENGINE_DIR / "erakshak.spec"
+    spec = ENGINE_DIR / "snagr.spec"
     if not spec.exists():
-        sys.exit(f"erakshak.spec not found at {spec}. Run this script from the project root.")
+        sys.exit(f"snagr.spec not found at {spec}. Run this script from the project root.")
     run(
         [sys.executable, "-m", "PyInstaller", str(spec), "--noconfirm", "--clean"],
         cwd=ENGINE_DIR,
@@ -95,7 +95,7 @@ def build_frontend() -> Path:
 def bundle(version: str, engine_dir: Path, frontend_dir: Path, target_platform: str) -> Path:
     """Assemble the portable folder."""
     print("\n━━━ Step 3/4  Assembling portable bundle ━━━")
-    dest = DIST_ROOT / f"eRakshak-{version}"
+    dest = DIST_ROOT / f"SNAGR-{version}"
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
@@ -138,7 +138,7 @@ def _write_launchers(dest: Path, version: str) -> None:
     win_bat = dest / "run.bat"
     win_bat.write_text(
         "@echo off\r\n"
-        "echo eRakshak v" + version + " — starting engine and dashboard...\r\n"
+        "echo SNAGR v" + version + " — starting engine and dashboard...\r\n"
         'set ADB_PATH=%~dp0adb\r\n'
         'set PATH=%ADB_PATH%;%PATH%\r\n'
         'start /B "" "%~dp0engine\\triage-engine.exe" --port 5057 --cases .\\cases\r\n'
@@ -149,7 +149,7 @@ def _write_launchers(dest: Path, version: str) -> None:
     linux_sh = dest / "run.sh"
     linux_sh.write_text(
         "#!/usr/bin/env bash\n"
-        f"# eRakshak v{version}\n"
+        f"# SNAGR v{version}\n"
         'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\n'
         'export PATH="$SCRIPT_DIR/adb:$PATH"\n'
         '"$SCRIPT_DIR/engine/triage-engine" --port 5057 --cases "$SCRIPT_DIR/cases" &\n'
@@ -169,7 +169,7 @@ def _write_readme(dest: Path, version: str, adb_bundled: bool) -> None:
         else "**adb must be installed separately** and available on PATH."
     )
     (dest / "README.md").write_text(
-        f"# eRakshak v{version} — Portable Bundle\n\n"
+        f"# SNAGR v{version} — Portable Bundle\n\n"
         "## Quick Start\n\n"
         "**Windows**\n```\nrun.bat\n```\n\n"
         "**macOS / Linux**\n```\nbash run.sh\n```\n\n"
@@ -202,7 +202,7 @@ def verify(bundle_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="eRakshak portable package builder")
+    parser = argparse.ArgumentParser(description="SNAGR portable package builder")
     parser.add_argument("--version",  default="0.1.0")
     parser.add_argument("--platform", default=sys.platform,
                         choices=["win32", "darwin", "linux"])
@@ -212,7 +212,7 @@ def main() -> None:
                         help="Skip Vite build (use existing app/dist/)")
     args = parser.parse_args()
 
-    print(f"Building eRakshak v{args.version} for {args.platform}")
+    print(f"Building SNAGR v{args.version} for {args.platform}")
 
     engine_dir  = build_engine()  if not args.skip_engine   else ENGINE_DIR / "dist" / "triage-engine"
     frontend_dir = build_frontend() if not args.skip_frontend else APP_DIR / "dist"

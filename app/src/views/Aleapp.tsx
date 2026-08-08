@@ -3,7 +3,7 @@
  * Parser) third-party artifact output.
  *
  * ALEAPP is a broad, actively-maintained third-party Android artifact parser
- * (100+ module types) that eRakshak shells out to rather than reimplementing
+ * (100+ module types) that SNAGR shells out to rather than reimplementing
  * (see engine/triage/aleapp.py::run_aleapp). Each module's rows carry an
  * ARBITRARY, dynamic set of columns — whatever that specific ALEAPP parser
  * happened to extract — so this view cannot hardcode a schema. Columns are
@@ -18,9 +18,9 @@
  *   }
  *
  * Provenance note (load-bearing, not decorative): everything rendered here is
- * THIRD-PARTY-PARSED. eRakshak did not verify ALEAPP's extraction logic — any
+ * THIRD-PARTY-PARSED. SNAGR did not verify ALEAPP's extraction logic — any
  * provenance/confidence language embedded in a row's own fields is ALEAPP's
- * claim about itself, not an eRakshak chain-of-custody guarantee.
+ * claim about itself, not an SNAGR chain-of-custody guarantee.
  */
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
@@ -204,11 +204,11 @@ export function AleappView({ caseId }: { caseId: string }) {
       </h1>
       <p className="text-sm text-muted leading-relaxed max-w-3xl">
         ALEAPP (Android Logs Events And Protobuf Parser) is a third-party, open-source Android
-        artifact parser that eRakshak shells out to for broad OS/app coverage it does not
+        artifact parser that SNAGR shells out to for broad OS/app coverage it does not
         implement itself. <strong className="text-ink">These rows are third-party-parsed</strong> —
-        eRakshak did not verify ALEAPP&apos;s extraction logic, so any provenance or confidence
+        SNAGR did not verify ALEAPP&apos;s extraction logic, so any provenance or confidence
         language that appears inside a row&apos;s own fields is ALEAPP&apos;s claim about itself,
-        not an eRakshak chain-of-custody guarantee.
+        not an SNAGR chain-of-custody guarantee.
       </p>
     </div>
   );

@@ -397,7 +397,7 @@ def render_seal_text(seal: dict[str, Any]) -> str:
     bar = "=" * 72
     lines = [
         bar,
-        "AUDIT LOG SEAL - eRakshak audit.jsonl hash chain",
+        "AUDIT LOG SEAL - SNAGR audit.jsonl hash chain",
         bar,
         f"Case ID        : {seal.get('case_id', '') or '(not recorded)'}",
         f"Examiner       : {seal.get('examiner', '') or '(not recorded)'}",

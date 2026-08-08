@@ -11,7 +11,7 @@ statute, asserted:
     "The extraction process was read-only and no data on the original device was altered."
 
 That claim is false for this tool and false for mobile acquisition generally. No
-write-blocking exists for mobile devices (SWGDE 18-F-003), and eRakshak's own Tier-1 path
+write-blocking exists for mobile devices (SWGDE 18-F-003), and SNAGR's own Tier-1 path
 installs a helper APK and grants runtime permissions. Signing that sentence would have put
 an untrue statement into a court document. The generator is therefore removed rather than
 merely left unused, and calling it now raises.

@@ -17,7 +17,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * NotificationCollector drain the buffer on demand.
  *
  * Activation: Settings → Apps → Special app access → Notification access →
- *             eRakshak Collector → Allow
+ *             SNAGR Collector → Allow
  */
 class NotificationWatcher : NotificationListenerService() {
 
@@ -109,7 +109,7 @@ object NotificationCollector {
 
         val note = when {
             out.length() == 0 && !listenerEnabled ->
-                "Notification access NOT granted. Go to Settings → Apps → Special app access → Notification access → eRakshak Collector → Allow, then re-run."
+                "Notification access NOT granted. Go to Settings → Apps → Special app access → Notification access → SNAGR Collector → Allow, then re-run."
             out.length() == 0 && listenerEnabled ->
                 "Notification access granted but history is empty (no recent notifications)."
             else -> null

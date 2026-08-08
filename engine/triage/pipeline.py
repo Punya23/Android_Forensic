@@ -359,7 +359,7 @@ class PipelineConfig:
     learn_from_case: bool = (
         True  # feed this run's outcome back into the knowledge graph
     )
-    llm_provider: str = ""  # "" → ERAKSHAK_LLM env (heuristic|ollama|anthropic)
+    llm_provider: str = ""  # "" → SNAGR_LLM env (heuristic|ollama|anthropic)
     # -- Performance options --------------------------------------------------
     use_priority_filter: bool = (
         False  # sort files by forensic value; skip low-value until budget allows

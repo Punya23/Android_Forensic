@@ -82,6 +82,14 @@ def _dms_to_deg(dms, ref: str) -> Optional[float]:
         return None
 
 
+def _is_null_island(lat: Optional[float], lon: Optional[float]) -> bool:
+    """True for the 0,0 "null island" sentinel — a real point off West Africa, but
+    what a zero-filled/never-written GPS tag decodes to. Same convention as
+    ``video_gps.py::_plausible``; treating this as "no fix" rather than reporting a
+    fabricated coordinate."""
+    return lat == 0.0 and lon == 0.0
+
+
 def _get_exif_block(path: str | Path):
     """Open an image and return the raw EXIF mapping (numeric tags → values).
 
@@ -142,7 +150,7 @@ def extract_gps(path: str | Path) -> Optional[dict[str, float]]:
             return None
         lat = _dms_to_deg(named.get("GPSLatitude"), named.get("GPSLatitudeRef", "N"))
         lon = _dms_to_deg(named.get("GPSLongitude"), named.get("GPSLongitudeRef", "E"))
-        if lat is None or lon is None:
+        if lat is None or lon is None or _is_null_island(lat, lon):
             return None
         return {"lat": lat, "lon": lon}
     except Exception:
@@ -214,7 +222,7 @@ def extract_gps_enhanced(path: str | Path) -> Dict[str, Any]:
             lon = _dms_to_deg(
                 named_gps.get("GPSLongitude"), named_gps.get("GPSLongitudeRef", "E")
             )
-            if lat is not None and lon is not None:
+            if lat is not None and lon is not None and not _is_null_island(lat, lon):
                 result["gps"] = {"lat": lat, "lon": lon}
 
             # Altitude

@@ -744,7 +744,7 @@ def build_certificate(
     )
     production_method = (
         _s(case_meta.get("production_method"))
-        or "Minimally-invasive logical acquisition over ADB by the eRakshak triage engine. "
+        or "Minimally-invasive logical acquisition over ADB by the SNAGR triage engine. "
         "No write-blocking exists for mobile devices (SWGDE 18-F-003); every device "
         "interaction is timestamped in the audit trail. Legal authority: "
         + _or_not_captured(case_meta.get("legal_authority"))

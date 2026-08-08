@@ -1,4 +1,4 @@
-"""Case-intelligence layer for eRakshak — the "AI impact" that makes triage *targeted*.
+"""Case-intelligence layer for SNAGR — the "AI impact" that makes triage *targeted*.
 
 An investigating officer describes a case in plain language; this package:
 

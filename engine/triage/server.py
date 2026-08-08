@@ -8,16 +8,26 @@ can render a live countdown, while REST endpoints serve finished case data.
 
 from __future__ import annotations
 
+import hmac
 import json
 import os
+import secrets
 import shutil
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_file, abort
 from flask_cors import CORS
+
+# Load engine/.env (sibling of the triage/ package, not cwd — so this works whether
+# the process is launched from the repo root, from engine/, or spawned by Electron
+# with its own cwd). Real values here override the insecure SNAGR_AUTH_* defaults
+# below without needing `export` in every shell that starts the server.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 try:
     from flask_socketio import SocketIO
@@ -74,6 +84,106 @@ def create_app(cases_root: Path = CASES_ROOT):
     )
 
     state: dict[str, Any] = {"running": False, "last_case": None}
+
+    # ---------------------------------------------------------
+    # AUTH — single-operator gate.
+    #
+    # Threat model matches the module docstring: this serves localhost only, so the
+    # point is "an unattended laptop can't be opened by whoever walks past", not
+    # defending against a network attacker. That buys a deliberately simple design:
+    #   - one examiner account, credentials from the environment (no user table, no
+    #     hashing at rest — there's nothing at rest, the password only ever lives in
+    #     the process environment).
+    #   - login returns a random bearer token held in memory; restart the server and
+    #     everyone is logged out. That's a feature here, not a bug — the tool is
+    #     opened once per shift.
+    #   - constant-time comparison (hmac.compare_digest) so a timing attack can't
+    #     narrow down the password character by character.
+    #
+    # Deliberately NOT gated: the report HTML, report snapshots, media bytes, and the
+    # export/download endpoint. Those are reached by raw URL (<img src>, an <iframe>,
+    # Playwright navigating straight to the report for PDF export in
+    # electron/pdf/pdfRenderer.cjs) and browsers don't attach custom headers to those
+    # requests. Gating them would mean plumbing the token through Electron's main
+    # process too. Given the threat model above (physical access to the machine, not
+    # a network attacker who already knows a case UUID and artifact id), that
+    # complexity isn't worth it — but it does mean: don't put this box on a shared
+    # network with those routes reachable. Everything else that lists or searches
+    # case content requires a token.
+    AUTH_USER = os.environ.get("SNAGR_AUTH_USER", "examiner")
+    AUTH_PASS = os.environ.get("SNAGR_AUTH_PASS", "snagr")
+    if "SNAGR_AUTH_PASS" not in os.environ:
+        print(
+            f"[auth] SNAGR_AUTH_PASS not set — using default credentials "
+            f"({AUTH_USER}/{AUTH_PASS}). Set SNAGR_AUTH_USER / SNAGR_AUTH_PASS "
+            f"before this handles real evidence.",
+            flush=True,
+        )
+
+    SESSION_TTL_SECONDS = 12 * 3600
+    _sessions: dict[str, float] = {}  # token -> expiry (unix time)
+
+    def _issue_token() -> str:
+        token = secrets.token_urlsafe(32)
+        _sessions[token] = time.time() + SESSION_TTL_SECONDS
+        return token
+
+    def _token_valid(token: str | None) -> bool:
+        if not token:
+            return False
+        expiry = _sessions.get(token)
+        if expiry is None:
+            return False
+        if expiry < time.time():
+            _sessions.pop(token, None)
+            return False
+        return True
+
+    def _is_public_route(path: str) -> bool:
+        if path in ("/api/health", "/api/auth/login"):
+            return True
+        # Raw-URL resource routes — see the comment above the AUTH block.
+        if path.startswith("/api/case/") and (
+            path.endswith("/report")
+            or "/reports/" in path
+            or "/media/" in path
+            or path.endswith("/export/download")
+        ):
+            return True
+        return False
+
+    @app.before_request
+    def _require_auth():
+        if request.method == "OPTIONS" or not request.path.startswith("/api/"):
+            return None
+        if _is_public_route(request.path):
+            return None
+        token = (request.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
+        if not _token_valid(token):
+            return jsonify({"error": "unauthorized"}), 401
+        return None
+
+    @app.post("/api/auth/login")
+    def auth_login():
+        body = request.get_json(silent=True) or {}
+        username = str(body.get("username", ""))
+        password = str(body.get("password", ""))
+        ok = hmac.compare_digest(username, AUTH_USER) and hmac.compare_digest(password, AUTH_PASS)
+        if not ok:
+            return jsonify({"error": "invalid credentials"}), 401
+        token = _issue_token()
+        return jsonify({"token": token, "expires_in": SESSION_TTL_SECONDS, "username": AUTH_USER})
+
+    @app.post("/api/auth/logout")
+    def auth_logout():
+        token = (request.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
+        _sessions.pop(token, None)
+        return jsonify({"ok": True})
+
+    @app.get("/api/auth/me")
+    def auth_me():
+        # Reaching this point already proves the token is valid — before_request gated it.
+        return jsonify({"username": AUTH_USER})
 
     # ---------------------------------------------------------
     # CASE-INTELLIGENCE STORES
@@ -1298,7 +1408,7 @@ def main():
 
     import argparse
 
-    parser = argparse.ArgumentParser(description="eRakshak triage local service")
+    parser = argparse.ArgumentParser(description="SNAGR triage local service")
 
     parser.add_argument("--host", default="127.0.0.1")
 

@@ -2,7 +2,7 @@
 
 This is intentionally *data, not model output*. An officer describing a case in plain
 language is mapped to a **crime type**, and each crime type carries an expert-curated
-priority ranking over the artifact classes eRakshak can collect, plus a set of
+priority ranking over the artifact classes SNAGR can collect, plus a set of
 case-relevant keyword terms.
 
 Design principle — **prioritise, never exclude** (see [[erakshak-project]] honesty model):

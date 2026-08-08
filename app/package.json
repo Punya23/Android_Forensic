@@ -1,7 +1,7 @@
 {
-  "name": "erakshak-triage-app",
+  "name": "snagr-triage-app",
   "version": "0.1.0",
-  "description": "eRakshak — Android Rapid Evidence Triage & Forensic Preview dashboard",
+  "description": "SNAGR — Android Rapid Evidence Triage & Forensic Preview dashboard",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",

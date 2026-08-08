@@ -1,4 +1,4 @@
-"""Bluetooth history parser for eRakshak.
+"""Bluetooth history parser for SNAGR.
 
 Parses Bluetooth device history from ``adb shell dumpsys bluetooth_manager``.
 

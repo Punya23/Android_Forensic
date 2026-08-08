@@ -2,7 +2,7 @@
 """
 retrieve_telegram_backup.py
 ================================================================================
-eRakshak -- Telegram Backup Data Recovery Tool
+SNAGR -- Telegram Backup Data Recovery Tool
 ================================================================================
 
 WHAT THIS TOOL COVERS
@@ -397,7 +397,7 @@ def generate_chat_viewer(summary: dict, out_dir: Path) -> Path:
 <html lang="en">
 <head>
 <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>eRakshak — Telegram Chat Viewer</title>
+<title>SNAGR — Telegram Chat Viewer</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
   *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
@@ -487,7 +487,7 @@ def generate_chat_viewer(summary: dict, out_dir: Path) -> Path:
   <div class="logo">✈</div>
   <h1>Telegram Chat Viewer</h1>
   <span class="acc">{acc_name} {'(@'+acc_user+')' if acc_user else ''} &nbsp;·&nbsp; {acc_phone}</span>
-  <span class="sub">eRakshak &nbsp;·&nbsp; Parsed: {parsed_at}</span>
+  <span class="sub">SNAGR &nbsp;·&nbsp; Parsed: {parsed_at}</span>
 </div>
 <div class="stats">
   <div class="stat"><div class="stat-num">{summary['chat_count']}</div><div class="stat-lbl">Chats</div></div>
@@ -556,7 +556,7 @@ def generate_chat_viewer(summary: dict, out_dir: Path) -> Path:
 def main():
     global _ADB
     parser = argparse.ArgumentParser(
-        description="eRakshak -- Telegram Backup Data Recovery Tool"
+        description="SNAGR -- Telegram Backup Data Recovery Tool"
     )
     parser.add_argument("--export",     help="Path to Telegram result.json export file")
     parser.add_argument("--adb-backup", action="store_true", help="Attempt ADB backup of Telegram")
@@ -571,7 +571,7 @@ def main():
 
     print()
     print(BOLD("=" * 78))
-    print(BOLD("  eRakshak  Telegram Backup Recovery Tool"))
+    print(BOLD("  SNAGR  Telegram Backup Recovery Tool"))
     print(BOLD("=" * 78))
     print(DIM(f"  ADB:    {_ADB}"))
     print(DIM(f"  Output: {out_dir}"))
