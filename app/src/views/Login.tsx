@@ -4,7 +4,7 @@ import type { Health } from "../lib/types";
 
 /**
  * Sign-in gate. One examiner account, credentials issued by whoever set up this
- * installation (ERAKSHAK_AUTH_USER / ERAKSHAK_AUTH_PASS on the engine — see
+ * installation (SNAGR_AUTH_USER / SNAGR_AUTH_PASS on the engine — see
  * triage/server.py). The token this returns is held in memory by the engine, so a
  * restarted engine logs everyone out; that's intentional, not a bug.
  */
@@ -39,7 +39,7 @@ export function LoginView({
     <div className="h-screen flex items-center justify-center bg-panel px-4">
       <form onSubmit={submit} className="card w-full max-w-sm p-8">
         <div className="text-center mb-6">
-          <div className="text-2xl font-bold text-accent">eRakshak</div>
+          <div className="text-2xl font-bold text-accent">SNAGR</div>
           <div className="text-sm text-muted mt-1">Android Rapid Evidence Triage</div>
         </div>
 

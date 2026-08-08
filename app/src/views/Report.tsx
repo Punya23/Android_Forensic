@@ -53,7 +53,7 @@ export function ReportView({ caseId }: { caseId: string }) {
               className="btn-accent text-sm"
               onClick={async () => {
                 try {
-                  await window.erakshak.exportAndPreviewReport(caseId);
+                  await window.snagr.exportAndPreviewReport(caseId);
                 } catch (error) {
                   console.error("PDF export failed:", error);
                 }

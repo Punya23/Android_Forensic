@@ -130,7 +130,7 @@ def _print_messages(messages: list[dict], verbose: bool, limit: int = 50) -> Non
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Telegram cache4.db forensic recovery — eRakshak Android Triage",
+        description="Telegram cache4.db forensic recovery — SNAGR Android Triage",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -166,7 +166,7 @@ def main() -> int:
 
     db_path = Path(args.db_path)
 
-    print(f"\n{_BOLD}eRakshak Telegram Recovery CLI{_RESET}")
+    print(f"\n{_BOLD}SNAGR Telegram Recovery CLI{_RESET}")
     print(f"Target : {db_path}")
 
     if not db_path.exists():

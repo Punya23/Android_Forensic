@@ -1,4 +1,4 @@
-"""Offline known-answer self-validation harness for the eRakshak engine.
+"""Offline known-answer self-validation harness for the SNAGR engine.
 
 Forensic purpose
 ----------------
@@ -84,7 +84,7 @@ KAT_DELETED_ROWID: int = 3
 NEGATIVE_CONTROL_CASE_ID: str = "NEG-CTRL-008"
 
 DATASET_NAME_DEFAULT = (
-    "eRakshak lab-created offline known-answer fixture set v1 (generated at run time)"
+    "SNAGR lab-created offline known-answer fixture set v1 (generated at run time)"
 )
 DATASET_PROVENANCE_DEFAULT = (
     "Generated programmatically by triage/validation/harness.py at the moment of "
@@ -729,7 +729,7 @@ def _case_negative_control(root: Path) -> ValidationCase:
     return _run_case(
         NEGATIVE_CONTROL_CASE_ID,
         "NEGATIVE CONTROL (expected to fail): recover plaintext message rows from an "
-        "encrypted application database. eRakshak cannot do this and must not appear "
+        "encrypted application database. SNAGR cannot do this and must not appear "
         "to. A passed=False result here is the correct outcome and demonstrates that "
         "this harness reports failures.",
         "negative control — encrypted application content",
@@ -772,7 +772,7 @@ def run_self_validation(
     """
     temp_holder: Optional[tempfile.TemporaryDirectory] = None
     if case_dir is None:
-        temp_holder = tempfile.TemporaryDirectory(prefix="erakshak-validation-")
+        temp_holder = tempfile.TemporaryDirectory(prefix="snagr-validation-")
         root = Path(temp_holder.name)
     else:
         root = Path(case_dir)

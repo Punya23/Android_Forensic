@@ -2,7 +2,7 @@
 
 Why this module exists
 ----------------------
-Every conclusion eRakshak draws about an Android device's *credential-encrypted* (CE)
+Every conclusion SNAGR draws about an Android device's *credential-encrypted* (CE)
 data is conditional on one fact: whether the per-user CE class key is currently loaded
 into the kernel keyring. That single bit decides whether ``/data/data/com.whatsapp`` is
 an inventory of readable databases or an opaque pile of ciphertext.

@@ -2,7 +2,7 @@
 """
 retrieve_telegram.py
 ================================================================================
-eRakshak -- Telegram Forensic Retrieval Tool
+SNAGR -- Telegram Forensic Retrieval Tool
 ================================================================================
 
 What this tool extracts WITHOUT root (via ADB + content provider):
@@ -435,7 +435,7 @@ def generate_html_gallery(media: list[dict], tg_info: dict, out_dir: Path,
 <html lang="en">
 <head>
 <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>eRakshak — Telegram Media Gallery</title>
+<title>SNAGR — Telegram Media Gallery</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
   *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
@@ -511,7 +511,7 @@ def generate_html_gallery(media: list[dict], tg_info: dict, out_dir: Path,
   <div class="tg-logo">&#9992;</div>
   <div class="header-text">
     <h1>Telegram Media Gallery</h1>
-    <div class="sub">eRakshak Forensic Triage &nbsp;&middot;&nbsp; Device: {device_serial}</div>
+    <div class="sub">SNAGR Forensic Triage &nbsp;&middot;&nbsp; Device: {device_serial}</div>
   </div>
 </div>
 <div class="meta-bar">
@@ -543,7 +543,7 @@ def generate_html_gallery(media: list[dict], tg_info: dict, out_dir: Path,
     <span class="modal-sz"    id="modal-sz"></span>
   </div>
 </div>
-<footer>eRakshak Forensic Tool &nbsp;&middot;&nbsp; Triage Preview &nbsp;&middot;&nbsp; {ext_at} &nbsp;&middot;&nbsp; Do not alter.</footer>
+<footer>SNAGR Forensic Tool &nbsp;&middot;&nbsp; Triage Preview &nbsp;&middot;&nbsp; {ext_at} &nbsp;&middot;&nbsp; Do not alter.</footer>
 <script>
   function openModal(src,name,sz){{
     document.getElementById('modal-img').src=src;
@@ -572,7 +572,7 @@ def generate_html_gallery(media: list[dict], tg_info: dict, out_dir: Path,
 def main() -> None:
     global _ADB
     parser = argparse.ArgumentParser(
-        description="eRakshak -- Telegram Forensic Retrieval Tool"
+        description="SNAGR -- Telegram Forensic Retrieval Tool"
     )
     parser.add_argument("--serial",   help="Target specific device serial")
     parser.add_argument("--out",      help="Output directory (default: Desktop/Android_Forensic)")
@@ -585,7 +585,7 @@ def main() -> None:
 
     print()
     print(BOLD("=" * 78))
-    print(BOLD("  eRakshak  Telegram Forensic Retrieval Session"))
+    print(BOLD("  SNAGR  Telegram Forensic Retrieval Session"))
     print(BOLD("=" * 78))
     print(DIM(f"  ADB:     {_ADB}"))
     print(DIM(f"  Output:  {out_dir}"))

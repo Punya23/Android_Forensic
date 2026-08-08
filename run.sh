@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command demo launcher for eRakshak.
+# One-command demo launcher for SNAGR.
 # Sets up the engine venv, generates a mock corpus, then starts the engine + dashboard.
 set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"

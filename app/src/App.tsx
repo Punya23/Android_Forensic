@@ -207,7 +207,7 @@ function TopBar({
   return (
     <header className="h-12 border-b border-line flex items-center justify-between px-5 bg-panel-2 shrink-0 gap-4">
       <div className="flex items-center gap-3 text-sm shrink-0">
-        <span className="font-semibold text-accent">eRakshak</span>
+        <span className="font-semibold text-accent">SNAGR</span>
         <span className="text-muted hidden md:inline">Android Rapid Evidence Triage</span>
         {caseId && (
           <span className="font-mono text-xs bg-panel px-2 py-0.5 rounded border border-line">{caseId}</span>

@@ -109,7 +109,7 @@ def cmd_acquire(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
-        prog="triage", description="eRakshak Android triage engine"
+        prog="triage", description="SNAGR Android triage engine"
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 

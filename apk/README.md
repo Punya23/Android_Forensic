@@ -1,4 +1,4 @@
-# eRakshak Collector — Tier-1 Helper APK
+# SNAGR Collector — Tier-1 Helper APK
 
 A **sideloaded** Android app that reads the artifacts the `shell` UID cannot reach without an
 app identity, and writes them as JSON to public `Download/` (via MediaStore on Android 10+) for
@@ -59,7 +59,7 @@ through the normal Android model. This is that app, kept deliberately small and 
 
 ```bash
 # 1. install (logged: alters_device=true)
-adb install -r eRakshakCollector.apk
+adb install -r SNAGRCollector.apk
 
 # 2a. contacts — clean grant, no root
 adb shell pm grant io.erakshak.collector android.permission.READ_CONTACTS

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  eRakshak Collector — Tier-1 forensic helper.
+  SNAGR Collector — Tier-1 forensic helper.
 
   Declaring a permission does NOT grant it. On stock Android the engine grants each one
   explicitly (and logs it) via `pm grant`. On OEM builds where pm grant is blocked
@@ -78,7 +78,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="eRakshak Collector"
+        android:label="SNAGR Collector"
         android:requestLegacyExternalStorage="true"
         android:theme="@android:style/Theme.Material.Light">
         <activity
@@ -93,7 +93,7 @@
         <!-- Notification listener service for capturing notification history -->
         <service
             android:name=".NotificationWatcher"
-            android:label="eRakshak Notification Watcher"
+            android:label="SNAGR Notification Watcher"
             android:exported="true"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>

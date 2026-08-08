@@ -20,7 +20,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * eRakshak Collector — Tier-1 forensic helper.
+ * SNAGR Collector — Tier-1 forensic helper.
  *
  * Supported actions (trigger via ADB):
  *   dump_contacts      → contacts.json
@@ -187,7 +187,7 @@ class MainActivity : Activity() {
                 showResultScreen(action, renderSummary(results, manifest), hasError)
                 Handler(Looper.getMainLooper()).postDelayed({ finish() }, 3000)
             }
-        }.apply { name = "erakshak-collect"; isDaemon = false }.start()
+        }.apply { name = "snagr-collect"; isDaemon = false }.start()
     }
 
     /**
@@ -362,7 +362,7 @@ class MainActivity : Activity() {
 
     private fun showStatusScreen() {
         val layout = buildLayout()
-        layout.addView(makeText("eRakshak Collector", 22f, Color.parseColor("#1A237E"), bold = true))
+        layout.addView(makeText("SNAGR Collector", 22f, Color.parseColor("#1A237E"), bold = true))
         layout.addView(makeText("✓ All permissions granted — ready", 14f, Color.parseColor("#2E7D32")))
         val info = TextView(this).apply {
             text = "Actions:\n  dump_all\n" +

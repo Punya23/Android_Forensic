@@ -1,4 +1,4 @@
-"""Notification history parser for eRakshak.
+"""Notification history parser for SNAGR.
 
 Parses Android notification history from ``adb shell dumpsys notification --history``.
 

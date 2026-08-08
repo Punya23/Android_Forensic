@@ -2,7 +2,7 @@
 // renderer — no raw Node access — consistent with contextIsolation.
 const { contextBridge, ipcRenderer } = require("electron");
 
-contextBridge.exposeInMainWorld("erakshak", {
+contextBridge.exposeInMainWorld("snagr", {
   engineStatus: () => ipcRenderer.invoke("engine-status"),
 
   // Render the report, create a temp PDF and open the preview window.

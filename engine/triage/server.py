@@ -25,7 +25,7 @@ from flask_cors import CORS
 
 # Load engine/.env (sibling of the triage/ package, not cwd — so this works whether
 # the process is launched from the repo root, from engine/, or spawned by Electron
-# with its own cwd). Real values here override the insecure ERAKSHAK_AUTH_* defaults
+# with its own cwd). Real values here override the insecure SNAGR_AUTH_* defaults
 # below without needing `export` in every shell that starts the server.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -110,12 +110,12 @@ def create_app(cases_root: Path = CASES_ROOT):
     # complexity isn't worth it — but it does mean: don't put this box on a shared
     # network with those routes reachable. Everything else that lists or searches
     # case content requires a token.
-    AUTH_USER = os.environ.get("ERAKSHAK_AUTH_USER", "examiner")
-    AUTH_PASS = os.environ.get("ERAKSHAK_AUTH_PASS", "erakshak")
-    if "ERAKSHAK_AUTH_PASS" not in os.environ:
+    AUTH_USER = os.environ.get("SNAGR_AUTH_USER", "examiner")
+    AUTH_PASS = os.environ.get("SNAGR_AUTH_PASS", "snagr")
+    if "SNAGR_AUTH_PASS" not in os.environ:
         print(
-            f"[auth] ERAKSHAK_AUTH_PASS not set — using default credentials "
-            f"({AUTH_USER}/{AUTH_PASS}). Set ERAKSHAK_AUTH_USER / ERAKSHAK_AUTH_PASS "
+            f"[auth] SNAGR_AUTH_PASS not set — using default credentials "
+            f"({AUTH_USER}/{AUTH_PASS}). Set SNAGR_AUTH_USER / SNAGR_AUTH_PASS "
             f"before this handles real evidence.",
             flush=True,
         )
@@ -1408,7 +1408,7 @@ def main():
 
     import argparse
 
-    parser = argparse.ArgumentParser(description="eRakshak triage local service")
+    parser = argparse.ArgumentParser(description="SNAGR triage local service")
 
     parser.add_argument("--host", default="127.0.0.1")
 

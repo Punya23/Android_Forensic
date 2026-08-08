@@ -1,10 +1,10 @@
-"""NIST CFTT mobile-device tool assertions and eRakshak's honest coverage matrix.
+"""NIST CFTT mobile-device tool assertions and SNAGR's honest coverage matrix.
 
 Forensic purpose
 ----------------
 A validation report is only worth anything if the coverage claims in it are true.
 This module holds (a) the NIST CFTT assertion text and (b) a per-assertion, per-module
-statement of what eRakshak actually does about it. Every ``evidence`` string names the
+statement of what SNAGR actually does about it. Every ``evidence`` string names the
 module that implements the claim, so a reviewer can go read the code instead of taking
 this table on trust.
 
@@ -24,10 +24,10 @@ output.
 
 Limitations of this module (read before quoting it)
 ---------------------------------------------------
-1. eRakshak is a **live-device logical acquisition** tool. It has no image-file ingest
+1. SNAGR is a **live-device logical acquisition** tool. It has no image-file ingest
    mode at all. Every v3.3 assertion is phrased "... available from an image file". We
    therefore assess each assertion against its nearest honest analogue — the logical
-   extraction set that eRakshak itself produces into the case folder — and say so in the
+   extraction set that SNAGR itself produces into the case folder — and say so in the
    caveat. That adaptation is ours, not NIST's.
 2. CFTT assertions say "**all** ... available from an image file". An unqualified "met"
    is a completeness claim that a triage tool cannot demonstrate. Only one assertion here
@@ -314,7 +314,7 @@ MDT_ASSERTIONS: list[dict[str, Any]] = [
 # --- The honest coverage assessment -------------------------------------------
 # RULE FOLLOWED THROUGHOUT: anything requiring a full physical/raw acquisition,
 # hardware write-blocking, or file-system-level unallocated-space carving is NOT MET.
-# eRakshak performs a logical acquisition only. Over-claiming here is the worst
+# SNAGR performs a logical acquisition only. Over-claiming here is the worst
 # possible failure mode for this project, so where the honest answer is ugly it is
 # stated plainly rather than softened.
 COVERAGE: dict[str, dict[str, str]] = {
@@ -433,7 +433,7 @@ COVERAGE: dict[str, dict[str, str]] = {
             "enumeration, not email content."
         ),
         "caveat": (
-            "Stated plainly: eRakshak does not present email data. Email is a core "
+            "Stated plainly: SNAGR does not present email data. Email is a core "
             "assertion, so this is a failure against MDT-CA-01..13, not a "
             "not-applicable. Any case requiring email must use a different tool."
         ),
@@ -514,14 +514,14 @@ COVERAGE: dict[str, dict[str, str]] = {
     "MDT-CA-12": {
         "status": "partially-met",
         "evidence": (
-            "For the artifact set eRakshak produces: triage/custody.py ingest_file() "
+            "For the artifact set SNAGR produces: triage/custody.py ingest_file() "
             "copies with shutil.copy2 and hashes into manifest.json at the moment of "
             "ingest, and triage/recovery/sqlite_recovery.py opens every database with "
             "the read-only URI 'file:<path>?mode=ro' so the analysis pass cannot write "
             "to, checkpoint, or recover a stored database."
         ),
         "caveat": (
-            "The assertion as written is NOT DIRECTLY TESTABLE against eRakshak: the "
+            "The assertion as written is NOT DIRECTLY TESTABLE against SNAGR: the "
             "tool has no image-file ingest mode, so there is no image file for it to "
             "leave unmodified. Assessed instead against its analogue, the stored case "
             "artifact set. Against the SOURCE, the honest answer is worse: no "
@@ -555,7 +555,7 @@ COVERAGE: dict[str, dict[str, str]] = {
     "MDT-AO-01": {
         "status": "not-applicable",
         "evidence": (
-            "eRakshak creates no mobile device image file. triage/acquire/base.py "
+            "SNAGR creates no mobile device image file. triage/acquire/base.py "
             "defines a logical file-pull interface (list_files / pull_file / "
             "pull_to_path) only; there is no imaging path anywhere in triage/acquire/."
         ),
@@ -575,9 +575,9 @@ COVERAGE: dict[str, dict[str, str]] = {
         ),
         "caveat": (
             "Optional feature not provided (CFTT v3.3 §6.2). A UICC read requires "
-            "dedicated hardware and a separate acquisition path that eRakshak does not "
+            "dedicated hardware and a separate acquisition path that SNAGR does not "
             "have. ICCID, IMSI, SIM phonebook and SIM-resident SMS are consequently all "
-            "absent from every eRakshak report."
+            "absent from every SNAGR report."
         ),
     },
     "MDT-AO-20": {
@@ -784,7 +784,7 @@ def coverage_summary() -> dict[str, Any]:
         f"{counts['met']} met, {counts['partially-met']} partially met, "
         f"{counts['not-met']} not met, {counts['not-applicable']} not applicable. "
         "The dominance of 'partially met' is the accurate result, not a hedge: every "
-        "CFTT assertion is phrased 'all ... available from an image file', and eRakshak "
+        "CFTT assertion is phrased 'all ... available from an image file', and SNAGR "
         "is a live-device logical acquisition tool with no image-file ingest mode, so a "
         "completeness claim cannot be demonstrated for any artifact class. Core "
         "assertions recorded as not met: "

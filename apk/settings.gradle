@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "eRakshakCollector"
+rootProject.name = "SNAGRCollector"
 include ':app'

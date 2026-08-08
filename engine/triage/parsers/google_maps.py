@@ -1,4 +1,4 @@
-"""Google Maps location history parser for eRakshak.
+"""Google Maps location history parser for SNAGR.
 
 Extracts location history from Google Maps using three complementary methods,
 each with different privilege requirements:

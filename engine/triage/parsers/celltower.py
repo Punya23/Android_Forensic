@@ -1,4 +1,4 @@
-"""Cell tower history parser for eRakshak.
+"""Cell tower history parser for SNAGR.
 
 Parses cell tower data from ``adb shell dumpsys telephony.registry``.
 

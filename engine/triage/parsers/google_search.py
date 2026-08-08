@@ -1,4 +1,4 @@
-"""Google search history and account parser for eRakshak.
+"""Google search history and account parser for SNAGR.
 
 Extracts Google search history and account information from an Android device.
 

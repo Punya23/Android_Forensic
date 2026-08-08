@@ -7,7 +7,7 @@ venv/
 .pytest_cache/
 .mypy_cache/
 
-# Real examiner credentials (ERAKSHAK_AUTH_USER/PASS) — see engine/.env.example.
+# Real examiner credentials (SNAGR_AUTH_USER/PASS) — see engine/.env.example.
 # Never commit the real file, only the template.
 engine/.env
 

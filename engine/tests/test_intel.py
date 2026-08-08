@@ -212,7 +212,7 @@ def test_heuristic_provider_returns_none():
 
 
 def test_get_provider_defaults_heuristic(monkeypatch):
-    monkeypatch.delenv("ERAKSHAK_LLM", raising=False)
+    monkeypatch.delenv("SNAGR_LLM", raising=False)
     assert get_provider().name == "heuristic"
 
 

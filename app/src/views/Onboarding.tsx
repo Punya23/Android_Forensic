@@ -8,7 +8,7 @@ export function OnboardingView({ username, onContinue }: { username: string | nu
     <div className="h-screen flex items-center justify-center bg-panel px-4 overflow-auto">
       <div className="card w-full max-w-xl p-8 my-8">
         {username && <div className="text-xs uppercase tracking-wider text-muted mb-1">Signed in as {username}</div>}
-        <h1 className="text-xl font-semibold text-ink mb-4">Welcome to eRakshak</h1>
+        <h1 className="text-xl font-semibold text-ink mb-4">Welcome to SNAGR</h1>
         <p className="text-sm text-muted leading-relaxed mb-5">
           Field-deployable Android rapid evidence triage. Every artifact this tool collects is
           tagged with a tier, so it's always clear how it was obtained.

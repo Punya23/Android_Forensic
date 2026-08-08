@@ -20,7 +20,7 @@ export const BASE = import.meta.env.DEV ? "" : "http://127.0.0.1:5057";
 // One examiner session at a time, held as a bearer token. Token lives in
 // localStorage so a page reload doesn't force a re-login; the engine drops it
 // on restart, so a stale token still gets rejected and onUnauthorized fires.
-const TOKEN_KEY = "erakshak_token";
+const TOKEN_KEY = "snagr_token";
 let authToken: string | null = localStorage.getItem(TOKEN_KEY);
 
 export function setAuthToken(token: string | null) {

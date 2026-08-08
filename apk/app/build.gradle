@@ -1,4 +1,4 @@
-// eRakshak Collector — Tier-1 helper APK module build file.
+// SNAGR Collector — Tier-1 helper APK module build file.
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
