@@ -56,6 +56,54 @@ export interface BluetoothBondReport {
 }
 
 /**
+ * One row of the OPP transfer log (`btopp.db`, root). The counterpoint to a bond
+ * record: `timestamp` is a wall-clock device time and a transfer cannot have
+ * happened without an active link at that moment. `succeeded === false` means the
+ * link existed but the file did not necessarily arrive — never render a failed
+ * row as a delivered file.
+ */
+export interface BluetoothTransfer {
+  peer_address?: string;
+  direction?: string;
+  filename?: string;
+  mimetype?: string;
+  timestamp?: string | null;
+  status?: string;
+  succeeded?: boolean | null;
+  total_bytes?: number | null;
+  local_path?: string;
+  confidence?: string;
+  provenance?: string;
+  caveats?: string[];
+}
+
+export interface BluetoothTransferSummary {
+  total?: number;
+  inbound?: number;
+  outbound?: number;
+  succeeded?: number;
+  failed?: number;
+  distinct_peers?: number;
+  first_transfer?: string | null;
+  last_transfer?: string | null;
+  undated_rows?: number;
+}
+
+/**
+ * A device's place in the connection-recency ordering (`bluetooth_db`).
+ *
+ * `ordinal` is Android's `metadata.last_active_time` verbatim — a counter, NOT a
+ * time — so this interface deliberately carries no date field at all.
+ */
+export interface BluetoothConnectionRank {
+  address: string;
+  ordinal: number;
+  rank: number;
+  name?: string;
+  caveats?: string[];
+}
+
+/**
  * One row of `collector_bluetooth` — the Tier-1 helper APK's own radio scan
  * (bluetooth.json, via the Collector's dump_all action). A THIRD, distinct source from
  * the two above: not dumpsys, not the root bt_config.conf bond store. Per the engine's
@@ -244,8 +292,17 @@ export function BluetoothView({ caseId }: { caseId: string }) {
     caseId,
     "collector_bluetooth",
   );
+  const { data: transfers, loading: transfersLoading } = useDataset<BluetoothTransfer>(
+    caseId,
+    "bluetooth_transfers",
+  );
+  const { data: connectionOrder, loading: orderLoading } = useDataset<BluetoothConnectionRank>(
+    caseId,
+    "bluetooth_connection_order",
+  );
   const [summary, setSummary] = useState<BluetoothSummary | null>(null);
   const [report, setReport] = useState<BluetoothBondReport | null>(null);
+  const [transferSummary, setTransferSummary] = useState<BluetoothTransferSummary | null>(null);
   const [deviceFilter, setDeviceFilter] = useState("");
   const [bondFilter, setBondFilter] = useState("");
   const [collectorBtFilter, setCollectorBtFilter] = useState("");
@@ -260,12 +317,25 @@ export function BluetoothView({ caseId }: { caseId: string }) {
       .dataset<BluetoothBondReport>(caseId, "bluetooth_bond_report")
       .then((d) => alive && setReport(d ?? {}))
       .catch(() => alive && setReport({}));
+    api
+      .dataset<BluetoothTransferSummary>(caseId, "bluetooth_transfer_summary")
+      .then((d) => alive && setTransferSummary(d ?? {}))
+      .catch(() => alive && setTransferSummary({}));
     return () => {
       alive = false;
     };
   }, [caseId]);
 
-  if (devicesLoading || bondsLoading || collectorBtLoading || summary === null || report === null) {
+  if (
+    devicesLoading ||
+    bondsLoading ||
+    collectorBtLoading ||
+    transfersLoading ||
+    orderLoading ||
+    summary === null ||
+    report === null ||
+    transferSummary === null
+  ) {
     return <div className="p-8 text-muted text-sm animate-pulse">Loading Bluetooth artefacts…</div>;
   }
 
@@ -670,6 +740,161 @@ export function BluetoothView({ caseId }: { caseId: string }) {
               </p>
             )}
           </>
+        )}
+      </section>
+
+      {/* ================================================================== */}
+      {/* Section 2b — OPP transfers + connection order                       */}
+      {/* ================================================================== */}
+      <section className="mt-10 pt-8 border-t-2 border-dashed border-line">
+        <SectionHeader
+          title="File transfers & connection order (root)"
+          sub="btopp.db and bluetooth_db — the only Bluetooth artefacts that carry a real time or a real ordering"
+          right={<TierBadge label="Tier 2 — Root" />}
+        />
+
+        {/* The counterpoint to the bond-timestamp warning above. */}
+        <div className="card p-3 mb-4 border-live/50 bg-live/5 text-xs text-live leading-relaxed">
+          <span className="font-semibold">
+            A transfer row is evidence of an active link at that moment.
+          </span>{" "}
+          Unlike a bond timestamp, a file cannot move between two devices unless they were
+          connected when it moved. The time is the <strong>device clock</strong>, so it is wrong by
+          exactly as much as the device clock was wrong. A row whose outcome is not{" "}
+          <code className="font-mono">success</code> records an <strong>attempt</strong> — the link
+          existed, the file did not necessarily arrive.
+        </div>
+
+        {transfers.length === 0 ? (
+          <div className="card p-8 text-center text-muted">
+            <div className="text-3xl mb-3 opacity-40">📤</div>
+            <div className="text-ink font-medium mb-1">No Bluetooth file transfers recovered</div>
+            <p className="text-sm leading-relaxed max-w-lg mx-auto">
+              The OPP transfer log covers <strong>file transfers only</strong>. Audio streaming,
+              tethering, keyboards and every other Bluetooth profile leave no row here, and the log
+              is only reachable with root. An empty table is not evidence that this device made no
+              Bluetooth connections.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+              <StatCard label="Transfers" n={transferSummary.total ?? transfers.length} />
+              <StatCard label="Sent / received" n={`${transferSummary.outbound ?? 0} / ${transferSummary.inbound ?? 0}`} />
+              <StatCard label="Completed" n={transferSummary.succeeded ?? 0} />
+              <StatCard label="Distinct peers" n={transferSummary.distinct_peers ?? 0} />
+            </div>
+
+            {(transferSummary.undated_rows ?? 0) > 0 && (
+              <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+                {transferSummary.undated_rows} transfer row(s) carry no usable timestamp. They are
+                listed below without a time rather than being given a fabricated one.
+              </div>
+            )}
+
+            <div className="card overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="th">When (device clock)</th>
+                    <th className="th">Direction</th>
+                    <th className="th">Peer</th>
+                    <th className="th">File</th>
+                    <th className="th">Outcome</th>
+                    <th className="th">Confidence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transfers.map((t, i) => (
+                    <tr key={`${t.peer_address}-${t.timestamp}-${i}`}>
+                      <td className="td font-mono text-xs">
+                        {t.timestamp ? (
+                          fmtTs(t.timestamp)
+                        ) : (
+                          <span className="italic text-muted">— no usable time</span>
+                        )}
+                      </td>
+                      <td className="td text-xs">
+                        {t.direction === "outbound"
+                          ? "→ sent"
+                          : t.direction === "inbound"
+                            ? "← received"
+                            : <span className="text-muted italic">unknown</span>}
+                      </td>
+                      <td className="td font-mono text-xs">
+                        {t.peer_address || <span className="italic text-muted">unidentified</span>}
+                      </td>
+                      <td className="td text-xs">
+                        {t.filename || <span className="italic text-muted">unnamed</span>}
+                        {t.mimetype && (
+                          <span className="block text-[10px] text-muted font-mono">{t.mimetype}</span>
+                        )}
+                      </td>
+                      <td className="td text-xs">
+                        <span className={t.succeeded === true ? "text-live" : t.succeeded === false ? "text-warn" : "text-muted"}>
+                          {t.status || "unstated"}
+                        </span>
+                        {t.succeeded === false && (
+                          <span className="block text-[10px] text-warn">attempt, not a delivery</span>
+                        )}
+                      </td>
+                      <td className="td">
+                        <ConfidenceBadge value={t.confidence} />
+                        {t.provenance && (
+                          <span className="block text-[10px] text-muted mt-0.5 font-mono">
+                            {t.provenance}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        {connectionOrder.length > 0 && (
+          <div className="mt-6">
+            <div className="text-[11px] uppercase tracking-wider text-muted mb-2">
+              Connection recency ranking (bluetooth_db)
+            </div>
+            <div className="card p-3 mb-3 border-deletion/50 bg-deletion/5 text-xs text-deletion leading-relaxed">
+              <span className="font-semibold">
+                Android's <code className="font-mono">last_active_time</code> is not a time.
+              </span>{" "}
+              It is a counter incremented on each connection, so it ranks devices by recency and
+              carries <strong>no date whatsoever</strong>. Rank 1 was the most recently connected
+              device as of the last write. Any tool that renders this field as a timestamp is wrong.
+            </div>
+            <div className="card overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="th">Rank</th>
+                    <th className="th">Device</th>
+                    <th className="th">Address</th>
+                    <th className="th">Counter value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {connectionOrder.map((d) => (
+                    <tr key={d.address}>
+                      <td className="td font-mono text-xs">#{d.rank}</td>
+                      <td className="td text-xs">
+                        {d.name || <span className="italic text-muted">unnamed</span>}
+                      </td>
+                      <td className="td font-mono text-xs">{d.address}</td>
+                      <td className="td font-mono text-xs text-muted">
+                        {d.ordinal}
+                        <span className="block font-sans text-[10px]">ordinal, not a date</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
       </section>
 
