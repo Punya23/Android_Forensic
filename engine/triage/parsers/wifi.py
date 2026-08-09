@@ -1,4 +1,6 @@
-"""Wi-Fi credential parser for SNAGR.
+"""Wi-Fi credential parser (Root Tier 2).
+
+MODULE 2: Wi-Fi Passwords (Root Tier 2)
 
 Supports two Android Wi-Fi config file formats:
 
@@ -12,9 +14,11 @@ name (or path suffix) and calls the appropriate sub-parser — no hardcoded
 Android version checks.  All parsing is best-effort: a malformed entry is
 skipped rather than aborting the whole file.
 
-Both files live in ``/data/misc/wifi/`` and require **root access** to read.
+Both files live in ``/data/misc/wifi/`` and require **root access** (Tier 2) to read.
 This module only parses locally-staged copies; pulling from the device is the
 pipeline's responsibility.
+
+Returns WifiNetwork(ssid, password, security, source_file) dataclasses.
 """
 
 from __future__ import annotations
@@ -127,6 +131,11 @@ def parse_wifi_config_store_xml(path: Path) -> list[WifiNetwork]:
 
     The ``PreSharedKey`` value may itself be surrounded by extra double-quotes
     (some OEMs store ``"\"password\""``) which are stripped.
+    
+    Supports:
+    - SSID (strip quotes)
+    - PreSharedKey (strip quotes) 
+    - AllowedKeyMgmt (WPA, WEP, OPEN, WPA3)
     """
     try:
         tree = ET.parse(str(path))
@@ -174,8 +183,8 @@ def parse_wifi_config_store_xml(path: Path) -> list[WifiNetwork]:
         # Security label from AllowedKeyMgmt bitmask name.
         key_mgmt_upper = key_mgmt_raw.upper()
         if "WPA_PSK" in key_mgmt_upper or "WPA2_PSK" in key_mgmt_upper:
-            security = "WPA/WPA2"
-        elif "WPA3_SAE" in key_mgmt_upper:
+            security = "WPA"
+        elif "WPA3_SAE" in key_mgmt_upper or "SAE" in key_mgmt_upper:
             security = "WPA3"
         elif "WEP" in key_mgmt_upper:
             security = "WEP"

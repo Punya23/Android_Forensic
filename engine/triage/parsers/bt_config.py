@@ -1309,6 +1309,29 @@ def _dumpsys_suffix(mac: str) -> str:
     return ":".join(parts[-2:]).upper()
 
 
+def correlate_bluetooth(bond_store_dict: dict, dumpsys_list: list[dict]) -> list[dict]:
+    """Correlate Bluetooth bond store with dumpsys bluetooth_manager output.
+    
+    This function MUST separate:
+    - "bond_record_written_utc" (from the INI file) 
+    - "dumpsys_connected_at_capture" (from dumpsys)
+    
+    These are returned as distinct fields.
+    
+    Caveat: The bond timestamp is when the pairing record was written to disk, 
+    NOT a connection time.
+    
+    Args:
+        bond_store_dict: Parsed bt_config.conf data (from parse_bt_config)
+        dumpsys_list: List of device dicts from dumpsys bluetooth_manager
+        
+    Returns:
+        List of correlated device records with separated timestamp semantics
+    """
+    bonds = bond_store_dict.get("bonds", [])
+    return merge_with_dumpsys(bonds, dumpsys_list)
+
+
 def merge_with_dumpsys(bonds: list, dumpsys_devices: list[dict]) -> list[dict]:
     """Correlate root bond records with the MAC-redacted ``dumpsys`` device list.
 
