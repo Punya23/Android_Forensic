@@ -1848,6 +1848,7 @@ def run_acquisition(
         screen_events=screen_events,
         searches=search_history,
         bluetooth_bonds=bluetooth_bonds,
+        bluetooth_transfers=bluetooth_bond_result.get("transfers", []),
     )
 
     # -- analysis: social graph + risk verdict ------------------------------
@@ -2085,6 +2086,16 @@ def run_acquisition(
     case.write_derived("signal", signal_result)
     case.write_derived("bluetooth_bonds", bluetooth_bonds)
     case.write_derived("bluetooth_bond_report", bluetooth_bond_result)
+    # Kept as their own datasets rather than folded into the bond report: a transfer
+    # carries a wall-clock time and a bond does not, and merging them would let the
+    # bond's write-time be read as a connection time.
+    case.write_derived("bluetooth_transfers", bluetooth_bond_result.get("transfers", []))
+    case.write_derived(
+        "bluetooth_transfer_summary", bluetooth_bond_result.get("transfer_summary", {})
+    )
+    case.write_derived(
+        "bluetooth_connection_order", bluetooth_bond_result.get("connection_order", [])
+    )
     case.write_derived("encryption_state", encryption_state)
     # P3-1/P3-2/P3-3/P3-4. Every one of these is written even when empty so the API and
     # dashboard can tell "collected, nothing found" apart from "never collected" — the
@@ -2480,6 +2491,7 @@ def run_acquisition(
                 "notifications": len(notifications),
                 "bluetooth_devices": len(bluetooth_devices),
                 "bluetooth_bonds": len(bluetooth_bonds),
+                "bluetooth_transfers": len(bluetooth_bond_result.get("transfers", [])),
                 "cell_towers": len(cell_towers),
                 "screen_events": len(screen_events),
                 "screen_app_usage": len(screen_app_usage),
@@ -4339,11 +4351,29 @@ def _run_encrypted_app_scan(case: "Case", staging: "Path", attempted: list) -> d
 def _run_tier2_bt_config(
     source: "RealDeviceSource", case: "Case", staging: "Path", dumpsys_devices: list
 ) -> dict:
-    """P1-3 — the persistent Bluetooth bond store (root)."""
+    """P1-3 — the persistent Bluetooth bond store, transfer log and connection order (root).
+
+    Three artifacts, deliberately kept apart in the result because they answer
+    three different questions and only one of them carries a real clock:
+
+    * ``bonds`` — which devices were paired, and when the *pairing record* was
+      last written. Not a connection, not proximity.
+    * ``transfers`` — OPP file transfers, each with a wall-clock time. A transfer
+      row cannot exist without an active link at that moment, which makes this
+      the only Bluetooth "when" here that survives cross-examination.
+    * ``connection_order`` — the Android 11+ recency *ranking*. An ordinal, never
+      a date.
+    """
     from .parsers.bt_config import (
         bt_config_summary,
         merge_with_dumpsys,
         parse_bt_config,
+    )
+    from .parsers.bt_transfer import (
+        BT_TRANSFER_PATHS,
+        bt_transfer_summary,
+        parse_bluetooth_metadata_db,
+        parse_btopp,
     )
 
     pulled = _root_pull_paths(
@@ -4361,22 +4391,98 @@ def _run_tier2_bt_config(
     primary = pulled.get("/data/misc/bluedroid/bt_config.conf") or pulled.get(
         "/data/misc/bluedroid/bt_config.bak"
     )
-    if primary is None:
-        return {}
-    result = parse_bt_config(primary)
-    bonds = result.get("bonds", []) or []
-    result["bonds"] = [b.to_dict() if hasattr(b, "to_dict") else b for b in bonds]
-    adapter = result.get("adapter")
-    if adapter is not None and hasattr(adapter, "to_dict"):
-        result["adapter"] = adapter.to_dict()
-    result["merged"] = merge_with_dumpsys(bonds, dumpsys_devices)
-    result["summary"] = bt_config_summary(result)
-    case.log(
-        "tier2.bt_config",
-        f"Bluetooth bond store: {len(result['bonds'])} persistent bond(s). Bond "
-        f"timestamps are pairing-record writes — NOT connection or co-location times.",
-        tier=Tier.TIER2.value,
+    result: dict = {}
+    if primary is not None:
+        result = parse_bt_config(primary)
+        bonds = result.get("bonds", []) or []
+        result["bonds"] = [b.to_dict() if hasattr(b, "to_dict") else b for b in bonds]
+        adapter = result.get("adapter")
+        if adapter is not None and hasattr(adapter, "to_dict"):
+            result["adapter"] = adapter.to_dict()
+        result["merged"] = merge_with_dumpsys(bonds, dumpsys_devices)
+        result["summary"] = bt_config_summary(result)
+        case.log(
+            "tier2.bt_config",
+            f"Bluetooth bond store: {len(result['bonds'])} persistent bond(s). Bond "
+            f"timestamps are pairing-record writes — NOT connection or co-location times.",
+            tier=Tier.TIER2.value,
+        )
+    else:
+        result.setdefault("bonds", [])
+
+    # -- OPP transfer log + connection-order store ---------------------------
+    # Pulled through the same stage so one root Bluetooth toggle covers all of it.
+    # The -wal sidecars come along because the newest transfers usually live in the
+    # WAL, not the main database; pulling the .db alone silently loses them.
+    bt_pulled = _root_pull_paths(
+        source,
+        case,
+        staging,
+        BT_TRANSFER_PATHS,
+        label="bt_transfer",
+        category="database",
+        app="bluetooth",
     )
+
+    transfers: list = []
+    for device_path, local in bt_pulled.items():
+        if not device_path.endswith("btopp.db"):
+            continue
+        try:
+            opp = parse_btopp(local)
+        except Exception as exc:
+            case.log(
+                "tier2.bt_transfer.parse",
+                f"{device_path}: parse error: {exc}",
+                result="error",
+                tier=Tier.TIER2.value,
+            )
+            continue
+        rows = [
+            t.to_dict() if hasattr(t, "to_dict") else t for t in opp.get("transfers", [])
+        ]
+        transfers.extend(rows)
+        result.setdefault("transfer_caveats", []).extend(opp.get("caveats", []))
+    if transfers:
+        result["transfers"] = transfers
+        result["transfer_summary"] = bt_transfer_summary({"transfers": transfers})
+        dated = sum(1 for t in transfers if t.get("timestamp"))
+        case.log(
+            "tier2.bt_transfer",
+            f"Bluetooth OPP transfers: {len(transfers)} row(s), {dated} with a "
+            f"wall-clock time. A transfer row requires an active link at that time — "
+            f"unlike a bond timestamp.",
+            tier=Tier.TIER2.value,
+        )
+
+    meta_db = bt_pulled.get(
+        "/data/user_de/0/com.android.bluetooth/databases/bluetooth_db"
+    )
+    if meta_db is not None:
+        try:
+            meta = parse_bluetooth_metadata_db(meta_db)
+        except Exception as exc:
+            case.log(
+                "tier2.bt_transfer.metadata",
+                f"bluetooth_db parse error: {exc}",
+                result="error",
+                tier=Tier.TIER2.value,
+            )
+        else:
+            ranked = [
+                d.to_dict() if hasattr(d, "to_dict") else d
+                for d in meta.get("devices", [])
+            ]
+            result["connection_order"] = ranked
+            result.setdefault("transfer_caveats", []).extend(meta.get("caveats", []))
+            case.log(
+                "tier2.bt_transfer.metadata",
+                f"Bluetooth connection order: {len(ranked)} device(s) ranked by "
+                f"recency. last_active_time is a COUNTER, not a timestamp — no date "
+                f"is derived from it.",
+                tier=Tier.TIER2.value,
+            )
+
     return result
 
 
@@ -4385,31 +4491,29 @@ def _run_tier2_wifi(
     case: "Case",
     staging: "Path",
 ) -> list:
-    """Root-pull the Android Wi-Fi config and extract stored credentials.  Tier 2.
+    """Root-pull every Android Wi-Fi config store and extract stored credentials.  Tier 2.
 
-    Probes for both config files (``wpa_supplicant.conf`` for Android ≤ 8 and
-    ``WifiConfigStore.xml`` for Android ≥ 9) and uses whichever is present —
-    no hardcoded Android version check.
+    All known store locations are probed and **all** hits are parsed, not just the
+    first: Android 11 moved ``WifiConfigStore.xml`` into the ``com.android.wifi``
+    APEX data dir, and a device upgraded across that boundary can still carry the
+    pre-APEX copy — often the only place a since-forgotten network survives. Probing
+    only the Android 9 path on an Android 14 device reports "no saved networks",
+    which reads as a finding rather than as looking in the wrong place.
 
-    The file is copied to ``/sdcard/Download/`` via ``su -c cp`` so that a
-    plain ``adb pull`` can retrieve it.  The original system file is **not
-    modified** (``cp`` is a read-only operation on the source).  Every action is
-    logged in the audit trail with ``alters_device=False``.
+    ``WifiConfigStoreSoftAp.xml`` is pulled alongside them. That file is the
+    device's *own* hotspot credential, a different fact from any network it joined,
+    and is flagged ``is_softap`` by the parser.
 
     Returns
     -------
     list[WifiNetwork]
         Parsed credential objects (may be empty if no root or no config found).
     """
-    from .parsers.wifi import parse_wifi_config
+    from .parsers.wifi import WIFI_CONFIG_PATHS, parse_wifi_config
     from .models import WifiNetwork as _WN
 
-    REMOTE_CONF = "/data/misc/wifi/wpa_supplicant.conf"
-    REMOTE_XML = "/data/misc/wifi/WifiConfigStore.xml"
-    STAGE_CONF = "/sdcard/Download/wifi_wpa_triage.conf"
-    STAGE_XML = "/sdcard/Download/wifi_store_triage.xml"
-
-    # 1. Verify root access.
+    # Verify root FIRST. Without it every `su -c test -e` probe below fails
+    # identically to "file absent", which would log a fleet of false absences.
     root_check = source.adb.shell("su -c 'id'")
     case.log(
         "tier2.wifi.root_check",
@@ -4422,113 +4526,66 @@ def _run_tier2_wifi(
     if not root_check.ok:
         case.log(
             "tier2.wifi",
-            "root not available; Wi-Fi credential recovery skipped",
+            "root not available; Wi-Fi credential recovery skipped. This is NOT a "
+            "finding that the device had no saved networks.",
             result="skipped",
             tier=Tier.TIER2.value,
         )
         return []
 
-    # 2. Detect which config file exists on the device.
-    remote_path: Optional[str] = None
-    stage_path: Optional[str] = None
-    local_name: Optional[str] = None
-
-    for r_path, s_path, l_name in [
-        (REMOTE_XML, STAGE_XML, "wifi_store_triage.xml"),
-        (REMOTE_CONF, STAGE_CONF, "wifi_wpa_triage.conf"),
-    ]:
-        probe = source.adb.shell(f"su -c 'test -f {r_path} && echo exists'")
-        if probe.ok and "exists" in (probe.stdout or ""):
-            remote_path = r_path
-            stage_path = s_path
-            local_name = l_name
-            break
-
-    if not remote_path:
-        case.log(
-            "tier2.wifi",
-            "neither wpa_supplicant.conf nor WifiConfigStore.xml found on device",
-            result="skipped",
-            tier=Tier.TIER2.value,
-        )
-        return []
-
-    case.log(
-        "tier2.wifi.detect",
-        f"Wi-Fi config detected: {remote_path}",
-        tier=Tier.TIER2.value,
-    )
-
-    # 3. su cp → staging area on sdcard.
-    cp = source.adb.shell(f'su -c "cp {remote_path} {stage_path}"')
-    case.log(
-        "tier2.wifi.cp",
-        f"su cp: {remote_path} → {stage_path}",
-        command=f"adb shell su -c 'cp {remote_path} {stage_path}'",
-        result="ok" if cp.ok else "error",
-        alters_device=False,
-        tier=Tier.TIER2.value,
-    )
-    if not cp.ok:
-        case.log(
-            "tier2.wifi",
-            f"su cp failed: {(cp.stderr or '')[:200]}",
-            result="error",
-            tier=Tier.TIER2.value,
-        )
-        return []
-
-    # 4. adb pull → local staging.
-    local_file = staging / local_name
-    pull = source.adb.pull(stage_path, local_file)
-    case.log(
-        "tier2.wifi.pull",
-        f"pull {local_name} from device staging area",
-        command=f"adb pull {stage_path}",
-        result="ok" if pull.ok else "error",
-        alters_device=False,
-        tier=Tier.TIER2.value,
-    )
-    if not pull.ok or not local_file.exists():
-        case.log(
-            "tier2.wifi",
-            "adb pull of Wi-Fi config failed",
-            result="error",
-            tier=Tier.TIER2.value,
-        )
-        return []
-
-    # 5. Ingest into case manifest (Tier 2).
-    rec = case.ingest_file(
-        local_file,
-        source_path=remote_path,
-        tier=Tier.TIER2,
-        method="root-su-cp",
+    pulled = _root_pull_paths(
+        source,
+        case,
+        staging,
+        [(device_path, local_name) for device_path, local_name, _ in WIFI_CONFIG_PATHS],
+        label="wifi",
         category="wifi_config",
-        flags=["tier2-root"],
-        move=True,
     )
-    stored = case.root / rec.stored_path
+    if not pulled:
+        case.log(
+            "tier2.wifi",
+            "no Wi-Fi config store found at any known location "
+            f"({len(WIFI_CONFIG_PATHS)} paths probed)",
+            result="skipped",
+            tier=Tier.TIER2.value,
+        )
+        return []
 
-    # 6. Parse credentials.
-    try:
-        wifi_networks: list[_WN] = parse_wifi_config(stored)
-    except Exception as exc:
+    wifi_networks: list[_WN] = []
+    seen: set[tuple[str, bool]] = set()
+    for device_path, local_file in pulled.items():
+        try:
+            parsed = parse_wifi_config(local_file)
+        except Exception as exc:
+            case.log(
+                "tier2.wifi.parse",
+                f"{device_path}: parse error: {exc}",
+                result="error",
+                tier=Tier.TIER2.value,
+            )
+            continue
+        # A legacy store left behind by an OS upgrade usually overlaps the current
+        # one. Dedupe on (SSID, is_softap) so the first — highest-priority — store
+        # wins and the report doesn't double-count networks.
+        fresh = [n for n in parsed if (n.ssid, n.is_softap) not in seen]
+        seen.update((n.ssid, n.is_softap) for n in fresh)
+        wifi_networks.extend(fresh)
         case.log(
             "tier2.wifi.parse",
-            f"parse error: {exc}",
-            result="error",
+            f"{device_path}: {len(parsed)} network(s), {len(fresh)} new",
             tier=Tier.TIER2.value,
         )
-        return []
 
+    joined = [n for n in wifi_networks if not n.is_softap]
+    softap = [n for n in wifi_networks if n.is_softap]
     case.log(
         "tier2.wifi.done",
-        f"Wi-Fi recovery: {len(wifi_networks)} networks "
-        f"({sum(1 for n in wifi_networks if n.password)} with password) "
-        f"from {stored.name}",
+        f"Wi-Fi recovery: {len(joined)} saved network(s) "
+        f"({sum(1 for n in joined if n.password)} with password), "
+        f"{len(softap)} own-hotspot config(s). Saved != connected: check the "
+        f"has_ever_connected flag per network, and note the store carries no "
+        f"connection timestamp.",
         tier=Tier.TIER2.value,
-        artifact_id=rec.artifact_id,
     )
 
     return wifi_networks

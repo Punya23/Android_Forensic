@@ -23,6 +23,7 @@ from .models import (
 from .config import Confidence
 from .parsers.notification import build_notification_timeline
 from .parsers.bluetooth import build_bluetooth_timeline
+from .parsers.bt_transfer import _as_confidence, build_transfer_timeline
 from .parsers.celltower import build_celltower_timeline
 from .parsers.screen_time import build_screen_timeline
 from .parsers.google_search import build_search_timeline
@@ -77,6 +78,7 @@ def build_timeline(
     screen_events: Iterable[dict] = (),
     searches: Iterable[dict] = (),
     bluetooth_bonds: Iterable[dict] = (),
+    bluetooth_transfers: Iterable[dict] = (),
 ) -> list[dict]:
     """Build a sorted, unified timeline from all evidence types.
 
@@ -251,6 +253,19 @@ def build_timeline(
         (events if ev.timestamp else undated).append(ev)
 
     for ev in build_bond_timeline_events(list(bluetooth_bonds)):
+        (events if ev.timestamp else undated).append(ev)
+
+    # OPP transfers are the one Bluetooth artifact that belongs on a wall clock: the
+    # row cannot exist unless the two devices held a link at that moment. Bonds above
+    # are deliberately worded so the two can never be conflated on the same axis.
+    for ev_dict in build_transfer_timeline(list(bluetooth_transfers)):
+        ev = TimelineEvent(
+            timestamp=ev_dict.get("timestamp", ""),
+            kind=ev_dict.get("kind", "bluetooth_transfer"),
+            summary=ev_dict.get("summary", ""),
+            confidence=_as_confidence(ev_dict.get("confidence")),
+            ref=ev_dict.get("ref", ""),
+        )
         (events if ev.timestamp else undated).append(ev)
 
     # Sort timestamped events; append undated at the end.

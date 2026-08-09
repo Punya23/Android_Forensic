@@ -149,7 +149,7 @@ class TestWifiPasswords(unittest.TestCase):
             self.assertEqual(len(networks), 1)
             self.assertEqual(networks[0].ssid, "TestNetwork")
             self.assertEqual(networks[0].password, "password123")
-            self.assertEqual(networks[0].security, "WPA")
+            self.assertEqual(networks[0].security, "WPA/WPA2")
         finally:
             temp_path.unlink()
     
