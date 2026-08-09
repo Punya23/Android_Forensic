@@ -189,3 +189,125 @@ class RealDeviceSource(AcquisitionSource):
 
     def root_available(self) -> bool:
         return self.adb.is_root_available()
+
+
+# ---------------------------------------------------------------------------
+# MODULE 4: USB Connection State (Non-root Tier 0)
+# ---------------------------------------------------------------------------
+
+def get_usb_state(adb: Adb) -> dict:
+    """Determine if a USB cable is physically connected using three independent probes.
+    
+    Uses three independent ADB probes to determine USB connection state:
+    1. Probe 1: Read '/sys/class/typec/port0/data_role' (if 'host', USB is active)
+    2. Probe 2: Read 'adb shell dumpsys battery' (check if 'USB' is power source)
+    3. Probe 3: Check 'adb devices' output (if shows 'device' state, cable present)
+    
+    Verdict: usb_connected = True if at least 2 out of 3 probes return true
+    
+    Args:
+        adb: Adb instance for running shell commands
+        
+    Returns:
+        Dict with:
+        - usb_connected: bool - True if USB cable is physically connected
+        - caveats: list[str] - Limitations and notes
+        - probe_results: dict - Individual probe outcomes
+    """
+    result = {
+        "usb_connected": False,
+        "caveats": [],
+        "probe_results": {
+            "typec_data_role": None,
+            "battery_power_source": None,
+            "adb_device_state": None
+        },
+        "probe_votes": []
+    }
+    
+    probe_count = 0
+    true_count = 0
+    
+    # Probe 1: Check Type-C data role
+    try:
+        typec_result = adb.shell("cat /sys/class/typec/port0/data_role").stdout.strip().lower()
+        result["probe_results"]["typec_data_role"] = typec_result
+        if typec_result == "host" or "host" in typec_result:
+            result["probe_votes"].append("typec_host")
+            true_count += 1
+        probe_count += 1
+    except Exception as e:
+        result["caveats"].append(f"Type-C probe failed: {e}")
+        result["probe_results"]["typec_data_role"] = f"error: {e}"
+    
+    # Probe 2: Check battery power source
+    try:
+        battery_output = adb.shell("dumpsys battery").stdout
+        result["probe_results"]["battery_power_source"] = battery_output[:500]  # Store first 500 chars
+        if "usb" in battery_output.lower() or "ac powered: true" in battery_output.lower():
+            # Look for specific patterns indicating USB power
+            for line in battery_output.lower().split('\n'):
+                if ('usb' in line and ('powered: true' in line or 'present: true' in line)) or \
+                   ('plugged:' in line and 'usb' in line):
+                    result["probe_votes"].append("battery_usb")
+                    true_count += 1
+                    break
+        probe_count += 1
+    except Exception as e:
+        result["caveats"].append(f"Battery probe failed: {e}")
+        result["probe_results"]["battery_power_source"] = f"error: {e}"
+    
+    # Probe 3: Check ADB devices list
+    try:
+        # Use subprocess to check adb devices
+        import subprocess
+        devices_output = subprocess.run(
+            adb._base() + ["devices"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        ).stdout
+        result["probe_results"]["adb_device_state"] = devices_output
+        
+        # Look for 'device' state (not 'emulator' or 'offline')
+        for line in devices_output.split('\n'):
+            if '\tdevice' in line and 'emulator' not in line.lower():
+                result["probe_votes"].append("adb_device")
+                true_count += 1
+                break
+        probe_count += 1
+    except Exception as e:
+        result["caveats"].append(f"ADB devices probe failed: {e}")
+        result["probe_results"]["adb_device_state"] = f"error: {e}"
+    
+    # Verdict: require at least 2 out of 3 probes to agree
+    if probe_count >= 2:
+        result["usb_connected"] = (true_count >= 2)
+        result["caveats"].append(
+            f"USB connection verdict based on {true_count}/{probe_count} probes. "
+            f"Requires at least 2 out of 3 probes to confirm connection."
+        )
+    else:
+        result["caveats"].append(
+            f"Insufficient probes succeeded ({probe_count}/3). "
+            "Cannot make reliable USB connection determination."
+        )
+    
+    # Add standard caveats
+    result["caveats"].append(
+        "USB connection state reflects the moment of capture only. "
+        "It does not establish how long the cable was connected or when it was first plugged in."
+    )
+    
+    if result["usb_connected"]:
+        result["caveats"].append(
+            "USB cable detected as physically connected. This confirms ADB access "
+            "was over USB (not Wi-Fi/network), but does not identify the host computer."
+        )
+    else:
+        result["caveats"].append(
+            "USB cable not detected or insufficient evidence. Connection may be over "
+            "Wi-Fi/network ADB, or probes failed to read the state."
+        )
+    
+    return result
