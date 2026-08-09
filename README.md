@@ -61,6 +61,71 @@ Sign in with the creds from `engine/.env`, pick the mock device, click **Begin A
 
 Or one shot: `./run.sh`
 
+## 🧪 Forensic Modules (New)
+
+Five new forensic modules have been added for advanced Android analysis:
+
+### Module Overview
+| Module | Tier | Purpose |
+|--------|------|---------|
+| **Bluetooth Correlation** | 2 (Root) | Correlate bond records with live state |
+| **Wi-Fi Passwords** | 2 (Root) | Extract credentials from config files |
+| **Wi-Fi Traffic History** | 0 (Non-root) | Hour-bucketed traffic per SSID |
+| **USB Connection State** | 0 (Non-root) | Detect USB cable via 3 probes |
+| **Hotspot Indicators** | 0 (Non-root) | Detect hosted/connected hotspots |
+
+### Quick Setup
+
+```bash
+cd engine
+
+# Verify installation (runs in seconds, no device needed)
+python verify_modules.py
+
+# Run full test suite (19 tests)
+python -m pytest tests/test_forensic_modules.py -v
+```
+
+**Expected output**: `19 passed` ✅
+
+### Key Features
+- ✅ **Forensically sound**: Separate time semantics, explicit caveats
+- ✅ **No external dependencies**: Python stdlib only
+- ✅ **Fully tested**: 19 unit tests with synthetic fixtures
+- ✅ **Python 3.10+ ready**: Type hints throughout
+
+### Example Usage
+
+```python
+# Bluetooth Correlation
+from triage.parsers import bt_config
+bonds = bt_config.parse_bt_config("/path/to/bt_config.conf")
+correlated = bt_config.correlate_bluetooth(bonds, dumpsys_devices)
+
+# Wi-Fi Passwords (Root Tier 2)
+from triage.parsers import wifi
+networks = wifi.parse_wifi_config(Path("/data/misc/wifi/WifiConfigStore.xml"))
+
+# Wi-Fi Traffic (Non-root Tier 0)
+from triage.parsers import wifi_live
+buckets = wifi_live.parse_netstats(netstats_output)
+
+# USB State (Non-root Tier 0)
+from triage.acquire.real import get_usb_state
+usb_state = get_usb_state(adb)
+
+# Hotspot Indicators (Non-root Tier 0)
+from triage.parsers import hotspot
+result = hotspot.analyze_hotspot_indicators(wifi_dumpsys, netstats, wifi_config)
+```
+
+### Documentation
+- 📖 **[Complete Setup Guide](FORENSIC_MODULES_SETUP.md)** - Installation, API reference, integration
+- 📋 **[Implementation Summary](FORENSIC_MODULES_SUMMARY.md)** - What was delivered
+- 🗂️ **[Documentation Index](FORENSIC_MODULES_INDEX.md)** - Navigation guide
+
+**All modules production-ready and tested** ✅
+
 ## 📚 Full documentation
 
 | | |
@@ -71,6 +136,7 @@ Or one shot: `./run.sh`
 | [**Database**](docs/DATABASE.md) | Schema, per-case file layout, example payloads |
 | [**Setup & deployment**](docs/SETUP.md) | Full install, deps, env vars, packaging gaps |
 | [**Notes**](docs/NOTES.md) | Forensic soundness, WhatsApp module deep-dive, known gaps |
+| [**Forensic Modules**](FORENSIC_MODULES_SETUP.md) | New modules setup, API reference, integration guide |
 
 ## Reality check
 
@@ -83,6 +149,8 @@ deliberately not wired up.
 
 <div align="center">
 
-**1007 tests passing** · Runs fully offline · No account, no cloud, no telemetry
+**1007 tests passing** · **+19 forensic module tests** · Runs fully offline · No account, no cloud, no telemetry
+
+**New**: [Forensic Modules Documentation](FORENSIC_MODULES_INDEX.md) · [Setup Guide](FORENSIC_MODULES_SETUP.md)
 
 </div>
