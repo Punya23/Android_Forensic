@@ -976,8 +976,12 @@ def create_app(cases_root: Path = CASES_ROOT):
             "search_history",
             "maps_locations",
             "maps_location_anomalies",
-            # P1-3: root-tier Bluetooth bond store (bt_config.conf).
+            # P1-3: root-tier Bluetooth bond store (bt_config.conf), the OPP transfer
+            # log (the only Bluetooth artifact with a real wall-clock time) and the
+            # Android 11+ connection-recency ranking.
             "bluetooth_bonds",
+            "bluetooth_transfers",
+            "bluetooth_connection_order",
             # P3-1/P3-2/P3-3/P3-4: persistent app-presence, anti-forensics, encrypted-app
             # reporting and recent tasks.
             "app_presence",
@@ -1040,6 +1044,7 @@ def create_app(cases_root: Path = CASES_ROOT):
             "device_state",
             "wifi_live",
             "bluetooth_bond_report",
+            "bluetooth_transfer_summary",
             "signal",
             # Honest "what happened" record for Tier-2 Telegram — written on every
             # exit path (success, root unavailable, BFU-gated, mock source) so a run

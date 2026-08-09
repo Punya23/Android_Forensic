@@ -79,9 +79,11 @@ from .snapchat import (  # NEW — Snapchat Tier-2 recovery (arroyo.db protobuf)
 from .appfinder import scan_sqlite_for_chats  # NEW — generic SQLite chat discovery
 from .appchat import thread_conversations, count_by_confidence
 from .wifi import (  # Wi-Fi credential parser (Tier 2)
+    WIFI_CONFIG_PATHS,
     parse_wifi_config,
     parse_wpa_supplicant_conf,
     parse_wifi_config_store_xml,
+    parse_wifi_softap_xml,
 )
 from .notification import (  # NEW — Notification history (dumpsys)
     parse_notification_history,
@@ -96,6 +98,15 @@ from .bluetooth import (  # NEW — Bluetooth device history (dumpsys)
     parse_bluetooth_timestamp,
     build_bluetooth_timeline,
     get_bluetooth_summary,
+)
+from .bt_transfer import (  # Bluetooth OPP transfers + connection order (Tier 2)
+    BT_TRANSFER_PATHS,
+    BluetoothTransfer,
+    BluetoothConnectionRank,
+    parse_btopp,
+    parse_bluetooth_metadata_db,
+    build_transfer_timeline,
+    bt_transfer_summary,
 )
 from .celltower import (  # NEW — Cell tower history (dumpsys)
     parse_celltower_history,
@@ -247,9 +258,11 @@ __all__ = [
     "thread_conversations",
     "count_by_confidence",
     # Wi-Fi credential recovery (Tier 2)
+    "WIFI_CONFIG_PATHS",
     "parse_wifi_config",
     "parse_wpa_supplicant_conf",
     "parse_wifi_config_store_xml",
+    "parse_wifi_softap_xml",
     # Notification history (dumpsys) — Tier 0
     "parse_notification_history",
     "get_notification_history",
@@ -262,6 +275,14 @@ __all__ = [
     "parse_bluetooth_timestamp",
     "build_bluetooth_timeline",
     "get_bluetooth_summary",
+    # Bluetooth OPP transfers + connection order — Tier 2
+    "BT_TRANSFER_PATHS",
+    "BluetoothTransfer",
+    "BluetoothConnectionRank",
+    "parse_btopp",
+    "parse_bluetooth_metadata_db",
+    "build_transfer_timeline",
+    "bt_transfer_summary",
     # Cell tower history (dumpsys) — Tier 0
     "parse_celltower_history",
     "get_celltower_history",

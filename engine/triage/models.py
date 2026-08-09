@@ -248,12 +248,30 @@ class TimelineEvent(Serialisable):
 class WifiNetwork(Serialisable):
     """A stored Wi-Fi credential recovered from the device's system config.
 
-    Sourced from either ``/data/misc/wifi/wpa_supplicant.conf`` (Android ≤ 8)
-    or ``/data/misc/wifi/WifiConfigStore.xml`` (Android ≥ 9).  Both files
+    Sourced from ``wpa_supplicant.conf`` (Android ≤ 8), ``WifiConfigStore.xml``
+    (Android ≥ 9, moved into the Wi-Fi APEX data dir on Android ≥ 11) or
+    ``WifiConfigStoreSoftAp.xml`` (the device's *own* hotspot).  All of them
     require root access and are pulled as Tier-2 evidence.
 
     No active cracking is performed — the password is recovered verbatim from
     the plaintext stored by the OS.
+
+    **On the "when".**  Android does not persist a per-network "last connected
+    at <datetime>" field in the config store.  What it does persist is weaker
+    and is surfaced here without being dressed up as a connection time:
+
+    * ``has_ever_connected`` — the network was successfully joined at least
+      once, at an unrecorded time.  ``False`` means saved-but-never-joined.
+    * ``is_most_recently_connected`` — this was the last network joined, as of
+      the last time the store was written.  An ordering fact, not a timestamp.
+    * ``timestamps`` — every epoch-looking value the store actually carried,
+      keyed by its **original field name** (e.g. ``ConnectChoiceTimestamp``), so
+      a reader can see exactly which event was timestamped rather than being
+      handed an unlabelled "last seen".
+
+    A real connection *time* has to come from a different artifact — the
+    ``netstats`` hour buckets in :mod:`triage.parsers.wifi_live`, or the live
+    association in ``dumpsys wifi``.
     """
 
     ssid: str
@@ -262,6 +280,20 @@ class WifiNetwork(Serialisable):
     timestamp: Optional[str] = None
     confidence: Confidence = Confidence.LIVE
     source_file: str = ""
+
+    # --- provenance / connection evidence (WifiConfigStore.xml only) --------
+    has_ever_connected: Optional[bool] = None
+    is_most_recently_connected: Optional[bool] = None
+    creator: str = ""  # package/uid that saved the network
+    last_update_by: str = ""  # package/uid that last modified it
+    default_gateway_mac: str = ""  # AP-side MAC — geolocatable via BSSID lookup
+    randomized_mac: str = ""  # per-network MAC the device presents
+    metered: str = ""  # metered override, if the user set one
+    network_status: str = ""  # enabled / permanently-disabled / …
+    hidden: Optional[bool] = None
+    is_softap: bool = False  # this is the device's OWN hotspot, not a joined network
+    timestamps: dict[str, str] = field(default_factory=dict)  # original field name → ISO-8601
+    caveats: list[str] = field(default_factory=list)
 
 
 # --- WhatsApp backup recovery -----------------------------------------------

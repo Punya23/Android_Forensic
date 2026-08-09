@@ -64,3 +64,18 @@ Driven by a deep-research + adversarial-audit pass; the full findings live in
 | **Non-root live Wi-Fi / Bluetooth bond store / App presence & execution** | 0/2 | The realistic non-root/root surface, honestly scoped |
 | **Structural anti-forensics** (work profile, dual-app clone, factory-reset trace) | 2 | Observations only — every finding lists innocent explanations |
 | **Tool self-validation** — known-answer report + CFTT coverage matrix, per acquisition | — | Includes a deliberate negative control that *must* fail |
+
+## New in v0.4 — radio artifacts and their time claims
+
+Full detail: [`docs/NETWORK_ARTIFACTS.md`](NETWORK_ARTIFACTS.md).
+
+| Capability | Tier | Why it matters |
+|---|---|---|
+| **Wi-Fi credential recovery across every Android era** — APEX (11+), pre-APEX (9–10), `wpa_supplicant` (≤8), all probed, all parsed | 2 | Probing only the Android 9 path on a modern device reports "no saved networks" — a finding, not a miss |
+| **Own-hotspot credentials** (`WifiConfigStoreSoftAp.xml`) | 2 | The SSID+passphrase this device *offered* — matches directly against another device's saved list |
+| **Saved vs actually joined** (`HasEverConnected`) + per-network provenance | 2 | "Was at this address" and "was told the password" stop looking the same |
+| **Wi-Fi timestamps kept under their original field name** | 2 | Android stores no "last connected"; nothing is relabelled into one |
+| **Bluetooth OPP transfer history** (`btopp.db`) — peer, file, bytes, outcome, wall-clock time, deleted rows carved | 2 | The only Bluetooth artifact that proves an *active link* at a stated time |
+| **Bluetooth connection-recency ranking** (`bluetooth_db`) | 2 | `last_active_time` is a counter — exposed as a rank, never as a date |
+| **Hotspot / tethering posture**, tri-state | 0 | "Not reported by this build" is distinct from "the hotspot was off" |
+| **USB cable state, pre- and post-acquisition** | 0 | A cable pulled mid-run explains a truncated pull |

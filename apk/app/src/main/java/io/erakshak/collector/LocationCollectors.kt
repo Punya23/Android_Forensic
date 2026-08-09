@@ -154,9 +154,27 @@ object WifiCollector {
                 )
             }
 
+            val notes = mutableListOf<String>()
+
+            // The radio being off does not clear the saved list, but it does mean the
+            // scan results below are whatever was last cached — worth saying out loud.
+            val wifiEnabled = runCatching { wm.isWifiEnabled }.getOrNull()
+            if (wifiEnabled == false) {
+                notes += "Wi-Fi radio was OFF at collection; scan results are stale or empty"
+            }
+
             // 2. Saved / configured networks — historic presence at each location.
             @Suppress("DEPRECATION")
             val configured = runCatching { wm.configuredNetworks }.getOrNull()
+            // Android 10+ returns an EMPTY LIST to non-system apps, not null. Checking
+            // only for null let an empty saved-network list read as "this device had no
+            // saved networks" on every modern phone.
+            if (configured.isNullOrEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                notes += "saved-network list is unavailable to non-system apps on " +
+                    "Android 10+ (returned ${if (configured == null) "null" else "empty"}); " +
+                    "absence here is not evidence the device had no saved networks — " +
+                    "the root-tier WifiConfigStore.xml pull is the only way to see them"
+            }
             if (configured != null) {
                 for (cfg in configured) {
                     val ssid = (cfg.SSID ?: "").trim('"')
@@ -183,6 +201,27 @@ object WifiCollector {
             // 3. Scan results — APs physically in range at collection time.
             @Suppress("DEPRECATION")
             val scanResults = runCatching { wm.scanResults }.getOrNull()
+            // Android 8.1+ silently returns an empty list when the device's master
+            // location toggle is off, even with ACCESS_FINE_LOCATION granted. Without
+            // this note an empty scan reads as "no APs in range" rather than "we were
+            // not allowed to look".
+            if (scanResults.isNullOrEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                // isLocationEnabled() is API 28+; the provider check works on minSdk 26.
+                // Defaults to "on" so a probe failure never manufactures a caveat.
+                val locationOn = runCatching {
+                    val lm = ctx.applicationContext.getSystemService(Context.LOCATION_SERVICE)
+                        as? LocationManager
+                    lm != null && (
+                        lm.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+                            lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+                        )
+                }.getOrDefault(true)
+                if (!locationOn) {
+                    notes += "scan results are empty because the device's location " +
+                        "toggle is OFF — Android 8.1+ blocks Wi-Fi scans without it. " +
+                        "This is not a finding that no access points were in range"
+                }
+            }
             if (scanResults != null) {
                 for (sr in scanResults) {
                     out.put(
@@ -201,9 +240,7 @@ object WifiCollector {
             CollectionResult(
                 "wifi", "wifi.json", out, out.length(),
                 if (out.length() == 0) CollectionResult.EMPTY else CollectionResult.OK,
-                if (configured == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                    "saved-network list unavailable to non-system apps on Android 10+"
-                else null
+                notes.takeIf { it.isNotEmpty() }?.joinToString("; ")
             )
         } catch (e: SecurityException) {
             CollectionResult("wifi", "wifi.json", JSONArray(), 0, CollectionResult.DENIED, e.message)
@@ -244,11 +281,14 @@ object BluetoothCollector {
                 CollectionResult.UNSUPPORTED, "no Bluetooth adapter on this device"
             )
 
+            val notes = mutableListOf<String>()
+            val adapterOn = runCatching { adapter.isEnabled }.getOrDefault(false)
+
             val out = JSONArray()
             out.put(
                 JSONObject()
                     .put("type", "adapter")
-                    .put("enabled", runCatching { adapter.isEnabled }.getOrDefault(false))
+                    .put("enabled", adapterOn)
                     .put("name", safeName(adapter))
                     .put("address", safeAddress(adapter))
                     .put(
@@ -264,6 +304,16 @@ object BluetoothCollector {
 
             val bonded: Set<BluetoothDevice>? =
                 runCatching { adapter.bondedDevices }.getOrNull()
+            if (bonded == null) {
+                notes += "bonded-device list could not be read; this is not a finding " +
+                    "that the device had no paired devices"
+            } else if (bonded.isEmpty() && !adapterOn) {
+                // Some OEM stacks return an empty bond set while the adapter is off
+                // rather than the persisted list. An empty set here is inconclusive.
+                notes += "Bluetooth adapter was OFF and the bonded list came back " +
+                    "empty; on some OEM stacks the bond store is only readable with " +
+                    "the adapter on, so this is not evidence of no pairings"
+            }
             bonded?.forEach { dev ->
                 val o = JSONObject().put("type", "bonded_device").put("bond_state", "bonded")
                 try {
@@ -290,7 +340,8 @@ object BluetoothCollector {
 
             CollectionResult(
                 "bluetooth", "bluetooth.json", out, out.length(),
-                if (out.length() == 0) CollectionResult.EMPTY else CollectionResult.OK
+                if (out.length() == 0) CollectionResult.EMPTY else CollectionResult.OK,
+                notes.takeIf { it.isNotEmpty() }?.joinToString("; ")
             )
         } catch (e: SecurityException) {
             CollectionResult("bluetooth", "bluetooth.json", JSONArray(), 0, CollectionResult.DENIED, e.message)
