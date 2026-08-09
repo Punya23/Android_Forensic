@@ -286,71 +286,106 @@ class TestWifiTrafficHistory(unittest.TestCase):
         self.assertIn("hour", caveat_text)
 
 
+def _adb_returning(responses: dict, serial: str = "ABC123"):
+    """Mock Adb whose shell() answers by command substring; unknown commands fail."""
+    mock_adb = Mock()
+    mock_adb.serial = serial
+
+    def _shell(cmd, *args, **kwargs):
+        for needle, stdout in responses.items():
+            if needle in cmd:
+                res = Mock()
+                res.ok = True
+                res.stdout = stdout
+                res.stderr = ""
+                return res
+        res = Mock()
+        res.ok = False
+        res.stdout = ""
+        res.stderr = "no such file or directory"
+        return res
+
+    mock_adb.shell.side_effect = _shell
+    return mock_adb
+
+
 class TestUSBConnectionState(unittest.TestCase):
-    """MODULE 4: USB Connection State (Non-root Tier 0) tests"""
-    
-    def test_usb_connected_2_of_3_probes(self):
-        """Test USB detected when 2 out of 3 probes agree"""
-        mock_adb = Mock()
-        
-        # Probe 1: Type-C says host
-        mock_result1 = Mock()
-        mock_result1.stdout = "host\n"
-        
-        # Probe 2: Battery says USB
-        mock_result2 = Mock()
-        mock_result2.stdout = "USB powered: true\nAC powered: false\n"
-        
-        # Probe 3: Fails
-        mock_adb.shell.side_effect = [mock_result1, mock_result2]
-        mock_adb._base.return_value = ["adb"]
-        
-        with patch('subprocess.run') as mock_run:
-            mock_run.side_effect = Exception("Failed")
-            
-            result = get_usb_state(mock_adb)
-        
-        # 2 out of 2 successful probes = connected
-        self.assertTrue(result["usb_connected"])
-        self.assertEqual(len(result["probe_votes"]), 2)
-    
-    def test_usb_not_connected_insufficient_votes(self):
-        """Test USB not detected when only 1 probe agrees"""
-        mock_adb = Mock()
-        
-        # Probe 1: Type-C says device (not host)
-        mock_result1 = Mock()
-        mock_result1.stdout = "device\n"
-        
-        # Probe 2: Battery says not USB
-        mock_result2 = Mock()
-        mock_result2.stdout = "AC powered: false\nWireless: false\n"
-        
-        mock_adb.shell.side_effect = [mock_result1, mock_result2]
-        mock_adb._base.return_value = ["adb"]
-        
-        with patch('subprocess.run') as mock_run:
-            # Probe 3: ADB devices shows device
-            mock_proc = Mock()
-            mock_proc.stdout = "List of devices attached\n12345\tdevice\n"
-            mock_run.return_value = mock_proc
-            
-            result = get_usb_state(mock_adb)
-        
-        # Only 1 out of 3 votes for USB = not connected
-        self.assertFalse(result["usb_connected"])
-    
+    """USB connection state (Non-root Tier 0) tests"""
+
+    def test_any_positive_probe_reports_connected(self):
+        adb = _adb_returning({"dumpsys battery": "USB powered: true\nAC powered: false\n"})
+
+        result = get_usb_state(adb)
+
+        self.assertIs(result["usb_connected"], True)
+        self.assertIn("battery:usb-powered", result["probe_votes"])
+
+    def test_device_role_is_the_connected_role_not_host(self):
+        """A phone plugged into a workstation is the DEVICE side of the link.
+
+        Treating 'host' as the connected role inverts the test and returns False
+        on exactly the setup a forensic capture runs on.
+        """
+        adb = _adb_returning({"typec/port0/data_role": "[device] host\n"})
+
+        result = get_usb_state(adb)
+
+        self.assertIs(result["usb_connected"], True)
+        self.assertIn("typec:device", result["probe_votes"])
+
+    def test_host_role_is_flagged_as_otg_not_the_workstation_link(self):
+        adb = _adb_returning({"typec/port0/data_role": "host\n"})
+
+        result = get_usb_state(adb)
+
+        self.assertIn("OTG", " ".join(result["caveats"]))
+        self.assertNotIn("typec:host", result["probe_votes"])
+
+    def test_all_probes_negative_reports_disconnected(self):
+        adb = _adb_returning(
+            {
+                "dumpsys battery": "USB powered: false\nAC powered: false\n",
+                "android_usb/android0/state": "DISCONNECTED\n",
+            }
+        )
+
+        result = get_usb_state(adb)
+
+        self.assertIs(result["usb_connected"], False)
+
+    def test_no_legible_probe_is_unknown_not_disconnected(self):
+        """Absent != disconnected — the whole point of the tri-state."""
+        result = get_usb_state(_adb_returning({}))
+
+        self.assertIsNone(result["usb_connected"])
+        self.assertIn("UNKNOWN", " ".join(result["caveats"]))
+
+    def test_tcp_transport_is_recorded_separately(self):
+        adb = _adb_returning({"dumpsys battery": "USB powered: false\n"}, serial="192.168.1.5:5555")
+
+        result = get_usb_state(adb)
+
+        self.assertEqual(result["transport"], "tcp")
+        self.assertIn("over TCP/IP", " ".join(result["caveats"]))
+
+    def test_adb_reachability_is_not_used_as_a_probe(self):
+        """We are talking over ADB, so 'adb devices lists it' always passes.
+
+        It proves nothing about a cable and must not be able to carry a verdict.
+        """
+        adb = _adb_returning({})
+
+        get_usb_state(adb)
+
+        issued = [call.args[0] for call in adb.shell.call_args_list]
+        self.assertFalse(any("devices" in cmd for cmd in issued))
+        # Nor may it reach around the Adb API to run `adb devices` itself.
+        adb._base.assert_not_called()
+
     def test_usb_caveats_present(self):
         """Test that standard caveats are included"""
-        mock_adb = Mock()
-        mock_adb.shell.side_effect = Exception("All failed")
-        mock_adb._base.return_value = ["adb"]
-        
-        with patch('subprocess.run') as mock_run:
-            mock_run.side_effect = Exception("Failed")
-            
-            result = get_usb_state(mock_adb)
-        
+        result = get_usb_state(_adb_returning({}))
+
         caveat_text = " ".join(result["caveats"]).lower()
         self.assertIn("moment of capture", caveat_text)
         self.assertIn("does not establish", caveat_text)
@@ -366,24 +401,89 @@ mWifiInfo SSID: <unknown>, BSSID: <none>
 SoftAp state: ENABLED
 SoftApManager - current state: StartedState
 '''
-        
+
         result = hotspot.analyze_hotspot_indicators(wifi_dumpsys, "", [])
-        
+
         self.assertTrue(result["hosted_indicator"])
         self.assertIn("SoftAp", result["details"]["hosted_evidence"][0])
-    
+
+    def test_idle_softap_state_machine_is_not_a_hosted_hotspot(self):
+        """dumpsys wifi prints SoftApManager on EVERY device, hotspot or not.
+
+        Matching the word "SoftAp" therefore flags every phone ever seized. Only
+        an explicit started/enabled state may set hosted_indicator.
+        """
+        wifi_dumpsys = '''
+mWifiInfo SSID: "HomeNetwork", BSSID: aa:bb:cc:dd:ee:ff
+SoftApManager - current state: IdleState
+mWifiApState: 11
+'''
+
+        result = hotspot.analyze_hotspot_indicators(wifi_dumpsys, "", [])
+
+        self.assertIs(result["hosted_indicator"], False)
+
+    def test_absent_softap_block_is_unknown_not_false(self):
+        """A build that reports no AP state at all must not read as "hotspot off"."""
+        result = hotspot.analyze_hotspot_indicators("mWifiInfo SSID: <unknown>", "", [])
+
+        self.assertIsNone(result["hosted_indicator"])
+        self.assertIn(
+            "unknown", " ".join(result["caveats"]).lower()
+        )
+
+    def test_tethered_interface_corroborates_hosting(self):
+        connectivity = "Tethering:\n  Tethered ifaces: [wlan1]\n"
+
+        result = hotspot.analyze_hotspot_indicators(
+            "", "", [], connectivity=connectivity
+        )
+
+        self.assertTrue(result["hosted_indicator"])
+        self.assertTrue(
+            any("wlan1" in e for e in result["details"]["hosted_evidence"])
+        )
+
+    def test_softap_config_records_configured_not_active(self):
+        result = hotspot.analyze_hotspot_indicators(
+            "", "", [], softap_config={"ssid": "MyPhoneAP"}
+        )
+
+        self.assertTrue(result["hosted_configured"])
+        self.assertIn(
+            "not that it was ever switched on", " ".join(result["caveats"])
+        )
+
     def test_connected_to_hotspot_detected(self):
         """Test detection of connection to another device's hotspot"""
         wifi_config = [
             {"ssid": "AndroidAP1234"},
             {"ssid": "MyHomeWifi"}
         ]
-        
+
         result = hotspot.analyze_hotspot_indicators("", "", wifi_config)
-        
+
         self.assertTrue(result["connected_indicator"])
         self.assertIn("androidap", result["details"]["connected_evidence"][0].lower())
-    
+
+    def test_ssid_name_match_is_labelled_a_heuristic(self):
+        """An SSID is freely chosen, so a name match is a lead, never a finding."""
+        result = hotspot.analyze_hotspot_indicators(
+            "", "", [{"ssid": "AndroidAP1234"}]
+        )
+
+        self.assertIn(
+            "not a determination", result["details"]["connected_evidence"][0]
+        )
+        self.assertIn("lead, not a conclusion", " ".join(result["caveats"]))
+
+    def test_no_saved_network_list_says_the_check_could_not_run(self):
+        """Android 10+ hides the saved list from non-root; that is not "no hotspot"."""
+        result = hotspot.analyze_hotspot_indicators("", "", [])
+
+        self.assertIsNone(result["connected_indicator"])
+        self.assertIn("unreadable without root", " ".join(result["caveats"]))
+
     def test_hotspot_with_traffic(self):
         """Test detection of traffic over hotspot SSID"""
         netstats = '''
@@ -399,11 +499,17 @@ ident=[{networkId="AndroidAP5678", type=WIFI}] uid=-1 set=ALL tag=0x0
     
     def test_no_hotspot_indicators(self):
         """Test when no hotspot indicators are present"""
-        result = hotspot.analyze_hotspot_indicators("normal wifi", "", [{"ssid": "HomeNetwork"}])
-        
-        self.assertFalse(result["hosted_indicator"])
-        self.assertFalse(result["connected_indicator"])
-        self.assertIn("no hotspot indicators detected", result["caveats"][-1].lower())
+        wifi_dumpsys = "SoftApManager - current state: IdleState"
+        result = hotspot.analyze_hotspot_indicators(
+            wifi_dumpsys, "", [{"ssid": "HomeNetwork"}]
+        )
+
+        self.assertIs(result["hosted_indicator"], False)
+        self.assertIs(result["connected_indicator"], False)
+        caveats = " ".join(result["caveats"]).lower()
+        # An absence of indicators is never allowed to read as an absence of use.
+        self.assertIn("does not exclude hotspot use", caveats)
+        self.assertIn("neither shown nor excluded", caveats)
     
     def test_critical_caveats_always_present(self):
         """Test that critical caveats are always included"""
