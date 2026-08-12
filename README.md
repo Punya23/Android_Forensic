@@ -27,11 +27,15 @@ trail — so the report is something you can actually stand behind.
 - 🔓 **Tiered acquisition** — Tier 0 (zero touch) → Tier 1 (sideloaded helper) → Tier 2 (root), every tier opt-in and logged
 - 🧬 **Deleted-record recovery** — WAL / freelist / freeblock / rollback-journal carving, confidence-badged (Live / Recovered / Carved / Deletion-Detected)
 - 💬 **Multi-app coverage** — WhatsApp, Telegram, Instagram, Snapchat, SMS, browser history — including their deleted messages
-- 🗺️ **Location & social graph** — EXIF/GPS trace, cell/BT/Wi-Fi history, cross-channel comms graph
+- 🗺️ **Location & social graph** — EXIF/GPS trace, cell-tower history, cross-channel comms graph
+- 📡 **Radio artifacts** — Wi-Fi credentials & saved-vs-joined networks, Bluetooth pairings *and* file-transfer history, hotspot posture
 - 🚦 **Traffic-light verdict** — RED/AMBER/GREEN scorecard built for a five-minute field decision
 - 📜 **Court-shaped report** — NIST/SWGDE-aligned, BSA 2023 §63 certificate, sealed SHA-256 export
 - 🧠 **Case intelligence** — plain-language brief → ontology-ranked collection plan, offline by default
 - 📴 **Works with zero phone** — full pipeline demoable against a synthetic mock corpus
+
+Running through all of it is one rule: **absent ≠ inaccessible, and unverified ≠ clean.** A
+thing we could not read is reported as unreadable, never as not there.
 
 ## How it flows
 
@@ -48,18 +52,62 @@ flowchart LR
 ## Quick start (no phone required)
 
 ```bash
-# engine
+./run.sh          # venv + deps + mock corpus + engine :5057 + dashboard :5173
+```
+
+Sign in (`examiner` / `snagr` by default — override in `engine/.env`), pick the mock
+device, click **Begin Acquisition**. Or step by step:
+
+```bash
 cd engine && python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && cp .env.example .env
-python tools/make_corpus.py _corpus/device_A
+python tools/make_corpus.py _corpus/device_A     # synthetic device, no phone involved
 python -m triage.server --port 5057
 
-# dashboard (new terminal)
-cd app && npm install && npm run dev   # → localhost:5173
+cd app && npm install && npm run dev             # new terminal → localhost:5173
 ```
-Sign in with the creds from `engine/.env`, pick the mock device, click **Begin Acquisition**.
 
-Or one shot: `./run.sh`
+## Against a real phone
+
+USB debugging on, device authorised, screen unlocked. Tier 0 needs nothing else; Tier 1
+sideloads [the collector APK](apk/README.md); Tier 2 needs root and is always opt-in.
+
+```bash
+adb devices                                       # confirm it is authorised
+cd engine && source .venv/bin/activate
+python -m triage.cli devices                      # what the engine can see
+
+# Tier 0 only — no install, no root
+python -m triage.cli acquire --serial <SERIAL> \
+    --case CASE01 --examiner "Your Name" --authority "<warrant ref>"
+
+# Add Tier 1 (installs + uninstalls the helper) and Tier 2 (root) as the case allows
+python -m triage.cli acquire --serial <SERIAL> --case CASE01 --examiner "Your Name" \
+    --tier1-collect-all \
+    --tier2-wifi --tier2-bt-config --tier2-browser-history --tier2-whatsapp-backup
+```
+
+`python -m triage.cli acquire --help` lists every tier flag. The dashboard drives the same
+pipeline with live progress if you'd rather click.
+
+## Repo layout
+
+| | |
+|---|---|
+| `engine/` | Python acquisition + recovery + reporting. `triage/pipeline.py` is the spine |
+| `engine/triage/parsers/` | One module per artifact type — the bulk of the forensic logic |
+| `engine/triage/recovery/` | SQLite carving: freelist, freeblocks, unallocated, WAL, journals |
+| `app/` | Electron + React dashboard (Vite, TypeScript) |
+| `apk/` | Kotlin Tier-1 collector, sideloaded and then removed |
+| `docs/` | The reference docs linked below |
+
+Building and testing each half:
+
+```bash
+cd engine && python -m pytest tests/ -q      # 1061 tests, no device needed
+cd apk && ./gradlew assembleDebug            # needs the Android SDK
+cd app && npx tsc --noEmit                   # dashboard typecheck
+```
 
 ## 📚 Full documentation
 

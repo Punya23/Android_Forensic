@@ -1,101 +1,131 @@
-# SNAGR Collector — Tier-1 Helper APK
+# SNAGR Collector — Tier-1 helper APK
 
-A **sideloaded** Android app that reads the artifacts the `shell` UID cannot reach without an
-app identity, and writes them as JSON to public `Download/` (via MediaStore on Android 10+) for
-the engine to `adb pull`. As of v0.2 it is a full non-root collector.
+[← back to the main README](../README.md)
 
-## Collectors (v0.2)
+A **sideloaded** Android app that reads the artifacts `adb shell` cannot reach, and writes
+them as JSON into public `Download/` (via MediaStore on Android 10+) for the engine to
+`adb pull`. Installed, run, pulled from, and uninstalled — all inside one acquisition, all
+logged.
 
-Each `--es action <name>` runs one collector; `dump_all` runs them all (off the main thread)
-and writes a `collector_manifest.json` summarising what ran, row counts, and any permission
-denials. Every collector returns a clean status instead of crashing when a permission is missing.
+## Why a helper APK at all
+
+`adb shell` runs as UID 2000, which holds none of the dangerous content-provider
+permissions. There is no non-root way to read `content://contacts`, `call_log` or `sms`
+from the bare shell. The industry-standard workaround — Cellebrite's and Oxygen's "agent"
+methods do the same thing — is a small unprivileged app that requests those permissions
+through the normal Android model. This is that app, kept deliberately small and auditable.
+
+Being Tier 1 means it is **state-changing by definition**: it installs software and grants
+it permissions. Every step is logged in the case audit trail with `alters_device: true`, it
+is never run silently, and the Tier-0 core never depends on it.
+
+## Collectors
+
+One `--es action <name>` per collector; `dump_all` runs all fourteen off the main thread
+and writes `collector_manifest.json` summarising what ran, row counts, and every denial.
 
 | Action | Output | Permission | Grantable via `pm grant`? |
 |---|---|---|---|
-| `dump_contacts` | `contacts.json` (merged numbers + emails) | READ_CONTACTS | ✅ |
-| `dump_calllog` | `calllog.json` | READ_CALL_LOG | ❌ hard-restricted → Dialer role swap |
-| `dump_sms` | `sms.json` (+ MMS text) | READ_SMS | ❌ hard-restricted → SMS role swap |
-| `dump_media` | `media_inventory.json` (MediaStore: trashed/favorite/owner-app/EXIF-GPS) | READ_MEDIA_* / ACCESS_MEDIA_LOCATION | ✅ |
-| `dump_apps` | `apps.json` (inventory + vault/messaging classification) | QUERY_ALL_PACKAGES | ✅ (install-time) |
-| `dump_accounts` | `accounts.json` | GET_ACCOUNTS | ✅ (OEM-dependent visibility) |
-| `dump_calendar` | `calendar.json` | READ_CALENDAR | ✅ |
-| `dump_usage` | `usage.json` | PACKAGE_USAGE_STATS | via `appops set … GET_USAGE_STATS allow` |
-| `dump_device` | `device_extra.json` (Build/props, root indicators) | — | — |
+| `dump_contacts` | `contacts.json` (merged numbers + emails) | `READ_CONTACTS` | ✅ |
+| `dump_calllog` | `calllog.json` | `READ_CALL_LOG` | ❌ hard-restricted → Dialer role swap |
+| `dump_sms` | `sms.json` (+ MMS text) | `READ_SMS` | ❌ hard-restricted → SMS role swap |
+| `dump_calendar` | `calendar.json` | `READ_CALENDAR` | ✅ |
+| `dump_accounts` | `accounts.json` (Google / WhatsApp / Telegram / Snapchat identities) | `GET_ACCOUNTS` | ✅ — visibility is OEM-dependent |
+| `dump_apps` | `apps.json` (inventory + vault/messaging classification) | `QUERY_ALL_PACKAGES` | ✅ install-time |
+| `dump_usage` | `usage.json` | `PACKAGE_USAGE_STATS` | via `appops set … GET_USAGE_STATS allow` |
+| `dump_media` | `media_inventory.json` (trashed / favorite / owner-app / EXIF GPS) | `READ_MEDIA_*`, `ACCESS_MEDIA_LOCATION` | ✅ |
+| `dump_recordings` | `recordings.json` (OEM call-recording folders, 10+ vendor paths) | `READ_EXTERNAL_STORAGE` (≤ SDK 32) / `READ_MEDIA_AUDIO` | ✅ — but see the scoped-storage note below |
+| `dump_notifications` | `notifications.json` | Android 11+ history via reflection, plus a live watcher buffer | ❌ — `@SystemApi`, blocked on many builds |
+| `dump_location` | `location.json` (last-known fix per provider) | `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION` | ✅ |
+| `dump_wifi` | `wifi.json` (current association, scan results, saved list where readable) | `ACCESS_WIFI_STATE` + location for scans | ✅ |
+| `dump_bluetooth` | `bluetooth.json` (adapter + bonded devices) | `BLUETOOTH_CONNECT` (Android 12+) / `BLUETOOTH` | ✅ |
+| `dump_device` | `device_extra.json` (Build props, root indicators) | — | — |
 | `dump_all` | all of the above + `collector_manifest.json` | — | — |
 
-The engine drives `dump_all` when **Full collection** is enabled in the Acquisition view (or
-`--tier1-collect-all` on the CLI): install → grant the non-restricted permissions → enable the
-usage appop → `am start … dump_all` → pull every JSON → uninstall — all logged with
-`alters_device: true`.
+The engine drives `dump_all` when **Full collection** is enabled in the Acquisition view,
+or `--tier1-collect-all` on the CLI: install → grant the non-restricted permissions →
+enable the usage appop → `am start … dump_all` → pull every JSON → uninstall.
 
----
+## An empty file is never allowed to mean "nothing was there"
 
-The original minimal surface — **contacts**, and (behind an explicit, revert-after-use step)
-**call log** and **SMS** — is still available as the individual actions above.
+Every collector returns a `CollectionResult` instead of throwing, so a missing permission
+becomes a labelled `denied` row in `collector_manifest.json` rather than an aborted run —
+and, more importantly, rather than an empty JSON file that looks exactly like a device with
+nothing on it. The statuses are `ok` / `empty` / `denied` / `unsupported` / `error`.
 
-This is the **Tier-1** path in the acquisition model. It is **state-changing** by
-definition (it installs an app and grants it permissions), so every step it triggers is
-logged in the case audit trail with `alters_device: true`. It is never run silently and
-never required for the Tier-0 core demo.
+Several Android APIs make that distinction hard, because they answer a blocked call with an
+empty result rather than an error. Those cases are detected and their reason recorded:
 
-## Why a helper APK at all?
+- `getConfiguredNetworks()` returns an **empty list** to non-system apps on Android 10+, not
+  null and not an exception. Only the root-tier `WifiConfigStore.xml` pull can see the saved
+  networks — see [`docs/NETWORK_ARTIFACTS.md`](../docs/NETWORK_ARTIFACTS.md).
+- Wi-Fi scan results come back empty whenever the device's master location toggle is off,
+  even with `ACCESS_FINE_LOCATION` granted (Android 8.1+).
+- An empty bonded-device set while the Bluetooth adapter is off is inconclusive on some OEM
+  stacks, not evidence of no pairings.
+- `dump_recordings` walks the known OEM folders directly with `File`, which scoped storage
+  restricts from Android 11 on. An empty `recordings.json` on a modern device may mean the
+  folder was unreachable rather than empty; the result carries "No call recording files
+  found in known OEM paths", which is a statement about the *paths searched*.
 
-`adb shell` runs as UID 2000, which holds none of the dangerous content-provider
-permissions. There is no non-root way to read `content://contacts` / `call_log` / `sms`
-from the bare shell. The industry-standard workaround (used by Cellebrite's and Oxygen's
-"agent" methods) is to install a tiny unprivileged app that requests those permissions
-through the normal Android model. This is that app, kept deliberately small and auditable.
+Where a device detail cannot be read due to a `SecurityException`, the app writes the
+literal string `[permission_denied]` into the field rather than omitting it.
 
-## Permission tiers (mirrors the engine's honesty model)
+## Permission reality
 
-| Artifact | Permission | Grantable via `pm grant` (no root)? | Notes |
+| Artifact | Permission | `pm grant` without root? | Notes |
 |---|---|---|---|
-| Contacts | `READ_CONTACTS` | ✅ Yes (dangerous, not hard-restricted) | The clean Tier-1 win. |
-| Media metadata | `READ_MEDIA_IMAGES/VIDEO/AUDIO` | ✅ Yes | For full MediaStore enumeration. |
-| Call log | `READ_CALL_LOG` | ❌ No (hard-restricted) | Needs a temporary default-Dialer role swap — intrusive, log & revert. |
-| SMS | `READ_SMS` | ❌ No (hard-restricted) | Needs a temporary default-SMS role swap — intrusive, log & revert. |
+| Contacts, calendar, media, location, Wi-Fi, Bluetooth | dangerous, not hard-restricted | ✅ | The clean Tier-1 wins |
+| Call log | `READ_CALL_LOG` | ❌ hard-restricted | Needs a temporary default-Dialer role swap — intrusive; log it and revert |
+| SMS | `READ_SMS` | ❌ hard-restricted | Needs a temporary default-SMS role swap — same treatment |
+| App usage | `PACKAGE_USAGE_STATS` | ❌ (not a runtime permission) | Granted with `appops`, not `pm grant` |
+| Wi-Fi passwords, Bluetooth link keys | — | ❌ ever | Root-only. No app can read them |
 
-## Acquisition flow (scripted by the engine, logged in the audit trail)
+## The flow, by hand
 
 ```bash
 # 1. install (logged: alters_device=true)
 adb install -r SNAGRCollector.apk
 
-# 2a. contacts — clean grant, no root
+# 2. clean grants, no root
 adb shell pm grant io.erakshak.collector android.permission.READ_CONTACTS
-adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_contacts
-
-# 2b. media metadata
 adb shell pm grant io.erakshak.collector android.permission.READ_MEDIA_IMAGES
+adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_all
 
-# 3. (INTRUSIVE, optional) call log / SMS via role swap — must be reverted afterwards
+# 3. INTRUSIVE, optional — call log / SMS via role swap. Must be reverted.
 adb shell cmd role add-role-holder android.app.role.DIALER io.erakshak.collector
 adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_calllog
-# ... then restore the original default dialer and uninstall:
 adb shell cmd role remove-role-holder android.app.role.DIALER io.erakshak.collector
 
-# 4. pull the JSON the app wrote, then uninstall
+# 4. pull what it wrote, then remove the app
+adb pull /sdcard/Download/collector_manifest.json
 adb pull /sdcard/Download/contacts.json
-adb pull /sdcard/Download/calllog.json
 adb uninstall io.erakshak.collector
 ```
 
-The engine's `parsers/contacts.py` and `parsers/calllog.py` ingest exactly the JSON shape
-this app emits, and the pipeline picks up `contacts.json` / `calllog.json` automatically
-when they appear in `/sdcard/Download`.
+`engine/triage/parsers/collector.py` ingests exactly the JSON shapes this app emits, and
+the pipeline picks them up automatically when they appear in `/sdcard/Download`.
 
 ## Building
 
-This needs Android Studio / the Android SDK (not bundled in this repo). The `src/` here is
-the complete app source — open `apk/` as a Gradle project, or:
+Needs the Android SDK (not bundled). Open `apk/` as a Gradle project, or:
 
 ```bash
 cd apk && ./gradlew assembleDebug
-# output: app/build/outputs/apk/debug/app-debug.apk
+# → app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> For the hackathon Round-1 demo, the **contacts** path is the only Tier-1 artifact on the
-> must-ship list. The call-log/SMS role-swap is deliberately gated as an advanced step.
-> The engine already handles the JSON either way, so the demo works whether or not the APK
-> is built — the mock corpus ships pre-made `contacts.json` / `calllog.json` so the
-> Contacts view is populated without any device.
+`assembleRelease` currently produces an **unsigned** APK — there is no `signingConfigs`
+block. Tracked in [`docs/NOTES.md`](../docs/NOTES.md) with the rest of the known gaps.
+
+The package id is still `io.erakshak.collector` after the SNAGR rename. That is deliberate,
+not an oversight: the string is duplicated across Kotlin, Python and test assertions with no
+single source of truth, nothing but `adb` ever sees it, and the reasoning is recorded in
+`docs/NOTES.md`.
+
+## Demoing without the APK
+
+The mock corpus (`engine/tools/make_corpus.py`) ships pre-made collector output —
+`contacts.json`, `calllog.json`, `sms.json`, `accounts.json`, `apps.json`, `calendar.json`,
+`media_inventory.json`, `usage.json` — so those views populate with no device and no build.
+The engine ingests the JSON identically either way.
