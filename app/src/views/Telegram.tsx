@@ -227,8 +227,8 @@ export function TelegramView({ caseId }: { caseId: string }) {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`${BASE}/api/case/${caseId}/telegram/conversations`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+    api
+      .telegramConversations(caseId)
       .then((data: TelegramConversationsMap) => {
         setConvs(data);
         const first = Object.keys(data)[0];
@@ -236,8 +236,8 @@ export function TelegramView({ caseId }: { caseId: string }) {
       })
       .catch(() => setConvs({}))
       .finally(() => setLoading(false));
-    fetch(`${BASE}/api/case/${caseId}/telegram_presence`)
-      .then((r) => (r.ok ? r.json() : null))
+    api
+      .telegramPresence(caseId)
       .then((data: TelegramPresence | null) => setPresence(data && data.attempted ? data : null))
       .catch(() => setPresence(null));
   }, [caseId, reloadKey]);
@@ -277,7 +277,7 @@ export function TelegramView({ caseId }: { caseId: string }) {
         "If acquisition was Tier-0 only, only gallery media is available.";
     return (
       <div className="flex flex-col items-center justify-center h-full text-center py-16 px-6">
-        <EmptyState title="No Telegram conversations" detail={detail} />
+        <EmptyState dataset="telegram_conversations" title="No Telegram conversations" detail={detail} />
         <ImportControl caseId={caseId} onImported={() => setReloadKey((k) => k + 1)} />
       </div>
     );

@@ -1140,6 +1140,31 @@ def collect_wifi_live(shell: Callable[[str], str]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Serialisation
+# ---------------------------------------------------------------------------
+
+
+def wifi_live_json(result: dict[str, Any]) -> dict[str, Any]:
+    """Convert a :func:`collect_wifi_live` result into plain JSON-safe types.
+
+    The collector returns dataclasses (:class:`WifiConnectionState` and friends)
+    because the summary and timeline builders want typed access to them. Anything
+    that persists the result has to flatten them first — writing the raw dict raises
+    ``Object of type WifiConnectionState is not JSON serializable``, which for a long
+    time only ever fired on a device that actually had Wi-Fi state to report. An
+    empty capture serialised fine, so the failure was invisible against a corpus with
+    no canned ``dumpsys wifi`` output.
+    """
+    if not isinstance(result, dict):
+        return {}
+    out = dict(result)
+    out["current"] = _as_dict(result.get("current")) or None
+    for key in ("saved", "scan_results", "usage"):
+        out[key] = [_as_dict(item) for item in (result.get(key) or [])]
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Timeline
 # ---------------------------------------------------------------------------
 

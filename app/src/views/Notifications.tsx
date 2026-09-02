@@ -1,6 +1,6 @@
 /**
  * Notifications — the OS notification shade's retained history
- * (Tier 2, root; `adb shell dumpsys notification --history`).
+ * (Tier 0, read-only; `adb shell dumpsys notification --history`).
  *
  * Forensic value and the honesty problem in one sentence: the notification service keeps a
  * circular ring buffer that can retain a message's title/text preview even after the sender app
@@ -79,7 +79,7 @@ export function NotificationsView({ caseId }: { caseId: string }) {
       <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
         <span>🔔</span> Notifications
         <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
-          Tier 2 — Root
+          Tier 0 — Read-only
         </span>
       </h1>
       <p className="text-sm text-muted leading-relaxed">

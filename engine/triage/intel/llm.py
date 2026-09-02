@@ -214,6 +214,97 @@ def get_provider(kind: Optional[str] = None) -> LLMProvider:
     return HeuristicProvider()
 
 
+def list_ollama_models(host: Optional[str] = None, timeout: float = 3.0) -> list[dict]:
+    """Models actually pulled on this workstation, or ``[]`` if Ollama is unreachable.
+
+    The dashboard offers "Ollama (local model)" as a back-end; without this the
+    examiner picks it blind and only discovers at plan time whether anything is
+    installed. Names come from the daemon, so the list can never claim a model the
+    machine does not have.
+    """
+    host = (host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")).rstrip("/")
+    try:
+        req = urllib.request.Request(f"{host}/api/tags")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status != 200:
+                return []
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return []
+    out = []
+    for m in payload.get("models") or []:
+        if not isinstance(m, dict):
+            continue
+        name = str(m.get("name", ""))
+        if not name:
+            continue
+        caps = m.get("capabilities") or []
+        details = m.get("details") or {}
+        out.append(
+            {
+                "name": name,
+                "size_bytes": int(m.get("size") or 0),
+                "parameter_size": str(details.get("parameter_size", "")),
+                "quantization": str(details.get("quantization_level", "")),
+                # An embedding-only model cannot answer a chat prompt, and a chat model
+                # is a poor embedder. Separating them stops the UI offering either for
+                # the wrong job.
+                "embedding_only": "completion" not in caps and "embed" in name.lower(),
+            }
+        )
+    out.sort(key=lambda m: m["name"])
+    return out
+
+
+def provider_status(kind: Optional[str] = None) -> dict:
+    """Which back-ends this workstation can actually use, and why not when it cannot.
+
+    Reports every back-end rather than only the configured one, because the useful
+    question at acquisition time is "what are my options here", and because an offline
+    default that was *chosen* and one that was *fallen back to* must be told apart.
+    """
+    configured = (kind or os.environ.get("SNAGR_LLM", "heuristic")).strip().lower()
+    models = list_ollama_models()
+    chat_models = [m for m in models if not m["embedding_only"]]
+    has_key = bool(os.environ.get("ANTHROPIC_API_KEY", ""))
+    return {
+        "configured": configured,
+        "chat_model": os.environ.get("SNAGR_LLM_MODEL", "llama3.1"),
+        "providers": [
+            {
+                "name": "heuristic",
+                "label": "Heuristic (offline, deterministic)",
+                "available": True,
+                "local": True,
+                "reason": "",
+                "note": "No model, no network. Regex and ontology only — always available.",
+            },
+            {
+                "name": "ollama",
+                "label": "Ollama (local model)",
+                "available": bool(chat_models),
+                "local": True,
+                "reason": (
+                    ""
+                    if chat_models
+                    else "Ollama is not running on this workstation, or no chat model is pulled."
+                ),
+                "models": [m["name"] for m in chat_models],
+                "note": "Case text never leaves this machine — the safest option for real evidence.",
+            },
+            {
+                "name": "anthropic",
+                "label": "Claude API (cloud)",
+                "available": has_key,
+                "local": False,
+                "reason": "" if has_key else "ANTHROPIC_API_KEY is not set on the engine.",
+                "note": "Sends case text off-device. Opt-in only; never a default for seized evidence.",
+            },
+        ],
+        "embedding_models": [m["name"] for m in models if m["embedding_only"]],
+    }
+
+
 def _degraded(requested: str) -> LLMProvider:
     """A heuristic provider that remembers which back-end it is standing in for."""
     provider = HeuristicProvider()

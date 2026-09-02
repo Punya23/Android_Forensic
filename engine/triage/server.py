@@ -214,6 +214,20 @@ def create_app(cases_root: Path = CASES_ROOT):
             )
         return state["knowledge_graph"]
 
+    def _embedder(refresh: bool = False):
+        """Local embedding model for semantic retrieval, or None if switched off.
+
+        Cached like the other intel stores: probing Ollama and reloading the vector
+        cache on every request would add a round-trip to each plan preview. Availability
+        is re-probed on ``refresh`` so starting Ollama mid-session is picked up without
+        restarting the engine.
+        """
+        from .intel.embeddings import get_embedder
+
+        if refresh or "embedder" not in state:
+            state["embedder"] = get_embedder(cases_root)
+        return state["embedder"]
+
     def _save_graph(graph) -> None:
         from .intel import GRAPH_FILENAME
 
@@ -337,6 +351,7 @@ def create_app(cases_root: Path = CASES_ROOT):
             bank=bank,
             graph=graph,
             use_rag=use_rag,
+            embedder=_embedder(refresh=bool(body.get("refresh_models"))) if use_rag else None,
         )
 
         return jsonify(
@@ -344,7 +359,13 @@ def create_app(cases_root: Path = CASES_ROOT):
                 "profile": profile.to_dict(),
                 "plan": plan.to_dict(),
                 "provider": provider.name,
+                "provider_degraded_from": provider.degraded_from,
                 "case_bank_size": len(bank) if bank is not None else 0,
+                # How retrieval actually ran. A hybrid plan and a lexical one can rank
+                # the same corpus differently, so the plan has to say which it was
+                # rather than leaving the examiner to assume the better of the two.
+                "retrieval_mode": getattr(bank, "retrieval_mode", "lexical") if bank else "none",
+                "embedding": (_embedder().status() if _embedder() else {"available": False, "mode": "disabled"}),
             }
         )
 
@@ -361,13 +382,17 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         if query:
             hits = bank.search(
-                query, crime_type=crime, top_k=int(request.args.get("top_k", 5))
+                query,
+                crime_type=crime,
+                top_k=int(request.args.get("top_k", 5)),
+                embedder=_embedder(),
             )
             return jsonify(
                 {
                     "query": query,
                     "crime_type": crime,
                     "total": len(bank),
+                    "retrieval_mode": bank.retrieval_mode,
                     "results": [h.to_dict() for h in hits],
                 }
             )
@@ -803,6 +828,13 @@ def create_app(cases_root: Path = CASES_ROOT):
         q = str(request.args.get("q", "")).strip()
         sort = str(request.args.get("sort", "-updated_at")).strip()
         limit = int(request.args.get("limit", 500))
+        # Index anything that appeared since startup. The engine is not the only thing
+        # that creates case folders — `python -m triage.cli acquire` writes one too, and
+        # so does copying a case in from another workstation. Syncing only at boot meant
+        # those cases were missing from Case History with no indication they existed,
+        # which for a case index is the one failure that matters. The call only touches
+        # folders with no row, so the steady-state cost is a single SELECT.
+        registry.sync_registry(cases_root)
         return jsonify(
             {
                 "cases": registry.list_cases(cases_root, q=q, sort=sort, limit=limit),
@@ -812,6 +844,7 @@ def create_app(cases_root: Path = CASES_ROOT):
 
     @app.get("/api/registry/stats")
     def registry_stats_endpoint():
+        registry.sync_registry(cases_root)
         return jsonify(registry.registry_stats(cases_root))
 
     @app.get("/api/case/<case_id>/reports")
@@ -927,6 +960,58 @@ def create_app(cases_root: Path = CASES_ROOT):
         )
 
         return jsonify(summary)
+
+    @app.get("/api/case/<case_id>/capabilities")
+    def case_capabilities_route(case_id: str):
+        """Per-dataset state: populated / empty / not_collected / inaccessible / planned.
+
+        Registered before the generic ``/<dataset>`` route so "capabilities" resolves
+        here rather than being looked up as a derived file.
+        """
+        from .capabilities import case_capabilities
+
+        case = _open(cases_root, case_id)
+        config = getattr(case.meta, "acquisition_config", None) or {}
+        return jsonify(case_capabilities(case.root, config))
+
+    @app.get("/api/llm/status")
+    def llm_status():
+        """Which case-intelligence back-ends this workstation can actually use.
+
+        Answered live from the local Ollama daemon and the engine environment, so the
+        dashboard's provider picker offers what exists rather than what is theoretically
+        supported. ``refresh=1`` also re-probes the embedding model.
+        """
+        from .intel.llm import provider_status
+
+        status = provider_status()
+        embedder = _embedder(refresh=request.args.get("refresh") in ("1", "true"))
+        status["embedding"] = (
+            embedder.status() if embedder else {"available": False, "mode": "disabled"}
+        )
+        return jsonify(status)
+
+    @app.get("/api/capabilities")
+    def capabilities_catalogue():
+        """The catalogue with no case attached — what this build can and cannot do."""
+        from .capabilities import CATALOGUE
+
+        return jsonify(
+            {
+                "items": [
+                    {
+                        "dataset": cap.dataset,
+                        "label": cap.label,
+                        "tier": cap.tier,
+                        "requires": cap.requires,
+                        "flag": cap.flag,
+                        "planned": cap.planned,
+                        "planned_note": cap.planned_note,
+                    }
+                    for cap in CATALOGUE.values()
+                ]
+            }
+        )
 
     @app.get("/api/case/<case_id>/<dataset>")
     def case_dataset(case_id: str, dataset: str):

@@ -46,7 +46,7 @@ export function GraphView({ caseId }: { caseId: string }) {
 
   if (!graph) return <div className="p-8 text-muted">Loading communication graph…</div>;
   if (graph.nodes.length <= 1)
-    return <EmptyState title="No communication network" detail="No messages or calls were attributable to participants." />;
+    return <EmptyState dataset="graph" title="No communication network" detail="No messages or calls were attributable to participants." />;
 
   const { W, H, pos } = layout!;
   const maxEdge = Math.max(...graph.edges.map((e) => e.weight), 1);

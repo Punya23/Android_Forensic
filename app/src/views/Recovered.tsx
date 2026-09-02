@@ -297,7 +297,8 @@ export function RecoveredView({ caseId }: { caseId: string }) {
         <DeletionEvidencePanel caseId={caseId} />
         <RowidGapsPanel caseId={caseId} />
         <EmptyState
-          title="No deleted content recovered"
+          dataset="recovered"
+        title="No deleted content recovered"
           detail="No freelist / freeblock / WAL remnants were carved from the acquired databases. That is a statement about content recovery only — see any structural deletion findings above."
         />
       </div>

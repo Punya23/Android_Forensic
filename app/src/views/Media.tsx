@@ -80,6 +80,7 @@ function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[
   if (data.length === 0)
     return (
       <EmptyState
+        dataset="media"
         title="No media pulled"
         detail="The Tier-0 shared-storage pull found no eligible files (DCIM, Pictures, Download, Movies, Music, Documents, or the WhatsApp/Telegram media trees), or the pull did not run."
       />

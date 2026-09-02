@@ -61,8 +61,8 @@ export function SnapchatView({ caseId }: { caseId: string }) {
   const [stats, setStats] = useState({ convs: 0, msgs: 0, carved: 0, ready: false });
 
   useEffect(() => {
-    fetch(`${api.base}/case/${caseId}/snapchat_conversations`)
-      .then((r) => (r.ok ? r.json() : Promise.resolve({})))
+    api
+      .conversations(caseId, "snapchat_conversations")
       .then((data: ChatConversationsMap) => {
         const convs = Object.values(data ?? {});
         const msgs  = convs.reduce((n, c) => n + (c.messages?.length ?? 0), 0);

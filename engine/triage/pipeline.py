@@ -409,6 +409,25 @@ def run_acquisition(
         scope_note=cfg.scope_note,
     )
     case = Case.create(cfg.cases_root, meta)
+    # Persist the scalar settings this run was launched with. The capability layer reads
+    # them to tell "this stage was switched off" from "this stage ran and found nothing";
+    # without the record both look like an empty dataset. Only JSON-safe scalars are kept
+    # — keyword rules and hash tables belong in the audit trail, not here.
+    def _snapshot_config() -> None:
+        case.set_acquisition_config(
+            {
+                key: value
+                for key, value in vars(cfg).items()
+                if isinstance(value, (bool, int, float, str))
+                and key != "case_description"
+            }
+            # The brief itself is case content and stays out of the settings record;
+            # whether one was given is a setting, and it is what decides whether an
+            # empty ai_findings means "nothing matched" or "nothing to match against".
+            | {"case_description_present": bool((cfg.case_description or "").strip())}
+        )
+
+    _snapshot_config()
     completed_files: set[str] = set()
 
     if checkpoint_exists(case.root):
@@ -608,6 +627,7 @@ def run_acquisition(
                 CaseBank,
                 KnowledgeGraph,
                 GRAPH_FILENAME,
+                get_embedder,
                 get_provider,
                 plan_case,
             )
@@ -627,6 +647,7 @@ def run_acquisition(
                 )
 
             bank = None
+            embedder = None
             if cfg.use_case_bank:
                 corpora = [Path(p) for p in (cfg.case_bank_paths or [])]
                 # The department's promoted cases live beside the case store, next to
@@ -637,6 +658,10 @@ def run_acquisition(
                     if local_corpus.exists():
                         corpora.append(local_corpus)
                 bank = CaseBank.load(*corpora)
+                # Semantic retrieval, if a local embedding model is pulled. Optional by
+                # design: an air-gapped workstation, or one with SNAGR_EMBEDDINGS=off,
+                # falls back to BM25 and the plan records which path it took.
+                embedder = get_embedder(Path(case.root).parent)
                 for warn in bank.warnings:
                     case.log("intel.corpus", warn, result="warning", tier=Tier.TIER0.value)
                 # The learned graph lives beside the case store so it persists across
@@ -659,6 +684,7 @@ def run_acquisition(
                 bank=bank,
                 graph=knowledge_graph,
                 use_rag=cfg.use_case_bank,
+                embedder=embedder,
             )
             case_profile_dict = profile.to_dict()
             for flag, val in plan.pipeline_overrides.items():
@@ -677,7 +703,34 @@ def run_acquisition(
                     "examiner had already enabled it, so it was collected.",
                     tier=Tier.TIER0.value,
                 )
+            # Record how precedent retrieval actually ran, in the plan itself. Reading
+            # the plan later has to answer "was this ranked by meaning or by words",
+            # because the two can order the same corpus differently and a reader who
+            # assumes the stronger one is reading a basis the run did not have.
+            if bank is not None:
+                _rmode = getattr(bank, "retrieval_mode", "lexical")
+                if _rmode == "hybrid":
+                    plan.notes.append(
+                        "Precedent retrieval was hybrid — BM25 keyword matching blended "
+                        f"with a local embedding model ('{getattr(embedder, 'model', '')}') "
+                        "running on this workstation. No case text left the machine."
+                    )
+                else:
+                    _why = getattr(embedder, "unavailable_reason", "") if embedder else (
+                        "Semantic retrieval is switched off (SNAGR_EMBEDDINGS)."
+                    )
+                    plan.notes.append(
+                        "Precedent retrieval was lexical (BM25) only"
+                        + (f" — {_why}" if _why else ".")
+                        + " Studies phrased differently from this brief may not have "
+                        "been retrieved."
+                    )
             collection_plan_dict = plan.to_dict()
+            # The plan may have switched Tier-1/Tier-2 stages on. Re-record the settings
+            # so the stored config is what actually ran, not what the examiner ticked
+            # before the brief was read — otherwise a stage the plan enabled is later
+            # reported as "you chose not to collect this".
+            _snapshot_config()
             cfg.keywords = list(cfg.keywords) + plan.keyword_rules()
             case.log(
                 "intel.plan",
@@ -687,6 +740,25 @@ def run_acquisition(
                 f"overrides={plan.pipeline_overrides}",
                 tier=Tier.TIER0.value,
             )
+            _mode = getattr(bank, "retrieval_mode", "lexical") if bank else "none"
+            if bank is not None:
+                case.log(
+                    "intel.retrieval",
+                    f"Precedent retrieval ran in '{_mode}' mode"
+                    + (
+                        f" using local embedding model "
+                        f"'{getattr(embedder, 'model', '')}'."
+                        if _mode == "hybrid"
+                        else ". Lexical (BM25) matching only"
+                        + (
+                            f" — {getattr(embedder, 'unavailable_reason', '')}"
+                            if embedder is not None
+                            and getattr(embedder, "unavailable_reason", "")
+                            else "."
+                        )
+                    ),
+                    tier=Tier.TIER0.value,
+                )
             if plan.precedents:
                 case.log(
                     "intel.precedent",
@@ -1063,12 +1135,15 @@ def run_acquisition(
             from .parsers.wifi_live import (
                 build_wifi_timeline,
                 collect_wifi_live,
+                wifi_live_json,
                 wifi_live_summary,
             )
 
             wifi_live_result = collect_wifi_live(source.shell_readonly)
             wifi_live_result["summary"] = wifi_live_summary(wifi_live_result)
             wifi_live_result["timeline"] = build_wifi_timeline(wifi_live_result)
+            # The collector hands back dataclasses; flatten them before persisting.
+            wifi_live_result = wifi_live_json(wifi_live_result)
             case.write_derived("wifi_live", wifi_live_result)
             _cur = wifi_live_result.get("current")
             case.log(

@@ -24,6 +24,7 @@ export function CalendarView({ caseId }: { caseId: string }) {
   if (data.length === 0)
     return (
       <EmptyState
+        dataset="calendar"
         title="No calendar events acquired"
         detail="Calendar events require the Tier-1 Collector helper's full collection (READ_CALENDAR). This device was acquired without it."
       />

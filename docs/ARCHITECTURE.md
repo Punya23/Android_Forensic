@@ -85,7 +85,7 @@ flowchart LR
         E1["Acquisition<br/>adbutils orchestration"]
         E2["Parsers<br/>38 modules — WhatsApp/Telegram/IG/Snap/SMS/browser/…"]
         E3["Recovery<br/>WAL / freelist / freeblock / rollback-journal carving"]
-        E4["Case Intelligence<br/>ontology + pluggable LLM (heuristic/Ollama/Anthropic)"]
+        E4["Case Intelligence<br/>ontology + hybrid RAG (BM25 + local embeddings)<br/>pluggable LLM (heuristic/Ollama/Anthropic)"]
         E5["Custody<br/>hash-chained audit log + SHA-256 manifest"]
         E6["Report Engine<br/>HTML/PDF + BSA s.63 certificate"]
     end
@@ -149,12 +149,13 @@ Digital forensic tool/
 │   ├── requirements.txt
 │   ├── .env.example                # copy → .env for SNAGR_AUTH_USER/PASS
 │   ├── docs/PRODUCTION_READINESS.md
-│   ├── tools/                      # make_corpus.py (synthetic device generator) + 4 more
+│   ├── tools/                      # make_corpus.py + corpus_shell.py (canned dumpsys) + 4 more
 │   ├── tests/                      # pytest suite — 1007 tests
 │   ├── security/ analytics/ integration/ advanced_forensics/   # ⚠ present, unwired — see NOTES.md
 │   └── triage/                     # the actual engine package
 │       ├── server.py               # Flask + Socket.IO app, all API routes
 │       ├── pipeline.py             # stage orchestration — run_acquisition()
+│       ├── capabilities.py         # per-dataset state: populated/empty/not_collected/inaccessible/planned
 │       ├── custody.py              # Case class — chain-of-custody, audit, manifest
 │       ├── registry.py             # cross-case SQLite registry
 │       ├── config.py / models.py / cli.py / adb.py / hashing.py
@@ -162,7 +163,7 @@ Digital forensic tool/
 │       ├── parsers/                # 38 files — whatsapp_db.py, telegram.py, instagram.py, snapchat.py, sms.py, wifi.py, exif.py …
 │       ├── recovery/                # deep_sqlite.py, sqbrite.py, sqlite_recovery.py
 │       ├── forensics/               # 48 files — audit_chain.py, bsa_certificate.py, comm_graph.py, hash_verification.py …
-│       ├── intel/                   # llm.py, planner.py, ontology.py, knowledge_graph.py, casebank.py + data/case_studies.jsonl
+│       ├── intel/                   # llm.py, embeddings.py, planner.py, ontology.py, knowledge_graph.py, casebank.py + data/case_studies.jsonl
 │       ├── report/                  # html_report.py, exporter_pdf.py, exporter_word.py, exporter_csv.py
 │       ├── validation/              # cftt.py, harness.py, swgde.py — self-validation harness
 │       └── notifications/           # ⚠ present, unwired — see NOTES.md
@@ -173,7 +174,7 @@ Digital forensic tool/
 │   └── src/
 │       ├── App.tsx / main.tsx / index.css
 │       ├── components/              # Sidebar.tsx, ChatView.tsx, GlobalSearch.tsx, RiskCard.tsx …
-│       ├── lib/                     # api.ts (fetch client + auth), hooks.ts, types.ts, tagStore.tsx
+│       ├── lib/                     # api.ts (fetch client + auth), capabilities.tsx, hooks.ts, types.ts, tagStore.tsx
 │       └── views/                   # 47 files — one per dataset (Overview, Messages, Locations, Report, Login, Onboarding …)
 │
 └── apk/                             # Kotlin "Collector" Tier-1 helper APK

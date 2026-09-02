@@ -39,6 +39,9 @@ export function KnowledgeBaseView() {
   const [disclaimer, setDisclaimer] = useState("");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Precedent[] | null>(null);
+  // How the last search ran. A keyword match and a meaning match rank the same
+  // corpus differently, so the reader is told which they are looking at.
+  const [retrievalMode, setRetrievalMode] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,6 +72,7 @@ export function KnowledgeBaseView() {
     try {
       const r = await api.searchCaseBank(query.trim());
       setResults(r.results);
+      setRetrievalMode(r.retrieval_mode ?? "");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -211,6 +215,15 @@ export function KnowledgeBaseView() {
                 </button>
               )}
             </div>
+            {retrievalMode && (
+              <p className="text-[11px] mt-2 leading-relaxed">
+                <span className={retrievalMode === "hybrid" ? "text-live" : "text-muted"}>
+                  {retrievalMode === "hybrid"
+                    ? "Hybrid retrieval — keyword (BM25) blended with a local embedding model, so studies that share this brief's meaning but not its wording are found too. Nothing left this machine."
+                    : "Lexical retrieval — keyword (BM25) matching only. Studies phrased differently from your query may not appear; install a local embedding model to match on meaning as well."}
+                </span>
+              </p>
+            )}
             <p className="text-[11px] text-muted mt-2 leading-relaxed">{disclaimer}</p>
           </div>
 
@@ -226,6 +239,12 @@ export function KnowledgeBaseView() {
                       <span className="text-ink">{r.title}</span>
                       <span className="text-[10px] font-mono text-muted ml-auto">
                         {r.score.toFixed(2)}
+                        {retrievalMode === "hybrid" && r.semantic !== undefined && (
+                          <span className="text-muted/70">
+                            {" "}
+                            (kw {(r.lexical ?? 0).toFixed(2)} · sem {r.semantic.toFixed(2)})
+                          </span>
+                        )}
                       </span>
                     </div>
                     <div className="text-[11px] text-muted mt-1">
