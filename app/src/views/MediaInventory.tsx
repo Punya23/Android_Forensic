@@ -46,7 +46,7 @@ export function MediaInventoryView({ caseId }: { caseId: string }) {
   if (loading) return <div className="p-8 text-muted">Loading media inventory…</div>;
   if (data.length === 0)
     return (
-      <EmptyState
+      <EmptyState dataset="media_inventory"
         title="No media inventory acquired"
         detail="The MediaStore catalogue requires the Tier-1 Collector helper's full collection (dump_all). It surfaces every media file's metadata — including trashed/favorite flags and owning app — without pulling the files. Pulled files still appear under Media."
       />

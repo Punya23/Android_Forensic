@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { DatasetEmpty } from "../lib/capabilities";
 
 export function StatCard({ n, label, tone }: { n: ReactNode; label: string; tone?: string }) {
   return (
@@ -9,15 +10,22 @@ export function StatCard({ n, label, tone }: { n: ReactNode; label: string; tone
   );
 }
 
-export function EmptyState({ title, detail }: { title: string; detail?: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center h-full text-center py-16 px-6">
-      <div className="text-muted text-sm max-w-md">
-        <div className="text-ink font-medium mb-1">{title}</div>
-        {detail && <p className="leading-relaxed">{detail}</p>}
-      </div>
-    </div>
-  );
+/**
+ * Empty state for a view. Pass `dataset` — the name the view fetches — and the engine's
+ * own account of *why* it is empty replaces the generic text: checked and empty, gated
+ * off by an acquisition flag, unreachable without root, or not built yet. `title` and
+ * `detail` remain the fallback for views with no single backing dataset.
+ */
+export function EmptyState({
+  title,
+  detail,
+  dataset,
+}: {
+  title: string;
+  detail?: string;
+  dataset?: string;
+}) {
+  return <DatasetEmpty dataset={dataset} title={title} detail={detail} />;
 }
 
 export function SectionHeader({ title, sub, right }: { title: string; sub?: string; right?: ReactNode }) {

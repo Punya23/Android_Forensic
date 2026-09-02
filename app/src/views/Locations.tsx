@@ -515,6 +515,7 @@ export function LocationsView({ caseId }: { caseId: string }) {
   if (data.length === 0)
     return (
       <EmptyState
+        dataset="locations"
         title="No geotagged images found"
         detail="No GPS EXIF data was found in pulled photos and no last-known fixes were collected. The device owner may have disabled location tagging, or no images with GPS metadata were acquired."
       />

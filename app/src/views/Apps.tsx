@@ -51,6 +51,7 @@ export function AppsView({ caseId }: { caseId: string }) {
   if (data.length === 0)
     return (
       <EmptyState
+        dataset="apps"
         title="No app inventory acquired"
         detail="Installed-app inventory requires the Tier-1 Collector helper's full collection (dump_all). Enable it for a real device, or it was not run at this tier."
       />

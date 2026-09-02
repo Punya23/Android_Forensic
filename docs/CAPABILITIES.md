@@ -79,3 +79,28 @@ Full detail: [`docs/NETWORK_ARTIFACTS.md`](NETWORK_ARTIFACTS.md).
 | **Bluetooth connection-recency ranking** (`bluetooth_db`) | 2 | `last_active_time` is a counter — exposed as a rank, never as a date |
 | **Hotspot / tethering posture**, tri-state | 0 | "Not reported by this build" is distinct from "the hotspot was off" |
 | **USB cable state, pre- and post-acquisition** | 0 | A cable pulled mid-run explains a truncated pull |
+
+## New in v0.5 — the dashboard stops rendering silence
+
+A dataset view with nothing in it used to look identical whether the engine had read the
+source and found nothing, been told not to look, been unable to look without root, or had
+no such feature at all. The engine drew those distinctions everywhere except on screen.
+
+| Capability | Where | Why it matters |
+|---|---|---|
+| **Per-dataset capability states** (`triage/capabilities.py`, `GET /api/case/:id/capabilities`) | Engine + every view | Resolves each dataset to exactly one of `populated` / `empty` / `not_collected` / `inaccessible` / `planned`, with the reason and the acquisition flag to turn on |
+| **Acquisition settings recorded per case** (`case.json` → `acquisition_config`) | Engine | Without it an opt-in stage that was switched off is indistinguishable from one that ran and found nothing |
+| **Stage-recorded outcomes outrank inference** | Engine | Where a stage wrote its own account of failing (`telegram_presence`), that text is what the view shows |
+| **Unconditionally-written datasets need corroboration** | Engine | `collector_wifi`/`collector_bluetooth` are written on every run; an empty one is only reported as "checked" when the Collector's run manifest proves it executed |
+| **Sidebar state badges** (`off` / `n/a` / `soon` / `0`) | Dashboard | The gaps in a run are visible before clicking into forty views |
+| **Named, not-built features** | Both | iOS acquisition, cloud extraction and raw `/data` carving are listed with their reasons rather than being absent without explanation |
+
+## New in v0.6 — retrieval that matches meaning, locally
+
+| Capability | Tier | Why it matters |
+|---|---|---|
+| **Hybrid precedent retrieval** — BM25 blended with cosine similarity over a local embedding model (`nomic-embed-text` under Ollama) | — | A brief written in an officer's own words retrieves the study that shares its meaning but not its vocabulary. Lexical keeps the larger share of the weight, so an exact drug name or pier number still outranks a semantic near-miss |
+| **Vectors cached on disk, keyed by `(model, text)`** | — | Re-planning against an unchanged corpus costs a file read, not a model call per study |
+| **Air-gap safe by construction** | — | No daemon, no model, or `SNAGR_EMBEDDINGS=off` degrades to pure BM25 — never an error, and the ranking is bit-for-bit what it was before the feature existed |
+| **Retrieval mode reported, never assumed** (`retrieval_mode` in the plan, the audit log, and the acquisition screen) | — | A degraded lexical run and a deliberately offline one rank the same corpus differently; a plan must say which basis it had |
+| **Live back-end discovery** (`GET /api/llm/status`) | — | The provider picker lists the chat models actually pulled on this workstation and disables back-ends with the reason, instead of offering a choice that silently falls back |

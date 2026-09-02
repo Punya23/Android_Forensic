@@ -33,7 +33,8 @@ from .feedback import (
     record_provisional,
 )
 from .knowledge_graph import GRAPH_FILENAME, Edge, KnowledgeGraph
-from .llm import LLMProvider, get_provider
+from .llm import LLMProvider, get_provider, list_ollama_models, provider_status
+from .embeddings import LocalEmbedder, get_embedder
 from .nomenclature import (
     ADVERSE_ROLES,
     PROTECTED_ROLES,
@@ -92,6 +93,10 @@ __all__ = [
     "promote_case_to_study",
     # infrastructure
     "get_provider",
+    "list_ollama_models",
+    "provider_status",
+    "LocalEmbedder",
+    "get_embedder",
     "LLMProvider",
     "classify_crime",
     "CRIME_ONTOLOGY",

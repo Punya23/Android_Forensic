@@ -324,7 +324,11 @@ def extract_profile(
 
 # --- stage 1b: precedent retrieval -------------------------------------------
 def retrieve_precedents(
-    profile: CaseProfile, bank: Optional[CaseBank] = None, *, top_k: int = 5
+    profile: CaseProfile,
+    bank: Optional[CaseBank] = None,
+    *,
+    top_k: int = 5,
+    embedder=None,
 ) -> tuple[list[RetrievedCase], dict[str, dict]]:
     """Find prior cases resembling *profile* and aggregate their artifact outcomes.
 
@@ -347,7 +351,11 @@ def retrieve_precedents(
         )
     )
     hits = bank.search(
-        query, crime_type=profile.crime_type, roles=profile.role_map(), top_k=top_k
+        query,
+        crime_type=profile.crime_type,
+        roles=profile.role_map(),
+        top_k=top_k,
+        embedder=embedder,
     )
     return hits, bank.artifact_evidence(hits)
 
@@ -689,6 +697,7 @@ def plan_case(
     bank: Optional[CaseBank] = None,
     graph: Optional[KnowledgeGraph] = None,
     use_rag: bool = True,
+    embedder=None,
 ) -> tuple[CaseProfile, CollectionPlan]:
     """Convenience: description → (profile, plan) in one call.
 
@@ -699,7 +708,7 @@ def plan_case(
     profile = extract_profile(description, provider=provider, case_number=case_number)
     if not use_rag:
         return profile, build_plan(profile, allow_tier2=allow_tier2)
-    hits, evidence = retrieve_precedents(profile, bank)
+    hits, evidence = retrieve_precedents(profile, bank, embedder=embedder)
     return profile, build_plan(
         profile,
         allow_tier2=allow_tier2,

@@ -17,6 +17,7 @@ export function BrowserView({ caseId }: { caseId: string }) {
   if (data.length === 0)
     return (
       <EmptyState
+        dataset="browser"
         title="No browser history"
         detail="No Chromium History database was available. On a non-rooted device this is typically an app-private artifact (Tier 2 / extracted image)."
       />

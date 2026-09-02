@@ -185,8 +185,8 @@ export function ChatView({
   useEffect(() => {
     setLoading(true);
     setSelectedId(null);
-    fetch(`${api.base}/case/${caseId}/${dataset}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+    api
+      .conversations(caseId, dataset)
       .then((data: ChatConversationsMap) => {
         setConvs(data && typeof data === "object" ? data : {});
         const first = Object.keys(data || {})[0];

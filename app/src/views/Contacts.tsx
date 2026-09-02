@@ -15,7 +15,7 @@ export function ContactsView({ caseId }: { caseId: string }) {
   if (loading) return <div className="p-8 text-muted">Loading contacts…</div>;
   if (data.length === 0)
     return (
-      <EmptyState
+      <EmptyState dataset="contacts"
         title="No contacts acquired"
         detail="Contacts require the Tier-1 Collector helper (a single READ_CONTACTS grant). This device was acquired at Tier 0 only, or the helper was not run."
       />

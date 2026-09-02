@@ -32,10 +32,14 @@ trail — so the report is something you can actually stand behind.
 - 🚦 **Traffic-light verdict** — RED/AMBER/GREEN scorecard built for a five-minute field decision
 - 📜 **Court-shaped report** — NIST/SWGDE-aligned, BSA 2023 §63 certificate, sealed SHA-256 export
 - 🧠 **Case intelligence** — plain-language brief → ontology-ranked collection plan, offline by default
+- 🔎 **Local RAG, on your machine** — precedent retrieval blends BM25 with a local embedding model under Ollama; case text never leaves the workstation, and the plan records which of the two actually ran
+- 🚧 **Per-dataset capability states** — every view says whether its data was collected, checked-and-empty, gated off, unreachable, or not built yet
 - 📴 **Works with zero phone** — full pipeline demoable against a synthetic mock corpus
 
 Running through all of it is one rule: **absent ≠ inaccessible, and unverified ≠ clean.** A
-thing we could not read is reported as unreadable, never as not there.
+thing we could not read is reported as unreadable, never as not there — including in the
+dashboard, where an empty view names which of the four kinds of "empty" it is rather than
+rendering a blank panel.
 
 ## How it flows
 
@@ -104,7 +108,7 @@ pipeline with live progress if you'd rather click.
 Building and testing each half:
 
 ```bash
-cd engine && python -m pytest tests/ -q      # 1061 tests, no device needed
+cd engine && python -m pytest tests/ -q      # 1101 tests, no device needed
 cd apk && ./gradlew assembleDebug            # needs the Android SDK
 cd app && npx tsc --noEmit                   # dashboard typecheck
 ```
@@ -132,6 +136,6 @@ deliberately not wired up.
 
 <div align="center">
 
-**1061 tests passing** · Runs fully offline · No account, no cloud, no telemetry
+**1101 tests passing** · Runs fully offline · No account, no cloud, no telemetry
 
 </div>

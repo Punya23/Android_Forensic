@@ -317,9 +317,9 @@ export function WhatsAppBackupView({ caseId }: { caseId: string }) {
   useEffect(() => {
     setLoading(true);
     Promise.all([
-      fetch(`/api/case/${caseId}/whatsapp_backup/messages`).then((r) => r.json()),
-      fetch(`/api/case/${caseId}/whatsapp_backup/summary`).then((r) => r.json()).catch(() => null),
-      fetch(`/api/case/${caseId}/whatsapp_backup/media`).then((r) => r.json()).catch(() => []),
+      api.whatsappBackupMessages(caseId).catch(() => [] as WhatsAppBackupMessage[]),
+      api.whatsappBackupSummary(caseId).catch(() => null),
+      api.whatsappBackupMedia(caseId).catch(() => [] as WhatsAppBackupMedia[]),
     ])
       .then(([msgs, sum, med]) => {
         setMessages(Array.isArray(msgs) ? msgs : []);
@@ -390,7 +390,8 @@ export function WhatsAppBackupView({ caseId }: { caseId: string }) {
       <div className="p-8">
         <SectionHeader title="WhatsApp Backup Recovery" />
         <EmptyState
-          title="No WhatsApp backup messages recovered."
+          dataset="whatsapp_backup_messages"
+        title="No WhatsApp backup messages recovered."
           detail="Enable Tier-2 WhatsApp Backup Recovery and re-run the acquisition on a rooted device."
         />
       </div>

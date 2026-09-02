@@ -264,7 +264,8 @@ export function AleappView({ caseId }: { caseId: string }) {
       {modules.length === 0 ? (
         <div className="p-6">
           <EmptyState
-            title="ALEAPP ran but parsed no artifact modules."
+            dataset="aleapp"
+        title="ALEAPP ran but parsed no artifact modules."
             detail="The output directory produced no readable TSV files for this acquisition — check the audit log around the ALEAPP stage for details."
           />
         </div>

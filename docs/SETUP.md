@@ -161,9 +161,31 @@ Vite 5 / Electron 31's own requirements, not enforced in-repo.
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` | Local LLM endpoint, if `SNAGR_LLM=ollama` |
 | `ANTHROPIC_API_KEY` | — | Cloud LLM key, if `SNAGR_LLM=anthropic` |
 | `SNAGR_LLM_MODEL` | `llama3.1` / `claude-sonnet-5` | Model name per backend |
+| `SNAGR_EMBED_MODEL` | `nomic-embed-text` | Local embedding model used for semantic precedent retrieval. Pull it with `ollama pull nomic-embed-text` |
+| `SNAGR_EMBEDDINGS` | *(on)* | Set to `off` to force pure BM25 retrieval — for an air-gapped box, or to reproduce a plan exactly as a lexical-only run produced it |
 | `ANDROID_HOME` | — | Android SDK location, for locating `adb` |
 | `ALEAPP_PATH` | — | Path to an external ALEAPP install, if used |
 | `SIGNALBACKUP_TOOLS_PATH` | — | Path to `signalbackup-tools`, if used |
+
+### Optional: local models (Ollama)
+
+Everything works with no model installed — the default `heuristic` back-end is pure
+regex/ontology and precedent retrieval falls back to BM25. Installing Ollama upgrades two
+independent things, and neither sends case text anywhere:
+
+```bash
+ollama pull llama3.1:8b        # case-brief understanding: crime type, parties, roles
+ollama pull nomic-embed-text   # semantic precedent retrieval (hybrid with BM25)
+```
+
+Then pick **Ollama (local model)** in the acquisition screen's AI back-end selector — it
+lists the models actually pulled on the workstation and disables back-ends it cannot
+reach, with the reason. Check what the engine sees with `GET /api/llm/status`.
+
+If either model is missing the run still completes: the plan degrades to the
+deterministic path, says so in the audit log and on screen, and records
+`retrieval_mode: lexical` so nobody later reads the plan as having had a basis it did
+not have.
 
 ### Packaging (`npm run electron:build`) — ⚠ untuned
 

@@ -19,8 +19,8 @@ export function DiscoveredChatsView({ caseId }: { caseId: string }) {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`${api.base}/case/${caseId}/discovered_chats`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+    api
+      .discoveredChats(caseId)
       .then((d: DiscoveredChats) => setData(d))
       .catch(() => setData({ tables: [], messages: [] }))
       .finally(() => setLoading(false));
@@ -38,6 +38,7 @@ export function DiscoveredChatsView({ caseId }: { caseId: string }) {
   if (!data || (data.tables.length === 0 && messages.length === 0))
     return (
       <EmptyState
+        dataset="discovered_chats"
         title="No unknown-app chats discovered"
         detail="The Dynamic App Finder scans every unrecognised SQLite database for chat-like tables (a text column + a timestamp column) and auto-classifies them. Nothing matched in this acquisition."
       />

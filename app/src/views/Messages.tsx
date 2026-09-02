@@ -38,7 +38,7 @@ export function MessagesView({ caseId }: { caseId: string }) {
 
   if (loading) return <div className="p-8 text-muted">Loading messages…</div>;
   if (data.length === 0)
-    return <EmptyState title="No messages" detail="No chat exports were ingested and no chat databases yielded rows." />;
+    return <EmptyState dataset="messages" title="No messages" detail="No chat exports were ingested and no chat databases yielded rows." />;
 
   return (
     <div className="p-6 h-full flex flex-col">

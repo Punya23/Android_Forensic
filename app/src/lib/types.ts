@@ -209,7 +209,14 @@ export interface Precedent {
   crime_type: string;
   crime_match: boolean;
   score: number;
+  /** Normalised BM25 component of `score`, 0..1. */
   lexical: number;
+  /**
+   * Cosine similarity from the local embedding model, 0..1. Stays 0 when semantic
+   * retrieval did not run — check the response's `retrieval_mode` to tell that apart
+   * from a genuine similarity of zero.
+   */
+  semantic?: number;
   matched_terms: string[];
   decisive_artifacts: string[];
   /** Collected, examined, produced nothing — a genuine evidential null. */
@@ -317,6 +324,8 @@ export interface CaseBankSearchResponse {
   query: string;
   crime_type: string | null;
   total: number;
+  /** "hybrid" (BM25 + local embeddings) or "lexical" (BM25 only). */
+  retrieval_mode?: string;
   results: Precedent[];
 }
 
@@ -421,7 +430,12 @@ export interface PlanResponse {
   profile: CaseProfile;
   plan: CollectionPlan;
   provider: string;
+  /** Back-end that was asked for but unreachable, when `provider` is standing in. */
+  provider_degraded_from?: string;
   case_bank_size: number;
+  /** "hybrid" (BM25 + local embeddings), "lexical" (BM25 only), or "none". */
+  retrieval_mode?: string;
+  embedding?: EmbeddingStatus;
 }
 
 export interface NomenclatureCheckResponse {
@@ -971,4 +985,59 @@ export interface WhatsAppBackupSummary {
     carved: number;
     deletion: number;
   };
+}
+
+// --- capability states (engine: triage/capabilities.py) --------------------
+/** Why a dataset view has nothing to show. Never just "empty". */
+export interface CapabilityState {
+  dataset: string;
+  label: string;
+  /** 0 = read-only, 1 = Collector APK, 2 = root, -1 = derived from other datasets. */
+  tier: number;
+  state: "populated" | "empty" | "not_collected" | "inaccessible" | "planned";
+  reason: string;
+  requires: string;
+  /** Acquisition flag that gates this stage, when one does. */
+  flag: string;
+  count: number;
+}
+
+export interface CaseCapabilities {
+  items: CapabilityState[];
+  by_dataset: Record<string, CapabilityState>;
+  counts: Partial<Record<CapabilityState["state"], number>>;
+  root_available: boolean | null;
+  note: string;
+}
+
+// --- case-intelligence back-ends (engine: triage/intel/llm.py) -------------
+export interface LlmProviderInfo {
+  name: "heuristic" | "ollama" | "anthropic";
+  label: string;
+  available: boolean;
+  /** True when the back-end runs on this workstation and case text never leaves it. */
+  local: boolean;
+  /** Why it is unavailable. Empty when it is. */
+  reason: string;
+  note: string;
+  /** Chat models actually pulled locally (Ollama only). */
+  models?: string[];
+}
+
+export interface EmbeddingStatus {
+  available: boolean;
+  model?: string;
+  host?: string;
+  cached_vectors?: number;
+  reason?: string;
+  /** "hybrid (BM25 + local embeddings)" | "lexical (BM25 only)" | "disabled" */
+  mode: string;
+}
+
+export interface LlmStatus {
+  configured: string;
+  chat_model: string;
+  providers: LlmProviderInfo[];
+  embedding_models: string[];
+  embedding: EmbeddingStatus;
 }

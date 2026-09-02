@@ -1,4 +1,5 @@
 import type { Health } from "../lib/types";
+import { useCapabilities } from "../lib/capabilities";
 
 export type ViewKey =
   | "acquire"
@@ -94,11 +95,89 @@ const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
   { key: "report", label: "Report", icon: "📄" },
 ];
 
+/**
+ * The dataset each view is *about*. Used to look the view up in the per-case capability
+ * map, so a nav item and its page can both say whether the data was collected, checked
+ * and empty, gated off, unreachable, or not built yet. Views with no single backing
+ * dataset (Overview, Report, Timeline over everything) are deliberately absent.
+ */
+export const VIEW_DATASET: Partial<Record<ViewKey, string>> = {
+  messages: "messages",
+  contacts: "contacts",
+  calls: "calls",
+  notifications: "notifications",
+  media: "media",
+  mediainv: "media_inventory",
+  deletedmedia: "mediastore_trash",
+  telegram: "telegram_conversations",
+  whatsapp_backup: "whatsapp_backup_messages",
+  instagram: "instagram_conversations",
+  snapchat: "snapchat_conversations",
+  discovered: "discovered_chats",
+  apps: "apps",
+  accounts: "accounts",
+  calendar: "calendar",
+  wifi: "wifi",
+  wifi_live: "wifi_live",
+  bluetooth: "bluetooth",
+  celltower: "celltower",
+  screentime: "screen_app_usage",
+  search: "search_history",
+  gaccounts: "google_accounts",
+  locations: "locations",
+  loctrace: "location_traces",
+  browser: "browser",
+  recovered: "recovered",
+  graph: "graph",
+  advanced: "advanced",
+  apppresence: "app_presence",
+  antiforensics: "antiforensic_findings",
+  recenttasks: "recent_tasks",
+  encryptedapps: "encrypted_apps",
+  aleapp: "aleapp",
+  encryption: "encryption_state",
+  devicestate: "device_state",
+  validation: "validation_report",
+  intel: "ai_findings",
+};
+
 /** Views that work without a case loaded — they read installation-wide state. */
 const CASE_INDEPENDENT: ReadonlySet<ViewKey> = new Set<ViewKey>(["acquire", "knowledge", "cases"]);
 
 export function isCaseIndependent(view: ViewKey): boolean {
   return CASE_INDEPENDENT.has(view);
+}
+
+/**
+ * A one-word tail on a nav item saying why that view has nothing in it. Populated and
+ * unknown states render nothing — the badge is only there when the absence needs
+ * explaining, so the sidebar stays readable.
+ */
+function NavState({ state }: { state?: string }) {
+  if (!state || state === "populated") return null;
+  const label =
+    state === "planned"
+      ? "soon"
+      : state === "not_collected"
+        ? "off"
+        : state === "inaccessible"
+          ? "n/a"
+          : "0";
+  const tone =
+    state === "planned"
+      ? "bg-accent/15 text-accent border-accent/30"
+      : state === "not_collected"
+        ? "bg-warn/15 text-warn border-warn/30"
+        : state === "inaccessible"
+          ? "bg-deletion/15 text-deletion border-deletion/30"
+          : "bg-panel text-muted/70 border-line";
+  return (
+    <span
+      className={`ml-auto shrink-0 text-[9px] font-mono px-1.5 py-px rounded-full border ${tone}`}
+    >
+      {label}
+    </span>
+  );
 }
 
 export function Sidebar({
@@ -115,6 +194,7 @@ export function Sidebar({
   onNewAcquisition: () => void;
 }) {
   let lastGroup = "";
+  const caps = useCapabilities();
   return (
     <aside className="w-60 shrink-0 border-r border-line bg-panel flex flex-col">
       <div className="p-4 border-b border-line">
@@ -146,7 +226,8 @@ export function Sidebar({
                 }`}
               >
                 <span className="w-4 text-center opacity-80">{item.icon}</span>
-                {item.label}
+                <span className="truncate">{item.label}</span>
+                <NavState state={caps?.by_dataset[VIEW_DATASET[item.key] ?? ""]?.state} />
               </button>
             </div>
           );

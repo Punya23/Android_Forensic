@@ -16,6 +16,12 @@
   could not be read is reported as present-and-encrypted, never as missing.
 - **"Could not check" is never rendered as "checked and clean."** Teardown verification,
   hash verification, and the audit chain each have a distinct *unverified* state.
+- **The same rule now applies to the screen.** `triage/capabilities.py` resolves every
+  dataset the dashboard can request into one of `populated` / `empty` / `not_collected` /
+  `inaccessible` / `planned`, and the view renders that reason instead of a blank panel.
+  An empty dataset is only reported as a finding about the device when something
+  corroborates that its stage actually ran — for the datasets the pipeline writes
+  unconditionally, an empty file proves nothing and is not allowed to read as "checked".
 - **Not independently validated.** The self-validation harness runs real known-answer tests
   (including a negative control designed to fail), but the tool has never been tested
   against a ground-truthed reference image by a tester independent of its developer.
@@ -87,6 +93,28 @@ report = simulate_e2e_decryption_workflow(Path("msgstore.db.crypt15"))  # WAL/fr
 aff = AdvancedForensicFeatures()
 graph = aff.analyze_social_graph(msgs)
 ```
+
+---
+
+## Defects found by making the demo real (2026-09-01)
+
+Filling the mock corpus with realistic `dumpsys` output surfaced four defects that an
+empty corpus had been hiding. Three of them only ever fired **on a real device** — the
+demo could not reach them, so nothing looked wrong.
+
+| Defect | Effect before the fix | Fix |
+|---|---|---|
+| Six dashboard views fetched with a bare `fetch` instead of the authed client | Snapchat, Instagram, Telegram, WhatsApp Backup, Discovered Chats and the shared `ChatView` all got `401` after the sign-in gate landed and rendered as empty tabs. Recovered Snapchat messages existed in the case folder the whole time | Every one routed through `api.*`, which attaches the bearer token (`app/src/lib/api.ts`) |
+| `wifi_live` wrote dataclasses straight to JSON | `Object of type WifiConnectionState is not JSON serializable` — the stage failed on **every device that had Wi-Fi state to report**. An empty capture serialised fine, so a corpus with no canned `dumpsys wifi` never triggered it | `wifi_live_json()` flattens the collector result before `write_derived` |
+| `parse_current_location` only understood `latitude=` / `longitude=` | `dumpsys location` prints `Location[fused 19.07,72.87 hAcc=12 ...]` on every modern build, so the Maps/location-history view was empty on real hardware | Bracket form parsed first, with `hAcc` as accuracy. `et=` is elapsed-since-boot and is deliberately **not** converted into a timestamp |
+| The registry only synced at engine startup | A case acquired with `python -m triage.cli` — or copied in from another workstation — was missing from Case History with no indication it existed | `sync_registry()` runs on the registry read path; it only touches folders with no row |
+
+The corpus itself was the fifth finding: it shipped one canned shell reply
+(`dumpsys location`), so roughly twenty views were blank for a reason that had nothing to
+do with the device. `engine/tools/corpus_shell.py` now supplies the rest, shaped the way
+the framework actually prints them, and `tests/test_corpus_shell.py` asserts on *parsed
+rows* so a fixture that stops matching its parser fails the suite instead of quietly
+emptying the demo.
 
 ---
 
