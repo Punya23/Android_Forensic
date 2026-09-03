@@ -104,3 +104,28 @@ no such feature at all. The engine drew those distinctions everywhere except on 
 | **Air-gap safe by construction** | — | No daemon, no model, or `SNAGR_EMBEDDINGS=off` degrades to pure BM25 — never an error, and the ranking is bit-for-bit what it was before the feature existed |
 | **Retrieval mode reported, never assumed** (`retrieval_mode` in the plan, the audit log, and the acquisition screen) | — | A degraded lexical run and a deliberately offline one rank the same corpus differently; a plan must say which basis it had |
 | **Live back-end discovery** (`GET /api/llm/status`) | — | The provider picker lists the chat models actually pulled on this workstation and disables back-ends with the reason, instead of offering a choice that silently falls back |
+
+## New in v0.7 — deep investigation, cross-case linking, ask-this-case
+
+A research pass (deep-agent architecture patterns, commercial-tool feature trends, and
+an audit of every unwired module in this codebase) turned into four features, each
+grounded in code that already existed and already worked — not new subsystems bolted on
+from scratch. `docs/NOTES.md` records what was found and, just as importantly, what was
+found but deliberately **not** wired (fabrication-risk stubs in `security/`,
+`analytics/vision/`, `advanced_forensics/`).
+
+| Capability | Tier | Why it matters |
+|---|---|---|
+| **Deep investigation** (`triage/intel/investigator.py`, `POST /api/case/:id/investigate`) — a bounded, deterministic multi-hypothesis pass | — | `analyze_case()`'s single flat scoring pass can't correlate findings it scored independently. This adds two grounded cross-checks: a **channel-gap** hypothesis (a named party has a Contacts entry but no message/call finding — check whether the relevant app was even collected) and a **location correlation** (an already-flagged location anomaly co-occurring in time with a message/call). Both always run deterministically, the same as `analyze_derived`'s own scoring; an LLM (if configured) only adds a narrative synthesis on top, never a different investigation |
+| **Cross-artifact contradiction detection** (`triage/forensics/contradiction.py`) — a message vs. the call log, and a message vs. this device's own inferred home location | — | Replaces an earlier unwired module that flagged *any* "at home" message near *any* GPS point with no comparison to where home actually is (a truthful message would have fired identically to a false one). The rewrite compares against a real, confidence-scored home cluster and only fires on genuine cross-artifact tension — every result is a candidate, `requires_verification: true` |
+| **Scam-pattern keyword flagging** (`triage/forensics/scam_detection.py`) — UPI fraud / "digital arrest" / investment fraud / sextortion, India-specific statute citations | — | The original regex classified on any single common word ("video" alone → sextortion). Rewritten to need either one specific phrase or two independent weak signals before classifying, and every hit cites its exact matched term |
+| **Cross-case identifier linking** (`triage/registry.py`, `GET /api/case/:id/linked-cases`) — the same phone number, UPI ID, or email surfacing in more than one case on this installation | — | An indexed SQLite lookup, not an O(n²) in-memory comparison. Phone numbers are normalised for matching (`+91 98200 44711` and `+919820044711` recognised as the same number) while every citation still shows the value exactly as it appeared in the evidence |
+| **"Ask this case"** (`triage/intel/case_qa.py`, `POST /api/case/:id/ask`, dashboard: **Ask This Case**) — free-text Q&A over a case's own already-collected evidence | — | Local retrieval (BM25 + the same local embedding model used for precedent search) always runs; a grounded LLM synthesis on top, when configured, is instructed to answer *only* from the retrieved passages and say plainly when they don't answer the question. With no model, the passages themselves are the answer — no synthesis step, nothing invented |
+| **Opt-in completion notifications** (`triage/notifications/`, wired to `run_acquisition()`) — email / SMS / Slack / Teams when a run finishes | — | The one unwired module that was genuinely real, working code (confirmed: real SMTP/Twilio/webhook clients, just never called). Off by default; every client degrades to "logged, not sent" rather than raising, so a notification failure can never fail the acquisition it's reporting on |
+
+Deleted alongside this: `triage/ai/` (nine files, 1606 lines, zero references anywhere
+in the codebase) — an abandoned earlier attempt at case Q&A that required an
+undeclared `transformers` dependency, cited nothing but the fixed string "Extracted
+text context", and included a `predict_case_outcome()` function that fabricated a
+confidence score ("Strong Evidentiary Basis, confidence 0.85") from a raw count of
+high-scoring findings. Superseded entirely by `case_qa.py` above.

@@ -358,6 +358,15 @@ CATALOGUE: dict[str, Capability] = {
         "validation_report", "Tool self-validation", -1, "Known-answer tests, per acquisition",
         flag="run_self_validation",
     ),
+    "investigation_trace": Capability(
+        "investigation_trace",
+        "Deep investigation",
+        -1,
+        "Runs on the same case brief and findings as Case Intelligence — needs both "
+        "a brief and at least one AI finding to have something to investigate.",
+        flag="run_ai_analysis",
+        ran_if_present=("ai_findings",),
+    ),
     # --- named, not built --------------------------------------------------
     "ios_acquisition": Capability(
         "ios_acquisition",

@@ -11,6 +11,7 @@ import { AcquisitionView } from "./views/Acquisition";
 import { CasesView } from "./views/Cases";
 import { OverviewView } from "./views/Overview";
 import { CaseIntelView } from "./views/CaseIntel";
+import { AskTheCaseView } from "./views/AskTheCase";
 import { KnowledgeBaseView } from "./views/KnowledgeBase";
 import { MessagesView } from "./views/Messages";
 import { ContactsView } from "./views/Contacts";
@@ -141,6 +142,7 @@ export default function App() {
           )}
           {caseId && view === "overview" && <OverviewView caseId={caseId} setView={setView} />}
           {caseId && view === "intel" && <CaseIntelView caseId={caseId} />}
+          {caseId && view === "ask" && <AskTheCaseView caseId={caseId} />}
           {caseId && view === "messages" && <MessagesView caseId={caseId} />}
           {caseId && view === "contacts" && <ContactsView caseId={caseId} />}
           {caseId && view === "calls" && <CallsView caseId={caseId} />}

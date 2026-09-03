@@ -1041,3 +1041,75 @@ export interface LlmStatus {
   embedding_models: string[];
   embedding: EmbeddingStatus;
 }
+
+// --- Deep investigation (engine: triage/intel/investigator.py) -------------
+export interface Hypothesis {
+  id: string;
+  kind: string;
+  question: string;
+  dataset_scope: string[];
+  status: "pending" | "answered" | "blocked";
+  finding_ids: string[];
+  /** Plain-language result — what was found, or why the hypothesis is blocked. */
+  detail: string;
+}
+
+export interface LinkedFinding {
+  id: string;
+  kind: string;
+  rationale: string;
+  left_ref: string;
+  right_ref: string;
+  gap_seconds: number;
+}
+
+export interface InvestigationTrace {
+  hypotheses: Hypothesis[];
+  linked_findings: LinkedFinding[];
+  narrative: string;
+  analysis_method: string;
+  disclaimer: string;
+}
+
+// --- Ask this case (engine: triage/intel/case_qa.py) -------------------------
+export interface Passage {
+  id: string;
+  text: string;
+  source_type: string;
+  source_file: string;
+  timestamp: string | null;
+  app: string;
+  confidence: string;
+}
+
+export interface AskCaseResponse {
+  question: string;
+  answer: string;
+  /** "llm:<provider>" when a model synthesised an answer, else "retrieval-only". */
+  method: string;
+  /** "hybrid" (BM25 + local embeddings) | "lexical" | "none". */
+  retrieval_mode: string;
+  passages: Passage[];
+  disclaimer: string;
+  passages_available: number;
+}
+
+// --- Cross-case identifier linking (engine: triage/registry.py) --------------
+export interface SharedIdentifier {
+  category: string;
+  this_value: string;
+  this_source: string;
+  other_value: string;
+  other_source: string;
+}
+
+export interface LinkedCase {
+  case_id: string;
+  shared: SharedIdentifier[];
+}
+
+export interface LinkedCasesResponse {
+  case_id: string;
+  linked_cases: LinkedCase[];
+  disclaimer: string;
+}

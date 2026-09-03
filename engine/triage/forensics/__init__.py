@@ -116,6 +116,35 @@ from .location_aggregate import (
     traces_to_geojson,
 )
 
+# --- Cross-artifact contradiction detection ---
+from .contradiction import (
+    check_message_vs_call,
+    check_message_vs_home,
+    detect_contradictions,
+    generate_contradiction_report,
+)
+
+# --- Scam-pattern keyword flagging ---
+from .scam_detection import (
+    classify_scam_type,
+    detect_scam_patterns,
+    generate_scam_report,
+    get_scam_actions,
+    get_scam_indicators,
+    get_scam_statutes,
+)
+
+# --- Cross-case identifier extraction (feeds triage.registry.find_linked_cases) ---
+from .case_reference import (
+    IdentifierMatch,
+    extract_case_identifiers,
+    normalize_for_matching,
+    to_value_sets,
+)
+
+# --- Examiner-curated watchlist matching ---
+from .watchlist import WatchlistMatcher
+
 __all__ = [
     # Models
     "MediaLocation",
@@ -187,4 +216,23 @@ __all__ = [
     "analyze_mediastore_trash",
     "parse_trash_filename",
     "TRASH_WINDOW_DAYS",
+    # Contradiction detection
+    "check_message_vs_call",
+    "check_message_vs_home",
+    "detect_contradictions",
+    "generate_contradiction_report",
+    # Scam-pattern flagging
+    "classify_scam_type",
+    "detect_scam_patterns",
+    "generate_scam_report",
+    "get_scam_actions",
+    "get_scam_indicators",
+    "get_scam_statutes",
+    # Cross-case identifiers
+    "IdentifierMatch",
+    "extract_case_identifiers",
+    "normalize_for_matching",
+    "to_value_sets",
+    # Watchlist
+    "WatchlistMatcher",
 ]

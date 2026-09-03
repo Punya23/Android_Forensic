@@ -1,7 +1,17 @@
+"""Examiner-curated watchlist matching: exact-value hits against a maintained list of
+persons/identifiers of interest, checked against every case's own contacts/messages/
+calls. Unlike a scam or contradiction flag, a watchlist entry is examiner-supplied
+ground truth — an exact match on a number the department already knows matters — so a
+hit is reported at CRITICAL severity without the hedging a keyword guess needs.
+"""
+
 import json
+import logging
 from pathlib import Path
 from typing import Dict, List, Set
 import datetime
+
+logger = logging.getLogger(__name__)
 
 
 class WatchlistMatcher:
@@ -14,31 +24,39 @@ class WatchlistMatcher:
             "emails": set(),
             "names": set(),
         }
+        #: Set when the watchlist file exists but couldn't be read — an empty
+        #: watchlist after a load failure must not look identical to "no watchlist
+        #: configured": an examiner who added entries and then sees zero matches
+        #: needs to know the file was corrupt, not conclude no match exists.
+        self.load_error: str = ""
         self.load_watchlist(self.watchlist_path)
 
     def load_watchlist(self, watchlist_path: Path) -> Dict[str, List[str]]:
         """Load watchlist from JSON file."""
+        self.load_error = ""
         if not watchlist_path.exists():
             return {k: list(v) for k, v in self.watchlist.items()}
 
         try:
             with open(watchlist_path, "r") as f:
                 data = json.load(f)
-                for cat in self.watchlist.keys():
-                    if cat in data:
-                        self.watchlist[cat] = set(data[cat])
+            for cat in self.watchlist.keys():
+                if cat in data:
+                    self.watchlist[cat] = set(data[cat])
         except Exception as e:
-            # Fallback to empty if invalid format
-            pass
+            self.load_error = f"{watchlist_path}: {e}"
+            logger.warning("Watchlist load failed, treating as empty: %s", self.load_error)
 
         return {k: list(v) for k, v in self.watchlist.items()}
 
     def _save_watchlist(self):
-        """Internal helper to save the watchlist to disk."""
+        """Save the watchlist to disk atomically — a write interrupted mid-flush must
+        never leave a truncated, half-written watchlist that then loads as empty."""
         data = {k: list(v) for k, v in self.watchlist.items()}
         self.watchlist_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.watchlist_path, "w") as f:
-            json.dump(data, f, indent=2)
+        tmp = self.watchlist_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        tmp.replace(self.watchlist_path)
 
     def add_to_watchlist(self, category: str, value: str) -> None:
         """Add new entry to watchlist and preserve existing entries."""
@@ -112,7 +130,7 @@ class WatchlistMatcher:
                     "source_context": str(
                         match["source"].get("source_file", "Unknown")
                     ),
-                    "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 }
             )
         return alerts

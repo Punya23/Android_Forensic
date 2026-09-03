@@ -151,7 +151,7 @@ Digital forensic tool/
 │   ├── docs/PRODUCTION_READINESS.md
 │   ├── tools/                      # make_corpus.py + corpus_shell.py (canned dumpsys) + 4 more
 │   ├── tests/                      # pytest suite — 1007 tests
-│   ├── security/ analytics/ integration/ advanced_forensics/   # ⚠ present, unwired — see NOTES.md
+│   ├── security/ analytics/ integration/ advanced_forensics/   # ⚠ present, fabrication stubs — see NOTES.md
 │   └── triage/                     # the actual engine package
 │       ├── server.py               # Flask + Socket.IO app, all API routes
 │       ├── pipeline.py             # stage orchestration — run_acquisition()
@@ -163,10 +163,11 @@ Digital forensic tool/
 │       ├── parsers/                # 38 files — whatsapp_db.py, telegram.py, instagram.py, snapchat.py, sms.py, wifi.py, exif.py …
 │       ├── recovery/                # deep_sqlite.py, sqbrite.py, sqlite_recovery.py
 │       ├── forensics/               # 48 files — audit_chain.py, bsa_certificate.py, comm_graph.py, hash_verification.py …
-│       ├── intel/                   # llm.py, embeddings.py, planner.py, ontology.py, knowledge_graph.py, casebank.py + data/case_studies.jsonl
+│       ├── intel/                   # llm.py, embeddings.py, planner.py, ontology.py, knowledge_graph.py, casebank.py,
+│       │                           # investigator.py (deep investigation), case_qa.py (ask-this-case) + data/case_studies.jsonl
 │       ├── report/                  # html_report.py, exporter_pdf.py, exporter_word.py, exporter_csv.py
 │       ├── validation/              # cftt.py, harness.py, swgde.py — self-validation harness
-│       └── notifications/           # ⚠ present, unwired — see NOTES.md
+│       └── notifications/           # email/SMS/Slack/Teams — real, wired to run_acquisition() (opt-in)
 │
 ├── app/                            # Electron + React + TypeScript + Tailwind dashboard
 │   ├── package.json / vite.config.ts / tailwind.config.js
@@ -175,7 +176,8 @@ Digital forensic tool/
 │       ├── App.tsx / main.tsx / index.css
 │       ├── components/              # Sidebar.tsx, ChatView.tsx, GlobalSearch.tsx, RiskCard.tsx …
 │       ├── lib/                     # api.ts (fetch client + auth), capabilities.tsx, hooks.ts, types.ts, tagStore.tsx
-│       └── views/                   # 47 files — one per dataset (Overview, Messages, Locations, Report, Login, Onboarding …)
+│       └── views/                   # 48 files — one per dataset (Overview, Messages, Locations, Report, Login, Onboarding,
+│                                   # AskTheCase …)
 │
 └── apk/                             # Kotlin "Collector" Tier-1 helper APK
     ├── build.gradle / settings.gradle / gradlew

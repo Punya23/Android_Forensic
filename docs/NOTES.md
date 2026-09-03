@@ -118,14 +118,40 @@ emptying the demo.
 
 ---
 
+## Defects found building the deep-agent / cross-case features (2026-09-03)
+
+Two more, found the same way as above — by running the new code against real
+acquisition data instead of hand-built test fixtures, which is exactly why the mock
+corpus and every acquisition in this codebase is real (adb-derived or realistically
+shaped), never a shortcut sample.
+
+| Defect | Effect before the fix | Fix |
+|---|---|---|
+| Mixed naive/aware timestamps across datasets | Real acquisitions mix a naive `2026-07-06T21:00:04` (one writer's format) with an aware `2025-07-06T18:28:20Z` (another's) inside the *same case's own findings*. Subtracting one from the other raised `TypeError: can't subtract offset-naive and offset-aware datetimes` — caught by `investigate()`'s own try/except and reported as `blocked`, so it never crashed an acquisition, but the location-correlation hypothesis could never actually answer on real data | `contradiction.parse_iso()` now always returns a timezone-aware datetime (a naive result is assumed UTC, matching this codebase's timestamp convention everywhere else); `investigator.py` reuses it instead of keeping a second, differently-behaved copy |
+| WhatsApp JIDs matched the email regex | `case_reference.py`'s email extractor is a standard `word@word.tld` pattern; a WhatsApp JID (`<number>@s.whatsapp.net`, surfaced verbatim in a carved/recovered row's raw text) is shaped exactly like one, so a real phone number was being reported as an "email" and linked across cases under the wrong category — the same class of mislabelling this module was rewritten to fix for UPI IDs in the first place | `_is_real_email()` excludes known messaging-app-internal JID domains (`s.whatsapp.net`, `g.us`, `c.us`, `lid`, `broadcast`); a JID with a real phone number embedded (`@s.whatsapp.net`/`@c.us`) is recovered as a phone number instead of being silently dropped |
+
+Also caught in review, before it shipped: the original `check_message_vs_location`
+(part of the unwired `contradiction.py` this session rewrote) flagged *any* message
+containing "at home" within five minutes of *any* GPS fix, with no comparison to where
+home actually is — its own code comment admitted as much ("mock logic"). A truthful
+"at home" message would have fired identically to a false one, with a hardcoded `HIGH`
+severity either way. It was not wired as-is; `check_message_vs_home` replaces it,
+comparing against this device's own confidence-scored inferred home cluster (from
+`place_identification.py`, already computed, never previously used for this) and
+firing only on genuine distance from it. Caught during implementation, not after —
+included here because it's the same "read the code, don't trust the summary of it"
+discipline the rest of this file is built on.
+
+---
+
 ## Known gaps & unwired scaffolding
 
 In keeping with this project's own honesty model, applied to itself:
 
 | Item | State |
 |---|---|
-| `engine/security/`, `engine/analytics/`, `engine/integration/`, `engine/advanced_forensics/`, `engine/triage/notifications/` | Present on disk, **zero import references anywhere in the codebase** — not called from `pipeline.py`, `server.py`, or each other. Not part of the working pipeline. |
-| `TWILIO_*` / `SMTP_*` env vars | Read by the unwired `notifications/` module above — configuring them does nothing today. |
+| `engine/security/`, `engine/analytics/`, `engine/integration/`, `engine/advanced_forensics/` | Present on disk, **zero import references anywhere in the codebase** — not called from `pipeline.py`, `server.py`, or each other. Audited (2026-09) file by file: every one is a **fabrication stub**, not merely unfinished — `security/audit.py`'s `verify_integrity()` always returns `True` regardless of file content; `security/hsm_integration.py`'s `sign_evidence()` returns the literal string `"hsm_digital_signature_placeholder"` for any input; `security/legal/section_65b.py` certifies against the Indian Evidence Act 1872 s.65B, repealed and replaced by BSA 2023 s.63 (the working report generator already made this exact fix once, per P2-1 below — this module would silently reintroduce it); `analytics/vision/face_recognition.py` and `object_detection.py` return an identical hardcoded detection for every image regardless of content; `analytics/vision/ocr_tamper.py`'s tamper detector always reports "low probability" — worse than no detector, since it would falsely reassure an examiner a manipulated image is clean; `advanced_forensics/filesystem/file_recovery.py` is exactly the raw-image slack-space carver this project's own "do NOT build" list forbids (production-readiness doc, below), and `advanced_forensics/memory/volatility_runner.py` targets full physical-memory dumps this tool has no acquisition path to obtain, with field values (`pid: 4, name: 'System'`) lifted from a Windows kernel process template. None of this is wired, and none of it should be — see `docs/CAPABILITIES.md` "New in v0.7" for what was built instead where a real, honest version of the underlying idea existed. |
+| `engine/triage/notifications/` | The one exception to the row above: audited and found to be **real, working code** (SMTP/Twilio/Slack/Teams clients, the dependencies already declared in `requirements.txt`) — just never called. Wired in v0.7 (opt-in, off by default) to fire on acquisition completion; see `docs/CAPABILITIES.md`. |
 | `deploy/docker-compose.yml` | References a missing `Dockerfile.gateway`; describes an unrelated architecture. Not a working deployment path. |
 | Electron packaging (`electron:build`) | No electron-builder config committed; the packaged-app engine-bundling step (`resources/engine/triage-engine`) has no build step producing it. |
 | APK release signing | No `signingConfigs` — `assembleRelease` would produce an unsigned APK. |

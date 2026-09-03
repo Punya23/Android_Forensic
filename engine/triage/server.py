@@ -645,6 +645,97 @@ def create_app(cases_root: Path = CASES_ROOT):
         return jsonify(bundle)
         # ---------------------------------------------------------
 
+    @app.post("/api/case/<case_id>/investigate")
+    def investigate_case_endpoint(case_id: str):
+        """(Re-)run the deep investigation pass against this case's current
+        ``ai_findings`` — see triage/intel/investigator.py. Requires a case profile
+        (run /analyze first, or supply one this run already has)."""
+        case = _open(cases_root, case_id)
+        body = request.get_json(silent=True) or {}
+
+        from .intel import get_provider
+        from .intel.investigator import investigate_case
+        from .intel.planner import CaseProfile, CollectionPlan
+
+        stored_profile = case.read_derived("case_profile")
+        if not stored_profile:
+            return jsonify({"error": "no case profile available — run /analyze first"}), 400
+        profile = CaseProfile(**stored_profile)
+
+        stored_plan = case.read_derived("collection_plan")
+        plan = CollectionPlan.from_dict(stored_plan) if stored_plan else None
+
+        provider = get_provider(str(body.get("llm_provider", "")) or None)
+        bundle = investigate_case(case, profile, plan=plan, provider=provider)
+        return jsonify(bundle)
+
+    @app.post("/api/case/<case_id>/ask")
+    def ask_case_endpoint(case_id: str):
+        """"Ask this case" — free-text Q&A over the case's own already-collected
+        evidence. Local retrieval always runs; a grounded LLM synthesis on top is
+        added only when a model is configured, and it is instructed to answer
+        strictly from the retrieved passages — see triage/intel/case_qa.py.
+        """
+        from .intel import get_provider
+        from .intel.case_qa import answer_question, build_passages
+
+        case = _open(cases_root, case_id)
+        body = request.get_json(silent=True) or {}
+        question = str(body.get("question", "")).strip()
+        if not question:
+            return jsonify({"error": "a question is required"}), 400
+
+        derived = {
+            name: case.read_derived(name)
+            for name in ("messages", "recovered", "calls", "browser", "locations", "contacts")
+        }
+        passages = build_passages(derived)
+        provider = get_provider(str(body.get("llm_provider", "")) or None)
+        embedder = _embedder() if bool(body.get("use_embeddings", True)) else None
+        bundle = answer_question(
+            question,
+            passages,
+            embedder=embedder,
+            provider=provider,
+            top_k=int(body.get("top_k", 6)),
+        )
+        bundle["passages_available"] = len(passages)
+        return jsonify(bundle)
+
+    @app.get("/api/case/<case_id>/linked-cases")
+    def linked_cases_endpoint(case_id: str):
+        """Other cases on this installation sharing a phone number, UPI ID, or email
+        with this one — see triage/registry.py's find_linked_cases and
+        triage/forensics/case_reference.py for exactly what is and isn't extracted.
+
+        Every acquisition since this feature shipped indexes its own identifiers as
+        part of run_acquisition(); a case acquired before that (or re-opened after new
+        artifacts were added without a fresh acquisition) is indexed here, lazily, on
+        first request — mirroring how registry.sync_registry() backfills the case list
+        itself. Cheap: an upsert-and-query, not a re-scan of every other case.
+        """
+        from .forensics.case_reference import extract_case_identifiers
+
+        case = _open(cases_root, case_id)
+        contacts = case.read_derived("contacts") or []
+        messages = case.read_derived("messages") or []
+        calls = case.read_derived("calls") or []
+        identifiers = extract_case_identifiers(contacts, messages, calls)
+        registry.upsert_case_identifiers(cases_root, case_id, identifiers)
+
+        return jsonify(
+            {
+                "case_id": case_id,
+                "linked_cases": registry.find_linked_cases(cases_root, case_id),
+                "disclaimer": (
+                    "A shared identifier is a fact about this installation's case "
+                    "history, not evidence linking two investigations. Every match "
+                    "cites the exact artifact it came from in both cases — verify "
+                    "against those artifacts before relying on it."
+                ),
+            }
+        )
+
     # ACQUISITION
     # ---------------------------------------------------------
 
@@ -721,6 +812,11 @@ def create_app(cases_root: Path = CASES_ROOT):
             plan_allow_tier2=bool(body.get("plan_allow_tier2", True)),
             use_local_corpus=bool(body.get("use_local_corpus", True)),
             learn_from_case=bool(body.get("learn_from_case", True)),
+            # Opt-in completion notification (off unless the caller supplies types).
+            notify_on_complete=bool(body.get("notify_on_complete", False)),
+            notify_types=list(body.get("notify_types") or []),
+            notify_recipients=list(body.get("notify_recipients") or []),
+            notify_webhook_url=str(body.get("notify_webhook_url", "") or ""),
         )
 
         # -------------------------------
@@ -1106,6 +1202,9 @@ def create_app(cases_root: Path = CASES_ROOT):
             "snapchat_conversations",
             "discovered_chats",
             "ai_findings",
+            # Deep investigation: bounded hypothesis pass cross-linking findings
+            # analyze_derived's single flat scoring pass can't correlate on its own.
+            "investigation_trace",
             "case_profile",
             "collection_plan",
             # Re-analysis writes its re-ranking here rather than over the plan that
