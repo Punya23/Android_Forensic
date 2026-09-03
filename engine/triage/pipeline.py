@@ -372,6 +372,16 @@ class PipelineConfig:
     battery_poll_interval_s: float = (
         BATTERY_POLL_INTERVAL_S  # live battery re-poll cadence, in seconds
     )
+    # -- Completion notification (opt-in) --------------------------------------
+    # Off by default: a long triage run finishing with nobody at the workstation is
+    # exactly the case this is for, but it must never be a default behaviour an
+    # examiner didn't ask for — see triage/notifications/.
+    notify_on_complete: bool = False
+    notify_types: list = field(
+        default_factory=list
+    )  # subset of "email" | "sms" | "slack" | "teams"
+    notify_recipients: list = field(default_factory=list)  # emails or phone numbers
+    notify_webhook_url: str = ""  # required for slack/teams
 
 
 def run_acquisition(
@@ -2315,6 +2325,46 @@ def run_acquisition(
                         "(not a finding of 'nothing there')"
                     )
                 case.log("intel.findings", _msg, tier=Tier.TIER0.value)
+
+                # -- Deep investigation: bounded, deterministic hypothesis pass ---
+                # Runs over the findings just produced, cross-linking datasets
+                # analyze_derived's single flat scoring pass structurally cannot
+                # correlate against each other (see triage/intel/investigator.py). A
+                # separate try/except from the analysis above: a failure here must
+                # not be reported as "analysis error" when the leads themselves are
+                # fine — only the investigation layer on top of them failed.
+                try:
+                    from .intel.investigator import investigate_case
+
+                    investigation = investigate_case(
+                        case,
+                        profile,
+                        plan=plan_obj,
+                        provider=get_provider(cfg.llm_provider or None),
+                    )
+                    _answered = sum(
+                        1 for h in investigation["hypotheses"] if h["status"] == "answered"
+                    )
+                    _blocked = sum(
+                        1 for h in investigation["hypotheses"] if h["status"] == "blocked"
+                    )
+                    case.log(
+                        "intel.investigate",
+                        f"Deep investigation: {_answered} hypothesis(es) answered, "
+                        f"{_blocked} blocked (data not available), "
+                        f"{len(investigation['linked_findings'])} cross-dataset "
+                        f"correlation(s) found ({investigation['analysis_method']}).",
+                        tier=Tier.TIER0.value,
+                    )
+                except Exception as exc:
+                    case.log(
+                        "intel.investigate",
+                        f"investigation error: {exc}. The AI leads above are "
+                        "unaffected — only the cross-linking pass on top of them "
+                        "failed.",
+                        result="error",
+                        tier=Tier.TIER0.value,
+                    )
             except Exception as exc:
                 case.log(
                     "intel.findings",
@@ -2502,6 +2552,39 @@ def run_acquisition(
                 tier=Tier.TIER0.value,
             )
 
+    # -- Cross-case identifier index (P4-1) ------------------------------------
+    # Derived, not collected: extracts phone numbers/UPI IDs/emails already sitting in
+    # this case's own contacts/messages/calls and indexes them for cross-case lookup
+    # (registry.find_linked_cases). Always runs — unlike the notification below, this
+    # produces no side effect visible outside the case store and costs one SQLite
+    # write, so there is no reason to gate it behind a flag the way an opt-in,
+    # externally-visible action is gated.
+    try:
+        from . import registry
+        from .forensics.case_reference import extract_case_identifiers
+
+        contacts = case.read_derived("contacts") or []
+        messages = case.read_derived("messages") or []
+        calls = case.read_derived("calls") or []
+        identifiers = extract_case_identifiers(contacts, messages, calls)
+        n_indexed = registry.upsert_case_identifiers(cfg.cases_root, case.meta.case_id, identifiers)
+        case.log(
+            "registry.identifiers",
+            f"{n_indexed} identifier(s) indexed for cross-case linking "
+            f"(phone numbers, UPI IDs, emails from this case's own contacts/messages/"
+            f"calls). Not evidence linking any two cases — see the Linked Cases panel's "
+            f"own disclaimer.",
+            tier=Tier.TIER0.value,
+        )
+    except Exception as exc:
+        case.log(
+            "registry.identifiers",
+            f"identifier indexing error: {exc}. This case will not appear in another "
+            f"case's Linked Cases panel until re-indexed.",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+
     progress("report", 0.96, "Generating triage report")
     report_path = generate_report(case.root)
     case.log(
@@ -2511,6 +2594,40 @@ def run_acquisition(
     )
 
     progress("done", 1.0, "Acquisition complete")
+
+    # -- Completion notification (opt-in) ---------------------------------------
+    # Fires after the report exists and everything else has been logged, so a
+    # notification never arrives before the case it describes is actually ready to
+    # open. A dispatch failure is logged and never re-raised: it must not turn a
+    # successful acquisition into a failed one.
+    if cfg.notify_on_complete and cfg.notify_types:
+        try:
+            from .notifications.dispatcher import NotificationDispatcher, NotificationPayload
+
+            payload = NotificationPayload(
+                types=list(cfg.notify_types),
+                subject=f"SNAGR: acquisition complete — case {case.meta.case_id}",
+                content=(
+                    f"Case {case.meta.case_id} ({case.meta.examiner}) finished "
+                    f"acquisition. Report: {report_path.name}."
+                ),
+                recipients=list(cfg.notify_recipients) or None,
+                webhook_url=cfg.notify_webhook_url or None,
+            )
+            NotificationDispatcher().dispatch(payload)
+            case.log(
+                "notify.dispatch",
+                f"completion notification sent via {', '.join(cfg.notify_types)}",
+                tier=Tier.TIER0.value,
+            )
+        except Exception as exc:
+            case.log(
+                "notify.dispatch",
+                f"notification dispatch error: {exc}. The acquisition itself "
+                f"completed successfully; only the notification failed.",
+                result="error",
+                tier=Tier.TIER0.value,
+            )
 
     # ── Cleanup: stop auto-save, clear checkpoint, record total time ────────
     stop_autosave(_autosave_thread)

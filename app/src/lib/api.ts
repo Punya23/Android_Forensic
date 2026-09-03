@@ -242,6 +242,31 @@ export const api = {
       body: JSON.stringify(body || {}),
     }),
 
+  // Deep investigation: bounded, deterministic hypothesis pass cross-linking findings
+  // (run automatically during acquisition; this re-runs it on demand).
+  investigate: (id: string, body?: { llm_provider?: string }) =>
+    request<import("./types").InvestigationTrace>(`/api/case/${id}/investigate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    }),
+
+  // "Ask this case" — free-text Q&A over the case's own already-collected evidence.
+  askCase: (
+    id: string,
+    question: string,
+    opts?: { llm_provider?: string; top_k?: number; use_embeddings?: boolean }
+  ) =>
+    request<import("./types").AskCaseResponse>(`/api/case/${id}/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, ...opts }),
+    }),
+
+  // Other cases on this installation sharing a phone number / UPI ID / email.
+  linkedCases: (id: string) =>
+    get<import("./types").LinkedCasesResponse>(`/api/case/${id}/linked-cases`),
+
   acquire: (body: {
     mock?: string;
     serial?: string;

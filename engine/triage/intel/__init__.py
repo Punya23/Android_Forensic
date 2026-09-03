@@ -25,6 +25,8 @@ on-device; retrieval and the graph are pure Python and need no network at all. S
 from __future__ import annotations
 
 from .analysis import Finding, analyze_case, analyze_derived
+from .investigator import Hypothesis, LinkedFinding, investigate, investigate_case
+from .case_qa import Passage, answer_question, build_passages
 from .casebank import ArtifactOutcome, CaseBank, CaseStudy, RetrievedCase
 from .feedback import (
     derive_artifact_yields,
@@ -87,6 +89,15 @@ __all__ = [
     "Finding",
     "analyze_case",
     "analyze_derived",
+    # deep investigation (bounded, deterministic multi-hypothesis pass)
+    "investigate",
+    "investigate_case",
+    "Hypothesis",
+    "LinkedFinding",
+    # ask-this-case Q&A
+    "Passage",
+    "answer_question",
+    "build_passages",
     "derive_artifact_yields",
     "record_provisional",
     "record_confirmed",

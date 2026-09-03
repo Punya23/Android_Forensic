@@ -1,144 +1,189 @@
-import html
+"""Cross-case identifier extraction: the same phone number, UPI ID, or email
+address appearing in more than one case on this installation.
+
+This is a fact about the *installation's case history*, not evidence in any one case —
+matching the same discipline the case bank and knowledge graph already use for
+precedent (``triage/intel/casebank.py``): a shared identifier is a lead worth an
+examiner's attention, never a determination that the two cases are related.
+
+**Fixed since the original, unwired version of this module.** The UPI-ID extractor was
+a bare email-shaped regex (``word@word``) applied to every message body, so it matched
+ordinary email addresses and mislabelled them as UPI handles, and every match doubled
+into both the ``emails`` and ``upi_ids`` buckets. UPI handles are now matched against
+the actual bank/PSP handle suffixes NPCI issues (``@okhdfcbank``, ``@ybl``, ``@paytm``,
+…); a proper email regex (with a real top-level domain) is separate. ``bank_accounts``
+is deliberately left unpopulated rather than guessed at — a bare 9–18 digit sequence is
+indistinguishable from a phone number, an order ID, or an OTP without far more context
+than a regex has, and a fabricated bank-account match is exactly the kind of finding
+this codebase's honesty model exists to prevent. Every match also now carries where it
+came from (which dataset, which record) instead of a bare value with no provenance.
+"""
+
+from __future__ import annotations
+
 import re
-from typing import Dict, List, Optional
-from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Optional
+
+#: NPCI-issued UPI handle suffixes in common use. Not exhaustive — banks add handles
+#: over time — but far more precise than "anything shaped like an email", which is the
+#: entire point of separating this from the email regex below.
+_UPI_HANDLES = (
+    "okhdfcbank",
+    "okaxis",
+    "oksbi",
+    "okicici",
+    "ybl",  # PhonePe
+    "paytm",
+    "apl",  # Amazon Pay
+    "ibl",  # ICICI
+    "axl",  # Axis
+    "sbi",
+    "hdfcbank",
+    "icici",
+    "upi",
+    "airtel",
+    "jio",
+    "fbl",  # Federal Bank
+    "idfcbank",
+    "kotak",
+    "yesbank",
+    "waaxis",  # WhatsApp Pay
+)
+_RE_UPI = re.compile(
+    r"\b[a-zA-Z0-9.\-_]{2,64}@(?:" + "|".join(re.escape(h) for h in _UPI_HANDLES) + r")\b",
+    re.IGNORECASE,
+)
+_RE_EMAIL = re.compile(
+    r"\b[a-zA-Z0-9.\-_+]{1,64}@[a-zA-Z0-9.\-]{2,64}\.[a-zA-Z]{2,10}\b"
+)
+
+#: Messaging-app-internal identifier domains — a WhatsApp JID (``<number>@s.whatsapp.net``
+#: for a person, ``<number>@g.us`` for a group) is shaped exactly like an email address
+#: and, once its internal storage columns (e.g. ``remote_jid``) surface in a recovered/
+#: carved row's raw text, WOULD match ``_RE_EMAIL``. It is a phone number wearing an
+#: email-shaped costume, not a real address, and reporting it as "emails" would be the
+#: same category-mislabelling bug this module was rewritten to fix for UPI IDs. Matched
+#: case-insensitively against the domain the regex captured.
+_NON_EMAIL_DOMAINS = frozenset(
+    {"s.whatsapp.net", "g.us", "broadcast", "lid", "c.us"}
+)
 
 
-def extract_case_identifiers(case: Dict) -> Dict:
-    """Extract identifiers from case data.
-    Assumes `case` contains 'derived_data' keys like 'contacts', 'messages', 'calls'.
-    Returns a dictionary of sets.
-    """
-    identifiers = {
-        "phone_numbers": set(),
-        "upi_ids": set(),
-        "bank_accounts": set(),
-        "emails": set(),
-    }
+def _is_real_email(candidate: str) -> bool:
+    domain = candidate.rsplit("@", 1)[-1].lower()
+    return domain not in _NON_EMAIL_DOMAINS
 
-    # Extract from contacts
-    for contact in case.get("contacts", []):
-        if contact.get("number"):
-            identifiers["phone_numbers"].add(contact["number"])
-        if contact.get("email"):
-            identifiers["emails"].add(contact["email"])
-
-    # Extract from messages
-    for msg in case.get("messages", []):
-        sender = msg.get("sender")
-        if sender:
-            identifiers["phone_numbers"].add(sender)
-
-        body = str(msg.get("body", ""))
-        # Dummy regex for UPI extraction
-        for upi in re.findall(r"[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}", body):
-            identifiers["upi_ids"].add(upi)
-
-    # Extract from calls
-    for call in case.get("calls", []):
-        num = call.get("number")
-        if num:
-            identifiers["phone_numbers"].add(num)
-
-    return {k: list(v) for k, v in identifiers.items()}
+#: Categories this module actually populates. ``bank_accounts`` stays out of this set —
+#: see the module docstring for why — but the key is still present (always empty) so a
+#: caller iterating categories doesn't need a special case for the one that's missing.
+_POPULATED_CATEGORIES = ("phone_numbers", "upi_ids", "emails")
+ALL_CATEGORIES = _POPULATED_CATEGORIES + ("bank_accounts",)
 
 
-def find_shared_identifiers(case1: Dict, case2: Dict) -> List[str]:
-    """Find shared identifiers between cases."""
-    shared = []
-    ids1 = extract_case_identifiers(case1)
-    ids2 = extract_case_identifiers(case2)
+@dataclass
+class IdentifierMatch:
+    """One extracted identifier, with where it came from."""
 
-    for category in ids1:
-        set1 = set(ids1[category])
-        set2 = set(ids2.get(category, []))
-        intersection = set1.intersection(set2)
-        for item in intersection:
-            shared.append(f"[{category}] {item}")
+    category: str
+    value: str
+    source_dataset: str  # "contacts" | "messages" | "calls"
+    source_ref: str  # a contact name, or the message/call's source_file+timestamp
 
-    return shared
-
-
-def calculate_similarity_score(case1: Dict, case2: Dict) -> float:
-    """Calculate similarity score based on Jaccard index of extracted identifiers."""
-    ids1 = extract_case_identifiers(case1)
-    ids2 = extract_case_identifiers(case2)
-
-    all_set1 = set()
-    all_set2 = set()
-
-    for v in ids1.values():
-        all_set1.update(v)
-    for v in ids2.values():
-        all_set2.update(v)
-
-    if not all_set1 and not all_set2:
-        return 0.0
-
-    intersection = all_set1.intersection(all_set2)
-    union = all_set1.union(all_set2)
-
-    if not union:
-        return 0.0
-
-    return len(intersection) / len(union)
-
-
-def _compare_single_case(new_case: Dict, old_case: Dict) -> Optional[Dict]:
-    """Helper to compare single case, meant for parallel execution."""
-    score = calculate_similarity_score(new_case, old_case)
-    if score > 0.01:  # Set threshold to 1% for demo purposes
-        shared = find_shared_identifiers(new_case, old_case)
+    def to_dict(self) -> dict:
         return {
-            "case_id": old_case.get("case_id", "Unknown"),
-            "score": score,
-            "shared_identifiers": shared,
+            "category": self.category,
+            "value": self.value,
+            "source_dataset": self.source_dataset,
+            "source_ref": self.source_ref,
         }
-    return None
 
 
-def cross_reference_cases(new_case: Dict, old_cases: List[Dict]) -> List[Dict]:
-    """Cross-reference new case with old cases in parallel."""
-    matches = []
+def extract_case_identifiers(
+    contacts: Optional[Iterable[Dict[str, Any]]] = None,
+    messages: Optional[Iterable[Dict[str, Any]]] = None,
+    calls: Optional[Iterable[Dict[str, Any]]] = None,
+) -> Dict[str, List[IdentifierMatch]]:
+    """Extract phone numbers, UPI IDs, and emails from a case's own derived datasets.
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [
-            executor.submit(_compare_single_case, new_case, oc) for oc in old_cases
-        ]
-        for f in futures:
-            res = f.result()
-            if res:
-                matches.append(res)
+    Returns ``{category: [IdentifierMatch, ...]}`` for every category in
+    :data:`ALL_CATEGORIES` (``bank_accounts`` always empty — see module docstring).
+    Deduplicated within each category by value, keeping every distinct source.
+    """
+    out: Dict[str, Dict[str, IdentifierMatch]] = {c: {} for c in ALL_CATEGORIES}
 
-    # Sort by score descending
-    matches.sort(key=lambda x: x["score"], reverse=True)
-    return matches
+    def _add(category: str, value: str, dataset: str, ref: str) -> None:
+        value = value.strip()
+        if not value:
+            return
+        # First match for a value wins the citation; a value appearing in five
+        # messages is still one identifier for cross-case purposes.
+        out[category].setdefault(value, IdentifierMatch(category, value, dataset, ref))
+
+    for contact in contacts or []:
+        number = str(contact.get("number") or "").strip()
+        name = str(contact.get("name") or "unnamed contact")
+        if number:
+            _add("phone_numbers", number, "contacts", name)
+        email = str(contact.get("email") or "").strip()
+        if email:
+            _add("emails", email, "contacts", name)
+
+    for msg in messages or []:
+        sender = str(msg.get("sender") or "").strip()
+        ref = f"{msg.get('source_file', 'unknown')} @ {msg.get('timestamp', '?')}"
+        # Only a phone-number-shaped sender is added — app usernames (e.g. Telegram
+        # handles) aren't a cross-referenceable identifier in the same sense.
+        if sender and re.fullmatch(r"[+\d][\d\s\-()]{6,}", sender):
+            _add("phone_numbers", sender, "messages", ref)
+        body = str(msg.get("body") or "")
+        if not body:
+            continue
+        for m in _RE_UPI.finditer(body):
+            _add("upi_ids", m.group(0), "messages", ref)
+        for m in _RE_EMAIL.finditer(body):
+            candidate = m.group(0)
+            if _is_real_email(candidate):
+                _add("emails", candidate, "messages", ref)
+            else:
+                # A WhatsApp JID (<number>@s.whatsapp.net / @g.us / @c.us) is a phone
+                # number wearing an email-shaped costume — the number itself is a real,
+                # useful identifier, so it is recovered as one instead of being dropped.
+                # @lid/@broadcast carry no phone number (an opaque internal id / a
+                # broadcast-list marker) and are correctly discarded either way.
+                local, _, domain = candidate.partition("@")
+                if domain.lower() in ("s.whatsapp.net", "g.us", "c.us") and local.isdigit():
+                    _add("phone_numbers", local, "messages", ref)
+
+    for call in calls or []:
+        number = str(call.get("number") or "").strip()
+        if number:
+            ref = f"{call.get('source_file', 'unknown')} @ {call.get('timestamp', '?')}"
+            _add("phone_numbers", number, "calls", ref)
+
+    return {cat: list(matches.values()) for cat, matches in out.items()}
 
 
-def generate_case_reference_report(matches: List[Dict]) -> str:
-    """Generate HTML case reference report."""
-    html_out = [
-        "<div class='case-reference-report'>",
-        "<h2>Prior Case Cross-Reference</h2>",
-    ]
+def to_value_sets(identifiers: Dict[str, List[IdentifierMatch]]) -> Dict[str, set]:
+    """Bare ``{category: {value, ...}}`` — for a quick membership/intersection test."""
+    return {cat: {m.value for m in matches} for cat, matches in identifiers.items()}
 
-    if not matches:
-        html_out.append(
-            "<p>No links to prior cases found based on shared identifiers.</p>"
-        )
-    else:
-        html_out.append(
-            "<table><tr><th>Prior Case ID</th><th>Similarity Score</th><th>Shared Identifiers</th></tr>"
-        )
-        for match in matches:
-            score_pct = f"{match['score'] * 100:.2f}%"
-            shared_list = "<br>".join(
-                html.escape(item) for item in match["shared_identifiers"]
-            )
-            html_out.append(f"<tr><td>{html.escape(match['case_id'])}</td>")
-            html_out.append(f"<td>{score_pct}</td>")
-            html_out.append(f"<td>{shared_list}</td></tr>")
-        html_out.append("</table>")
 
-    html_out.append("</div>")
-    return "\n".join(html_out)
+def normalize_for_matching(category: str, value: str) -> str:
+    """The value cross-case matching actually compares on.
+
+    A contact's ``+91 98200 44711`` and the same number as a message sender,
+    ``+919820044711``, are the same phone number formatted two different ways — without
+    normalising, cross-case matching would silently miss it. Only whitespace/punctuation
+    is stripped; the original ``value`` (never this normalised form) is always what gets
+    shown to the examiner, so a citation still reads exactly as it appeared in the
+    evidence.
+    """
+    if category == "phone_numbers":
+        digits = re.sub(r"[^\d+]", "", value)
+        # A 10-digit Indian mobile number with no country code and the same number
+        # with +91 are the same phone — match on the last 10 digits either way.
+        return digits[-10:] if len(digits) >= 10 else digits
+    if category in ("upi_ids", "emails"):
+        return value.strip().lower()
+    return value.strip()

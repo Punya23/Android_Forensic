@@ -33,6 +33,9 @@ trail — so the report is something you can actually stand behind.
 - 📜 **Court-shaped report** — NIST/SWGDE-aligned, BSA 2023 §63 certificate, sealed SHA-256 export
 - 🧠 **Case intelligence** — plain-language brief → ontology-ranked collection plan, offline by default
 - 🔎 **Local RAG, on your machine** — precedent retrieval blends BM25 with a local embedding model under Ollama; case text never leaves the workstation, and the plan records which of the two actually ran
+- 🕵️ **Deep investigation** — a bounded, deterministic pass cross-links findings a flat scoring pass can't correlate on its own (a location anomaly co-occurring with a message; a known contact with no communication surfaced)
+- 💬 **Ask this case** — free-text Q&A over a case's own already-collected evidence, cited to the exact artifact, grounded so a model can only answer from what's retrieved
+- 🔗 **Cross-case linking** — the same phone number, UPI ID, or email surfacing in another case on this installation, indexed and cited from both sides
 - 🚧 **Per-dataset capability states** — every view says whether its data was collected, checked-and-empty, gated off, unreachable, or not built yet
 - 📴 **Works with zero phone** — full pipeline demoable against a synthetic mock corpus
 
@@ -101,6 +104,7 @@ pipeline with live progress if you'd rather click.
 | `engine/` | Python acquisition + recovery + reporting. `triage/pipeline.py` is the spine |
 | `engine/triage/parsers/` | One module per artifact type — the bulk of the forensic logic |
 | `engine/triage/recovery/` | SQLite carving: freelist, freeblocks, unallocated, WAL, journals |
+| `engine/triage/intel/` | Case-intelligence layer — planning, RAG retrieval, deep investigation, ask-this-case |
 | `app/` | Electron + React dashboard (Vite, TypeScript) |
 | `apk/` | Kotlin Tier-1 collector, sideloaded and then removed |
 | `docs/` | The reference docs linked below |
@@ -108,7 +112,7 @@ pipeline with live progress if you'd rather click.
 Building and testing each half:
 
 ```bash
-cd engine && python -m pytest tests/ -q      # 1101 tests, no device needed
+cd engine && python -m pytest tests/ -q      # 1205 tests, no device needed
 cd apk && ./gradlew assembleDebug            # needs the Android SDK
 cd app && npx tsc --noEmit                   # dashboard typecheck
 ```
@@ -136,6 +140,6 @@ deliberately not wired up.
 
 <div align="center">
 
-**1101 tests passing** · Runs fully offline · No account, no cloud, no telemetry
+**1205 tests passing** · Runs fully offline · No account, no cloud, no telemetry
 
 </div>

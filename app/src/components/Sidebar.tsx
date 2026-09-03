@@ -6,6 +6,7 @@ export type ViewKey =
   | "cases"
   | "overview"
   | "intel"
+  | "ask"
   | "knowledge"
   | "messages"
   | "contacts"
@@ -52,6 +53,7 @@ const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
   { key: "cases", label: "Case History", icon: "🗄" },
   { key: "overview", label: "Overview", icon: "▤" },
   { key: "intel", label: "Case Intelligence", icon: "✦" },
+  { key: "ask", label: "Ask This Case", icon: "💬" },
   { key: "messages", label: "Messages", icon: "💬", group: "Communications" },
   { key: "telegram", label: "Telegram", icon: "✈" },
   { key: "whatsapp_backup", label: "WA Backup Recovery", icon: "🔓" },

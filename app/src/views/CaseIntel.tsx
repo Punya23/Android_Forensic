@@ -7,6 +7,8 @@ import type {
   CaseProfile,
   CollectionPlan,
   Finding,
+  InvestigationTrace,
+  LinkedCasesResponse,
 } from "../lib/types";
 import { fmtTs } from "../lib/hooks";
 import { ConfidenceBadge } from "../components/Badges";
@@ -31,17 +33,20 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
   const [plan, setPlan] = useState<CollectionPlan | null>(null);
   const [findings, setFindings] = useState<AIFindings | null>(null);
   const [learning, setLearning] = useState<CaseLearning | null>(null);
+  const [investigation, setInvestigation] = useState<InvestigationTrace | null>(null);
+  const [linkedCases, setLinkedCases] = useState<LinkedCasesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [rerunDesc, setRerunDesc] = useState("");
   const [rerunProvider, setRerunProvider] = useState<"heuristic" | "ollama" | "anthropic">("heuristic");
   const [busy, setBusy] = useState(false);
+  const [investigating, setInvestigating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [planRevised, setPlanRevised] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [p, pl, plRev, f, l] = await Promise.all([
+    const [p, pl, plRev, f, l, inv, linked] = await Promise.all([
       api.dataset<CaseProfile>(caseId, "case_profile").catch(() => null),
       api.dataset<CollectionPlan>(caseId, "collection_plan").catch(() => null),
       // Re-analysis writes its re-ranking to a separate dataset rather than over the plan
@@ -50,6 +55,8 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
       api.dataset<CollectionPlan>(caseId, "collection_plan_revised").catch(() => null),
       api.dataset<AIFindings>(caseId, "ai_findings").catch(() => null),
       api.dataset<CaseLearning>(caseId, "case_learning").catch(() => null),
+      api.dataset<InvestigationTrace>(caseId, "investigation_trace").catch(() => null),
+      api.linkedCases(caseId).catch(() => null),
     ]);
     setProfile(p && (p as CaseProfile).crime_type ? (p as CaseProfile) : null);
     const revised = plRev && (plRev as CollectionPlan).crime_type ? (plRev as CollectionPlan) : null;
@@ -58,6 +65,8 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
     setPlanRevised(!!revised);
     setFindings(f && (f as AIFindings).findings ? (f as AIFindings) : null);
     setLearning(l && typeof (l as CaseLearning).recorded === "boolean" ? (l as CaseLearning) : null);
+    setInvestigation(inv && (inv as InvestigationTrace).hypotheses ? (inv as InvestigationTrace) : null);
+    setLinkedCases(linked);
     setLoading(false);
   }, [caseId]);
 
@@ -79,6 +88,19 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function reinvestigate() {
+    setInvestigating(true);
+    setError(null);
+    try {
+      const inv = await api.investigate(caseId, { llm_provider: rerunProvider });
+      setInvestigation(inv);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInvestigating(false);
     }
   }
 
@@ -307,6 +329,108 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
               : "Start a new acquisition with a case brief, or run analysis over this case now using the box below."
           }
         />
+      )}
+
+      {/* Deep investigation — bounded, deterministic hypothesis pass */}
+      <div className="card p-4 mt-6 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-muted">Deep investigation</div>
+            <p className="text-[11px] text-muted mt-0.5 max-w-2xl">
+              A bounded, deterministic pass that cross-links findings the leads above scored
+              independently — e.g. a device location anomaly co-occurring with a message.
+              Runs automatically after analysis; re-run below if new leads were added.
+            </p>
+          </div>
+          <button className="btn-ghost shrink-0" disabled={investigating || !hasProfile} onClick={reinvestigate}>
+            {investigating ? "Investigating…" : "Re-run investigation"}
+          </button>
+        </div>
+        {investigation ? (
+          <div className="space-y-3">
+            <div className="space-y-2">
+              {investigation.hypotheses.map((h) => (
+                <div key={h.id} className="text-xs border-b border-line pb-2 last:border-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full border ${
+                        h.status === "answered"
+                          ? "text-live border-live/30 bg-live/10"
+                          : h.status === "blocked"
+                            ? "text-warn border-warn/30 bg-warn/10"
+                            : "text-muted border-line"
+                      }`}
+                    >
+                      {h.status}
+                    </span>
+                    <span className="text-ink">{h.question}</span>
+                  </div>
+                  <p className="text-[11px] text-muted mt-1 leading-relaxed">{h.detail}</p>
+                </div>
+              ))}
+            </div>
+            {investigation.linked_findings.length > 0 && (
+              <div>
+                <div className="text-[11px] font-medium text-ink mb-1">
+                  Cross-dataset correlations ({investigation.linked_findings.length})
+                </div>
+                <div className="space-y-1.5">
+                  {investigation.linked_findings.map((lf) => (
+                    <div key={lf.id} className="text-[11px] text-muted leading-relaxed border-l-2 border-accent/40 pl-2">
+                      {lf.rationale}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {investigation.narrative && (
+              <div className="border-t border-line pt-2">
+                <div className="text-[11px] font-medium text-ink mb-1">AI synthesis</div>
+                <p className="text-xs text-muted leading-relaxed whitespace-pre-wrap">
+                  {investigation.narrative}
+                </p>
+              </div>
+            )}
+            <p className="text-[11px] text-warn leading-relaxed pt-1">{investigation.disclaimer}</p>
+          </div>
+        ) : (
+          <p className="text-xs text-muted">
+            {hasProfile
+              ? "No investigation has run for this case yet — it runs automatically after analysis with a case brief, or click Re-run investigation above."
+              : "Needs a case brief and at least one AI finding — see Re-run analysis below."}
+          </p>
+        )}
+      </div>
+
+      {/* Linked cases — cross-case identifier matches on this installation */}
+      {linkedCases && linkedCases.linked_cases.length > 0 && (
+        <div className="card p-4 mb-4">
+          <div className="text-xs uppercase tracking-wider text-muted mb-2">
+            Linked cases ({linkedCases.linked_cases.length})
+          </div>
+          <div className="space-y-2">
+            {linkedCases.linked_cases.map((lc) => (
+              <div key={lc.case_id} className="text-xs border-b border-line pb-2 last:border-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[11px] text-accent">{lc.case_id}</span>
+                  <span className="text-muted">
+                    {lc.shared.length} shared identifier{lc.shared.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                <div className="mt-1 space-y-1">
+                  {lc.shared.map((s, i) => (
+                    <div key={i} className="text-[11px] text-muted leading-relaxed">
+                      <span className="text-ink">{s.category}</span>: this case's{" "}
+                      <span className="font-mono">{s.this_value}</span> ({s.this_source}) matches{" "}
+                      {lc.case_id}'s <span className="font-mono">{s.other_value}</span> ({s.other_source})
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-warn mt-2 leading-relaxed">{linkedCases.disclaimer}</p>
+        </div>
       )}
 
       {/* Re-analyze */}

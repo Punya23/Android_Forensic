@@ -59,6 +59,24 @@ CREATE TABLE IF NOT EXISTS reports (
     trigger       TEXT DEFAULT 'manual'
 );
 CREATE INDEX IF NOT EXISTS idx_reports_case ON reports(case_id);
+
+-- Cross-case identifiers: one row per (case, category, normalised value), so the same
+-- phone number/UPI ID/email surfacing in two cases on this installation is a single
+-- indexed lookup rather than an O(n^2) in-memory comparison against every other case.
+-- `value` is what's shown to the examiner (as it appeared in the evidence); `norm` is
+-- what cross-case matching actually joins on (see case_reference.normalize_for_matching)
+-- so "+91 98200 44711" and "+919820044711" are recognised as the same number without
+-- ever displaying the normalised form as if it were the original artifact text.
+CREATE TABLE IF NOT EXISTS case_identifiers (
+    case_id          TEXT NOT NULL,
+    category         TEXT NOT NULL,
+    value            TEXT NOT NULL,
+    norm             TEXT NOT NULL,
+    source_dataset   TEXT DEFAULT '',
+    source_ref       TEXT DEFAULT '',
+    PRIMARY KEY (case_id, category, value)
+);
+CREATE INDEX IF NOT EXISTS idx_case_identifiers_norm ON case_identifiers(category, norm);
 """
 
 
@@ -200,9 +218,56 @@ def delete_case_row(cases_root: Path, case_id: str) -> None:
         try:
             conn.execute("DELETE FROM cases WHERE case_id = ?", (case_id,))
             conn.execute("DELETE FROM reports WHERE case_id = ?", (case_id,))
+            conn.execute("DELETE FROM case_identifiers WHERE case_id = ?", (case_id,))
             conn.commit()
         finally:
             conn.close()
+
+
+def upsert_case_identifiers(cases_root: Path, case_id: str, identifiers: dict) -> int:
+    """(Re-)index one case's extracted identifiers for cross-case linking.
+
+    *identifiers* is the ``{category: [IdentifierMatch, ...]}`` shape from
+    :func:`triage.forensics.case_reference.extract_case_identifiers`. Replaces this
+    case's rows atomically (delete-then-insert in one transaction) so a re-run after
+    new artifacts are collected doesn't leave stale identifiers from an earlier,
+    smaller extraction. Returns the number of identifiers indexed.
+    """
+    from .forensics.case_reference import normalize_for_matching
+
+    rows = []
+    for category, matches in (identifiers or {}).items():
+        for m in matches:
+            value = m.value if hasattr(m, "value") else m.get("value", "")
+            source_dataset = m.source_dataset if hasattr(m, "source_dataset") else m.get("source_dataset", "")
+            source_ref = m.source_ref if hasattr(m, "source_ref") else m.get("source_ref", "")
+            if not value:
+                continue
+            rows.append(
+                (
+                    case_id,
+                    category,
+                    value,
+                    normalize_for_matching(category, value),
+                    source_dataset,
+                    source_ref,
+                )
+            )
+
+    with _WRITE_LOCK:
+        conn = _connect(cases_root)
+        try:
+            conn.execute("DELETE FROM case_identifiers WHERE case_id = ?", (case_id,))
+            conn.executemany(
+                "INSERT INTO case_identifiers "
+                "(case_id, category, value, norm, source_dataset, source_ref) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return len(rows)
 
 
 def sync_registry(cases_root: Path) -> int:
@@ -329,6 +394,62 @@ def list_reports(cases_root: Path, case_id: str) -> list[dict[str, Any]]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def find_linked_cases(cases_root: Path, case_id: str) -> list[dict[str, Any]]:
+    """Every OTHER case on this installation sharing an identifier with *case_id*.
+
+    A single indexed self-join against ``case_identifiers`` (see the table's
+    definition) rather than pairwise comparison against every case in memory. Returns
+    one row per (other_case_id, category, value) match, each carrying both cases'
+    original (non-normalised) values and their provenance — so a match is never just
+    "these two cases are linked" with no way to check it, but exactly which artifact in
+    each case produced the shared value.
+
+    This is a fact about the *installation's case history*, never evidence linking two
+    investigations — the disclaimer travels with the API response, matching how
+    precedent retrieval is presented in the case-intelligence plan.
+    """
+    conn = _connect(cases_root)
+    try:
+        rows = conn.execute(
+            """
+            SELECT a.category AS category,
+                   a.value AS this_value, a.source_dataset AS this_source_dataset,
+                   a.source_ref AS this_source_ref,
+                   b.case_id AS other_case_id,
+                   b.value AS other_value, b.source_dataset AS other_source_dataset,
+                   b.source_ref AS other_source_ref
+            FROM case_identifiers a
+            JOIN case_identifiers b
+              ON a.category = b.category AND a.norm = b.norm AND a.case_id != b.case_id
+            WHERE a.case_id = ?
+            ORDER BY b.case_id, a.category
+            """,
+            (case_id,),
+        )
+        matches = [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+    # Group by the other case so the caller gets "these N shared identifiers link to
+    # case X" rather than a flat list an examiner has to re-group themselves.
+    by_case: dict[str, dict[str, Any]] = {}
+    for m in matches:
+        other = m["other_case_id"]
+        entry = by_case.setdefault(other, {"case_id": other, "shared": []})
+        entry["shared"].append(
+            {
+                "category": m["category"],
+                "this_value": m["this_value"],
+                "this_source": f"{m['this_source_dataset']}: {m['this_source_ref']}",
+                "other_value": m["other_value"],
+                "other_source": f"{m['other_source_dataset']}: {m['other_source_ref']}",
+            }
+        )
+    out = list(by_case.values())
+    out.sort(key=lambda e: len(e["shared"]), reverse=True)
+    return out
 
 
 def registry_stats(cases_root: Path) -> dict[str, Any]:
