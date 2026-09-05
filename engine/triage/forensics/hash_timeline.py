@@ -6,6 +6,7 @@ how long the hashing took, presenting the data in an HTML timeline chart.
 
 from __future__ import annotations
 
+import html
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,10 @@ from typing import Any, Dict, List
 from .hash_verification import artifact_sha256, load_manifest
 
 logger = logging.getLogger(__name__)
+
+
+def _esc(v: Any) -> str:
+    return html.escape(str(v if v is not None else ""))
 
 
 def _extracted_epoch(artifact: Dict[str, Any], fallback: float) -> float:
@@ -111,7 +116,7 @@ def create_timeline_chart(timeline: List[Dict[str, Any]]) -> str:
         # Color red if it's very slow (> 1 second)
         color = "#ef4444" if item["time_elapsed"] > 1.0 else "#3b82f6"
 
-        tooltip = f"{item['file']}&#10;Time: {item['time_elapsed']:.3f}s"
+        tooltip = f"{_esc(item['file'])}&#10;Time: {item['time_elapsed']:.3f}s"
         bars += f'<div style="width:10px; height:{height_pct}%; background:{color}; margin:0 2px; display:inline-block; border-radius:2px 2px 0 0;" title="{tooltip}"></div>'
 
     html = f"""
@@ -139,7 +144,7 @@ def generate_timeline_html(case_dir: Path) -> str:
         slowest_html = "<table><thead><tr><th>Time (s)</th><th>Size</th><th>File</th></tr></thead><tbody>"
         for item in slowest:
             size_mb = item["size"] / (1024 * 1024)
-            slowest_html += f"<tr><td>{item['time_elapsed']:.3f}s</td><td>{size_mb:.1f} MB</td><td style='word-break:break-all'>{item['file']}</td></tr>"
+            slowest_html += f"<tr><td>{item['time_elapsed']:.3f}s</td><td>{size_mb:.1f} MB</td><td style='word-break:break-all'>{_esc(item['file'])}</td></tr>"
         slowest_html += "</tbody></table>"
 
     html = f"""<!DOCTYPE html>
