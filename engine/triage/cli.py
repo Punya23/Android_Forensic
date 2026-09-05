@@ -22,6 +22,12 @@ from pathlib import Path
 from .acquire import MockDeviceSource, RealDeviceSource
 from .adb import Adb
 from .pipeline import PipelineConfig, run_acquisition
+from .preflight import (
+    ConnectionState,
+    detect_connection_state,
+    reassert_developer_options,
+    steps_for_brand,
+)
 
 
 def _progress(stage: str, pct: float, detail: str) -> None:
@@ -39,6 +45,55 @@ def cmd_devices(_args) -> int:
         return 0
     for d in devs:
         print(f"  {d['serial']:<24} {d['state']}")
+    return 0
+
+
+def cmd_check_device(args) -> int:
+    """Report ADB connection state and, if not ready, the exact steps to get there.
+
+    This never bypasses Android's own security gate — it can't; nothing on the
+    workstation side can. See ``triage.preflight`` for why. What it does do is stop
+    "no devices found" from being the examiner's only signal by naming exactly which
+    step of the Developer-Options/USB-debugging sequence the device is stuck on, and
+    which of that OEM's known extra steps still apply.
+    """
+    adb = Adb(serial=args.serial)
+    readiness = detect_connection_state(adb)
+
+    print(f"State: {readiness.state.value}")
+    if readiness.serial:
+        print(f"Serial: {readiness.serial}")
+    if readiness.note:
+        print(readiness.note)
+
+    if readiness.state != ConnectionState.READY:
+        brand = (args.brand or "").strip()
+        heading = (
+            f"\nDeveloper Options / USB debugging checklist for {brand}:"
+            if brand
+            else "\nDeveloper Options / USB debugging checklist (generic AOSP — pass "
+            "--brand for OEM-specific steps, e.g. xiaomi, oneplus, vivo, samsung):"
+        )
+        print(heading)
+        for i, step in enumerate(steps_for_brand(brand), 1):
+            print(f"  {i}. {step}")
+        return 0
+
+    source = RealDeviceSource(adb)
+    info = source.device_info()
+    print(
+        f"Device: {info.manufacturer} {info.model} — "
+        f"{info.os_skin or info.brand} / Android {info.android_version}"
+    )
+    if info.oem_quirks:
+        print(f"OEM quirks: {', '.join(info.oem_quirks)}")
+
+    if args.reassert_dev_options:
+        dev_opts, adb_enabled = reassert_developer_options(adb)
+        print("\nRe-asserting Developer Options (STATE-CHANGING; only works because an "
+              "adb session already exists — see triage.preflight):")
+        print(f"  development_settings_enabled=1 -> {'ok' if dev_opts.ok else 'FAILED: ' + dev_opts.stderr.strip()}")
+        print(f"  adb_enabled=1                 -> {'ok' if adb_enabled.ok else 'FAILED: ' + adb_enabled.stderr.strip()}")
     return 0
 
 
@@ -114,6 +169,26 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("devices", help="list connected ADB devices")
+
+    ck = sub.add_parser(
+        "check-device",
+        help="check ADB connection state; print Developer-Options/USB-debugging "
+        "guidance if the device isn't ready yet",
+    )
+    ck.add_argument("--serial", help="ADB serial of a real device")
+    ck.add_argument(
+        "--brand",
+        default="",
+        help="device brand/manufacturer for OEM-specific steps when no device is "
+        "visible yet, e.g. xiaomi, oneplus, vivo, samsung, oppo, honor, huawei",
+    )
+    ck.add_argument(
+        "--reassert-dev-options",
+        action="store_true",
+        help="STATE-CHANGING: re-enable Developer Options + USB debugging via "
+        "`settings put global` — only works if adb shell access already exists; "
+        "cannot perform the first-time enable on any device",
+    )
 
     a = sub.add_parser("acquire", help="run a full triage acquisition")
     a.add_argument(
@@ -268,6 +343,8 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     if args.cmd == "devices":
         return cmd_devices(args)
+    if args.cmd == "check-device":
+        return cmd_check_device(args)
     if args.cmd == "acquire":
         return cmd_acquire(args)
     return 1

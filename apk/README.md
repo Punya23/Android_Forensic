@@ -27,8 +27,8 @@ and writes `collector_manifest.json` summarising what ran, row counts, and every
 | Action | Output | Permission | Grantable via `pm grant`? |
 |---|---|---|---|
 | `dump_contacts` | `contacts.json` (merged numbers + emails) | `READ_CONTACTS` | ✅ |
-| `dump_calllog` | `calllog.json` | `READ_CALL_LOG` | ❌ hard-restricted → Dialer role swap |
-| `dump_sms` | `sms.json` (+ MMS text) | `READ_SMS` | ❌ hard-restricted → SMS role swap |
+| `dump_calllog` | `calllog.json` | `READ_CALL_LOG` | ✅ via `adb shell pm grant` — hard-restricted for a *normal* install, but `pm grant` issued from the ADB shell UID is allowlisted for it (see the honesty note in `pipeline.py`, tag P2-5); the flow aborts rather than falling back to a role swap if that ever stops being true on some future build |
+| `dump_sms` | `sms.json` (+ MMS text) | `READ_SMS` | ✅ same as above |
 | `dump_calendar` | `calendar.json` | `READ_CALENDAR` | ✅ |
 | `dump_accounts` | `accounts.json` (Google / WhatsApp / Telegram / Snapchat identities) | `GET_ACCOUNTS` | ✅ — visibility is OEM-dependent |
 | `dump_apps` | `apps.json` (inventory + vault/messaging classification) | `QUERY_ALL_PACKAGES` | ✅ install-time |
@@ -76,8 +76,8 @@ literal string `[permission_denied]` into the field rather than omitting it.
 | Artifact | Permission | `pm grant` without root? | Notes |
 |---|---|---|---|
 | Contacts, calendar, media, location, Wi-Fi, Bluetooth | dangerous, not hard-restricted | ✅ | The clean Tier-1 wins |
-| Call log | `READ_CALL_LOG` | ❌ hard-restricted | Needs a temporary default-Dialer role swap — intrusive; log it and revert |
-| SMS | `READ_SMS` | ❌ hard-restricted | Needs a temporary default-SMS role swap — same treatment |
+| Call log | `READ_CALL_LOG` | ✅ from `adb shell pm grant` only | Blocked if requested through the runtime dialog like a normal app; the ADB-shell grant path is allowlisted around that restriction. No role swap is performed — if the grant fails, the flow aborts and logs it rather than escalating to a role change |
+| SMS | `READ_SMS` | ✅ from `adb shell pm grant` only | Same treatment as call log |
 | App usage | `PACKAGE_USAGE_STATS` | ❌ (not a runtime permission) | Granted with `appops`, not `pm grant` |
 | Wi-Fi passwords, Bluetooth link keys | — | ❌ ever | Root-only. No app can read them |
 
@@ -92,10 +92,12 @@ adb shell pm grant io.erakshak.collector android.permission.READ_CONTACTS
 adb shell pm grant io.erakshak.collector android.permission.READ_MEDIA_IMAGES
 adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_all
 
-# 3. INTRUSIVE, optional — call log / SMS via role swap. Must be reverted.
-adb shell cmd role add-role-holder android.app.role.DIALER io.erakshak.collector
+# 3. INTRUSIVE, optional — call log / SMS. `pm grant` issued from the ADB shell UID is
+#    allowlisted for these two even though they're hard-restricted for a normal app; no
+#    role swap happens. If the grant ever fails on some future build, the engine aborts
+#    that flow and logs it rather than escalating to a role change.
+adb shell pm grant io.erakshak.collector android.permission.READ_CALL_LOG
 adb shell am start -n io.erakshak.collector/.MainActivity --es action dump_calllog
-adb shell cmd role remove-role-holder android.app.role.DIALER io.erakshak.collector
 
 # 4. pull what it wrote, then remove the app
 adb pull /sdcard/Download/collector_manifest.json
@@ -103,8 +105,55 @@ adb pull /sdcard/Download/contacts.json
 adb uninstall io.erakshak.collector
 ```
 
+The engine's own driver (`pipeline._run_tier1_collect_all` / `_run_tier1_calllog_helper` /
+`_run_tier1_sms_helper` / `_run_tier1_contacts_helper`) doesn't just sleep a fixed few
+seconds after step 2/3 and hope — it polls for `collector_manifest.json` to appear on the
+device (written last, after every requested collector has run), and gives OEMs with a
+known interactive quirk — OnePlus's runtime-dialog fallback, Xiaomi's Mi Account prompt,
+OPPO/Realme's lock-screen PIN, Vivo's "Verify apps over USB" — up to 90s instead of the
+generic 20s, so the examiner has real time to clear whatever's on screen before the pull
+happens. See `_TIER1_INTERACTIVE_QUIRKS` in `pipeline.py`.
+
 `engine/triage/parsers/collector.py` ingests exactly the JSON shapes this app emits, and
 the pipeline picks them up automatically when they appear in `/sdcard/Download`.
+
+## Developer Options / USB debugging, brand by brand
+
+None of this can be automated, on any brand, ever — and that's not a gap in this tool.
+Android requires a human to tap through Developer Options → USB debugging → the "Allow
+USB debugging?" prompt, on the device's own screen, before *any* ADB tool can talk to it.
+The entire point of that prompt is that the computer side isn't trusted yet, so nothing
+issued from the computer side can substitute for it. Cellebrite, Oxygen, and every other
+non-root forensic tool hits the same wall.
+
+What this repo does instead:
+
+- `python -m triage.cli check-device --brand <brand>` reports the exact ADB state
+  (`no_device` / `unauthorized` / `offline` / `device`) and prints that brand's full
+  checklist — the generic AOSP sequence plus whatever extra friction that OEM is known to
+  add. See `engine/triage/preflight.py` for the source of truth; `triage.config.OEM_QUIRKS`
+  for the same brand keys used everywhere else in the codebase (device intake, the
+  report's OEM-quirk footnotes, and the `_TIER1_INTERACTIVE_QUIRKS` wait logic above).
+- `--reassert-dev-options` runs the *one* legitimately automatable step: once an ADB shell
+  session already exists, `settings put global development_settings_enabled 1` +
+  `adb_enabled 1` re-enable Developer Options if an OEM build (MIUI does this) silently
+  flips it back off between sessions on the same device. It cannot perform the first-time
+  enable — there's no ADB session to run it over yet on a device that's never had USB
+  debugging on.
+
+Known extra steps per brand (beyond "Build number ×7 → Developer options → USB debugging
+→ tap Allow"):
+
+| Brand | Extra step |
+|---|---|
+| Xiaomi / Redmi / POCO | Separate "USB debugging (Security settings)" toggle, needs a signed-in Mi Account + active SIM; also enable "Install via USB"; disable battery saver |
+| OPPO / Realme | May prompt for the lock-screen PIN during `adb install`; keep the collector in the foreground |
+| OnePlus | No extra Developer Options step, but `pm grant` is blocked at collection time — expect on-screen permission dialogs instead |
+| Vivo / iQOO | Disable "Verify apps over USB" if present; keep the collector in the foreground (i Manager kills background apps) |
+| Honor | ADB authorization can time out faster than stock Android — re-authorize promptly |
+| Huawei | Only AOSP-based HarmonyOS (≤3.x) works at all; HarmonyOS NEXT has no Android layer and no Developer-Options equivalent reaches it |
+| Samsung | No extra step to *reach* the device, but Secure Folder content stays encrypted regardless |
+| Google / Motorola / Nothing | Stock sequence only |
 
 ## Building
 

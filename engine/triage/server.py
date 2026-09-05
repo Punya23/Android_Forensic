@@ -318,6 +318,84 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         return jsonify({"real": real, "mock": mocks})
 
+    @app.get("/api/devices/check")
+    def devices_check():
+        """Connection-state + Developer-Options guidance for one device.
+
+        The dashboard equivalent of ``triage.cli check-device`` — nothing here needs a
+        terminal. Meant to be polled from the Acquisition view's device picker (once on
+        selection, or on an explicit "Re-check" click) so "no devices found" is never
+        the examiner's only signal. See ``triage.preflight`` for why the very first
+        Developer-Options/USB-debugging enable can never be automated, on any brand,
+        by this tool or any other.
+        """
+        from .preflight import ConnectionState, detect_connection_state, steps_for_brand
+
+        serial = request.args.get("serial") or None
+        brand = request.args.get("brand", "")
+        adb = Adb(serial=serial)
+        readiness = detect_connection_state(adb)
+
+        result: dict[str, Any] = {
+            "state": readiness.state.value,
+            "serial": readiness.serial,
+            "note": readiness.note,
+            "ready": readiness.state == ConnectionState.READY,
+        }
+
+        if readiness.state == ConnectionState.READY:
+            source = RealDeviceSource(adb)
+            info = source.device_info()
+            result["device"] = {
+                "manufacturer": info.manufacturer,
+                "model": info.model,
+                "brand": info.brand,
+                "os_skin": info.os_skin,
+                "android_version": info.android_version,
+                "oem_quirks": info.oem_quirks,
+            }
+            # A ready device tells us its own brand — no need to ask the caller for it.
+            brand = brand or info.brand
+
+        result["brand"] = brand
+        result["checklist"] = steps_for_brand(brand)
+        return jsonify(result)
+
+    @app.post("/api/devices/reassert-dev-options")
+    def devices_reassert_dev_options():
+        """STATE-CHANGING: re-enable Developer Options + USB debugging.
+
+        Runs ``settings put global development_settings_enabled 1`` / ``adb_enabled 1``
+        over an ADB shell session that must already exist — see
+        ``triage.preflight.reassert_developer_options``. This is the only step in the
+        whole Developer-Options sequence that can be scripted, and only because an
+        existing session is the precondition for running it; it cannot perform the
+        first-time enable on a device that has never had USB debugging turned on.
+        This call happens before any case is opened, so — unlike every other
+        state-changing step in this tool — it is NOT written to a case audit trail;
+        the response says so explicitly so the dashboard can surface it.
+        """
+        from .preflight import reassert_developer_options
+
+        body = request.get_json(silent=True) or {}
+        adb = Adb(serial=body.get("serial") or None)
+        if not adb.available:
+            return jsonify({"error": "adb not available"}), 400
+
+        dev_opts, adb_enabled = reassert_developer_options(adb)
+        return jsonify(
+            {
+                "development_settings_enabled": {
+                    "ok": dev_opts.ok,
+                    "stderr": dev_opts.stderr.strip(),
+                },
+                "adb_enabled": {"ok": adb_enabled.ok, "stderr": adb_enabled.stderr.strip()},
+                "note": "pre-case action — not written to any case's audit trail "
+                "(no case is open yet); mention it in the case scope note if you "
+                "go on to acquire from this device",
+            }
+        )
+
     # ---------------------------------------------------------
     # CASE INTELLIGENCE
     # ---------------------------------------------------------

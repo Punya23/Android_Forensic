@@ -62,7 +62,18 @@ Messages, Recovered/Deleted, Media, Locations, Timeline, Chain-of-Custody, and R
 ## 4 — Using a real device (Tier 0 / Tier 1)
 
 1. Enable **USB debugging** on the (unlocked, consenting) device and authorise the
-   workstation's RSA key when prompted.
+   workstation's RSA key when prompted. This step needs a finger on the device's own
+   screen — Android will not let *any* tool, this one included, do it from the
+   workstation side, on any brand. If you're not sure what to tap, or the device is a
+   brand you haven't seen before:
+   ```bash
+   python -m triage.cli check-device --brand xiaomi   # or oppo, oneplus, vivo, samsung, honor, huawei…
+   ```
+   prints the exact ADB connection state (no device / unauthorized / offline / ready)
+   plus that brand's Developer-Options checklist — see [`triage/preflight.py`](../engine/triage/preflight.py)
+   and the "Developer Options / USB debugging, brand by brand" section of
+   [`apk/README.md`](../apk/README.md#developer-options--usb-debugging-brand-by-brand)
+   for the full per-OEM detail.
 2. `cd engine && source .venv/bin/activate`
 3. `python -m triage.cli devices` to confirm it's detected.
 4. `python -m triage.cli acquire --serial <SERIAL> --case CASE-002 --examiner "..."`
