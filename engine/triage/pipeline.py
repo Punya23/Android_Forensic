@@ -4046,6 +4046,34 @@ def _run_tier2_instagram(
         move=True,
     )
     stored = case.root / rec.stored_path
+
+    # WAL/SHM/rollback-journal sidecars (same P0 fix as Telegram's cache4.db, see
+    # test_wal_sidecar.py). direct.db is held open by a live app in WAL mode; copying
+    # the .db alone silently drops the newest committed rows AND every deleted/edited
+    # row image still sitting in the WAL or an uncheckpointed journal. `recover_deleted_rows`
+    # (called inside `recover_instagram_messages` -> `appchat.carve_and_gaps`) looks for
+    # a sibling named `<stored name>-wal`/`-shm`/`-journal`, so co-locate each sidecar
+    # under that exact name next to `stored`. A missing sidecar is normal (a fully
+    # checkpointed DB has none) and is not itself a finding.
+    sidecar_specs = [
+        (remote_db + suf, f"direct.db{suf}") for suf in ("-wal", "-shm", "-journal")
+    ]
+    sidecars_pulled = _root_pull_paths(
+        source, case, staging, sidecar_specs, label="instagram.sidecar", category="database", app="instagram"
+    )
+    sidecars_present: list[str] = []
+    for remote_path, _local_name in sidecar_specs:
+        local_file = sidecars_pulled.get(remote_path)
+        if local_file and local_file.exists():
+            suffix = "-" + remote_path.rsplit("-", 1)[-1]
+            shutil.copy2(local_file, Path(str(stored) + suffix))
+            sidecars_present.append(suffix.lstrip("-"))
+    case.log(
+        "tier2.instagram.sidecars",
+        f"WAL/journal sidecars co-located: {sidecars_present or 'none (checkpointed or absent)'}",
+        tier=Tier.TIER2.value,
+    )
+
     res = recover_instagram_messages(
         stored, prefs_dir=local_prefs if local_prefs.exists() else None
     )
@@ -4124,6 +4152,34 @@ def _run_tier2_snapchat(
         move=True,
     )
     stored = case.root / rec.stored_path
+
+    # WAL/SHM/rollback-journal sidecars (same P0 fix as Telegram's cache4.db, see
+    # test_wal_sidecar.py). arroyo.db is held open by a live app in WAL mode; copying
+    # the .db alone silently drops the newest committed rows AND every deleted/edited
+    # row image still sitting in the WAL or an uncheckpointed journal. `recover_deleted_rows`
+    # (called inside `recover_snapchat_messages` -> `appchat.carve_and_gaps`) looks for a
+    # sibling named `<stored name>-wal`/`-shm`/`-journal`, so co-locate each sidecar under
+    # that exact name next to `stored`. A missing sidecar is normal (a fully checkpointed
+    # DB has none) and is not itself a finding.
+    sidecar_specs = [
+        (remote_arroyo + suf, f"arroyo.db{suf}") for suf in ("-wal", "-shm", "-journal")
+    ]
+    sidecars_pulled = _root_pull_paths(
+        source, case, staging, sidecar_specs, label="snapchat.sidecar", category="database", app="snapchat"
+    )
+    sidecars_present: list[str] = []
+    for remote_path, _local_name in sidecar_specs:
+        local_file = sidecars_pulled.get(remote_path)
+        if local_file and local_file.exists():
+            suffix = "-" + remote_path.rsplit("-", 1)[-1]
+            shutil.copy2(local_file, Path(str(stored) + suffix))
+            sidecars_present.append(suffix.lstrip("-"))
+    case.log(
+        "tier2.snapchat.sidecars",
+        f"WAL/journal sidecars co-located: {sidecars_present or 'none (checkpointed or absent)'}",
+        tier=Tier.TIER2.value,
+    )
+
     res = recover_snapchat_messages(
         stored, main_db=local_main if local_main.exists() else None
     )
