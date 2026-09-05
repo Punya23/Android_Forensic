@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
-import { StatCard, bytes } from "../components/common";
+import { StatCard, SortTh, useSort, bytes } from "../components/common";
 
 /** One entry from the recent-task list. */
 export interface RecentTaskRecord {
@@ -151,6 +151,16 @@ export function RecentTasksView({ caseId }: { caseId: string }) {
       )
       .sort((a, b) => (b.last_time_moved || "").localeCompare(a.last_time_moved || ""));
   }, [tasks, query]);
+  const namedSnapshots = useMemo(
+    () => snapshots.filter((s) => snapshotName(s)),
+    [snapshots]
+  );
+  // Hooks must run unconditionally on every render — computed here, before either early
+  // return below, rather than after the loading/BFU checks. Each table gets its own
+  // useSort instance; with no column clicked yet, `sorted` is just the array as given, so
+  // the existing default orders (last_time_moved descending / dataset order) are unchanged.
+  const tasksSort = useSort<RecentTaskRecord>(filtered);
+  const snapshotsSort = useSort<TaskSnapshotRecord>(namedSnapshots);
 
   // Wait for the summary before rendering anything — a skipped collection must never flash an
   // empty table, because that reads as "there were no recent tasks".
@@ -206,7 +216,6 @@ export function RecentTasksView({ caseId }: { caseId: string }) {
   /* ------------------------------------------------------------------ */
   const volatileCount = tasks.filter((t) => t.volatile).length;
   const abxCount = tasks.filter((t) => t.encoding === "abx").length;
-  const namedSnapshots = snapshots.filter((s) => snapshotName(s));
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -290,25 +299,25 @@ export function RecentTasksView({ caseId }: { caseId: string }) {
             <table className="w-full text-sm">
               <thead>
                 <tr>
-                  <th className="th w-20">Task</th>
-                  <th className="th">Activity / label</th>
-                  <th className="th w-44">Calling package</th>
-                  <th className="th w-44">Last moved</th>
-                  <th className="th">Intent</th>
-                  <th className="th w-44">Snapshot</th>
-                  <th className="th w-28">Encoding</th>
-                  <th className="th w-28">Confidence</th>
+                  <SortTh className="th w-20" label="Task" sortKeyName="task_id" getValue={(t: RecentTaskRecord) => t.task_id} sort={tasksSort} />
+                  <SortTh className="th" label="Activity / label" sortKeyName="real_activity" getValue={(t: RecentTaskRecord) => t.real_activity} sort={tasksSort} />
+                  <SortTh className="th w-44" label="Calling package" sortKeyName="calling_package" getValue={(t: RecentTaskRecord) => t.calling_package} sort={tasksSort} />
+                  <SortTh className="th w-44" label="Last moved" sortKeyName="last_time_moved" getValue={(t: RecentTaskRecord) => t.last_time_moved} sort={tasksSort} />
+                  <SortTh className="th" label="Intent" sortKeyName="intent_action" getValue={(t: RecentTaskRecord) => t.intent_action} sort={tasksSort} />
+                  <SortTh className="th w-44" label="Snapshot" sortKeyName="snapshot_file" getValue={(t: RecentTaskRecord) => t.snapshot_file} sort={tasksSort} />
+                  <SortTh className="th w-28" label="Encoding" sortKeyName="encoding" getValue={(t: RecentTaskRecord) => t.encoding} sort={tasksSort} />
+                  <SortTh className="th w-28" label="Confidence" sortKeyName="confidence" getValue={(t: RecentTaskRecord) => t.confidence} sort={tasksSort} />
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 ? (
+                {tasksSort.sorted.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="text-center py-8 text-muted text-xs">
                       No tasks match your filter.
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((t, i) => (
+                  tasksSort.sorted.map((t, i) => (
                     <tr key={i}>
                       <td className="td font-mono text-xs align-top">
                         {t.task_id}
@@ -408,15 +417,15 @@ export function RecentTasksView({ caseId }: { caseId: string }) {
               <table className="w-full text-sm">
                 <thead>
                   <tr>
-                    <th className="th">File</th>
-                    <th className="th w-24">Task</th>
-                    <th className="th w-28">Size</th>
-                    <th className="th w-48">Modified (file mtime)</th>
-                    <th className="th w-28">Kind</th>
+                    <SortTh className="th" label="File" sortKeyName="file" getValue={(s: TaskSnapshotRecord) => snapshotName(s)} sort={snapshotsSort} />
+                    <SortTh className="th w-24" label="Task" sortKeyName="task_id" getValue={(s: TaskSnapshotRecord) => s.task_id} sort={snapshotsSort} />
+                    <SortTh className="th w-28" label="Size" sortKeyName="size" getValue={(s: TaskSnapshotRecord) => s.size} sort={snapshotsSort} />
+                    <SortTh className="th w-48" label="Modified (file mtime)" sortKeyName="modified" getValue={(s: TaskSnapshotRecord) => s.modified} sort={snapshotsSort} />
+                    <SortTh className="th w-28" label="Kind" sortKeyName="kind" getValue={(s: TaskSnapshotRecord) => s.kind} sort={snapshotsSort} />
                   </tr>
                 </thead>
                 <tbody>
-                  {namedSnapshots.map((s, i) => (
+                  {snapshotsSort.sorted.map((s, i) => (
                     <tr key={i}>
                       <td className="td font-mono text-xs break-all">{snapshotName(s)}</td>
                       <td className="td font-mono text-xs">

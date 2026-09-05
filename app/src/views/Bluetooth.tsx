@@ -306,6 +306,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
   const [deviceFilter, setDeviceFilter] = useState("");
   const [bondFilter, setBondFilter] = useState("");
   const [collectorBtFilter, setCollectorBtFilter] = useState("");
+  const [transferFilter, setTransferFilter] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -390,6 +391,17 @@ export function BluetoothView({ caseId }: { caseId: string }) {
     return acc;
   }, {});
   const isPermissionDenied = (v?: string) => (v || "").startsWith("[");
+
+  const tq = transferFilter.toLowerCase();
+  const filteredTransfers = transfers.filter(
+    (t) =>
+      !tq ||
+      (t.peer_address || "").toLowerCase().includes(tq) ||
+      (t.filename || "").toLowerCase().includes(tq) ||
+      (t.mimetype || "").toLowerCase().includes(tq) ||
+      (t.direction || "").toLowerCase().includes(tq) ||
+      (t.status || "").toLowerCase().includes(tq),
+  );
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -792,6 +804,13 @@ export function BluetoothView({ caseId }: { caseId: string }) {
               </div>
             )}
 
+            <input
+              className="input max-w-sm mb-3"
+              placeholder="Filter by peer address, filename, direction or outcome…"
+              value={transferFilter}
+              onChange={(e) => setTransferFilter(e.target.value)}
+            />
+
             <div className="card overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -805,7 +824,14 @@ export function BluetoothView({ caseId }: { caseId: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {transfers.map((t, i) => (
+                  {filteredTransfers.length === 0 ? (
+                    <tr>
+                      <td className="td text-center text-muted text-xs py-6" colSpan={6}>
+                        No transfers match your filter.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredTransfers.map((t, i) => (
                     <tr key={`${t.peer_address}-${t.timestamp}-${i}`}>
                       <td className="td font-mono text-xs">
                         {t.timestamp ? (
@@ -847,10 +873,17 @@ export function BluetoothView({ caseId }: { caseId: string }) {
                         )}
                       </td>
                     </tr>
-                  ))}
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
+
+            {filteredTransfers.length < transfers.length && (
+              <p className="text-xs text-muted mt-2">
+                Showing {filteredTransfers.length} of {transfers.length} transfers
+              </p>
+            )}
           </>
         )}
 

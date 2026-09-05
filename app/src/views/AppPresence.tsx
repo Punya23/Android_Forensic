@@ -12,7 +12,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
-import { StatCard } from "../components/common";
+import { SortTh, StatCard, useSort } from "../components/common";
 
 /** One reconstructed package-presence record. */
 export interface AppPresenceRecord {
@@ -238,6 +238,11 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
       );
   }, [presence, query]);
 
+  // Sortable state for the main package-presence table below. Computed here,
+  // unconditionally, before the `if (loading) return` further down — see the
+  // Rules-of-Hooks note at the top of this file's sibling views (Calls.tsx).
+  const sort = useSort<AppPresenceRecord>(filtered);
+
   /** Raw packages.xml rows — searchable/sortable by package name, independent of the
    *  reconstructed presence table above. This is the actual parsed row, not a count. */
   const filteredPackages = useMemo(() => {
@@ -438,14 +443,26 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
             <table className="w-full text-sm">
               <thead>
                 <tr>
-                  <th className="th">Package</th>
-                  <th className="th w-32">Status</th>
-                  <th className="th w-40">Install / execution</th>
-                  <th className="th w-40">First seen (approx.)</th>
-                  <th className="th w-40">Last seen (approx.)</th>
-                  <th className="th w-20">Events</th>
-                  <th className="th">Evidence basis</th>
-                  <th className="th w-28">Confidence</th>
+                  <SortTh className="th" label="Package" sortKeyName="package" getValue={(r) => r.package} sort={sort} />
+                  <SortTh className="th w-32" label="Status" sortKeyName="currently_installed" getValue={(r) => r.currently_installed} sort={sort} />
+                  <SortTh
+                    className="th w-40"
+                    label="Install / execution"
+                    sortKeyName="install_execution"
+                    getValue={(r) => (r.ever_executed ? 2 : 0) + (r.ever_installed ? 1 : 0)}
+                    sort={sort}
+                  />
+                  <SortTh className="th w-40" label="First seen (approx.)" sortKeyName="first_seen" getValue={(r) => r.first_seen} sort={sort} />
+                  <SortTh className="th w-40" label="Last seen (approx.)" sortKeyName="last_seen" getValue={(r) => r.last_seen} sort={sort} />
+                  <SortTh className="th w-20" label="Events" sortKeyName="event_count" getValue={(r) => r.event_count} sort={sort} />
+                  <SortTh
+                    className="th"
+                    label="Evidence basis"
+                    sortKeyName="evidence_sources"
+                    getValue={(r) => r.evidence_sources?.length ?? 0}
+                    sort={sort}
+                  />
+                  <SortTh className="th w-28" label="Confidence" sortKeyName="confidence" getValue={(r) => r.confidence} sort={sort} />
                 </tr>
               </thead>
               <tbody>
@@ -456,7 +473,7 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((r, i) => {
+                  sort.sorted.map((r, i) => {
                     const isExpanded = expandedEventsPkg === r.package;
                     const caseEventCount = eventsByPackage.get(r.package) ?? 0;
                     return (

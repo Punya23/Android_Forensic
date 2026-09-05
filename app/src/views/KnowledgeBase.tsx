@@ -6,7 +6,7 @@ import type {
   KnowledgeGraphView,
   Precedent,
 } from "../lib/types";
-import { SectionHeader, EmptyState } from "../components/common";
+import { SectionHeader, EmptyState, SortTh, useSort } from "../components/common";
 
 const CRIME_TYPES = [
   "murder",
@@ -83,6 +83,9 @@ export function KnowledgeBaseView() {
     const entries = Object.values(graph?.artifact_priors || {});
     return entries.sort((a, b) => b.blended - a.blended || b.observations - a.observations);
   }, [graph]);
+  // Hook must run unconditionally on every render — computed here, before the
+  // loading early return below, rather than after it.
+  const priorsSort = useSort<ArtifactPrior>(priors);
 
   if (loading) return <div className="p-8 text-muted">Loading knowledge base…</div>;
 
@@ -136,15 +139,39 @@ export function KnowledgeBaseView() {
               <thead className="text-muted uppercase tracking-wider text-[10px]">
                 <tr className="border-b border-line">
                   <th className="text-left py-1">Artifact</th>
-                  <th className="text-right py-1">Doctrine</th>
-                  <th className="text-right py-1">Learned</th>
-                  <th className="text-right py-1">Applied</th>
-                  <th className="text-right py-1">Observations</th>
+                  <SortTh
+                    className="text-right py-1"
+                    label="Doctrine"
+                    sortKeyName="doctrine"
+                    getValue={(p: ArtifactPrior) => p.doctrine}
+                    sort={priorsSort}
+                  />
+                  <SortTh
+                    className="text-right py-1"
+                    label="Learned"
+                    sortKeyName="posterior"
+                    getValue={(p: ArtifactPrior) => p.posterior}
+                    sort={priorsSort}
+                  />
+                  <SortTh
+                    className="text-right py-1"
+                    label="Applied"
+                    sortKeyName="blended"
+                    getValue={(p: ArtifactPrior) => p.blended}
+                    sort={priorsSort}
+                  />
+                  <SortTh
+                    className="text-right py-1"
+                    label="Observations"
+                    sortKeyName="observations"
+                    getValue={(p: ArtifactPrior) => p.observations}
+                    sort={priorsSort}
+                  />
                   <th className="text-left py-1 pl-3">Trust</th>
                 </tr>
               </thead>
               <tbody>
-                {priors.map((p) => (
+                {priorsSort.sorted.map((p) => (
                   <PriorRow key={p.artifact} p={p} />
                 ))}
               </tbody>

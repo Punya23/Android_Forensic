@@ -9,7 +9,7 @@
  */
 import { useMemo, useState } from "react";
 import { useDataset, fmtTs } from "../lib/hooks";
-import { StatCard } from "../components/common";
+import { StatCard, SortTh, useSort } from "../components/common";
 
 /** A row parsed from `dumpsys notification --history` (engine: parsers/notification.py). */
 export interface NotificationRecord {
@@ -32,6 +32,17 @@ const PRIORITY_META: Record<NotificationRecord["priority"], { label: string; cls
   none: { label: "NONE", cls: "bg-panel-2 text-muted border border-line" },
 };
 
+// Severity order for column sort — priority is not alphabetical (e.g. "high" < "max"
+// alphabetically is fine, but "default" < "high" is not), so sort by this rank instead.
+const PRIORITY_RANK: Record<NotificationRecord["priority"], number> = {
+  none: 0,
+  min: 1,
+  low: 2,
+  default: 3,
+  high: 4,
+  max: 5,
+};
+
 function PriorityBadge({ value }: { value: string }) {
   const meta = PRIORITY_META[value as NotificationRecord["priority"]] ?? PRIORITY_META.default;
   return (
@@ -47,6 +58,7 @@ export function NotificationsView({ caseId }: { caseId: string }) {
   const { data, loading } = useDataset<NotificationRecord>(caseId, "notifications");
   const [query, setQuery] = useState("");
   const [commFilter, setCommFilter] = useState<CommFilter>("all");
+  const [urgentOnly, setUrgentOnly] = useState(false);
 
   const commCount = useMemo(() => data.filter((n) => n.is_comm).length, [data]);
   const uniqueApps = useMemo(() => new Set(data.map((n) => n.package)).size, [data]);
@@ -55,10 +67,13 @@ export function NotificationsView({ caseId }: { caseId: string }) {
     [data]
   );
 
+  // Hooks must run unconditionally on every render — filtered and sort are computed here,
+  // before either early return below, rather than after the empty-state check.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return data
       .filter((n) => {
+        if (urgentOnly && n.priority !== "high" && n.priority !== "max") return false;
         if (commFilter === "comm" && !n.is_comm) return false;
         if (commFilter === "other" && n.is_comm) return false;
         if (!q) return true;
@@ -70,7 +85,10 @@ export function NotificationsView({ caseId }: { caseId: string }) {
         );
       })
       .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
-  }, [data, query, commFilter]);
+  }, [data, query, commFilter, urgentOnly]);
+  // useSort's `sorted` falls back to the rows as passed in until a column header is
+  // clicked, so this preserves the newest-first default from the .sort() above.
+  const sort = useSort<NotificationRecord>(filtered);
 
   if (loading) return <div className="p-8 text-muted text-sm animate-pulse">Loading notification history…</div>;
 
@@ -133,7 +151,13 @@ export function NotificationsView({ caseId }: { caseId: string }) {
         <StatCard n={data.length} label="Notifications retained" />
         <StatCard n={commCount} label="From communication apps" tone="text-accent" />
         <StatCard n={uniqueApps} label="Distinct apps" />
-        <StatCard n={urgentCount} label="High / max priority" tone="text-deletion" />
+        <StatCard
+          n={urgentCount}
+          label="High / max priority"
+          tone="text-deletion"
+          onClick={() => setUrgentOnly((v) => !v)}
+          active={urgentOnly}
+        />
       </div>
 
       {/* Filters */}
@@ -163,29 +187,36 @@ export function NotificationsView({ caseId }: { caseId: string }) {
             </button>
           ))}
         </div>
-        <span className="text-[11px] text-muted ml-auto">Sorted newest first</span>
+        {urgentOnly && (
+          <span className="text-[11px] px-2 py-1 rounded bg-deletion/15 text-deletion border border-deletion/40">
+            High/max priority only
+          </span>
+        )}
+        <span className="text-[11px] text-muted ml-auto">
+          {sort.sortKey ? "Click a column again to reverse" : "Sorted newest first by default — click a column to change"}
+        </span>
       </div>
 
       <div className="card overflow-auto">
         <table className="w-full text-sm">
           <thead>
             <tr>
-              <th className="th w-44">App</th>
-              <th className="th w-40">Time (device clock)</th>
-              <th className="th">Title / text</th>
-              <th className="th w-24">Priority</th>
-              <th className="th w-16">Comm</th>
+              <SortTh className="th w-44" label="App" sortKeyName="app_name" getValue={(n) => n.app_name || n.package} sort={sort} />
+              <SortTh className="th w-40" label="Time (device clock)" sortKeyName="timestamp" getValue={(n) => n.timestamp} sort={sort} />
+              <SortTh className="th" label="Title / text" sortKeyName="title" getValue={(n) => n.title || n.text} sort={sort} />
+              <SortTh className="th w-24" label="Priority" sortKeyName="priority" getValue={(n) => PRIORITY_RANK[n.priority] ?? -1} sort={sort} />
+              <SortTh className="th w-16" label="Comm" sortKeyName="is_comm" getValue={(n) => (n.is_comm ? 1 : 0)} sort={sort} />
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 ? (
+            {sort.sorted.length === 0 ? (
               <tr>
                 <td colSpan={5} className="text-center py-8 text-muted text-xs">
                   No notifications match your filter.
                 </td>
               </tr>
             ) : (
-              filtered.map((n, i) => (
+              sort.sorted.map((n, i) => (
                 <tr key={n.key || `${n.package}_${i}`}>
                   <td className="td align-top">
                     <div className="text-ink text-xs">{n.app_name || "Unknown app"}</div>

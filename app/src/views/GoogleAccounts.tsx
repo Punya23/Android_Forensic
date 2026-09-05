@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useDataset, fmtTs } from "../lib/hooks";
-import { SectionHeader } from "../components/common";
+import { SectionHeader, SortTh, useSort } from "../components/common";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -86,6 +86,9 @@ export function GoogleAccountsView({ caseId }: { caseId: string }) {
       (a) => acctName(a).toLowerCase().includes(q) || acctType(a).toLowerCase().includes(q),
     );
   }, [data, filter]);
+  // Hooks must run unconditionally on every render — computed here, before either
+  // early return below, rather than after the empty-state check.
+  const sort = useSort<GoogleAccount>(filtered);
 
   if (loading) return <div className="p-8 text-muted text-sm animate-pulse">Loading registered accounts…</div>;
 
@@ -194,21 +197,21 @@ export function GoogleAccountsView({ caseId }: { caseId: string }) {
         <table className="w-full text-sm">
           <thead>
             <tr>
-              <th className="th">Account</th>
-              <th className="th w-56">Account type</th>
-              <th className="th w-48">Last sync (UTC)</th>
-              <th className="th w-36">Read from</th>
+              <SortTh className="th" label="Account" sortKeyName="account" getValue={(a) => acctName(a)} sort={sort} />
+              <SortTh className="th w-56" label="Account type" sortKeyName="account_type" getValue={(a) => acctType(a)} sort={sort} />
+              <SortTh className="th w-48" label="Last sync (UTC)" sortKeyName="last_sync" getValue={(a) => a.last_sync} sort={sort} />
+              <SortTh className="th w-36" label="Read from" sortKeyName="source" getValue={(a) => a.source} sort={sort} />
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 ? (
+            {sort.sorted.length === 0 ? (
               <tr>
                 <td colSpan={4} className="td text-center text-muted text-xs py-6">
                   No accounts match your filter.
                 </td>
               </tr>
             ) : (
-              filtered.map((a, i) => {
+              sort.sorted.map((a, i) => {
                 const name = acctName(a);
                 const rowCaveats = [...(a.caveats ?? []), ...(a.warnings ?? [])];
                 return (

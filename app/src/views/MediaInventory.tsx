@@ -8,7 +8,7 @@
 import { useMemo, useState } from "react";
 import type { MediaInventoryItem } from "../lib/types";
 import { useDataset, fmtTs } from "../lib/hooks";
-import { SectionHeader, EmptyState, StatCard, Filters, bytes } from "../components/common";
+import { SectionHeader, EmptyState, StatCard, Filters, bytes, SortTh, useSort } from "../components/common";
 
 type Flag = "all" | "trashed" | "favorite" | "gps";
 
@@ -42,6 +42,9 @@ export function MediaInventoryView({ caseId }: { caseId: string }) {
       )
       .sort((a, b) => (b.date_taken || b.date_added || "").localeCompare(a.date_taken || a.date_added || ""));
   }, [data, query, kind, flag]);
+  // Hooks must run unconditionally on every render — sort is computed here, on the
+  // already-filtered rows, before either early return below (see Calls.tsx precedent).
+  const sort = useSort<MediaInventoryItem>(filtered);
 
   if (loading) return <div className="p-8 text-muted">Loading media inventory…</div>;
   if (data.length === 0)
@@ -95,16 +98,22 @@ export function MediaInventoryView({ caseId }: { caseId: string }) {
         <table className="w-full text-sm">
           <thead>
             <tr>
-              <th className="th">Name</th>
-              <th className="th w-20">Kind</th>
-              <th className="th w-28">Owner app</th>
-              <th className="th w-24">Size</th>
-              <th className="th w-40">Date taken</th>
-              <th className="th w-28">Flags</th>
+              <SortTh className="th" label="Name" sortKeyName="display_name" getValue={(m) => m.display_name} sort={sort} />
+              <SortTh className="th w-20" label="Kind" sortKeyName="kind" getValue={(m) => m.kind} sort={sort} />
+              <SortTh className="th w-28" label="Owner app" sortKeyName="owner_app" getValue={(m) => m.owner_app} sort={sort} />
+              <SortTh className="th w-24" label="Size" sortKeyName="size_bytes" getValue={(m) => m.size_bytes} sort={sort} />
+              <SortTh className="th w-40" label="Date taken" sortKeyName="date_taken" getValue={(m) => m.date_taken || m.date_added} sort={sort} />
+              <SortTh
+                className="th w-28"
+                label="Flags"
+                sortKeyName="flags"
+                getValue={(m) => (m.is_trashed ? 4 : 0) + (m.is_favorite ? 2 : 0) + (m.gps ? 1 : 0)}
+                sort={sort}
+              />
             </tr>
           </thead>
           <tbody>
-            {filtered.slice(0, 2000).map((m, i) => (
+            {sort.sorted.slice(0, 2000).map((m, i) => (
               <tr key={i} className={m.is_trashed ? "bg-deletion/5" : ""}>
                 <td className="td font-medium truncate max-w-xs" title={m.relative_path}>{m.display_name || "—"}</td>
                 <td className="td text-xs">{m.kind}</td>
