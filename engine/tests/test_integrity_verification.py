@@ -152,3 +152,25 @@ def test_hash_timeline_uses_real_manifest(case_dir):
     assert len(tl) > 0
     # timestamps come from the manifest's extracted_at, not a 1700000000 placeholder
     assert all(entry["timestamp"] > 0 for entry in tl)
+
+
+def test_hash_timeline_html_escapes_hostile_filename(case_dir):
+    """The manifest's ``path``/``stored_path`` is an attacker-controlled device file
+    path (see [[erakshak-honesty-invariants]]). generate_timeline_html() writes a
+    standalone hash_timeline.html an examiner opens in a browser, so an unescaped
+    path is script execution in the examiner's context on evidence they were handed.
+    """
+    xss = '<script>alert("pwned")</script>'
+    manifest_path = case_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest, "fixture produced an empty manifest"
+    manifest[0]["path"] = xss
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    report_path = hash_timeline.generate_timeline_html(case_dir)
+    assert report_path
+    html = Path(report_path).read_text(encoding="utf-8")
+
+    assert "<script" not in html.lower()
+    assert xss not in html
+    assert "&lt;script&gt;" in html
