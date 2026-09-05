@@ -38,18 +38,18 @@ export interface TaskSnapshotRecord {
   file?: string;
   name?: string;
   path?: string;
-  size?: number | null;
+  size_bytes?: number | null;
   modified?: string | null;
   task_id?: number | string | null;
-  kind?: string | null;
+  image_format?: string | null;
 }
 
 /** Optional roll-up. `skipped` is the field the whole view branches on. */
 export interface RecentTasksSummary {
   skipped?: boolean;
   reason?: string;
-  note?: string;
-  caveats?: string[];
+  /** Engine field is `headline_caveats`, not `caveats` — see the Caveats card below. */
+  headline_caveats?: string[];
   total_tasks?: number;
   total_snapshots?: number;
 }
@@ -208,7 +208,9 @@ export function RecentTasksView({ caseId }: { caseId: string }) {
             acquisition time. Re-acquiring after a reboot will put it back into BFU and lose it
             again.
           </p>
-          {summary.caveats && summary.caveats.length > 0 && <Caveats items={summary.caveats} />}
+          {summary.headline_caveats && summary.headline_caveats.length > 0 && (
+            <Caveats items={summary.headline_caveats} />
+          )}
         </div>
       </div>
     );
@@ -422,9 +424,9 @@ export function RecentTasksView({ caseId }: { caseId: string }) {
                   <tr>
                     <SortTh className="th" label="File" sortKeyName="file" getValue={(s: TaskSnapshotRecord) => snapshotName(s)} sort={snapshotsSort} />
                     <SortTh className="th w-24" label="Task" sortKeyName="task_id" getValue={(s: TaskSnapshotRecord) => s.task_id} sort={snapshotsSort} />
-                    <SortTh className="th w-28" label="Size" sortKeyName="size" getValue={(s: TaskSnapshotRecord) => s.size} sort={snapshotsSort} />
+                    <SortTh className="th w-28" label="Size" sortKeyName="size_bytes" getValue={(s: TaskSnapshotRecord) => s.size_bytes} sort={snapshotsSort} />
                     <SortTh className="th w-48" label="Modified (file mtime)" sortKeyName="modified" getValue={(s: TaskSnapshotRecord) => s.modified} sort={snapshotsSort} />
-                    <SortTh className="th w-28" label="Kind" sortKeyName="kind" getValue={(s: TaskSnapshotRecord) => s.kind} sort={snapshotsSort} />
+                    <SortTh className="th w-28" label="Kind" sortKeyName="image_format" getValue={(s: TaskSnapshotRecord) => s.image_format} sort={snapshotsSort} />
                   </tr>
                 </thead>
                 <tbody>
@@ -439,12 +441,16 @@ export function RecentTasksView({ caseId }: { caseId: string }) {
                         )}
                       </td>
                       <td className="td font-mono text-xs">
-                        {s.size != null ? bytes(s.size) : <span className="text-muted">—</span>}
+                        {s.size_bytes != null ? (
+                          bytes(s.size_bytes)
+                        ) : (
+                          <span className="text-muted">—</span>
+                        )}
                       </td>
                       <td className="td font-mono text-xs">
                         {s.modified ? fmtTs(s.modified) : <span className="text-muted">—</span>}
                       </td>
-                      <td className="td text-xs text-muted">{s.kind || "—"}</td>
+                      <td className="td text-xs text-muted">{s.image_format || "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -459,20 +465,12 @@ export function RecentTasksView({ caseId }: { caseId: string }) {
             captured. The files themselves remain in the case's evidence store with their hashes.
           </p>
 
-          {summary.note && (
-            <div className="card p-3 mt-4 text-xs leading-relaxed">
-              <div className="text-[10px] uppercase tracking-wider text-muted mb-1">
-                Engine summary (verbatim)
-              </div>
-              <p className="text-ink whitespace-pre-line">{summary.note}</p>
-            </div>
-          )}
-          {summary.caveats && summary.caveats.length > 0 && (
+          {summary.headline_caveats && summary.headline_caveats.length > 0 && (
             <div className="card p-3 mt-3">
               <div className="text-[10px] uppercase tracking-wider text-muted mb-1">
                 Dataset-level caveats
               </div>
-              <Caveats items={summary.caveats} />
+              <Caveats items={summary.headline_caveats} />
             </div>
           )}
         </>

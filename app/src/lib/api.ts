@@ -336,6 +336,7 @@ export const api = {
     tier2_wifi?: boolean;
     tier2_browser_history?: boolean;
     tier2_whatsapp_backup?: boolean;
+    tier2_maps_location?: boolean;
     // Deep system-artifact stages (root). Omitted => the engine's default (all off).
     tier2_bt_config?: boolean;
     tier2_app_presence?: boolean;
@@ -358,7 +359,15 @@ export const api = {
 let socket: Socket | null = null;
 export function getSocket(): Socket {
   if (!socket) {
-    socket = io(BASE || "/", { transports: ["websocket", "polling"] });
+    // Polling first, not websocket-first: the engine pins allow_upgrades=False
+    // (see server.py's SocketIO(...) — the Werkzeug dev server, and the Vite
+    // dev proxy in front of it, don't reliably carry a raw WebSocket upgrade;
+    // every real-time event still arrives fine over HTTP long-polling). With
+    // "websocket" listed first the client opened straight into that transport,
+    // which the proxy resets before the handshake completes — connection never
+    // fell back to polling, so it looped failed WS attempts forever and the
+    // Acquisition Activity Panel never received a single live event.
+    socket = io(BASE || "/", { transports: ["polling", "websocket"] });
   }
   return socket;
 }

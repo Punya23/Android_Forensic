@@ -249,7 +249,11 @@ class AdvancedForensicFeatures:
         if not sorted_msgs:
             return {
                 "bursts": [],
-                "response_times": {},
+                # Same shape as the populated path below (fast/medium/slow/mean_s/
+                # samples, all zeroed) — the frontend's ResponseTimes type has none of
+                # these fields optional, so an empty {} here rendered the literal string
+                # "undefined" wherever a response-time figure was read out of it.
+                "response_times": {"fast": 0, "medium": 0, "slow": 0, "mean_s": 0.0, "samples": 0},
                 "hourly_distribution": {},
                 "daily_distribution": {},
                 "peak_hour": None,

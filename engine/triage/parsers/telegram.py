@@ -292,6 +292,9 @@ class TelegramSchema:
     def from_id_col(self) -> Optional[str]:
         return self.mapping.get("from_id") or self.mapping.get("id_col")
 
+    def out_col(self) -> Optional[str]:
+        return self.mapping.get("out") or self.mapping.get("out_col")
+
     def data_blob_col(self) -> Optional[str]:
         return self.mapping.get("data_blob") or self.mapping.get("blob_col")
 
@@ -311,6 +314,7 @@ def detect_telegram_schema(path: str | Path) -> TelegramSchema:
     old_map["date"] = m.get("date_col")
     old_map["from_id"] = m.get("id_col")  # best guess for sender ID
     old_map["data_blob"] = m.get("blob_col")
+    old_map["out"] = m.get("out_col")
 
     # Also preserve any raw column names the old code expected.
     for col in ts.raw_columns:
@@ -323,6 +327,8 @@ def detect_telegram_schema(path: str | Path) -> TelegramSchema:
             old_map["from_id"] = col
         if "data" == cl:
             old_map["data_blob"] = col
+        if cl in ("out", "is_out"):
+            old_map["out"] = col
 
     s = TelegramSchema(
         raw_columns=ts.raw_columns,
@@ -968,6 +974,22 @@ def _read_live_telegram_rows(
                     v = row[from_col]
                     if v is not None:
                         sender = str(v)
+                except (KeyError, IndexError):
+                    pass
+            # The "out"/"is_out" column (detected by column-role mapping above, see
+            # _ROLE_HINTS) is Telegram's own record of which side sent the
+            # message — the examiner's own outgoing messages often have no from_id at
+            # all (Telegram's schema leaves it null for "me"), so this is the only
+            # reliable signal, not a fallback on top of from_id. sender_id="__self__"
+            # is the sentinel Telegram.tsx checks to right-align an outgoing bubble.
+            out_col = schema.out_col()
+            if out_col:
+                try:
+                    v = row[out_col]
+                    # Coerce explicitly rather than bool(v): a TEXT-typed "out" column
+                    # (some carved/export schemas) would make bool("0") == True.
+                    if v is not None and str(v).strip().lower() not in ("", "0", "false"):
+                        sender = "__self__"
                 except (KeyError, IndexError):
                     pass
             # Also capture chat_id for conversation threading.
