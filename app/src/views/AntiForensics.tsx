@@ -9,6 +9,7 @@
  * it, not tucked into a tooltip.
  */
 import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Puzzle } from "lucide-react";
 import { api } from "../lib/api";
 import { useDataset } from "../lib/hooks";
 import { StatCard } from "../components/common";
@@ -149,7 +150,9 @@ function Caveats({ items, label }: { items: string[]; label?: string }) {
       <ul className="space-y-0.5">
         {items.map((c, i) => (
           <li key={i} className="text-[11px] text-warn leading-relaxed">
-            ⚠ {c}
+            <span className="inline-flex items-center gap-1">
+              <AlertTriangle className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden /> {c}
+            </span>
           </li>
         ))}
       </ul>
@@ -209,7 +212,7 @@ export function AntiForensicsView({ caseId }: { caseId: string }) {
       {/* Header */}
       <div className="mb-5">
         <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
-          <span>🧩</span> Containers &amp; Structural Observations
+          <Puzzle className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Containers &amp; Structural Observations
           <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
             Tier 2 — Root
           </span>

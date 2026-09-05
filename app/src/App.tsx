@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ShieldCheck, FolderOpen, Cpu, Usb, CircleUserRound, LogOut } from "lucide-react";
 import { api, hasAuthToken, setOnUnauthorized } from "./lib/api";
 import type { Health } from "./lib/types";
 import { TagProvider } from "./lib/tagStore";
@@ -214,25 +215,38 @@ function TopBar({
   onLogout: () => void;
 }) {
   return (
-    <header className="h-12 border-b border-line flex items-center justify-between px-5 bg-panel-2 shrink-0 gap-4">
+    <header className="h-14 border-b border-line flex items-center justify-between px-5 bg-panel-2 shrink-0 gap-4">
       <div className="flex items-center gap-3 text-sm shrink-0">
-        <span className="font-semibold text-accent">SNAGR</span>
+        <div className="flex items-center gap-1.5 text-accent font-semibold">
+          <ShieldCheck className="h-[18px] w-[18px]" strokeWidth={2.25} aria-hidden />
+          SNAGR
+        </div>
         <span className="text-muted hidden md:inline">Android Rapid Evidence Triage</span>
         {caseId && (
-          <span className="font-mono text-xs bg-panel px-2 py-0.5 rounded border border-line">{caseId}</span>
+          <span className="flex items-center gap-1.5 font-mono text-xs bg-panel px-2 py-1 rounded-md border border-line">
+            <FolderOpen className="h-3.5 w-3.5 text-muted" strokeWidth={1.75} aria-hidden />
+            {caseId}
+          </span>
         )}
       </div>
       {caseId && <GlobalSearch caseId={caseId} setView={setView} />}
       <div className="flex items-center gap-3 text-xs text-muted shrink-0">
         <span className="flex items-center gap-1.5">
-          <span className={`h-2 w-2 rounded-full ${health ? "bg-live" : "bg-deletion"}`} />
+          <Cpu className={`h-3.5 w-3.5 ${health ? "text-live" : "text-deletion"}`} strokeWidth={1.75} aria-hidden />
           {health ? `engine v${health.version}` : "engine offline"}
         </span>
-        <span className={health?.adb ? "text-live" : "text-warn"}>
+        <span className={`flex items-center gap-1.5 ${health?.adb ? "text-live" : "text-warn"}`}>
+          <Usb className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
           {health?.adb ? "adb ready" : "adb not found"}
         </span>
-        {username && <span className="text-muted">{username}</span>}
-        <button className="btn-ghost !px-2 !py-1 text-xs" onClick={onLogout}>
+        {username && (
+          <span className="flex items-center gap-1.5 text-muted">
+            <CircleUserRound className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+            {username}
+          </span>
+        )}
+        <button className="btn-ghost !px-2.5 !py-1.5 text-xs flex items-center gap-1.5" onClick={onLogout}>
+          <LogOut className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
           Sign out
         </button>
       </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { RadioTower, Wifi } from "lucide-react";
 import { api } from "../lib/api";
 import type { WifiNetwork } from "../lib/types";
 import { SortTh, useSort } from "../components/common";
@@ -182,7 +183,7 @@ function CollectorWifiSection({ caseId }: { caseId: string }) {
     <section className="mt-10 pt-8 border-t-2 border-dashed border-line">
       <div className="mb-4">
         <h2 className="text-lg font-semibold text-ink flex items-center gap-2">
-          <span>📡</span> Non-root helper capture (association/saved/scan)
+          <RadioTower className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Non-root helper capture (association/saved/scan)
           <span className="text-xs font-normal text-recovered bg-recovered/10 border border-recovered/30 rounded px-2 py-0.5 ml-1">
             Tier 1 — Non-root helper
           </span>
@@ -217,7 +218,9 @@ function CollectorWifiSection({ caseId }: { caseId: string }) {
         <div className="p-8 text-muted text-sm animate-pulse">Loading helper capture…</div>
       ) : rows.length === 0 ? (
         <div className="card p-10 text-center text-muted">
-          <div className="text-4xl mb-3 opacity-40">📡</div>
+          <div className="text-4xl mb-3 opacity-40">
+            <RadioTower className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+          </div>
           <div className="font-medium mb-1">No helper-captured Wi-Fi data for this case</div>
           <div className="text-sm max-w-lg mx-auto leading-relaxed">
             Absent here means the Tier-1 "collect all" helper stage either never ran on this
@@ -375,7 +378,7 @@ export function WifiView({ caseId }: { caseId: string }) {
       {/* Header */}
       <div className="mb-5">
         <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
-          <span>📶</span> Wi-Fi Passwords
+          <Wifi className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Wi-Fi Passwords
           <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
             Tier 2 — Root
           </span>
@@ -400,7 +403,9 @@ export function WifiView({ caseId }: { caseId: string }) {
       {networks.length === 0 ? (
         /* Empty state */
         <div className="card p-10 text-center text-muted">
-          <div className="text-4xl mb-3 opacity-40">📶</div>
+          <div className="text-4xl mb-3 opacity-40">
+            <Wifi className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+          </div>
           <div className="font-medium mb-1">No Wi-Fi credentials recovered</div>
           <div className="text-sm">
             Enable <strong>Tier-2 Wi-Fi Credentials</strong> on the next

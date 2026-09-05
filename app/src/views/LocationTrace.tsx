@@ -22,6 +22,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
+import { ArrowRight } from "lucide-react";
 import type {
   ImpossibleTravel,
   LocationCategory,
@@ -357,7 +358,9 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
                   </div>
                   {mapsSummary.date_range?.first && (
                     <div className="opacity-70 mt-1">
-                      {fmtTs(mapsSummary.date_range.first)} → {fmtTs(mapsSummary.date_range.last)}
+                      {fmtTs(mapsSummary.date_range.first)}{" "}
+                      <ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />{" "}
+                      {fmtTs(mapsSummary.date_range.last)}
                     </div>
                   )}
                 </div>
@@ -385,8 +388,12 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
           <ul className="space-y-1 text-xs">
             {anomalies.slice(0, 5).map((a, i) => (
               <li key={i} className="font-mono">
-                {fmtTs(a.from.timestamp)} → {fmtTs(a.to.timestamp)} · {a.distance_km} km in{" "}
-                {a.hours} h = {a.implied_kmh} km/h ({a.from.source} → {a.to.source})
+                {fmtTs(a.from.timestamp)}{" "}
+                <ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />{" "}
+                {fmtTs(a.to.timestamp)} · {a.distance_km} km in{" "}
+                {a.hours} h = {a.implied_kmh} km/h ({a.from.source}{" "}
+                <ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />{" "}
+                {a.to.source})
               </li>
             ))}
           </ul>

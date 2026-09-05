@@ -11,6 +11,7 @@
  * just give the two a chance to drift out of sync.
  */
 import { useEffect, useState } from "react";
+import { Brain, ArrowRight } from "lucide-react";
 import { api } from "../lib/api";
 import { fmtTs } from "../lib/hooks";
 import { StatCard } from "../components/common";
@@ -270,7 +271,7 @@ export function AdvancedAnalyticsView({
   const header = (
     <div className="mb-5">
       <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
-        <span>🧠</span> Advanced Analytics
+        <Brain className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Advanced Analytics
         <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
           Derived — best effort
         </span>
@@ -378,7 +379,9 @@ export function AdvancedAnalyticsView({
             className="text-xs text-accent underline underline-offset-2 shrink-0"
             onClick={() => setView("graph")}
           >
-            Open Social Graph →
+            <span className="inline-flex items-center gap-1">
+              Open Social Graph <ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+            </span>
           </button>
         </div>
         {!social || social.stats.unique_contacts === 0 ? (
@@ -459,7 +462,13 @@ export function AdvancedAnalyticsView({
                   {patterns.response_times.samples === 1 ? "" : "s"})
                 </div>
                 {patterns.response_times.samples === 0 ? (
-                  <Empty>No incoming→outgoing reply pairs could be timed.</Empty>
+                  <Empty>
+                    No{" "}
+                    <span className="inline-flex items-center gap-1">
+                      incoming <ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden /> outgoing
+                    </span>{" "}
+                    reply pairs could be timed.
+                  </Empty>
                 ) : (
                   <>
                     <div className="flex gap-2 mb-1">
@@ -485,7 +494,9 @@ export function AdvancedAnalyticsView({
                   render={(b, i) => (
                     <div key={i} className="text-[11px] text-muted flex flex-wrap gap-x-2">
                       <span className="text-ink font-mono">{b.count} msgs</span>
-                      <span>{fmtTs(b.start)} → {fmtTs(b.end)}</span>
+                      <span className="inline-flex items-center gap-1">
+                        {fmtTs(b.start)} <ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden /> {fmtTs(b.end)}
+                      </span>
                       <span className="text-muted/80">({b.senders.length} sender{b.senders.length === 1 ? "" : "s"})</span>
                     </div>
                   )}
@@ -593,7 +604,9 @@ export function AdvancedAnalyticsView({
                     <div key={i} className="text-[11px] text-muted flex gap-2 flex-wrap">
                       <span className="text-ink font-mono">{r.unique_senders} senders</span>
                       <span>{r.message_count} msgs</span>
-                      <span>{fmtTs(r.window_start)} → {fmtTs(r.window_end)}</span>
+                      <span className="inline-flex items-center gap-1">
+                        {fmtTs(r.window_start)} <ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden /> {fmtTs(r.window_end)}
+                      </span>
                     </div>
                   )}
                 />

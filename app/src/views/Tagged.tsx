@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Star } from "lucide-react";
 import { useTags } from "../lib/tagStore";
 import type { ViewKey } from "../components/Sidebar";
 import type { Tag } from "../lib/types";
@@ -34,7 +35,7 @@ export function TaggedView({ caseId, setView }: { caseId: string; setView: (v: V
     return (
       <EmptyState
         title="No tagged items yet"
-        detail="Bookmark items of interest with the ☆ button in any view. Tagged items are collected here and included in the report — the on-scene tagging commercial field tools provide."
+        detail="Bookmark items of interest with the star button in any view. Tagged items are collected here and included in the report — the on-scene tagging commercial field tools provide."
       />
     );
 
@@ -65,7 +66,7 @@ export function TaggedView({ caseId, setView }: { caseId: string; setView: (v: V
                 </td>
                 <td className="td">
                   <div className="flex items-center gap-2">
-                    <span className="text-accent">★</span>
+                    <Star className="inline h-3.5 w-3.5 text-accent" strokeWidth={1.75} fill="currentColor" aria-hidden />
                     <span>{t.label}</span>
                   </div>
                   <div className="text-[10px] text-muted font-mono">{t.ref}</div>

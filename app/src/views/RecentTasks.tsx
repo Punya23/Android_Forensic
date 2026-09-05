@@ -9,6 +9,7 @@
  *      file mtime — not the moment a person looked at the screen.
  */
 import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, FolderOpen } from "lucide-react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { StatCard, SortTh, useSort, bytes } from "../components/common";
@@ -88,7 +89,9 @@ function Caveats({ items }: { items: string[] }) {
     <ul className="mt-1 space-y-0.5">
       {items.map((c, i) => (
         <li key={i} className="text-[11px] text-warn leading-relaxed">
-          ⚠ {c}
+          <span className="inline-flex items-center gap-1">
+            <AlertTriangle className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden /> {c}
+          </span>
         </li>
       ))}
     </ul>
@@ -103,7 +106,7 @@ function Header() {
   return (
     <div className="mb-5">
       <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
-        <span>🗂️</span> Recent Tasks
+        <FolderOpen className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Recent Tasks
         <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
           Tier 2 — Root
         </span>

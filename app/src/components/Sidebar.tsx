@@ -1,3 +1,49 @@
+import {
+  Archive,
+  LayoutDashboard,
+  Sparkles,
+  MessageSquareText,
+  MessageSquare,
+  Send,
+  Unlock,
+  Camera,
+  Ghost,
+  ScanSearch,
+  User,
+  Phone,
+  Bell,
+  Image,
+  FolderOpen,
+  Trash2,
+  Package,
+  KeyRound,
+  Calendar,
+  Wifi,
+  Hourglass,
+  Search,
+  Users,
+  Globe,
+  Globe2,
+  RadioTower,
+  Bluetooth,
+  Clock,
+  Recycle,
+  Network,
+  Brain,
+  Puzzle,
+  ShieldAlert,
+  AppWindow,
+  Lock,
+  FlaskConical,
+  Star,
+  ShieldCheck,
+  RefreshCw,
+  CircleCheck,
+  BookOpen,
+  FileText,
+  Plus,
+  type LucideIcon,
+} from "lucide-react";
 import type { Health } from "../lib/types";
 import { useCapabilities } from "../lib/capabilities";
 
@@ -49,52 +95,52 @@ export type ViewKey =
   | "custody"
   | "report";
 
-const NAV: { key: ViewKey; label: string; icon: string; group?: string }[] = [
-  { key: "cases", label: "Case History", icon: "🗄" },
-  { key: "overview", label: "Overview", icon: "▤" },
-  { key: "intel", label: "Case Intelligence", icon: "✦" },
-  { key: "ask", label: "Ask This Case", icon: "💬" },
-  { key: "messages", label: "Messages", icon: "💬", group: "Communications" },
-  { key: "telegram", label: "Telegram", icon: "✈" },
-  { key: "whatsapp_backup", label: "WA Backup Recovery", icon: "🔓" },
-  { key: "instagram", label: "Instagram", icon: "📷" },
-  { key: "snapchat", label: "Snapchat", icon: "👻" },
-  { key: "discovered", label: "Discovered Chats", icon: "🔎" },
-  { key: "contacts", label: "Contacts", icon: "👤" },
-  { key: "calls", label: "Calls", icon: "📞" },
-  { key: "notifications", label: "Notifications", icon: "🔔" },
-  { key: "media", label: "Media", icon: "🖼", group: "Device" },
-  { key: "mediainv", label: "Media Inventory", icon: "🗂" },
-  { key: "deletedmedia", label: "Deleted Media", icon: "🗑" },
-  { key: "apps", label: "Installed Apps", icon: "📦" },
-  { key: "accounts", label: "Accounts", icon: "🔑" },
-  { key: "calendar", label: "Calendar", icon: "📅" },
-  { key: "wifi", label: "Wi-Fi Passwords", icon: "📶" },
-  { key: "screentime", label: "Screen & App Usage", icon: "⏳" },
-  { key: "search", label: "Search History", icon: "🔍" },
-  { key: "gaccounts", label: "Registered Accounts", icon: "👥" },
-  { key: "loctrace", label: "Location Trace (all sources)", icon: "🌍" },
-  { key: "locations", label: "Location Tracing (photos)", icon: "🗺" },
-  { key: "browser", label: "Browser History", icon: "🌐" },
-  { key: "wifi_live", label: "Wi-Fi (live, non-root)", icon: "📡", group: "Connectivity" },
-  { key: "bluetooth", label: "Bluetooth", icon: "🔵" },
-  { key: "celltower", label: "Cell Towers", icon: "📶" },
-  { key: "timeline", label: "Timeline", icon: "⏱", group: "Analysis" },
-  { key: "recovered", label: "Recovered / Deleted", icon: "♻" },
-  { key: "graph", label: "Social Graph", icon: "🕸" },
-  { key: "advanced", label: "Advanced Analytics", icon: "🧠" },
-  { key: "apppresence", label: "App Presence", icon: "🧩" },
-  { key: "antiforensics", label: "Anti-Forensics", icon: "🕵" },
-  { key: "recenttasks", label: "Recent Tasks", icon: "🪟" },
-  { key: "encryptedapps", label: "Encrypted Apps", icon: "🔐" },
-  { key: "aleapp", label: "ALEAPP Artifacts", icon: "🧪" },
-  { key: "tagged", label: "Tagged Items", icon: "★" },
-  { key: "custody", label: "Chain of Custody", icon: "🔒", group: "Forensics" },
-  { key: "encryption", label: "Encryption Posture", icon: "🛡" },
-  { key: "devicestate", label: "Device State (pre/post)", icon: "🔁" },
-  { key: "validation", label: "Tool Validation", icon: "✅" },
-  { key: "knowledge", label: "Knowledge Base", icon: "📚" },
-  { key: "report", label: "Report", icon: "📄" },
+const NAV: { key: ViewKey; label: string; icon: LucideIcon; group?: string }[] = [
+  { key: "cases", label: "Case History", icon: Archive },
+  { key: "overview", label: "Overview", icon: LayoutDashboard },
+  { key: "intel", label: "Case Intelligence", icon: Sparkles },
+  { key: "ask", label: "Ask This Case", icon: MessageSquareText },
+  { key: "messages", label: "Messages", icon: MessageSquare, group: "Communications" },
+  { key: "telegram", label: "Telegram", icon: Send },
+  { key: "whatsapp_backup", label: "WA Backup Recovery", icon: Unlock },
+  { key: "instagram", label: "Instagram", icon: Camera },
+  { key: "snapchat", label: "Snapchat", icon: Ghost },
+  { key: "discovered", label: "Discovered Chats", icon: ScanSearch },
+  { key: "contacts", label: "Contacts", icon: User },
+  { key: "calls", label: "Calls", icon: Phone },
+  { key: "notifications", label: "Notifications", icon: Bell },
+  { key: "media", label: "Media", icon: Image, group: "Device" },
+  { key: "mediainv", label: "Media Inventory", icon: FolderOpen },
+  { key: "deletedmedia", label: "Deleted Media", icon: Trash2 },
+  { key: "apps", label: "Installed Apps", icon: Package },
+  { key: "accounts", label: "Accounts", icon: KeyRound },
+  { key: "calendar", label: "Calendar", icon: Calendar },
+  { key: "wifi", label: "Wi-Fi Passwords", icon: Wifi },
+  { key: "screentime", label: "Screen & App Usage", icon: Hourglass },
+  { key: "search", label: "Search History", icon: Search },
+  { key: "gaccounts", label: "Registered Accounts", icon: Users },
+  { key: "loctrace", label: "Location Trace (all sources)", icon: Globe },
+  { key: "locations", label: "Location Tracing (photos)", icon: Globe2 },
+  { key: "browser", label: "Browser History", icon: Globe2 },
+  { key: "wifi_live", label: "Wi-Fi (live, non-root)", icon: RadioTower, group: "Connectivity" },
+  { key: "bluetooth", label: "Bluetooth", icon: Bluetooth },
+  { key: "celltower", label: "Cell Towers", icon: RadioTower },
+  { key: "timeline", label: "Timeline", icon: Clock, group: "Analysis" },
+  { key: "recovered", label: "Recovered / Deleted", icon: Recycle },
+  { key: "graph", label: "Social Graph", icon: Network },
+  { key: "advanced", label: "Advanced Analytics", icon: Brain },
+  { key: "apppresence", label: "App Presence", icon: Puzzle },
+  { key: "antiforensics", label: "Anti-Forensics", icon: ShieldAlert },
+  { key: "recenttasks", label: "Recent Tasks", icon: AppWindow },
+  { key: "encryptedapps", label: "Encrypted Apps", icon: Lock },
+  { key: "aleapp", label: "ALEAPP Artifacts", icon: FlaskConical },
+  { key: "tagged", label: "Tagged Items", icon: Star },
+  { key: "custody", label: "Chain of Custody", icon: ShieldCheck, group: "Forensics" },
+  { key: "encryption", label: "Encryption Posture", icon: ShieldCheck },
+  { key: "devicestate", label: "Device State (pre/post)", icon: RefreshCw },
+  { key: "validation", label: "Tool Validation", icon: CircleCheck },
+  { key: "knowledge", label: "Knowledge Base", icon: BookOpen },
+  { key: "report", label: "Report", icon: FileText },
 ];
 
 /**
@@ -198,36 +244,46 @@ export function Sidebar({
   let lastGroup = "";
   const caps = useCapabilities();
   return (
-    <aside className="w-60 shrink-0 border-r border-line bg-panel flex flex-col">
-      <div className="p-4 border-b border-line">
-        <button className="btn-accent w-full" onClick={onNewAcquisition}>
-          + New Acquisition
+    <aside className="w-64 shrink-0 border-r border-line bg-panel-2 flex flex-col">
+      <div className="p-3 border-b border-line">
+        <button
+          className="btn-accent w-full flex items-center justify-center gap-1.5"
+          onClick={onNewAcquisition}
+        >
+          <Plus className="h-4 w-4" strokeWidth={2.5} />
+          New Acquisition
         </button>
       </div>
-      <nav className="flex-1 overflow-y-auto py-2">
+      <nav className="flex-1 overflow-y-auto py-2 px-2">
         {NAV.map((item) => {
           const showGroup = item.group && item.group !== lastGroup;
           if (item.group) lastGroup = item.group;
           // The Knowledge Base reads installation-wide state, so it stays reachable
           // before any case is loaded.
           const disabled = !caseId && !isCaseIndependent(item.key);
+          const active = view === item.key;
+          const Icon = item.icon;
           return (
             <div key={item.key}>
               {showGroup && (
-                <div className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-widest text-muted/70">
+                <div className="mt-4 pt-3 pb-1 px-2.5 border-t border-line text-[10px] font-semibold uppercase tracking-widest text-muted/70">
                   {item.group}
                 </div>
               )}
               <button
                 disabled={disabled}
                 onClick={() => setView(item.key)}
-                className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2.5 transition-colors ${
-                  view === item.key
-                    ? "bg-accent/15 text-accent border-r-2 border-accent"
-                    : "text-ink/80 hover:bg-panel-2 disabled:opacity-30 disabled:hover:bg-transparent"
+                className={`w-full text-left mb-0.5 px-2.5 py-[7px] rounded-md text-[13px] font-medium flex items-center gap-2.5 transition-colors ${
+                  active
+                    ? "bg-accent/12 text-accent"
+                    : "text-ink/75 hover:bg-panel disabled:opacity-30 disabled:hover:bg-transparent"
                 }`}
               >
-                <span className="w-4 text-center opacity-80">{item.icon}</span>
+                <Icon
+                  className="h-[15px] w-[15px] shrink-0"
+                  strokeWidth={active ? 2.25 : 1.75}
+                  aria-hidden
+                />
                 <span className="truncate">{item.label}</span>
                 <NavState state={caps?.by_dataset[VIEW_DATASET[item.key] ?? ""]?.state} />
               </button>
@@ -236,7 +292,10 @@ export function Sidebar({
         })}
       </nav>
       <div className="p-3 border-t border-line text-[10px] text-muted leading-relaxed">
-        <div className="text-accent/90 font-semibold mb-1">Triage preview only</div>
+        <div className="flex items-center gap-1.5 text-accent/90 font-semibold mb-1">
+          <ShieldAlert className="h-3 w-3" strokeWidth={2.25} />
+          Triage preview only
+        </div>
         Minimally-invasive, fully-logged acquisition. Not a substitute for full lab
         examination.
       </div>

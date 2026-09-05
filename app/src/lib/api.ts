@@ -56,7 +56,7 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
     throw new Error("unauthorized");
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error || `${path} → HTTP ${res.status}`);
+  if (!res.ok) throw new Error((data as { error?: string }).error || `${path} -> HTTP ${res.status}`);
   return data as T;
 }
 

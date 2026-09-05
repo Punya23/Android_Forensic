@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { X } from "lucide-react";
 import { api } from "../lib/api";
 import type { CommunicationGraph, GraphNode } from "../lib/types";
 import { SectionHeader } from "../components/common";
@@ -424,7 +425,7 @@ export function GraphView({ caseId }: { caseId: string }) {
               <div className="flex items-center justify-between gap-2">
                 <div className="font-semibold text-ink truncate">{selected.label}</div>
                 <button className="text-muted hover:text-ink shrink-0" onClick={() => setSelected(null)}>
-                  ✕
+                  <X className="h-4 w-4" strokeWidth={1.75} aria-hidden />
                 </button>
               </div>
               <div className="text-muted mt-1">

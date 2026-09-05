@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { api } from "../lib/api";
 import type { Confidence, RecoveredRow } from "../lib/types";
 import { useDataset } from "../lib/hooks";
@@ -119,7 +120,9 @@ function DeletionEvidencePanel({ caseId }: { caseId: string }) {
                 <ul className="mt-2 space-y-0.5">
                   {summary.caveats.map((c, i) => (
                     <li key={i} className="text-[11px] text-warn leading-relaxed">
-                      ⚠ {c}
+                      <span className="inline-flex items-center gap-1">
+                        <AlertTriangle className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden /> {c}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -372,7 +375,11 @@ export function RecoveredView({ caseId }: { caseId: string }) {
                       ))}
                   </div>
                   {r.warnings.length > 0 && (
-                    <div className="text-[10px] text-carved/80 mt-1">⚠ {r.warnings[0]}</div>
+                    <div className="text-[10px] text-carved/80 mt-1">
+                      <span className="inline-flex items-center gap-1">
+                        <AlertTriangle className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden /> {r.warnings[0]}
+                      </span>
+                    </div>
                   )}
                 </td>
                 <td className="td font-mono text-[11px] text-muted">

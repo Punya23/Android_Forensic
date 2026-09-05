@@ -23,6 +23,7 @@
  * claim about itself, not an SNAGR chain-of-custody guarantee.
  */
 import { useEffect, useMemo, useState } from "react";
+import { FlaskConical, X } from "lucide-react";
 import { api } from "../lib/api";
 import { EmptyState } from "../components/common";
 
@@ -197,7 +198,7 @@ export function AleappView({ caseId }: { caseId: string }) {
   const header = (
     <div className="mb-4">
       <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
-        <span>🧪</span> ALEAPP Artifacts
+        <FlaskConical className="h-4 w-4" strokeWidth={1.75} aria-hidden /> ALEAPP Artifacts
         <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
           third-party parser
         </span>
@@ -303,7 +304,7 @@ export function AleappView({ caseId }: { caseId: string }) {
               />
               {search && (
                 <button onClick={() => setSearch("")} className="text-muted hover:text-fg text-xs">
-                  ✕
+                  <X className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
                 </button>
               )}
               <span className="text-xs text-muted shrink-0">

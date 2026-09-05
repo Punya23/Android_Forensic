@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { RadioTower } from "lucide-react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { SectionHeader, StatCard, SortTh, useSort } from "../components/common";
@@ -217,7 +218,7 @@ export function CellTowerView({ caseId }: { caseId: string }) {
       {/* Header */}
       <div className="mb-5">
         <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
-          <span>📡</span> Cell Towers
+          <RadioTower className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Cell Towers
           <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
             Tier 0 — Read-only
           </span>
@@ -253,7 +254,9 @@ export function CellTowerView({ caseId }: { caseId: string }) {
 
       {!collected && towers.length === 0 ? (
         <div className="card p-10 text-center text-muted">
-          <div className="text-4xl mb-3 opacity-40">📡</div>
+          <div className="text-4xl mb-3 opacity-40">
+            <RadioTower className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+          </div>
           <div className="text-ink font-medium mb-1">Cell-tower data was not collected</div>
           <p className="text-sm leading-relaxed max-w-lg mx-auto">
             No <code className="font-mono">celltower_summary</code> was written for this case, so the
@@ -264,7 +267,9 @@ export function CellTowerView({ caseId }: { caseId: string }) {
         </div>
       ) : towers.length === 0 ? (
         <div className="card p-10 text-center text-muted">
-          <div className="text-4xl mb-3 opacity-40">📡</div>
+          <div className="text-4xl mb-3 opacity-40">
+            <RadioTower className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+          </div>
           <div className="text-ink font-medium mb-1">Collected — no serving cell reported</div>
           <p className="text-sm leading-relaxed max-w-lg mx-auto">
             The telephony registry was read and contained no usable cell identity. This is the

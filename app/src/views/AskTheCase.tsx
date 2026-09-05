@@ -10,6 +10,16 @@
  * question — read directly, with no generated summary — rather than a blank result.
  */
 import { useEffect, useRef, useState } from "react";
+import {
+  MessageSquare,
+  Recycle,
+  Phone,
+  Globe2,
+  Map,
+  User,
+  FileText,
+  type LucideIcon,
+} from "lucide-react";
 import { api } from "../lib/api";
 import type { AskCaseResponse, LlmStatus, Passage } from "../lib/types";
 import { EmptyState, SectionHeader } from "../components/common";
@@ -17,20 +27,21 @@ import { fmtTs } from "../lib/hooks";
 
 type Turn = { question: string; response: AskCaseResponse | null; error?: string };
 
-const SOURCE_ICON: Record<string, string> = {
-  messages: "💬",
-  recovered: "♻",
-  calls: "📞",
-  browser: "🌐",
-  locations: "🗺",
-  contacts: "👤",
+const SOURCE_ICON: Record<string, LucideIcon> = {
+  messages: MessageSquare,
+  recovered: Recycle,
+  calls: Phone,
+  browser: Globe2,
+  locations: Map,
+  contacts: User,
 };
 
 function PassageCard({ p }: { p: Passage }) {
+  const Icon = SOURCE_ICON[p.source_type] ?? FileText;
   return (
     <div className="card p-2.5 text-xs">
       <div className="flex items-center gap-1.5 mb-1 text-[10px] text-muted">
-        <span>{SOURCE_ICON[p.source_type] ?? "📄"}</span>
+        <Icon className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
         <span className="font-mono">{p.id}</span>
         <span>{p.source_type}</span>
         {p.app && <span className="text-accent">· {p.app}</span>}
