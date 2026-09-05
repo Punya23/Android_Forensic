@@ -34,15 +34,17 @@ sequenceDiagram
     Dev-->>W: raw files
 
     loop every stage
-        W->>CS: SHA-256 + hash-chained audit.jsonl append
+        W->>W: check CancellationToken (exit if cancelled)
+        W->>CS: SHA-256 cache check (skip if unmodified)
+        W->>CS: hash-chained audit.jsonl append
         W-->>D: socket.io "progress" {stage, pct, detail, case_id}
     end
 
     W->>W: parse live rows + recover deleted rows (confidence-badged)
     W->>W: case-intelligence analysis (ranked, cited leads)
-    W->>CS: write derived/*.json (~90 dataset files)
+    W->>CS: write derived/*.json (~90 dataset files) + acquisition_timing.json
     W->>CS: render report.html (NIST/SWGDE + BSA s.63 certificate)
-    W-->>D: socket.io "complete" {case_id, counts}
+    W-->>D: socket.io "complete" and "timing_update" {case_id, counts}
 
     U->>D: Browse case views, tag artifacts, search
     D->>E: GET /api/case/:id/:dataset (bearer token required)
@@ -82,11 +84,11 @@ flowchart LR
 
     subgraph ENG["Python Engine — Flask + Socket.IO, :5057"]
         direction TB
-        E1["Acquisition<br/>adbutils orchestration"]
+        E1["Acquisition<br/>adbutils orchestration<br/>(CancellationToken guarded)"]
         E2["Parsers<br/>38 modules — WhatsApp/Telegram/IG/Snap/SMS/browser/…"]
         E3["Recovery<br/>WAL / freelist / freeblock / rollback-journal carving"]
         E4["Case Intelligence<br/>ontology + hybrid RAG (BM25 + local embeddings)<br/>pluggable LLM (heuristic/Ollama, both local)"]
-        E5["Custody<br/>hash-chained audit log + SHA-256 manifest"]
+        E5["Custody & Cache<br/>hash-chained audit log<br/>SHA-256 content-addressed cache"]
         E6["Report Engine<br/>HTML/PDF + BSA s.63 certificate"]
     end
 
@@ -133,6 +135,16 @@ flowchart LR
 - **Per-case SQLite/JSON on disk, no server database** — the tool has to work with zero
   network dependency at a crime scene. `registry.db` is a rebuildable cache, not the source
   of truth — the case folder is. Full schema: [`docs/DATABASE.md`](DATABASE.md).
+
+## Security & Reliability (Hardening)
+
+To ensure evidence integrity and workstation safety, the pipeline relies on several critical security controls:
+- **Authentication & CSRF**: All state-changing requests (`POST`, `PUT`, `DELETE`) strictly require an `X-CSRF-Token` issued at login, mitigating CSRF on the local bridge. Failed logins are rate-limited.
+- **Strict CORS**: The Flask server only accepts cross-origin requests from `localhost` / `127.0.0.1`.
+- **Input Validation**: All paths, case IDs, serial numbers, and examiner inputs are strictly validated (no null bytes, no path traversal `../`, bounded max length). SQLite path extraction refuses any symlinks or `..` archives.
+- **SHA-256 Content-Addressed Caching**: Parsers use a `get_artifact_cached(sha256, config)` mechanism. This ensures that unmodified DBs aren't needlessly reparsed across runs, drastically accelerating triage. The cache is automatically invalidated when the source changes (e.g. pulling a fresh SQLite file).
+- **Graceful Cancellation**: A thread-safe `CancellationToken` object propagates down to all worker threads and I/O-bound `adb pull` operations. Calling `POST /api/acquire/cancel` raises `AcquisitionCancelled` within threads, cleanly exiting without hanging the server.
+- **Live WebSocket Streaming**: Events like `progress`, `cancelled`, and `timing_update` emit in real-time, keeping the UI instantly responsive while heavy tasks (like report generation) yield to a background thread.
 
 ## Project folder structure
 
