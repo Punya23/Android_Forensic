@@ -219,11 +219,34 @@ function caveatsOf(row: { caveats?: string[]; warnings?: string[] }): string[] {
   return [...(row.caveats ?? []), ...(row.warnings ?? [])];
 }
 
+/**
+ * Screen events do not carry a pre-computed hour-of-day field — only an ISO
+ * `timestamp` (UTC, per the parser) or an empty string for state-only rows
+ * with no timestamp at all. Derive the hour with `getUTCHours()` (not
+ * `getHours()`) so it matches the UTC hours drawn by HourChart regardless of
+ * the browser's local timezone. Returns null for a missing/unparseable
+ * timestamp so those rows are simply excluded from any hour filter.
+ */
+function eventHourUTC(ts: string | null | undefined): number | null {
+  if (!ts) return null;
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.getUTCHours();
+}
+
 // ---------------------------------------------------------------------------
 // Hour-of-day chart — pure CSS, no charting library.
 // ---------------------------------------------------------------------------
 
-function HourChart({ hours }: { hours: RankedHour[] }) {
+function HourChart({
+  hours,
+  selectedHour,
+  onHourClick,
+}: {
+  hours: RankedHour[];
+  selectedHour: number | null;
+  onHourClick: (hour: number) => void;
+}) {
   const hasCounts = hours.some((h) => typeof h.count === "number" && Number.isFinite(h.count));
   const maxCount = hasCounts ? Math.max(...hours.map((h) => h.count ?? 0), 1) : 0;
   const byHour = new Map<number, RankedHour>();
@@ -244,32 +267,36 @@ function HourChart({ hours }: { hours: RankedHour[] }) {
           ? "Counted from screen-ON events that carried a parseable timestamp."
           : "The engine records only the rank-ordered top active hours, not a per-hour session count. Unranked hours are drawn flat: that means \"not in the top ranks\", NOT \"zero activity\"."}{" "}
         Hours are <strong className="text-ink">UTC</strong>, taken from the event timestamp — they are not
-        converted to the device's local timezone, so they may not match the user's wall clock.
+        converted to the device's local timezone, so they may not match the user's wall clock. Click a bar to
+        filter the screen event feed below to that hour; click it again to clear the filter.
       </p>
 
       <div className="flex items-end gap-[3px] h-24" role="img" aria-label="Hour of day activity chart">
         {Array.from({ length: 24 }, (_, hour) => {
           const hit = byHour.get(hour);
+          const isSelected = selectedHour === hour;
           let pct = 6;
           if (hit) {
             pct = hasCounts
               ? Math.max(10, ((hit.count ?? 0) / maxCount) * 100)
               : Math.max(24, 100 - hit.rank * 18);
           }
+          const baseTitle = hit
+            ? hasCounts
+              ? `${String(hour).padStart(2, "0")}:00 UTC — ${hit.count} session(s)`
+              : `${String(hour).padStart(2, "0")}:00 UTC — rank #${hit.rank + 1} most active (no count recorded)`
+            : `${String(hour).padStart(2, "0")}:00 UTC — not among the ranked active hours`;
           return (
             <div key={hour} className="flex-1 flex flex-col justify-end h-full">
               <div
-                title={
-                  hit
-                    ? hasCounts
-                      ? `${String(hour).padStart(2, "0")}:00 UTC — ${hit.count} session(s)`
-                      : `${String(hour).padStart(2, "0")}:00 UTC — rank #${hit.rank + 1} most active (no count recorded)`
-                    : `${String(hour).padStart(2, "0")}:00 UTC — not among the ranked active hours`
-                }
+                onClick={() => onHourClick(hour)}
+                title={`${baseTitle} — ${isSelected ? "click to clear filter" : "click to filter feed to this hour"}`}
                 style={{
                   height: `${pct}%`,
-                  background: hit ? "#c1651f" : "#dde1de",
+                  background: isSelected ? "#2258a8" : hit ? "#c1651f" : "#dde1de",
                   borderRadius: 2,
+                  cursor: "pointer",
+                  boxShadow: isSelected ? "0 0 0 2px #2258a8" : "none",
                 }}
               />
             </div>
@@ -304,6 +331,10 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
   const [manifest, setManifest] = useState<CollectorManifest | null>(null);
   const [filter, setFilter] = useState("");
   const [helperFilter, setHelperFilter] = useState("");
+  // Hour-of-day filter driven by clicking a HourChart bar. Declared here,
+  // unconditionally and before either early return below, per the Rules of
+  // Hooks — see the useSort/useState note at the top of this file's task.
+  const [selectedHour, setSelectedHour] = useState<number | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -344,6 +375,17 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
     () => [...events].sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? "")),
     [events],
   );
+
+  // Filtered view of the feed for the hour-of-day click-through. Rows with no
+  // parseable timestamp (state-only wakefulness rows) never match a specific
+  // hour and are excluded once a filter is active, same as they are already
+  // visually distinguished ("no timestamp") in the unfiltered feed.
+  const hourFilteredEvents = useMemo(
+    () => (selectedHour == null ? sortedEvents : sortedEvents.filter((e) => eventHourUTC(e.timestamp) === selectedHour)),
+    [sortedEvents, selectedHour],
+  );
+
+  const handleHourClick = (hour: number) => setSelectedHour((h) => (h === hour ? null : hour));
 
   const rankedHours = useMemo(() => normalizeHours(summary.most_active_hours), [summary]);
 
@@ -655,7 +697,7 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
       {/* Hour chart */}
       <div className="mb-4">
         {rankedHours.length > 0 ? (
-          <HourChart hours={rankedHours} />
+          <HourChart hours={rankedHours} selectedHour={selectedHour} onHourClick={handleHourClick} />
         ) : (
           <div className="card p-4 text-xs text-muted leading-relaxed">
             <h3 className="text-sm font-semibold text-ink mb-1">Hour-of-day activity</h3>
@@ -779,12 +821,31 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
       </p>
 
       {/* Screen event feed */}
-      <h3 className="text-sm font-semibold text-ink mb-2">Screen event feed</h3>
+      <div className="mb-2 flex items-center justify-between gap-3 flex-wrap">
+        <h3 className="text-sm font-semibold text-ink">Screen event feed</h3>
+        {selectedHour != null && (
+          <button
+            type="button"
+            onClick={() => setSelectedHour(null)}
+            className="text-[11px] text-accent hover:underline"
+          >
+            Filtered to {String(selectedHour).padStart(2, "0")}:00 UTC hour · Clear filter
+          </button>
+        )}
+      </div>
       {sortedEvents.length === 0 ? (
         <div className="card p-6 text-sm text-muted leading-relaxed">
           No screen ON/OFF/UNLOCK transitions were parsed from <code className="text-ink">dumpsys power</code>.
           App-usage rows above came from a different service, so their presence does not imply this read failed —
           the power buffer may simply have held no transition history at capture time.
+        </div>
+      ) : hourFilteredEvents.length === 0 ? (
+        <div className="card p-6 text-sm text-muted leading-relaxed">
+          No screen events fall in the {String(selectedHour).padStart(2, "0")}:00 UTC hour.{" "}
+          <button type="button" onClick={() => setSelectedHour(null)} className="text-accent hover:underline">
+            Clear the filter
+          </button>{" "}
+          to see all {sortedEvents.length} events.
         </div>
       ) : (
         <div className="card overflow-auto">
@@ -798,7 +859,7 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
               </tr>
             </thead>
             <tbody>
-              {sortedEvents.map((e, i) => {
+              {hourFilteredEvents.map((e, i) => {
                 const rowCaveats = caveatsOf(e);
                 return (
                   <tr key={i}>

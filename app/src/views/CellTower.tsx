@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
-import { SectionHeader, StatCard } from "../components/common";
+import { SectionHeader, StatCard, SortTh, useSort } from "../components/common";
 
 // ---------------------------------------------------------------------------
 // Types — declared locally (the orchestrator owns lib/types.ts).
@@ -131,6 +131,19 @@ function SignalCell({ record }: { record: CellTowerRecord }) {
   return <span className="text-muted italic text-xs">— not recorded</span>;
 }
 
+/**
+ * Numeric sort key for "signal strength". Prefers dBm (reported directly by the radio);
+ * falls back to ASU only when no dBm reading exists — same preference order SignalCell
+ * uses for display. dBm and ASU are different, not-directly-comparable scales, but since
+ * a given record only ever supplies one of the two, this does not mix them within a
+ * single record's ordering.
+ */
+function signalSortValue(t: CellTowerRecord): number | undefined {
+  if (typeof t.signal_dbm === "number") return t.signal_dbm;
+  if (typeof t.signal_asu === "number") return t.signal_asu;
+  return undefined;
+}
+
 /** A small "label × count" breakdown bar built from a summary map. */
 function Breakdown({ title, map }: { title: string; map?: Record<string, number> }) {
   const entries = Object.entries(map ?? {})
@@ -174,13 +187,8 @@ export function CellTowerView({ caseId }: { caseId: string }) {
     };
   }, [caseId]);
 
-  if (loading || summary === null) {
-    return <div className="p-8 text-muted text-sm animate-pulse">Loading cell-tower records…</div>;
-  }
-
-  // A written summary proves the telephony read ran; no summary means it never did.
-  const collected = Object.keys(summary).length > 0;
-
+  // Hooks must run unconditionally on every render — filtered/sort are computed here,
+  // before the loading early return below, rather than after it.
   const q = query.toLowerCase();
   const filtered = towers.filter(
     (t) =>
@@ -193,6 +201,14 @@ export function CellTowerView({ caseId }: { caseId: string }) {
       String(t.mcc ?? "").includes(q) ||
       String(t.mnc ?? "").includes(q),
   );
+  const sort = useSort<CellTowerRecord>(filtered);
+
+  if (loading || summary === null) {
+    return <div className="p-8 text-muted text-sm animate-pulse">Loading cell-tower records…</div>;
+  }
+
+  // A written summary proves the telephony read ran; no summary means it never did.
+  const collected = Object.keys(summary).length > 0;
 
   const techMap = summary.by_technology ?? summary.by_network_type;
 
@@ -293,18 +309,32 @@ export function CellTowerView({ caseId }: { caseId: string }) {
             <table className="w-full text-sm">
               <thead>
                 <tr>
-                  <th className="th w-44">
-                    Registry time
-                    <span className="block normal-case tracking-normal text-[10px] text-warn font-normal">
-                      when observed, not a fix
-                    </span>
-                  </th>
+                  <SortTh
+                    className="th w-44"
+                    label={
+                      <span>
+                        Registry time
+                        <span className="block normal-case tracking-normal text-[10px] text-warn font-normal">
+                          when observed, not a fix
+                        </span>
+                      </span>
+                    }
+                    sortKeyName="timestamp"
+                    getValue={(t) => t.timestamp}
+                    sort={sort}
+                  />
                   <th className="th w-24">Cell ID</th>
                   <th className="th w-24">LAC / TAC</th>
                   <th className="th w-24">MCC / MNC</th>
                   <th className="th">Operator</th>
                   <th className="th w-24">Technology</th>
-                  <th className="th w-36">Signal</th>
+                  <SortTh
+                    className="th w-36"
+                    label="Signal"
+                    sortKeyName="signal"
+                    getValue={signalSortValue}
+                    sort={sort}
+                  />
                   <th className="th w-28">Registration</th>
                   <th className="th w-28">Confidence</th>
                 </tr>
@@ -317,7 +347,7 @@ export function CellTowerView({ caseId }: { caseId: string }) {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((t, i) => {
+                  sort.sorted.map((t, i) => {
                     const lacTac = idText(t.lac) ?? idText(t.tac);
                     const isTac = idText(t.lac) === null && idText(t.tac) !== null;
                     const mcc = idText(t.mcc);

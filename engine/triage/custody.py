@@ -79,6 +79,11 @@ class CaseMeta:
     # {"pre":…, "post":…, "diff":…, "teardown":…, "summary":…} — see triage/device_state.py
     device_state: dict[str, Any] = field(default_factory=dict)
     custody_transfers: list[dict[str, Any]] = field(default_factory=list)
+    # The scalar acquisition settings this run was launched with, so a later reader can
+    # tell an opt-in stage that was switched off from one that ran and found nothing.
+    # Without it every empty dataset looks identical, which is exactly the conflation
+    # the honesty model forbids. See triage/capabilities.py.
+    acquisition_config: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         d = dict(self.__dict__)
@@ -165,6 +170,11 @@ class Case:
 
     def update_device(self, device: DeviceInfo) -> None:
         self.meta.device = device
+        self._save_meta()
+
+    def set_acquisition_config(self, config: dict[str, Any]) -> None:
+        """Record the settings this acquisition ran with (see ``acquisition_config``)."""
+        self.meta.acquisition_config = dict(config)
         self._save_meta()
 
     def set_pre_state(self, state: dict[str, Any]) -> None:

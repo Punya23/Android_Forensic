@@ -27,11 +27,22 @@ trail — so the report is something you can actually stand behind.
 - 🔓 **Tiered acquisition** — Tier 0 (zero touch) → Tier 1 (sideloaded helper) → Tier 2 (root), every tier opt-in and logged
 - 🧬 **Deleted-record recovery** — WAL / freelist / freeblock / rollback-journal carving, confidence-badged (Live / Recovered / Carved / Deletion-Detected)
 - 💬 **Multi-app coverage** — WhatsApp, Telegram, Instagram, Snapchat, SMS, browser history — including their deleted messages
-- 🗺️ **Location & social graph** — EXIF/GPS trace, cell/BT/Wi-Fi history, cross-channel comms graph
+- 🗺️ **Location & social graph** — EXIF/GPS trace, cell-tower history, cross-channel comms graph
+- 📡 **Radio artifacts** — Wi-Fi credentials & saved-vs-joined networks, Bluetooth pairings *and* file-transfer history, hotspot posture
 - 🚦 **Traffic-light verdict** — RED/AMBER/GREEN scorecard built for a five-minute field decision
 - 📜 **Court-shaped report** — NIST/SWGDE-aligned, BSA 2023 §63 certificate, sealed SHA-256 export
 - 🧠 **Case intelligence** — plain-language brief → ontology-ranked collection plan, offline by default
+- 🔎 **Local RAG, on your machine** — precedent retrieval blends BM25 with a local embedding model under Ollama; case text never leaves the workstation, and the plan records which of the two actually ran
+- 🕵️ **Deep investigation** — a bounded, deterministic pass cross-links findings a flat scoring pass can't correlate on its own (a location anomaly co-occurring with a message; a known contact with no communication surfaced)
+- 💬 **Ask this case** — free-text Q&A over a case's own already-collected evidence, cited to the exact artifact, grounded so a model can only answer from what's retrieved
+- 🔗 **Cross-case linking** — the same phone number, UPI ID, or email surfacing in another case on this installation, indexed and cited from both sides
+- 🚧 **Per-dataset capability states** — every view says whether its data was collected, checked-and-empty, gated off, unreachable, or not built yet
 - 📴 **Works with zero phone** — full pipeline demoable against a synthetic mock corpus
+
+Running through all of it is one rule: **absent ≠ inaccessible, and unverified ≠ clean.** A
+thing we could not read is reported as unreadable, never as not there — including in the
+dashboard, where an empty view names which of the four kinds of "empty" it is rather than
+rendering a blank panel.
 
 ## How it flows
 
@@ -48,83 +59,63 @@ flowchart LR
 ## Quick start (no phone required)
 
 ```bash
-# engine
-cd engine && python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt && cp .env.example .env
-python tools/make_corpus.py _corpus/device_A
-python -m triage.server --port 5057
-
-# dashboard (new terminal)
-cd app && npm install && npm run dev   # → localhost:5173
+./run.sh          # venv + deps + mock corpus + engine :5057 + dashboard :5173
 ```
-Sign in with the creds from `engine/.env`, pick the mock device, click **Begin Acquisition**.
 
-Or one shot: `./run.sh`
-
-## 🧪 Forensic Modules (New)
-
-Five new forensic modules have been added for advanced Android analysis:
-
-### Module Overview
-| Module | Tier | Purpose |
-|--------|------|---------|
-| **Bluetooth Correlation** | 2 (Root) | Correlate bond records with live state |
-| **Wi-Fi Passwords** | 2 (Root) | Extract credentials from config files |
-| **Wi-Fi Traffic History** | 0 (Non-root) | Hour-bucketed traffic per SSID |
-| **USB Connection State** | 0 (Non-root) | Detect USB cable via 3 probes |
-| **Hotspot Indicators** | 0 (Non-root) | Detect hosted/connected hotspots |
-
-### Quick Setup
+Sign in (`examiner` / `snagr` by default — override in `engine/.env`), pick the mock
+device, click **Begin Acquisition**. Or step by step:
 
 ```bash
-cd engine
+cd engine && python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt && cp .env.example .env
+python tools/make_corpus.py _corpus/device_A     # synthetic device, no phone involved
+python -m triage.server --port 5057
 
-# Verify installation (runs in seconds, no device needed)
-python verify_modules.py
-
-# Run full test suite (19 tests)
-python -m pytest tests/test_forensic_modules.py -v
+cd app && npm install && npm run dev             # new terminal → localhost:5173
 ```
 
-**Expected output**: `19 passed` ✅
+## Against a real phone
 
-### Key Features
-- ✅ **Forensically sound**: Separate time semantics, explicit caveats
-- ✅ **No external dependencies**: Python stdlib only
-- ✅ **Fully tested**: 19 unit tests with synthetic fixtures
-- ✅ **Python 3.10+ ready**: Type hints throughout
+USB debugging on, device authorised, screen unlocked. Tier 0 needs nothing else; Tier 1
+sideloads [the collector APK](apk/README.md); Tier 2 needs root and is always opt-in.
 
-### Example Usage
+```bash
+adb devices                                       # confirm it is authorised
+cd engine && source .venv/bin/activate
+python -m triage.cli devices                      # what the engine can see
 
-```python
-# Bluetooth Correlation
-from triage.parsers import bt_config
-bonds = bt_config.parse_bt_config("/path/to/bt_config.conf")
-correlated = bt_config.correlate_bluetooth(bonds, dumpsys_devices)
+# Tier 0 only — no install, no root
+python -m triage.cli acquire --serial <SERIAL> \
+    --case CASE01 --examiner "Your Name" --authority "<warrant ref>"
 
-# Wi-Fi Passwords (Root Tier 2)
-from triage.parsers import wifi
-networks = wifi.parse_wifi_config(Path("/data/misc/wifi/WifiConfigStore.xml"))
-
-# Wi-Fi Traffic (Non-root Tier 0)
-from triage.parsers import wifi_live
-buckets = wifi_live.parse_netstats(netstats_output)
-
-# USB State (Non-root Tier 0)
-from triage.acquire.real import get_usb_state
-usb_state = get_usb_state(adb)
-
-# Hotspot Indicators (Non-root Tier 0)
-from triage.parsers import hotspot
-result = hotspot.analyze_hotspot_indicators(wifi_dumpsys, netstats, wifi_config)
+# Add Tier 1 (installs + uninstalls the helper) and Tier 2 (root) as the case allows
+python -m triage.cli acquire --serial <SERIAL> --case CASE01 --examiner "Your Name" \
+    --tier1-collect-all \
+    --tier2-wifi --tier2-bt-config --tier2-browser-history --tier2-whatsapp-backup
 ```
 
-### Documentation
-- 📖 **[Complete Setup Guide](FORENSIC_MODULES_SETUP.md)** - Installation, API reference, integration
-- 📋 **[Implementation Summary](FORENSIC_MODULES_SUMMARY.md)** - What was delivered
-- 🗂️ **[Documentation Index](FORENSIC_MODULES_INDEX.md)** - Navigation guide
+`python -m triage.cli acquire --help` lists every tier flag. The dashboard drives the same
+pipeline with live progress if you'd rather click.
 
-**All modules production-ready and tested** ✅
+## Repo layout
+
+| | |
+|---|---|
+| `engine/` | Python acquisition + recovery + reporting. `triage/pipeline.py` is the spine |
+| `engine/triage/parsers/` | One module per artifact type — the bulk of the forensic logic |
+| `engine/triage/recovery/` | SQLite carving: freelist, freeblocks, unallocated, WAL, journals |
+| `engine/triage/intel/` | Case-intelligence layer — planning, RAG retrieval, deep investigation, ask-this-case |
+| `app/` | Electron + React dashboard (Vite, TypeScript) |
+| `apk/` | Kotlin Tier-1 collector, sideloaded and then removed |
+| `docs/` | The reference docs linked below |
+
+Building and testing each half:
+
+```bash
+cd engine && python -m pytest tests/ -q      # 1205 tests, no device needed
+cd apk && ./gradlew assembleDebug            # needs the Android SDK
+cd app && npx tsc --noEmit                   # dashboard typecheck
+```
 
 ## 🤖 AI Enhancement Modules (New)
 
@@ -201,8 +192,8 @@ graph = analyst.build_enhanced_graph(messages, contacts)
 | [**API reference**](docs/API_REFERENCE.md) | Every route, auth rule, Socket.IO event |
 | [**Database**](docs/DATABASE.md) | Schema, per-case file layout, example payloads |
 | [**Setup & deployment**](docs/SETUP.md) | Full install, deps, env vars, packaging gaps |
+| [**Network artifacts**](docs/NETWORK_ARTIFACTS.md) | Wi-Fi, Bluetooth, USB & hotspot — what the device stores and what we can read |
 | [**Notes**](docs/NOTES.md) | Forensic soundness, WhatsApp module deep-dive, known gaps |
-| [**Forensic Modules**](FORENSIC_MODULES_SETUP.md) | New modules setup, API reference, integration guide |
 
 ## Reality check
 
@@ -215,7 +206,7 @@ deliberately not wired up.
 
 <div align="center">
 
-**1007 tests passing** · **+19 forensic module tests** · **+17 AI module tests** · Runs fully offline · No account, no cloud, no telemetry
+**1205 tests passing** · **+19 forensic module tests** · **+17 AI module tests** · Runs fully offline · No account, no cloud, no telemetry
 
 **New**: [Forensic Modules](FORENSIC_MODULES_INDEX.md) · [AI Modules](AI_MODULES_COMPLETE.md)
 

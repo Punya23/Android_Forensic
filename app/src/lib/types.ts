@@ -209,7 +209,14 @@ export interface Precedent {
   crime_type: string;
   crime_match: boolean;
   score: number;
+  /** Normalised BM25 component of `score`, 0..1. */
   lexical: number;
+  /**
+   * Cosine similarity from the local embedding model, 0..1. Stays 0 when semantic
+   * retrieval did not run — check the response's `retrieval_mode` to tell that apart
+   * from a genuine similarity of zero.
+   */
+  semantic?: number;
   matched_terms: string[];
   decisive_artifacts: string[];
   /** Collected, examined, produced nothing — a genuine evidential null. */
@@ -317,6 +324,8 @@ export interface CaseBankSearchResponse {
   query: string;
   crime_type: string | null;
   total: number;
+  /** "hybrid" (BM25 + local embeddings) or "lexical" (BM25 only). */
+  retrieval_mode?: string;
   results: Precedent[];
 }
 
@@ -421,7 +430,12 @@ export interface PlanResponse {
   profile: CaseProfile;
   plan: CollectionPlan;
   provider: string;
+  /** Back-end that was asked for but unreachable, when `provider` is standing in. */
+  provider_degraded_from?: string;
   case_bank_size: number;
+  /** "hybrid" (BM25 + local embeddings), "lexical" (BM25 only), or "none". */
+  retrieval_mode?: string;
+  embedding?: EmbeddingStatus;
 }
 
 export interface NomenclatureCheckResponse {
@@ -971,4 +985,131 @@ export interface WhatsAppBackupSummary {
     carved: number;
     deletion: number;
   };
+}
+
+// --- capability states (engine: triage/capabilities.py) --------------------
+/** Why a dataset view has nothing to show. Never just "empty". */
+export interface CapabilityState {
+  dataset: string;
+  label: string;
+  /** 0 = read-only, 1 = Collector APK, 2 = root, -1 = derived from other datasets. */
+  tier: number;
+  state: "populated" | "empty" | "not_collected" | "inaccessible" | "planned";
+  reason: string;
+  requires: string;
+  /** Acquisition flag that gates this stage, when one does. */
+  flag: string;
+  count: number;
+}
+
+export interface CaseCapabilities {
+  items: CapabilityState[];
+  by_dataset: Record<string, CapabilityState>;
+  counts: Partial<Record<CapabilityState["state"], number>>;
+  root_available: boolean | null;
+  note: string;
+}
+
+// --- case-intelligence back-ends (engine: triage/intel/llm.py) -------------
+export interface LlmProviderInfo {
+  name: "heuristic" | "ollama" | "anthropic";
+  label: string;
+  available: boolean;
+  /** True when the back-end runs on this workstation and case text never leaves it. */
+  local: boolean;
+  /** Why it is unavailable. Empty when it is. */
+  reason: string;
+  note: string;
+  /** Chat models actually pulled locally (Ollama only). */
+  models?: string[];
+}
+
+export interface EmbeddingStatus {
+  available: boolean;
+  model?: string;
+  host?: string;
+  cached_vectors?: number;
+  reason?: string;
+  /** "hybrid (BM25 + local embeddings)" | "lexical (BM25 only)" | "disabled" */
+  mode: string;
+}
+
+export interface LlmStatus {
+  configured: string;
+  chat_model: string;
+  providers: LlmProviderInfo[];
+  embedding_models: string[];
+  embedding: EmbeddingStatus;
+}
+
+// --- Deep investigation (engine: triage/intel/investigator.py) -------------
+export interface Hypothesis {
+  id: string;
+  kind: string;
+  question: string;
+  dataset_scope: string[];
+  status: "pending" | "answered" | "blocked";
+  finding_ids: string[];
+  /** Plain-language result — what was found, or why the hypothesis is blocked. */
+  detail: string;
+}
+
+export interface LinkedFinding {
+  id: string;
+  kind: string;
+  rationale: string;
+  left_ref: string;
+  right_ref: string;
+  gap_seconds: number;
+}
+
+export interface InvestigationTrace {
+  hypotheses: Hypothesis[];
+  linked_findings: LinkedFinding[];
+  narrative: string;
+  analysis_method: string;
+  disclaimer: string;
+}
+
+// --- Ask this case (engine: triage/intel/case_qa.py) -------------------------
+export interface Passage {
+  id: string;
+  text: string;
+  source_type: string;
+  source_file: string;
+  timestamp: string | null;
+  app: string;
+  confidence: string;
+}
+
+export interface AskCaseResponse {
+  question: string;
+  answer: string;
+  /** "llm:<provider>" when a model synthesised an answer, else "retrieval-only". */
+  method: string;
+  /** "hybrid" (BM25 + local embeddings) | "lexical" | "none". */
+  retrieval_mode: string;
+  passages: Passage[];
+  disclaimer: string;
+  passages_available: number;
+}
+
+// --- Cross-case identifier linking (engine: triage/registry.py) --------------
+export interface SharedIdentifier {
+  category: string;
+  this_value: string;
+  this_source: string;
+  other_value: string;
+  other_source: string;
+}
+
+export interface LinkedCase {
+  case_id: string;
+  shared: SharedIdentifier[];
+}
+
+export interface LinkedCasesResponse {
+  case_id: string;
+  linked_cases: LinkedCase[];
+  disclaimer: string;
 }

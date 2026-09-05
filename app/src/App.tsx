@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { api, hasAuthToken, setOnUnauthorized } from "./lib/api";
 import type { Health } from "./lib/types";
 import { TagProvider } from "./lib/tagStore";
-import { Sidebar, isCaseIndependent, type ViewKey } from "./components/Sidebar";
+import { CapabilityProvider, CapabilityBanner } from "./lib/capabilities";
+import { Sidebar, isCaseIndependent, VIEW_DATASET, type ViewKey } from "./components/Sidebar";
 import { GlobalSearch } from "./components/GlobalSearch";
 import { LoginView } from "./views/Login";
 import { OnboardingView } from "./views/Onboarding";
@@ -10,6 +11,7 @@ import { AcquisitionView } from "./views/Acquisition";
 import { CasesView } from "./views/Cases";
 import { OverviewView } from "./views/Overview";
 import { CaseIntelView } from "./views/CaseIntel";
+import { AskTheCaseView } from "./views/AskTheCase";
 import { KnowledgeBaseView } from "./views/KnowledgeBase";
 import { MessagesView } from "./views/Messages";
 import { ContactsView } from "./views/Contacts";
@@ -127,6 +129,10 @@ export default function App() {
       />
       <main className="flex-1 overflow-hidden flex flex-col">
         <TopBar health={health} caseId={caseId} setView={setView} username={username} onLogout={onLogout} />
+        {/* One strip, above whichever view is routed, saying why this view's data is
+            absent when it is. Renders nothing when the dataset is populated, and
+            nothing for views that aren't about a single dataset. */}
+        {caseId && <CapabilityBanner dataset={VIEW_DATASET[view]} />}
         <div className="flex-1 overflow-auto">
           {view === "acquire" && <AcquisitionView onCaseReady={onCaseReady} onOpenCase={onCaseReady} />}
           {view === "cases" && <CasesView onOpenCase={onCaseReady} />}
@@ -136,6 +142,7 @@ export default function App() {
           )}
           {caseId && view === "overview" && <OverviewView caseId={caseId} setView={setView} />}
           {caseId && view === "intel" && <CaseIntelView caseId={caseId} />}
+          {caseId && view === "ask" && <AskTheCaseView caseId={caseId} />}
           {caseId && view === "messages" && <MessagesView caseId={caseId} />}
           {caseId && view === "contacts" && <ContactsView caseId={caseId} />}
           {caseId && view === "calls" && <CallsView caseId={caseId} />}
@@ -153,7 +160,7 @@ export default function App() {
           {caseId && view === "locations" && <LocationsView caseId={caseId} />}
           {caseId && view === "loctrace" && <LocationTraceView caseId={caseId} />}
           {caseId && view === "browser" && <BrowserView caseId={caseId} />}
-          {caseId && view === "timeline" && <TimelineView caseId={caseId} />}
+          {caseId && view === "timeline" && <TimelineView caseId={caseId} setView={setView} />}
           {caseId && view === "recovered" && <RecoveredView caseId={caseId} />}
           {caseId && view === "graph" && <GraphView caseId={caseId} />}
           {caseId && view === "advanced" && <AdvancedAnalyticsView caseId={caseId} setView={setView} />}
@@ -181,11 +188,13 @@ export default function App() {
     </div>
   );
 
-  // The tag store is per-case; only mount it once a case is loaded.
+  // The tag store and the capability map are both per-case; only mount them once a
+  // case is loaded. Capabilities wrap the tag store so every view can ask why its
+  // dataset is empty without each one re-fetching the same answer.
   return caseId ? (
-    <TagProvider caseId={caseId} key={caseId}>
-      {body}
-    </TagProvider>
+    <CapabilityProvider caseId={caseId} key={caseId}>
+      <TagProvider caseId={caseId}>{body}</TagProvider>
+    </CapabilityProvider>
   ) : (
     body
   );

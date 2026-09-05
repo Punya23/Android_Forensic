@@ -1,11 +1,17 @@
 import { useState } from "react";
 import type { CallRecord } from "../lib/types";
 import { useDataset, fmtTs } from "../lib/hooks";
-import { SectionHeader } from "../components/common";
+import { SectionHeader, SortTh, useSort } from "../components/common";
 
 export function CallsView({ caseId }: { caseId: string }) {
   const { data, loading } = useDataset<CallRecord>(caseId, "calls");
   const [query, setQuery] = useState("");
+  // Hooks must run unconditionally on every render — computed here, before either
+  // early return below, rather than after the empty-state check.
+  const filtered = data.filter(
+    (c) => !query || c.number.includes(query) || c.name.toLowerCase().includes(query.toLowerCase()),
+  );
+  const sort = useSort<CallRecord>(filtered);
 
   if (loading) return <div className="p-8 text-muted">Loading calls…</div>;
 
@@ -37,10 +43,6 @@ export function CallsView({ caseId }: { caseId: string }) {
     );
   }
 
-  const filtered = data.filter(
-    (c) => !query || c.number.includes(query) || c.name.toLowerCase().includes(query.toLowerCase()),
-  );
-
   return (
     <div className="p-6 h-full flex flex-col">
       <SectionHeader title="Calls" sub={`${data.length} call records`} />
@@ -49,15 +51,15 @@ export function CallsView({ caseId }: { caseId: string }) {
         <table className="w-full text-sm">
           <thead>
             <tr>
-              <th className="th w-40">Time</th>
-              <th className="th">Number</th>
-              <th className="th">Name</th>
-              <th className="th w-28">Type</th>
-              <th className="th w-24">Duration</th>
+              <SortTh className="th w-40" label="Time" sortKeyName="timestamp" getValue={(c) => c.timestamp} sort={sort} />
+              <SortTh className="th" label="Number" sortKeyName="number" getValue={(c) => c.number} sort={sort} />
+              <SortTh className="th" label="Name" sortKeyName="name" getValue={(c) => c.name} sort={sort} />
+              <SortTh className="th w-28" label="Type" sortKeyName="call_type" getValue={(c) => c.call_type} sort={sort} />
+              <SortTh className="th w-24" label="Duration" sortKeyName="duration_s" getValue={(c) => c.duration_s} sort={sort} />
             </tr>
           </thead>
           <tbody>
-            {filtered.map((c, i) => (
+            {sort.sorted.map((c, i) => (
               <tr key={i}>
                 <td className="td font-mono text-xs text-muted">{fmtTs(c.timestamp)}</td>
                 <td className="td font-mono">{c.number}</td>

@@ -91,11 +91,34 @@ export const api = {
   /** Confirms a stored token is still accepted by the (possibly restarted) engine. */
   me: () => get<{ username: string }>("/api/auth/me"),
 
+  /** Which case-intelligence back-ends this workstation can actually use, live. */
+  llmStatus: (refresh = false) =>
+    get<import("./types").LlmStatus>(`/api/llm/status${refresh ? "?refresh=1" : ""}`),
   health: () => get<Health>("/api/health"),
   devices: () => get<DeviceListing>("/api/devices"),
   cases: () => get<{ case_id: string; examiner: string; created_at: string; device: string }[]>("/api/cases"),
   caseOverview: (id: string) => get<CaseSummary>(`/api/case/${id}`),
   dataset: <T>(id: string, name: string) => get<T>(`/api/case/${id}/${name}`),
+  /** Authed conversation-map fetch. Every chat view goes through here — a raw
+   * `fetch` skips the bearer token and the engine answers 401, which used to render
+   * as a silently-empty Snapchat/Instagram/Telegram tab. */
+  conversations: (id: string, dataset: string) =>
+    get<import("./types").ChatConversationsMap>(`/api/case/${id}/${dataset}`),
+  telegramConversations: (id: string) =>
+    get<import("./types").TelegramConversationsMap>(`/api/case/${id}/telegram/conversations`),
+  telegramPresence: (id: string) =>
+    get<import("./types").TelegramPresence>(`/api/case/${id}/telegram_presence`),
+  whatsappBackupMessages: (id: string) =>
+    get<import("./types").WhatsAppBackupMessage[]>(`/api/case/${id}/whatsapp_backup/messages`),
+  whatsappBackupSummary: (id: string) =>
+    get<import("./types").WhatsAppBackupSummary>(`/api/case/${id}/whatsapp_backup/summary`),
+  whatsappBackupMedia: (id: string) =>
+    get<import("./types").WhatsAppBackupMedia[]>(`/api/case/${id}/whatsapp_backup/media`),
+  discoveredChats: (id: string) =>
+    get<import("./types").DiscoveredChats>(`/api/case/${id}/discovered_chats`),
+  /** Per-dataset collection state for a case — see lib/capabilities.tsx. */
+  capabilities: (id: string) =>
+    get<import("./types").CaseCapabilities>(`/api/case/${id}/capabilities`),
   manifest: (id: string) => get<ManifestRecord[]>(`/api/case/${id}/manifest`),
   audit: (id: string) => get<AuditEvent[]>(`/api/case/${id}/audit`),
   tags: (id: string) => get<import("./types").Tag[]>(`/api/case/${id}/tags`),
@@ -218,6 +241,31 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
     }),
+
+  // Deep investigation: bounded, deterministic hypothesis pass cross-linking findings
+  // (run automatically during acquisition; this re-runs it on demand).
+  investigate: (id: string, body?: { llm_provider?: string }) =>
+    request<import("./types").InvestigationTrace>(`/api/case/${id}/investigate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    }),
+
+  // "Ask this case" — free-text Q&A over the case's own already-collected evidence.
+  askCase: (
+    id: string,
+    question: string,
+    opts?: { llm_provider?: string; top_k?: number; use_embeddings?: boolean }
+  ) =>
+    request<import("./types").AskCaseResponse>(`/api/case/${id}/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, ...opts }),
+    }),
+
+  // Other cases on this installation sharing a phone number / UPI ID / email.
+  linkedCases: (id: string) =>
+    get<import("./types").LinkedCasesResponse>(`/api/case/${id}/linked-cases`),
 
   acquire: (body: {
     mock?: string;

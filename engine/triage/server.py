@@ -214,6 +214,20 @@ def create_app(cases_root: Path = CASES_ROOT):
             )
         return state["knowledge_graph"]
 
+    def _embedder(refresh: bool = False):
+        """Local embedding model for semantic retrieval, or None if switched off.
+
+        Cached like the other intel stores: probing Ollama and reloading the vector
+        cache on every request would add a round-trip to each plan preview. Availability
+        is re-probed on ``refresh`` so starting Ollama mid-session is picked up without
+        restarting the engine.
+        """
+        from .intel.embeddings import get_embedder
+
+        if refresh or "embedder" not in state:
+            state["embedder"] = get_embedder(cases_root)
+        return state["embedder"]
+
     def _save_graph(graph) -> None:
         from .intel import GRAPH_FILENAME
 
@@ -337,6 +351,7 @@ def create_app(cases_root: Path = CASES_ROOT):
             bank=bank,
             graph=graph,
             use_rag=use_rag,
+            embedder=_embedder(refresh=bool(body.get("refresh_models"))) if use_rag else None,
         )
 
         return jsonify(
@@ -344,7 +359,13 @@ def create_app(cases_root: Path = CASES_ROOT):
                 "profile": profile.to_dict(),
                 "plan": plan.to_dict(),
                 "provider": provider.name,
+                "provider_degraded_from": provider.degraded_from,
                 "case_bank_size": len(bank) if bank is not None else 0,
+                # How retrieval actually ran. A hybrid plan and a lexical one can rank
+                # the same corpus differently, so the plan has to say which it was
+                # rather than leaving the examiner to assume the better of the two.
+                "retrieval_mode": getattr(bank, "retrieval_mode", "lexical") if bank else "none",
+                "embedding": (_embedder().status() if _embedder() else {"available": False, "mode": "disabled"}),
             }
         )
 
@@ -361,13 +382,17 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         if query:
             hits = bank.search(
-                query, crime_type=crime, top_k=int(request.args.get("top_k", 5))
+                query,
+                crime_type=crime,
+                top_k=int(request.args.get("top_k", 5)),
+                embedder=_embedder(),
             )
             return jsonify(
                 {
                     "query": query,
                     "crime_type": crime,
                     "total": len(bank),
+                    "retrieval_mode": bank.retrieval_mode,
                     "results": [h.to_dict() for h in hits],
                 }
             )
@@ -620,6 +645,97 @@ def create_app(cases_root: Path = CASES_ROOT):
         return jsonify(bundle)
         # ---------------------------------------------------------
 
+    @app.post("/api/case/<case_id>/investigate")
+    def investigate_case_endpoint(case_id: str):
+        """(Re-)run the deep investigation pass against this case's current
+        ``ai_findings`` — see triage/intel/investigator.py. Requires a case profile
+        (run /analyze first, or supply one this run already has)."""
+        case = _open(cases_root, case_id)
+        body = request.get_json(silent=True) or {}
+
+        from .intel import get_provider
+        from .intel.investigator import investigate_case
+        from .intel.planner import CaseProfile, CollectionPlan
+
+        stored_profile = case.read_derived("case_profile")
+        if not stored_profile:
+            return jsonify({"error": "no case profile available — run /analyze first"}), 400
+        profile = CaseProfile(**stored_profile)
+
+        stored_plan = case.read_derived("collection_plan")
+        plan = CollectionPlan.from_dict(stored_plan) if stored_plan else None
+
+        provider = get_provider(str(body.get("llm_provider", "")) or None)
+        bundle = investigate_case(case, profile, plan=plan, provider=provider)
+        return jsonify(bundle)
+
+    @app.post("/api/case/<case_id>/ask")
+    def ask_case_endpoint(case_id: str):
+        """"Ask this case" — free-text Q&A over the case's own already-collected
+        evidence. Local retrieval always runs; a grounded LLM synthesis on top is
+        added only when a model is configured, and it is instructed to answer
+        strictly from the retrieved passages — see triage/intel/case_qa.py.
+        """
+        from .intel import get_provider
+        from .intel.case_qa import answer_question, build_passages
+
+        case = _open(cases_root, case_id)
+        body = request.get_json(silent=True) or {}
+        question = str(body.get("question", "")).strip()
+        if not question:
+            return jsonify({"error": "a question is required"}), 400
+
+        derived = {
+            name: case.read_derived(name)
+            for name in ("messages", "recovered", "calls", "browser", "locations", "contacts")
+        }
+        passages = build_passages(derived)
+        provider = get_provider(str(body.get("llm_provider", "")) or None)
+        embedder = _embedder() if bool(body.get("use_embeddings", True)) else None
+        bundle = answer_question(
+            question,
+            passages,
+            embedder=embedder,
+            provider=provider,
+            top_k=int(body.get("top_k", 6)),
+        )
+        bundle["passages_available"] = len(passages)
+        return jsonify(bundle)
+
+    @app.get("/api/case/<case_id>/linked-cases")
+    def linked_cases_endpoint(case_id: str):
+        """Other cases on this installation sharing a phone number, UPI ID, or email
+        with this one — see triage/registry.py's find_linked_cases and
+        triage/forensics/case_reference.py for exactly what is and isn't extracted.
+
+        Every acquisition since this feature shipped indexes its own identifiers as
+        part of run_acquisition(); a case acquired before that (or re-opened after new
+        artifacts were added without a fresh acquisition) is indexed here, lazily, on
+        first request — mirroring how registry.sync_registry() backfills the case list
+        itself. Cheap: an upsert-and-query, not a re-scan of every other case.
+        """
+        from .forensics.case_reference import extract_case_identifiers
+
+        case = _open(cases_root, case_id)
+        contacts = case.read_derived("contacts") or []
+        messages = case.read_derived("messages") or []
+        calls = case.read_derived("calls") or []
+        identifiers = extract_case_identifiers(contacts, messages, calls)
+        registry.upsert_case_identifiers(cases_root, case_id, identifiers)
+
+        return jsonify(
+            {
+                "case_id": case_id,
+                "linked_cases": registry.find_linked_cases(cases_root, case_id),
+                "disclaimer": (
+                    "A shared identifier is a fact about this installation's case "
+                    "history, not evidence linking two investigations. Every match "
+                    "cites the exact artifact it came from in both cases — verify "
+                    "against those artifacts before relying on it."
+                ),
+            }
+        )
+
     # ACQUISITION
     # ---------------------------------------------------------
 
@@ -696,6 +812,11 @@ def create_app(cases_root: Path = CASES_ROOT):
             plan_allow_tier2=bool(body.get("plan_allow_tier2", True)),
             use_local_corpus=bool(body.get("use_local_corpus", True)),
             learn_from_case=bool(body.get("learn_from_case", True)),
+            # Opt-in completion notification (off unless the caller supplies types).
+            notify_on_complete=bool(body.get("notify_on_complete", False)),
+            notify_types=list(body.get("notify_types") or []),
+            notify_recipients=list(body.get("notify_recipients") or []),
+            notify_webhook_url=str(body.get("notify_webhook_url", "") or ""),
         )
 
         # -------------------------------
@@ -803,6 +924,13 @@ def create_app(cases_root: Path = CASES_ROOT):
         q = str(request.args.get("q", "")).strip()
         sort = str(request.args.get("sort", "-updated_at")).strip()
         limit = int(request.args.get("limit", 500))
+        # Index anything that appeared since startup. The engine is not the only thing
+        # that creates case folders — `python -m triage.cli acquire` writes one too, and
+        # so does copying a case in from another workstation. Syncing only at boot meant
+        # those cases were missing from Case History with no indication they existed,
+        # which for a case index is the one failure that matters. The call only touches
+        # folders with no row, so the steady-state cost is a single SELECT.
+        registry.sync_registry(cases_root)
         return jsonify(
             {
                 "cases": registry.list_cases(cases_root, q=q, sort=sort, limit=limit),
@@ -812,6 +940,7 @@ def create_app(cases_root: Path = CASES_ROOT):
 
     @app.get("/api/registry/stats")
     def registry_stats_endpoint():
+        registry.sync_registry(cases_root)
         return jsonify(registry.registry_stats(cases_root))
 
     @app.get("/api/case/<case_id>/reports")
@@ -928,6 +1057,58 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         return jsonify(summary)
 
+    @app.get("/api/case/<case_id>/capabilities")
+    def case_capabilities_route(case_id: str):
+        """Per-dataset state: populated / empty / not_collected / inaccessible / planned.
+
+        Registered before the generic ``/<dataset>`` route so "capabilities" resolves
+        here rather than being looked up as a derived file.
+        """
+        from .capabilities import case_capabilities
+
+        case = _open(cases_root, case_id)
+        config = getattr(case.meta, "acquisition_config", None) or {}
+        return jsonify(case_capabilities(case.root, config))
+
+    @app.get("/api/llm/status")
+    def llm_status():
+        """Which case-intelligence back-ends this workstation can actually use.
+
+        Answered live from the local Ollama daemon and the engine environment, so the
+        dashboard's provider picker offers what exists rather than what is theoretically
+        supported. ``refresh=1`` also re-probes the embedding model.
+        """
+        from .intel.llm import provider_status
+
+        status = provider_status()
+        embedder = _embedder(refresh=request.args.get("refresh") in ("1", "true"))
+        status["embedding"] = (
+            embedder.status() if embedder else {"available": False, "mode": "disabled"}
+        )
+        return jsonify(status)
+
+    @app.get("/api/capabilities")
+    def capabilities_catalogue():
+        """The catalogue with no case attached — what this build can and cannot do."""
+        from .capabilities import CATALOGUE
+
+        return jsonify(
+            {
+                "items": [
+                    {
+                        "dataset": cap.dataset,
+                        "label": cap.label,
+                        "tier": cap.tier,
+                        "requires": cap.requires,
+                        "flag": cap.flag,
+                        "planned": cap.planned,
+                        "planned_note": cap.planned_note,
+                    }
+                    for cap in CATALOGUE.values()
+                ]
+            }
+        )
+
     @app.get("/api/case/<case_id>/<dataset>")
     def case_dataset(case_id: str, dataset: str):
 
@@ -976,8 +1157,12 @@ def create_app(cases_root: Path = CASES_ROOT):
             "search_history",
             "maps_locations",
             "maps_location_anomalies",
-            # P1-3: root-tier Bluetooth bond store (bt_config.conf).
+            # P1-3: root-tier Bluetooth bond store (bt_config.conf), the OPP transfer
+            # log (the only Bluetooth artifact with a real wall-clock time) and the
+            # Android 11+ connection-recency ranking.
             "bluetooth_bonds",
+            "bluetooth_transfers",
+            "bluetooth_connection_order",
             # P3-1/P3-2/P3-3/P3-4: persistent app-presence, anti-forensics, encrypted-app
             # reporting and recent tasks.
             "app_presence",
@@ -1017,6 +1202,9 @@ def create_app(cases_root: Path = CASES_ROOT):
             "snapchat_conversations",
             "discovered_chats",
             "ai_findings",
+            # Deep investigation: bounded hypothesis pass cross-linking findings
+            # analyze_derived's single flat scoring pass can't correlate on its own.
+            "investigation_trace",
             "case_profile",
             "collection_plan",
             # Re-analysis writes its re-ranking here rather than over the plan that
@@ -1040,6 +1228,7 @@ def create_app(cases_root: Path = CASES_ROOT):
             "device_state",
             "wifi_live",
             "bluetooth_bond_report",
+            "bluetooth_transfer_summary",
             "signal",
             # Honest "what happened" record for Tier-2 Telegram — written on every
             # exit path (success, root unavailable, BFU-gated, mock source) so a run

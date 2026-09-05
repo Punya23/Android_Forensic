@@ -28,6 +28,8 @@ the engine logs everyone out.
 |---|---|---|
 | `GET /api/health` | Liveness + version + adb availability | Public |
 | `GET /api/validation` | Self-test + CFTT coverage (runs fresh each call) | Required |
+| `GET /api/capabilities` | The dataset catalogue with no case attached — what this build can and cannot do | Required |
+| `GET /api/llm/status[?refresh=1]` | Which case-intelligence back-ends this workstation can actually use, asked of the local Ollama daemon and the engine environment. Lists the chat models pulled locally and the embedding model backing semantic retrieval | Required |
 
 ## Devices & acquisition
 
@@ -43,6 +45,7 @@ the engine logs everyone out.
 | `GET /api/cases` | Lightweight case list | Required |
 | `GET /api/case/<id>` | Case overview (counts, risk, throughput, graph stats) | Required |
 | `DELETE /api/case/<id>` | Irreversibly delete a case | Required |
+| `GET /api/case/<id>/capabilities` | Per-dataset state for this case: `populated` / `empty` / `not_collected` / `inaccessible` / `planned`, each with its reason and the acquisition flag that gates it. Registered ahead of the generic dataset route | Required |
 | `GET /api/case/<id>/<dataset>` | One of ~90 derived datasets by name | Required |
 | `GET /api/case/<id>/manifest` | Chain-of-custody artifact manifest | Required |
 | `GET /api/case/<id>/audit` | Audit/action log | Required |
@@ -67,11 +70,14 @@ the engine logs everyone out.
 
 | Method + path | Purpose | Auth |
 |---|---|---|
-| `POST /api/plan` | Preview a collection plan from a case brief | Required |
-| `GET/POST /api/casebank` | List/search/add retrieval-corpus case studies | Required |
+| `POST /api/plan` | Preview a collection plan from a case brief. The response carries `retrieval_mode` (`hybrid` / `lexical`) and an `embedding` block, so a reader can tell a semantic ranking from a keyword one | Required |
+| `GET/POST /api/casebank` | List/search/add retrieval-corpus case studies. A `?q=` search runs hybrid retrieval when a local embedding model is available and reports `retrieval_mode` either way | Required |
 | `GET /api/knowledge-graph?crime_type=` | Learned artifact-priors graph | Required |
 | `POST /api/case/<id>/outcome` | Record examiner-confirmed outcomes | Required |
 | `POST /api/case/<id>/analyze` | Run/re-run AI case analysis | Required |
+| `POST /api/case/<id>/investigate` | Run/re-run deep investigation — a bounded, deterministic multi-hypothesis pass cross-linking findings `analyze` scored independently (`triage/intel/investigator.py`). Requires a case profile from `/analyze` first | Required |
+| `POST /api/case/<id>/ask` | "Ask this case" — free-text Q&A over the case's own already-collected evidence. Body: `{question, llm_provider?, top_k?, use_embeddings?}`. Retrieval always runs; synthesis only when a model is configured, grounded strictly to the retrieved passages (`triage/intel/case_qa.py`) | Required |
+| `GET /api/case/<id>/linked-cases` | Other cases on this installation sharing a phone number/UPI ID/email with this one, indexed via `triage/registry.py`'s `case_identifiers` table | Required |
 | `GET /api/nomenclature` \| `POST /api/nomenclature/check` | Controlled forensic vocabulary | Required |
 | `POST /api/case/<id>/import/<app>` | Non-root import (instagram/snapchat/telegram export) | Required |
 

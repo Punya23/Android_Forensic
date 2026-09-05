@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Message } from "../lib/types";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { ConfidenceBadge } from "../components/Badges";
@@ -12,11 +12,18 @@ const APP_COLORS: Record<string, string> = {
   recovered: "text-carved",
 };
 
+// A real device's SMS/WhatsApp/recovered history can run into the tens of thousands of
+// rows — rendering all of them into one unvirtualized table locks up the tab. Capped
+// like Aleapp.tsx's table, with the same "N of M — click to show all" control so the
+// cap is disclosed rather than silently hiding rows.
+const TABLE_CAP = 1000;
+
 export function MessagesView({ caseId }: { caseId: string }) {
   const { data, loading } = useDataset<Message>(caseId, "messages");
   const [query, setQuery] = useState("");
   const [showDeletedOnly, setShowDeletedOnly] = useState(false);
   const [app, setApp] = useState<string>("all");
+  const [showAll, setShowAll] = useState(false);
 
   const apps = useMemo(() => Array.from(new Set(data.map((m) => m.app))).sort(), [data]);
 
@@ -34,11 +41,14 @@ export function MessagesView({ caseId }: { caseId: string }) {
     });
   }, [data, query, showDeletedOnly, app]);
 
+  useEffect(() => setShowAll(false), [query, showDeletedOnly, app]);
+  const visible = showAll ? filtered : filtered.slice(0, TABLE_CAP);
+
   const deletedCount = data.filter((m) => m.confidence !== "live").length;
 
   if (loading) return <div className="p-8 text-muted">Loading messages…</div>;
   if (data.length === 0)
-    return <EmptyState title="No messages" detail="No chat exports were ingested and no chat databases yielded rows." />;
+    return <EmptyState dataset="messages" title="No messages" detail="No chat exports were ingested and no chat databases yielded rows." />;
 
   return (
     <div className="p-6 h-full flex flex-col">
@@ -83,7 +93,7 @@ export function MessagesView({ caseId }: { caseId: string }) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((m, i) => (
+            {visible.map((m, i) => (
               <tr key={i} className={m.confidence !== "live" ? "bg-carved/5" : ""}>
                 <td className="td"><TagButton refId={`message:${i}`} kind="message" label={`${m.sender}: ${m.body.slice(0, 40)}`} /></td>
                 <td className="td font-mono text-xs text-muted whitespace-nowrap">{fmtTs(m.timestamp)}</td>
@@ -102,6 +112,13 @@ export function MessagesView({ caseId }: { caseId: string }) {
             ))}
           </tbody>
         </table>
+        {!showAll && filtered.length > TABLE_CAP && (
+          <div className="text-center py-3">
+            <button className="btn-ghost text-xs" onClick={() => setShowAll(true)}>
+              Showing first {TABLE_CAP.toLocaleString()} of {filtered.length.toLocaleString()} messages — click to show all
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

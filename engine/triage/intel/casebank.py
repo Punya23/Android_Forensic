@@ -49,6 +49,13 @@ INACCESSIBLE = "inaccessible"
 #: Everything a corpus row may legitimately say about an artifact.
 VALID_YIELDS: frozenset[str] = frozenset(set(YIELD_WEIGHT) | {INACCESSIBLE})
 
+#: How much of a hybrid retrieval score comes from the embedding model. Held below
+#: half deliberately: exact terms — a drug name, a pier number, an IMEI — are the ones
+#: an examiner is most likely to have typed on purpose, and are exactly what a dense
+#: vector smooths away. Embeddings break ties and rescue vocabulary mismatches; they do
+#: not outvote a literal match.
+_SEMANTIC_WEIGHT = 0.4
+
 #: Per-file cap on individually-reported corpus problems. A corrupt or hostile file can
 #: hold thousands of bad rows; every one of them would otherwise become its own audit-log
 #: entry and bury the rest of the acquisition record. Past the cap the count is still
@@ -216,6 +223,10 @@ class RetrievedCase:
     study: CaseStudy
     score: float
     lexical: float = 0.0
+    #: Cosine similarity against the local embedding model, 0..1. Stays 0.0 when
+    #: semantic retrieval did not run, which is distinguishable from a genuine
+    #: similarity of zero via the bank's ``retrieval_mode``.
+    semantic: float = 0.0
     crime_match: bool = False
     matched_terms: list[str] = field(default_factory=list)
 
@@ -227,6 +238,7 @@ class RetrievedCase:
             "crime_match": self.crime_match,
             "score": round(self.score, 3),
             "lexical": round(self.lexical, 3),
+            "semantic": round(self.semantic, 3),
             "matched_terms": self.matched_terms[:12],
             "decisive_artifacts": self.study.decisive_artifacts(),
             "useless_artifacts": self.study.useless_artifacts(),
@@ -255,6 +267,10 @@ class CaseBank:
         #: Human-readable problems found while reading corpus files. Empty for a clean
         #: load; the pipeline writes each entry to the case audit trail.
         self.warnings: list[str] = []
+        #: "lexical" or "hybrid" — how the last :meth:`search` actually ran. A plan
+        #: must be able to say which, because a degraded run and a deliberately
+        #: offline one produce the same ranking for different reasons.
+        self.retrieval_mode: str = "lexical"
         for s in studies or []:
             self.add(s)
         self._index_dirty = True
@@ -420,12 +436,25 @@ class CaseBank:
         roles: Optional[dict[str, list[str]]] = None,
         top_k: int = 5,
         min_score: float = 0.0,
+        embedder=None,
     ) -> list[RetrievedCase]:
         """Retrieve the studies most similar to *query*.
 
         Scoring = normalised BM25 over the narrative, plus a crime-type boost and a
         small role-shape boost (a case with an accused *and* a deceased is more like
         another such case than one with only a complainant).
+
+        When *embedder* is a working :class:`~.embeddings.LocalEmbedder`, cosine
+        similarity against a locally-run embedding model is blended in at
+        :data:`_SEMANTIC_WEIGHT`. That is what lets a brief phrased in an officer's own
+        words retrieve a study that shares its meaning but not its vocabulary. The
+        blend is deliberately not a replacement: BM25 keeps exact identifiers, place
+        names and drug names — the terms that matter most and that embeddings blur —
+        carrying their full weight.
+
+        A missing or failing embedder is not an error. Retrieval reverts to pure BM25
+        and :attr:`retrieval_mode` records that it did, so a plan never implies a
+        semantic search that did not happen.
         """
         if self._index_dirty:
             self._build_index()
@@ -441,13 +470,34 @@ class CaseBank:
             raw.append((cn, lex, matched))
         peak = max((r[1] for r in raw), default=0.0) or 1.0
 
+        # Semantic pass. Every failure mode here — no daemon, model not pulled, a
+        # study that would not embed — degrades to that study's lexical score alone.
+        semantic: dict[str, float] = {}
+        self.retrieval_mode = "lexical"
+        if embedder is not None and getattr(embedder, "available", False):
+            query_vec = embedder.embed(query if not crime_type else f"{query}\n{crime_type}")
+            if query_vec:
+                order = list(self._studies)
+                vectors = embedder.embed_many(
+                    [self._studies[cn].searchable_text() for cn in order]
+                )
+                for idx, vec in vectors.items():
+                    semantic[order[idx]] = embedder.similarity(query_vec, vec)
+                if semantic:
+                    self.retrieval_mode = "hybrid"
+
         query_roles = set((roles or {}).keys())
         hits: list[RetrievedCase] = []
         for cn, lex, matched in raw:
             study = self._studies[cn]
             norm = lex / peak  # 0..1
+            sem = semantic.get(cn, 0.0)
             crime_match = bool(crime_type) and study.crime_type == crime_type
-            score = norm
+            # With no semantic pass this is exactly the previous lexical score, so a
+            # lexical-only run reproduces the old ranking bit for bit.
+            score = norm if not semantic else (
+                (1.0 - _SEMANTIC_WEIGHT) * norm + _SEMANTIC_WEIGHT * sem
+            )
             if crime_match:
                 # Same crime type is the strongest single signal available offline.
                 score += 0.6
@@ -463,6 +513,7 @@ class CaseBank:
                     study=study,
                     score=score,
                     lexical=norm,
+                    semantic=sem,
                     crime_match=crime_match,
                     matched_terms=matched,
                 )

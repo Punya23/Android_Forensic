@@ -246,6 +246,80 @@ def analyze_derived(
             )
         )
 
+    # -- candidate contradictions & scam-pattern flags ---------------------
+    # Both passes read datasets already loaded above (messages/calls, plus locations
+    # and the inferred home cluster when present) rather than requiring any new
+    # collection stage, and both degrade to "nothing found" rather than raising if a
+    # required dataset is absent. Neither infers guilt: a contradiction is a candidate
+    # for a human to weigh, and a scam flag is a keyword match, not a verdict — see
+    # triage/forensics/contradiction.py and scam_detection.py for exactly what is and
+    # is not checked, and why.
+    try:
+        from ..forensics.contradiction import detect_contradictions
+
+        contradictions = detect_contradictions(
+            derived.get("messages", []) or [],
+            derived.get("calls", []) or [],
+            derived.get("locations", []) or [],
+            derived.get("location_places", {}).get("home") if isinstance(derived.get("location_places"), dict) else None,
+        )
+        for c in contradictions:
+            n += 1
+            findings.append(
+                Finding(
+                    id=f"F-CTR-{n:04d}",
+                    title=(
+                        f"Candidate contradiction: message vs. "
+                        f"{'call log' if c['type'] == 'message_vs_call' else 'inferred home location'}"
+                    ),
+                    severity=c.get("severity", "medium"),
+                    score=4.5,
+                    category="contradiction",
+                    snippet=c.get("message_body", "")[:200],
+                    source_type="messages",
+                    source_file=c.get("message_source_file", ""),
+                    timestamp=c.get("message_timestamp"),
+                    confidence="live",
+                    keywords_matched=[c.get("matched_phrase", "")],
+                    rationale=c.get("rationale", ""),
+                )
+            )
+    except Exception:
+        # A contradiction-detection failure must not take down the whole analysis
+        # pass; the rest of the findings are still valid and still get returned.
+        pass
+
+    try:
+        from ..forensics.scam_detection import detect_scam_patterns
+
+        for hit in detect_scam_patterns(derived.get("messages", []) or []):
+            n += 1
+            terms = hit.get("matched_terms") or []
+            findings.append(
+                Finding(
+                    id=f"F-SCM-{n:04d}",
+                    title=f"Scam-pattern flag: {hit.get('scam_type', 'unknown').replace('_', ' ')}",
+                    severity="medium" if hit.get("tier") == "strong" else "low",
+                    score=4.0 if hit.get("tier") == "strong" else 2.5,
+                    category="scam_indicator",
+                    snippet=_window(str(hit.get("body", "")), terms),
+                    source_type="messages",
+                    app=hit.get("app", ""),
+                    source_file=hit.get("source_file", ""),
+                    timestamp=hit.get("timestamp"),
+                    confidence=hit.get("confidence", "live"),
+                    keywords_matched=terms,
+                    rationale=(
+                        f"Message matches the '{hit.get('scam_type', '')}' keyword "
+                        f"pattern ({hit.get('tier', '')} signal: {', '.join(terms)}). "
+                        "This is a keyword match, not a confirmed scam — verify against "
+                        "the source artifact and the account/number involved."
+                    ),
+                )
+            )
+    except Exception:
+        pass
+
     # Overlapping carves of the same DB page produce many near-identical leads; collapse
     # them so one readable fragment counts once (keep the highest-scoring instance).
     findings, deduplicated = _dedupe(findings)
@@ -327,7 +401,16 @@ def analyze_case(
     persist the result as the ``ai_findings`` derived dataset. Returns the bundle."""
     derived = {
         name: case.read_derived(name)
-        for name in ("messages", "recovered", "calls", "browser")
+        for name in (
+            "messages",
+            "recovered",
+            "calls",
+            "browser",
+            # Read only for the contradiction pass (message-vs-home). Not scored as
+            # their own Findings here — that is what the Locations view is for.
+            "locations",
+            "location_places",
+        )
     }
     bundle = analyze_derived(
         derived, profile, plan=plan, provider=provider, limit=limit

@@ -64,3 +64,68 @@ Driven by a deep-research + adversarial-audit pass; the full findings live in
 | **Non-root live Wi-Fi / Bluetooth bond store / App presence & execution** | 0/2 | The realistic non-root/root surface, honestly scoped |
 | **Structural anti-forensics** (work profile, dual-app clone, factory-reset trace) | 2 | Observations only — every finding lists innocent explanations |
 | **Tool self-validation** — known-answer report + CFTT coverage matrix, per acquisition | — | Includes a deliberate negative control that *must* fail |
+
+## New in v0.4 — radio artifacts and their time claims
+
+Full detail: [`docs/NETWORK_ARTIFACTS.md`](NETWORK_ARTIFACTS.md).
+
+| Capability | Tier | Why it matters |
+|---|---|---|
+| **Wi-Fi credential recovery across every Android era** — APEX (11+), pre-APEX (9–10), `wpa_supplicant` (≤8), all probed, all parsed | 2 | Probing only the Android 9 path on a modern device reports "no saved networks" — a finding, not a miss |
+| **Own-hotspot credentials** (`WifiConfigStoreSoftAp.xml`) | 2 | The SSID+passphrase this device *offered* — matches directly against another device's saved list |
+| **Saved vs actually joined** (`HasEverConnected`) + per-network provenance | 2 | "Was at this address" and "was told the password" stop looking the same |
+| **Wi-Fi timestamps kept under their original field name** | 2 | Android stores no "last connected"; nothing is relabelled into one |
+| **Bluetooth OPP transfer history** (`btopp.db`) — peer, file, bytes, outcome, wall-clock time, deleted rows carved | 2 | The only Bluetooth artifact that proves an *active link* at a stated time |
+| **Bluetooth connection-recency ranking** (`bluetooth_db`) | 2 | `last_active_time` is a counter — exposed as a rank, never as a date |
+| **Hotspot / tethering posture**, tri-state | 0 | "Not reported by this build" is distinct from "the hotspot was off" |
+| **USB cable state, pre- and post-acquisition** | 0 | A cable pulled mid-run explains a truncated pull |
+
+## New in v0.5 — the dashboard stops rendering silence
+
+A dataset view with nothing in it used to look identical whether the engine had read the
+source and found nothing, been told not to look, been unable to look without root, or had
+no such feature at all. The engine drew those distinctions everywhere except on screen.
+
+| Capability | Where | Why it matters |
+|---|---|---|
+| **Per-dataset capability states** (`triage/capabilities.py`, `GET /api/case/:id/capabilities`) | Engine + every view | Resolves each dataset to exactly one of `populated` / `empty` / `not_collected` / `inaccessible` / `planned`, with the reason and the acquisition flag to turn on |
+| **Acquisition settings recorded per case** (`case.json` → `acquisition_config`) | Engine | Without it an opt-in stage that was switched off is indistinguishable from one that ran and found nothing |
+| **Stage-recorded outcomes outrank inference** | Engine | Where a stage wrote its own account of failing (`telegram_presence`), that text is what the view shows |
+| **Unconditionally-written datasets need corroboration** | Engine | `collector_wifi`/`collector_bluetooth` are written on every run; an empty one is only reported as "checked" when the Collector's run manifest proves it executed |
+| **Sidebar state badges** (`off` / `n/a` / `soon` / `0`) | Dashboard | The gaps in a run are visible before clicking into forty views |
+| **Named, not-built features** | Both | iOS acquisition, cloud extraction and raw `/data` carving are listed with their reasons rather than being absent without explanation |
+
+## New in v0.6 — retrieval that matches meaning, locally
+
+| Capability | Tier | Why it matters |
+|---|---|---|
+| **Hybrid precedent retrieval** — BM25 blended with cosine similarity over a local embedding model (`nomic-embed-text` under Ollama) | — | A brief written in an officer's own words retrieves the study that shares its meaning but not its vocabulary. Lexical keeps the larger share of the weight, so an exact drug name or pier number still outranks a semantic near-miss |
+| **Vectors cached on disk, keyed by `(model, text)`** | — | Re-planning against an unchanged corpus costs a file read, not a model call per study |
+| **Air-gap safe by construction** | — | No daemon, no model, or `SNAGR_EMBEDDINGS=off` degrades to pure BM25 — never an error, and the ranking is bit-for-bit what it was before the feature existed |
+| **Retrieval mode reported, never assumed** (`retrieval_mode` in the plan, the audit log, and the acquisition screen) | — | A degraded lexical run and a deliberately offline one rank the same corpus differently; a plan must say which basis it had |
+| **Live back-end discovery** (`GET /api/llm/status`) | — | The provider picker lists the chat models actually pulled on this workstation and disables back-ends with the reason, instead of offering a choice that silently falls back |
+
+## New in v0.7 — deep investigation, cross-case linking, ask-this-case
+
+A research pass (deep-agent architecture patterns, commercial-tool feature trends, and
+an audit of every unwired module in this codebase) turned into four features, each
+grounded in code that already existed and already worked — not new subsystems bolted on
+from scratch. `docs/NOTES.md` records what was found and, just as importantly, what was
+found but deliberately **not** wired (fabrication-risk stubs in `security/`,
+`analytics/vision/`, `advanced_forensics/`).
+
+| Capability | Tier | Why it matters |
+|---|---|---|
+| **Deep investigation** (`triage/intel/investigator.py`, `POST /api/case/:id/investigate`) — a bounded, deterministic multi-hypothesis pass | — | `analyze_case()`'s single flat scoring pass can't correlate findings it scored independently. This adds two grounded cross-checks: a **channel-gap** hypothesis (a named party has a Contacts entry but no message/call finding — check whether the relevant app was even collected) and a **location correlation** (an already-flagged location anomaly co-occurring in time with a message/call). Both always run deterministically, the same as `analyze_derived`'s own scoring; an LLM (if configured) only adds a narrative synthesis on top, never a different investigation |
+| **Cross-artifact contradiction detection** (`triage/forensics/contradiction.py`) — a message vs. the call log, and a message vs. this device's own inferred home location | — | Replaces an earlier unwired module that flagged *any* "at home" message near *any* GPS point with no comparison to where home actually is (a truthful message would have fired identically to a false one). The rewrite compares against a real, confidence-scored home cluster and only fires on genuine cross-artifact tension — every result is a candidate, `requires_verification: true` |
+| **Scam-pattern keyword flagging** (`triage/forensics/scam_detection.py`) — UPI fraud / "digital arrest" / investment fraud / sextortion, India-specific statute citations | — | The original regex classified on any single common word ("video" alone → sextortion). Rewritten to need either one specific phrase or two independent weak signals before classifying, and every hit cites its exact matched term |
+| **Cross-case identifier linking** (`triage/registry.py`, `GET /api/case/:id/linked-cases`) — the same phone number, UPI ID, or email surfacing in more than one case on this installation | — | An indexed SQLite lookup, not an O(n²) in-memory comparison. Phone numbers are normalised for matching (`+91 98200 44711` and `+919820044711` recognised as the same number) while every citation still shows the value exactly as it appeared in the evidence |
+| **"Ask this case"** (`triage/intel/case_qa.py`, `POST /api/case/:id/ask`, dashboard: **Ask This Case**) — free-text Q&A over a case's own already-collected evidence | — | Local retrieval (BM25 + the same local embedding model used for precedent search) always runs; a grounded LLM synthesis on top, when configured, is instructed to answer *only* from the retrieved passages and say plainly when they don't answer the question. With no model, the passages themselves are the answer — no synthesis step, nothing invented |
+| **Opt-in completion notifications** (`triage/notifications/`, wired to `run_acquisition()`) — email / SMS / Slack / Teams when a run finishes | — | The one unwired module that was genuinely real, working code (confirmed: real SMTP/Twilio/webhook clients, just never called). Off by default; every client degrades to "logged, not sent" rather than raising, so a notification failure can never fail the acquisition it's reporting on |
+
+Deleted alongside this: `triage/ai/` (nine files, 1606 lines, zero references anywhere
+in the codebase) — an abandoned earlier attempt at case Q&A that required an
+undeclared `transformers` dependency, cited nothing but the fixed string "Extracted
+text context", and included a `predict_case_outcome()` function that fabricated a
+confidence score ("Strong Evidentiary Basis, confidence 0.85") from a raw count of
+high-scoring findings. Superseded entirely by `case_qa.py` above.

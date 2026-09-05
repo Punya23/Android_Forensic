@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import type { WifiNetwork } from "../lib/types";
+import { SortTh, useSort } from "../components/common";
 
 const CONF_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   live:      { bg: "#e4f4ea", text: "#1c7d3f", border: "#1c7d3f" },
@@ -175,6 +176,8 @@ function CollectorWifiSection({ caseId }: { caseId: string }) {
     return acc;
   }, {});
 
+  const sort = useSort<CollectorWifiItem>(filtered);
+
   return (
     <section className="mt-10 pt-8 border-t-2 border-dashed border-line">
       <div className="mb-4">
@@ -256,25 +259,25 @@ function CollectorWifiSection({ caseId }: { caseId: string }) {
             <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="border-b border-line text-xs uppercase tracking-wider text-muted">
-                  <th className="text-left py-2 px-3 font-semibold">Row type</th>
-                  <th className="text-left py-2 px-3 font-semibold">SSID</th>
-                  <th className="text-left py-2 px-3 font-semibold">BSSID</th>
-                  <th className="text-left py-2 px-3 font-semibold">Freq / level</th>
-                  <th className="text-left py-2 px-3 font-semibold">Network ID</th>
-                  <th className="text-left py-2 px-3 font-semibold">Status / capabilities</th>
-                  <th className="text-left py-2 px-3 font-semibold">IP address</th>
-                  <th className="text-left py-2 px-3 font-semibold">Hidden</th>
+                  <SortTh className="text-left py-2 px-3 font-semibold" label="Row type" sortKeyName="type" getValue={(r) => r.type} sort={sort} />
+                  <SortTh className="text-left py-2 px-3 font-semibold" label="SSID" sortKeyName="ssid" getValue={(r) => r.ssid} sort={sort} />
+                  <SortTh className="text-left py-2 px-3 font-semibold" label="BSSID" sortKeyName="bssid" getValue={(r) => r.bssid} sort={sort} />
+                  <SortTh className="text-left py-2 px-3 font-semibold" label="Freq / level" sortKeyName="frequency_mhz" getValue={(r) => r.frequency_mhz} sort={sort} />
+                  <SortTh className="text-left py-2 px-3 font-semibold" label="Network ID" sortKeyName="network_id" getValue={(r) => r.network_id} sort={sort} />
+                  <SortTh className="text-left py-2 px-3 font-semibold" label="Status / capabilities" sortKeyName="status" getValue={(r) => r.status} sort={sort} />
+                  <SortTh className="text-left py-2 px-3 font-semibold" label="IP address" sortKeyName="ip_address" getValue={(r) => r.ip_address} sort={sort} />
+                  <SortTh className="text-left py-2 px-3 font-semibold" label="Hidden" sortKeyName="hidden" getValue={(r) => r.hidden} sort={sort} />
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 ? (
+                {sort.sorted.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="text-center py-8 text-muted text-xs">
                       No rows match your filter.
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((n, i) => (
+                  sort.sorted.map((n, i) => (
                     <tr
                       key={i}
                       className="border-b border-line/50 hover:bg-panel-2/50 transition-colors"
@@ -337,6 +340,18 @@ export function WifiView({ caseId }: { caseId: string }) {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [caseId]);
 
+  // Hooks must run unconditionally on every render — computed here, before either
+  // early return below, rather than after the error/loading checks.
+  const filtered = (networks ?? []).filter((n) => {
+    const q = filter.toLowerCase();
+    return (
+      n.ssid.toLowerCase().includes(q) ||
+      n.security.toLowerCase().includes(q) ||
+      n.source_file.toLowerCase().includes(q)
+    );
+  });
+  const sort = useSort<WifiNetwork>(filtered);
+
   if (error) {
     return (
       <div className="p-8 text-sm text-deletion">
@@ -352,15 +367,6 @@ export function WifiView({ caseId }: { caseId: string }) {
       </div>
     );
   }
-
-  const filtered = networks.filter((n) => {
-    const q = filter.toLowerCase();
-    return (
-      n.ssid.toLowerCase().includes(q) ||
-      n.security.toLowerCase().includes(q) ||
-      n.source_file.toLowerCase().includes(q)
-    );
-  });
 
   const withPassword = networks.filter((n) => n.password).length;
 
@@ -435,22 +441,22 @@ export function WifiView({ caseId }: { caseId: string }) {
             <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="border-b border-line text-xs uppercase tracking-wider text-muted">
-                  <th className="text-left py-2 px-3 font-semibold">SSID</th>
-                  <th className="text-left py-2 px-3 font-semibold">Security</th>
-                  <th className="text-left py-2 px-3 font-semibold">Password</th>
-                  <th className="text-left py-2 px-3 font-semibold">Confidence</th>
-                  <th className="text-left py-2 px-3 font-semibold">Source file</th>
+                  <SortTh className="text-left py-2 px-3 font-semibold" label="SSID" sortKeyName="ssid" getValue={(n) => n.ssid} sort={sort} />
+                  <SortTh className="text-left py-2 px-3 font-semibold" label="Security" sortKeyName="security" getValue={(n) => n.security} sort={sort} />
+                  <SortTh className="text-left py-2 px-3 font-semibold" label="Password" sortKeyName="password" getValue={(n) => n.password} sort={sort} />
+                  <SortTh className="text-left py-2 px-3 font-semibold" label="Confidence" sortKeyName="confidence" getValue={(n) => n.confidence} sort={sort} />
+                  <SortTh className="text-left py-2 px-3 font-semibold" label="Source file" sortKeyName="source_file" getValue={(n) => n.source_file} sort={sort} />
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 ? (
+                {sort.sorted.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="text-center py-8 text-muted text-xs">
                       No networks match your filter.
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((n, i) => (
+                  sort.sorted.map((n, i) => (
                     <tr
                       key={i}
                       className="border-b border-line/50 hover:bg-panel-2/50 transition-colors"

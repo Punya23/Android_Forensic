@@ -18,6 +18,7 @@ export function AccountsView({ caseId }: { caseId: string }) {
   if (data.length === 0)
     return (
       <EmptyState
+        dataset="accounts"
         title="No accounts acquired"
         detail="Device accounts require the Tier-1 Collector helper's full collection (GET_ACCOUNTS). On Android 8+, visibility is authenticator-dependent, so some accounts may not be listed."
       />

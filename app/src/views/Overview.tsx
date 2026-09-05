@@ -6,14 +6,21 @@ import { StatCard, bytes } from "../components/common";
 import { SeverityBadge } from "../components/Badges";
 import { RiskCard } from "../components/RiskCard";
 
+// Flagged-for-review panel is capped like Aleapp.tsx's table / Messages.tsx's list, with the
+// same "N of M — click to show all" control so the cap is disclosed rather than silently
+// hiding flags past this count.
+const FLAGS_CAP = 40;
+
 export function OverviewView({ caseId, setView }: { caseId: string; setView: (v: ViewKey) => void }) {
   const [summary, setSummary] = useState<CaseSummary | null>(null);
   const [flags, setFlags] = useState<Flag[]>([]);
   const [exporting, setExporting] = useState(false);
+  const [showAllFlags, setShowAllFlags] = useState(false);
 
   useEffect(() => {
     api.caseOverview(caseId).then(setSummary).catch(() => setSummary(null));
     api.dataset<Flag[]>(caseId, "flags").then(setFlags).catch(() => setFlags([]));
+    setShowAllFlags(false);
   }, [caseId]);
 
   if (!summary) return <div className="p-8 text-muted">Loading case…</div>;
@@ -145,19 +152,28 @@ export function OverviewView({ caseId, setView }: { caseId: string; setView: (v:
         {flags.length === 0 ? (
           <p className="text-sm text-muted">No flags raised.</p>
         ) : (
-          <div className="space-y-1.5 max-h-72 overflow-auto">
-            {[...flags]
-              .sort((a, b) => sev(a.severity) - sev(b.severity))
-              .slice(0, 40)
-              .map((f, i) => (
-                <div key={i} className="flex items-start gap-3 text-sm py-1 border-b border-line/50 last:border-0">
-                  <SeverityBadge s={f.severity} />
-                  <span className="font-mono text-accent shrink-0">{f.term}</span>
-                  <span className="text-muted flex-1 truncate">{f.context}</span>
-                  <span className="text-xs text-muted/70 shrink-0 hidden sm:block">{f.location}</span>
-                </div>
-              ))}
-          </div>
+          <>
+            <div className="space-y-1.5 max-h-72 overflow-auto">
+              {[...flags]
+                .sort((a, b) => sev(a.severity) - sev(b.severity))
+                .slice(0, showAllFlags ? flags.length : FLAGS_CAP)
+                .map((f, i) => (
+                  <div key={i} className="flex items-start gap-3 text-sm py-1 border-b border-line/50 last:border-0">
+                    <SeverityBadge s={f.severity} />
+                    <span className="font-mono text-accent shrink-0">{f.term}</span>
+                    <span className="text-muted flex-1 truncate">{f.context}</span>
+                    <span className="text-xs text-muted/70 shrink-0 hidden sm:block">{f.location}</span>
+                  </div>
+                ))}
+            </div>
+            {!showAllFlags && flags.length > FLAGS_CAP && (
+              <div className="text-center pt-3">
+                <button className="btn-ghost text-xs" onClick={() => setShowAllFlags(true)}>
+                  Showing first {FLAGS_CAP} of {flags.length.toLocaleString()} flags — click to show all
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

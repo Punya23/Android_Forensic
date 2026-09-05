@@ -26,6 +26,9 @@ import struct
 import sys
 from pathlib import Path
 
+# tools/ is not a package; keep sibling helpers importable however this file is run.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 # --- a tiny valid JPEG with a GPS EXIF block (built by hand, no deps) --------
 # We construct a minimal baseline JPEG and inject an EXIF APP1 segment with GPS.
 
@@ -828,6 +831,29 @@ def _build_browser_history(path: Path) -> None:
             3,
             base + 10_000_000_000,
         ),
+        # Surviving search queries. Without at least one live search row the Search
+        # History view is empty for a reason that reads as "nothing was searched"
+        # rather than "the searches that existed were deleted" — and the two deleted
+        # rows below are the whole point of the narrative. Keeping both states in the
+        # same table is what makes the deletion legible.
+        (
+            "https://www.google.com/search?q=customs+clearance+pier+4+timings",
+            "customs clearance pier 4 timings - Google",
+            2,
+            base + 11_000_000_000,
+        ),
+        (
+            "https://www.google.com/search?q=monero+to+inr",
+            "monero to inr - Google",
+            5,
+            base + 12_000_000_000,
+        ),
+        (
+            "https://www.bing.com/search?q=burner+phone+shops+mumbai",
+            "burner phone shops mumbai - Bing",
+            1,
+            base + 13_000_000_000,
+        ),
     ]
     for u in urls:
         con.execute(
@@ -951,9 +977,16 @@ def build(dest: Path) -> None:
     _build_instagram_db(downloads / "direct.db")
     _build_snapchat_dbs(downloads / "arroyo.db", downloads / "main.db")
 
-    # Canned shell output + manual-capture screenshot for the mock source
+    # Canned shell output + manual-capture screenshot for the mock source.
+    # `dumpsys location` was for a long time the *only* canned reply the corpus
+    # shipped, so every other shell-derived stage (notifications, Bluetooth, cell
+    # towers, live Wi-Fi, screen/app usage, accounts) parsed an empty string and
+    # wrote an empty dataset. corpus_shell supplies the rest.
     (shell / "dumpsys_location.txt").write_text(_dumpsys_location())
     (shell / "screenshot.png").write_bytes(_screenshot_png())
+    from corpus_shell import build_shell_fixtures  # noqa: E402  (tools/ is on sys.path)
+
+    _shell_files = build_shell_fixtures(shell)
 
     # Device intake + pre-state
     (dest / "_device.json").write_text(
@@ -991,6 +1024,10 @@ def build(dest: Path) -> None:
     print("  - WhatsApp export + 4 SQLite DBs with deleted rows (msgstore, chatcache,")
     print("    Telegram cache4, Chrome History), 5 photos (1 trashed), a screenshot,")
     print("    contacts.json, calllog.json, sms.json, dumpsys location, device intake")
+    print(f"  - {len(_shell_files)} canned shell replies (dumpsys notification / "
+          "bluetooth_manager /")
+    print("    telephony.registry / power / batterystats / usagestats / account /")
+    print("    wifi / wifiscanner / connectivity / netstats, plus getprops)")
 
 
 if __name__ == "__main__":

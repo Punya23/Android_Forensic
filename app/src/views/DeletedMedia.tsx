@@ -71,7 +71,8 @@ export function DeletedMediaView({ caseId }: { caseId: string }) {
 
       {items.length === 0 ? (
         <EmptyState
-          title="No trashed or pending media"
+          dataset="mediastore_trash"
+        title="No trashed or pending media"
           detail="Nothing was found in the MediaStore trash. On non-rooted devices this is the primary deleted-media source; on a full-file-system extraction, app recycle bins may hold more."
         />
       ) : (

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, getSocket } from "../lib/api";
-import type { DeviceListing, PlanResponse, Progress } from "../lib/types";
+import type { DeviceListing, LlmStatus, PlanResponse, Progress } from "../lib/types";
 import {
   DeprioritisedList,
   PartialCollectionList,
@@ -32,6 +32,10 @@ export function AcquisitionView({
   // always be a deliberate, visible choice, never silently inherited from a server
   // env var the examiner never sees.
   const [llmProvider, setLlmProvider] = useState<"heuristic" | "ollama" | "anthropic">("heuristic");
+  // What this workstation can actually run, asked of the engine rather than assumed.
+  // Offering a back-end the machine has no model for turns a deliberate choice into a
+  // silent fallback discovered only after the acquisition.
+  const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   // Whether the plan may switch on root-only pulls. Collection scope is the examiner's
   // decision: a case brief alone must not be able to widen it without them saying so.
   const [planAllowTier2, setPlanAllowTier2] = useState(true);
@@ -62,6 +66,10 @@ export function AcquisitionView({
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
+    api
+      .llmStatus()
+      .then(setLlmStatus)
+      .catch(() => setLlmStatus(null));
     api.devices().then((d) => {
       setDevices(d);
       if (d.real[0]) setTarget({ kind: "real", id: d.real[0].serial, label: d.real[0].serial });
@@ -282,20 +290,39 @@ export function AcquisitionView({
               value={llmProvider}
               onChange={(e) => setLlmProvider(e.target.value as typeof llmProvider)}
             >
-              <option value="heuristic">Heuristic (offline, default)</option>
-              <option value="ollama">Ollama (local model)</option>
-              <option value="anthropic">Claude API (cloud — sends case text off-device)</option>
+              {(llmStatus?.providers ?? []).map((p) => (
+                <option key={p.name} value={p.name} disabled={!p.available}>
+                  {p.label}
+                  {p.available ? "" : " — unavailable"}
+                </option>
+              ))}
+              {!llmStatus && <option value="heuristic">Heuristic (offline, default)</option>}
             </select>
           </div>
           <div className="flex items-end">
-            <p className="text-[11px] text-muted leading-relaxed">
-              {llmProvider === "heuristic" &&
-                "Deterministic regex/entity extraction, zero network calls. Always available."}
-              {llmProvider === "ollama" &&
-                "Requires Ollama running on this workstation (localhost:11434). Case data never leaves the machine — falls back to heuristic if unreachable."}
-              {llmProvider === "anthropic" &&
-                "Requires ANTHROPIC_API_KEY on the engine server. Sends case text to Claude — do not select for real seized evidence unless that is an accepted part of your workflow. Falls back to heuristic if no key is configured."}
-            </p>
+            <div className="text-[11px] text-muted leading-relaxed">
+              {(() => {
+                const chosen = llmStatus?.providers.find((p) => p.name === llmProvider);
+                if (!chosen) {
+                  return "Deterministic regex/entity extraction, zero network calls. Always available.";
+                }
+                return (
+                  <>
+                    <p>{chosen.note}</p>
+                    {!chosen.available && (
+                      <p className="text-warn mt-1">{chosen.reason} Runs deterministically instead.</p>
+                    )}
+                    {chosen.name === "ollama" && chosen.models && chosen.models.length > 0 && (
+                      <p className="mt-1">
+                        Installed: <span className="font-mono text-ink/80">{chosen.models.join(", ")}</span>
+                        {" · using "}
+                        <span className="font-mono text-ink/80">{llmStatus?.chat_model}</span>
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
           </div>
         </div>
 
@@ -323,9 +350,26 @@ export function AcquisitionView({
               · {plan.profile.extraction_method} · planning basis{" "}
               <span className="text-ink">{plan.plan.evidence_basis}</span>
               {plan.case_bank_size > 0 && <> · {plan.case_bank_size} case studies</>}
+              {plan.retrieval_mode && plan.retrieval_mode !== "none" && (
+                <>
+                  {" · retrieval "}
+                  <span className={plan.retrieval_mode === "hybrid" ? "text-live" : "text-ink"}>
+                    {plan.retrieval_mode === "hybrid"
+                      ? `hybrid (BM25 + ${plan.embedding?.model ?? "local embeddings"})`
+                      : "lexical (BM25 only)"}
+                  </span>
+                </>
+              )}
             </span>
           )}
         </div>
+        {plan?.retrieval_mode === "lexical" && plan?.embedding?.reason && (
+          <p className="text-[11px] text-muted mt-1.5 leading-relaxed">
+            Precedent retrieval matched on words only — {plan.embedding.reason} The plan is
+            still valid; it just could not use meaning-based similarity to find studies
+            phrased differently from this brief.
+          </p>
+        )}
         {plan?.profile.llm_degraded_from && (
           <p className="text-[11px] text-warn mt-1.5 leading-relaxed">
             The '{plan.profile.llm_degraded_from}' back-end was requested but unreachable —

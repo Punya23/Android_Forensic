@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { fmtTs } from "../lib/hooks";
+import { StatCard } from "../components/common";
 
 // ---------------------------------------------------------------------------
 // Types — mirror engine/triage/device_state.py (capture_device_state,
@@ -83,6 +84,14 @@ export interface DeviceStateRecord {
   diff?: DeviceStateDiff;
   teardown?: DeviceStateTeardown;
   summary?: DeviceStateSummary;
+}
+
+// Each Counts stat card jumps to the matching section further down the same page rather
+// than filtering — the four counts back four independently-rendered sections (residue is
+// only ever one of several diff tables, not rows sliced out of one shared table), so a
+// scroll anchor fits this data shape better than a table filter.
+function scrollToSection(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 const TONE = {
@@ -348,25 +357,39 @@ export function DeviceStateView({ caseId }: { caseId: string }) {
         </div>
       </div>
 
-      {/* Counts. */}
+      {/* Counts. Each card jumps to its section below — residual changes only when there is
+          a residue table to jump to (it's the one section that doesn't always render). */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-        {[
-          { label: "Residual changes", value: residue.length, tone: residue.length ? "text-deletion" : "text-ink" },
-          { label: "Unexpected changes", value: unexpected.length, tone: unexpected.length ? "text-deletion" : "text-ink" },
-          { label: "Expected drift", value: expected.length, tone: "text-muted" },
-          { label: "Unavailable probes", value: unavailable.length, tone: unavailable.length ? "text-warn" : "text-ink" },
-        ].map((s) => (
-          <div key={s.label} className="card p-3 text-center">
-            <div className={`text-2xl font-bold ${s.tone}`}>{s.value}</div>
-            <div className="text-[11px] uppercase tracking-wider text-muted mt-0.5">{s.label}</div>
-          </div>
-        ))}
+        <StatCard
+          n={residue.length}
+          label="Residual changes"
+          tone={residue.length ? "text-deletion" : "text-ink"}
+          onClick={residue.length > 0 ? () => scrollToSection("residual-section") : undefined}
+        />
+        <StatCard
+          n={unexpected.length}
+          label="Unexpected changes"
+          tone={unexpected.length ? "text-deletion" : "text-ink"}
+          onClick={() => scrollToSection("unexpected-section")}
+        />
+        <StatCard
+          n={expected.length}
+          label="Expected drift"
+          tone="text-muted"
+          onClick={() => scrollToSection("expected-section")}
+        />
+        <StatCard
+          n={unavailable.length}
+          label="Unavailable probes"
+          tone={unavailable.length ? "text-warn" : "text-ink"}
+          onClick={() => scrollToSection("unavailable-section")}
+        />
       </div>
 
       {/* Residue — only meaningful when something actually survived. */}
       {residue.length > 0 && (
         <>
-          <h2 className="text-sm font-semibold text-deletion mb-2">
+          <h2 id="residual-section" className="text-sm font-semibold text-deletion mb-2 scroll-mt-4">
             Residual modifications still on the device ({residue.length})
           </h2>
           <div className="card overflow-auto mb-5">
@@ -468,7 +491,7 @@ export function DeviceStateView({ caseId }: { caseId: string }) {
       </div>
 
       {/* Two clearly separated diff tables. */}
-      <h2 className="text-sm font-semibold text-deletion mb-1">
+      <h2 id="unexpected-section" className="text-sm font-semibold text-deletion mb-1 scroll-mt-4">
         Unexpected changes ({unexpected.length})
       </h2>
       <p className="text-xs text-muted mb-2 leading-relaxed">
@@ -486,7 +509,7 @@ export function DeviceStateView({ caseId }: { caseId: string }) {
         </div>
       )}
 
-      <h2 className="text-sm font-semibold text-ink mb-1">
+      <h2 id="expected-section" className="text-sm font-semibold text-ink mb-1 scroll-mt-4">
         Expected drift ({expected.length}){" "}
         <span className="text-muted font-normal">— not examiner modifications</span>
       </h2>
@@ -506,7 +529,7 @@ export function DeviceStateView({ caseId }: { caseId: string }) {
       )}
 
       {/* Probes that could not be compared. */}
-      <h2 className="text-sm font-semibold text-ink mb-2">
+      <h2 id="unavailable-section" className="text-sm font-semibold text-ink mb-2 scroll-mt-4">
         Probes that could not be compared ({unavailable.length})
       </h2>
       <div className="card p-4 mb-5">

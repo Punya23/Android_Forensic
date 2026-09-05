@@ -12,6 +12,7 @@ record). No PostgreSQL, MySQL, or ORM anywhere in the repo — confirmed by grep
 ```mermaid
 erDiagram
     CASES ||--o{ REPORTS : "generates"
+    CASES ||--o{ CASE_IDENTIFIERS : "extracted from"
     CASES {
         text case_id PK
         text examiner
@@ -32,6 +33,14 @@ erDiagram
         text path
         integer size_bytes
         text trigger
+    }
+    CASE_IDENTIFIERS {
+        text case_id PK_FK
+        text category PK
+        text value PK
+        text norm
+        text source_dataset
+        text source_ref
     }
 ```
 
@@ -64,11 +73,31 @@ CREATE TABLE IF NOT EXISTS reports (
     trigger       TEXT DEFAULT 'manual'
 );
 CREATE INDEX IF NOT EXISTS idx_reports_case ON reports(case_id);
+
+-- Cross-case identifier index (v0.7) — feeds GET /api/case/:id/linked-cases. `value` is
+-- exactly as it appeared in the evidence (always the citation shown to the examiner);
+-- `norm` is what cross-case matching actually joins on (case_reference.normalize_for_matching
+-- — e.g. "+91 98200 44711" and "+919820044711" both normalise to the same 10 digits), so a
+-- lookup never has to re-derive it and a citation never shows the normalised form as if it
+-- were the original artifact text.
+CREATE TABLE IF NOT EXISTS case_identifiers (
+    case_id          TEXT NOT NULL,
+    category         TEXT NOT NULL,
+    value            TEXT NOT NULL,
+    norm             TEXT NOT NULL,
+    source_dataset   TEXT DEFAULT '',
+    source_ref       TEXT DEFAULT '',
+    PRIMARY KEY (case_id, category, value)
+);
+CREATE INDEX IF NOT EXISTS idx_case_identifiers_norm ON case_identifiers(category, norm);
 ```
 
 No foreign key is enforced (SQLite FKs off, none declared) — the relationship is
-application-level only. `sync_registry()` rebuilds every row from each case's `case.json` on
-demand; **deleting `registry.db` loses no evidence.**
+application-level only. `sync_registry()` rebuilds `cases`/`reports` from each case's
+`case.json` on demand; `case_identifiers` is rebuilt per case on every acquisition and
+lazily on first `GET /api/case/:id/linked-cases` request for an older case. **Deleting
+`registry.db` loses no evidence** — everything in it is re-derivable from the case
+folders on disk.
 
 ## Per-case folder — `cases/<case_id>/` (the real source of truth)
 
@@ -115,7 +144,7 @@ reports those as `valid: False` rather than silently trusting them.
 `deletion_evidence`, `graph`, `risk`, `apps`, `accounts`, `calendar`, `wifi`, `bluetooth`,
 `celltower`, `instagram_conversations`, `snapchat_conversations`, `telegram_conversations`,
 `encrypted_apps`, `device_state`, `case_profile`, `collection_plan`, `ai_findings`,
-`validation_report`, … `case.read_derived(name)` returns `[]`/`{}` for a dataset that was
+`investigation_trace`, `validation_report`, … `case.read_derived(name)` returns `[]`/`{}` for a dataset that was
 collected-but-empty, vs a 404 from `GET /api/case/<id>/<dataset>` for one never in scope —
 that distinction is load-bearing (see [`NOTES.md`](NOTES.md#forensic-soundness-notes)).
 

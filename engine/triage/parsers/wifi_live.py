@@ -1102,6 +1102,22 @@ def collect_wifi_live(shell: Callable[[str], str]) -> dict[str, Any]:
         result["connectivity"] = {}
         result["caveats"].append(f"connectivity parse failed: {exc!r}")
 
+    # Hotspot / tethering posture. Runs here rather than in the pipeline because
+    # this is the only place holding the raw dumps — the parsed structures above
+    # have already dropped the SoftAp state lines it needs.
+    try:
+        from .hotspot import analyze_hotspot_indicators
+
+        result["hotspot"] = analyze_hotspot_indicators(
+            wifi_text,
+            outputs.get("dumpsys netstats --full --uid", ""),
+            [_as_dict(n) for n in result.get("saved", [])],
+            connectivity=outputs.get("dumpsys connectivity", ""),
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        result["hotspot"] = {}
+        result["caveats"].append(f"hotspot analysis failed: {exc!r}")
+
     # Capture context: needed to reason about every year-less, offset-less
     # timestamp in the dump. Recorded, never used to silently "fix" a value.
     iface_mac = (outputs.get("cat /sys/class/net/wlan0/address", "") or "").strip()
@@ -1121,6 +1137,31 @@ def collect_wifi_live(shell: Callable[[str], str]) -> dict[str, Any]:
         )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Serialisation
+# ---------------------------------------------------------------------------
+
+
+def wifi_live_json(result: dict[str, Any]) -> dict[str, Any]:
+    """Convert a :func:`collect_wifi_live` result into plain JSON-safe types.
+
+    The collector returns dataclasses (:class:`WifiConnectionState` and friends)
+    because the summary and timeline builders want typed access to them. Anything
+    that persists the result has to flatten them first — writing the raw dict raises
+    ``Object of type WifiConnectionState is not JSON serializable``, which for a long
+    time only ever fired on a device that actually had Wi-Fi state to report. An
+    empty capture serialised fine, so the failure was invisible against a corpus with
+    no canned ``dumpsys wifi`` output.
+    """
+    if not isinstance(result, dict):
+        return {}
+    out = dict(result)
+    out["current"] = _as_dict(result.get("current")) or None
+    for key in ("saved", "scan_results", "usage"):
+        out[key] = [_as_dict(item) for item in (result.get(key) or [])]
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1312,6 +1353,15 @@ def wifi_live_summary(result: dict[str, Any]) -> dict[str, Any]:
         "active_default_netid": conn.get("active_default_netid"),
         "wifi_connected_per_connectivity": bool(conn.get("wifi_connected")),
         "saved_recency_ordering": [n.get("ssid", "") for n in ordered],
+        # Tri-state on purpose: None means the build reported no AP state, which is
+        # a different finding from "the hotspot was off".
+        "hotspot_hosted": (result.get("hotspot") or {}).get("hosted_indicator"),
+        "hotspot_configured": bool(
+            (result.get("hotspot") or {}).get("hosted_configured")
+        ),
+        "hotspot_named_networks": (result.get("hotspot") or {})
+        .get("details", {})
+        .get("connected_evidence", []),
         "commands": [c.get("command") for c in (result.get("commands") or []) if isinstance(c, dict)],
         "caveats": list(result.get("caveats") or []),
         "caveat_paragraph": caveat_paragraph,

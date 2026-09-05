@@ -131,6 +131,17 @@ _RE_ACCUR = re.compile(r"accuracy\s*[=:]\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
 _RE_LOC_TS = re.compile(r"(?:time|timestamp|mTime)\s*[=:]\s*(\d+)", re.IGNORECASE)
 _RE_PROVIDER = re.compile(r"provider\s*[=:]\s*(\w+)", re.IGNORECASE)
 
+#: The bracket form ``Location[fused 19.075983,72.877655 hAcc=12 et=+1d2h34m ...]``.
+#: This — not ``latitude=``/``longitude=`` — is what `dumpsys location` actually prints
+#: on every modern Android build (``Location.toString()``), so without it this parser
+#: returned an invalid fix against real device output and the Maps view stayed empty.
+#: Fused is listed first by the framework and is the fix to prefer.
+_RE_LOC_BRACKET = re.compile(
+    r"Location\[(\w+)\s+(-?\d+\.\d+),\s*(-?\d+\.\d+)"
+    r"(?:[^\]]*?\bhAcc=(\d+(?:\.\d+)?))?",
+    re.IGNORECASE,
+)
+
 
 def parse_current_location(dumpsys_output: str) -> Dict[str, Any]:
     """Parse current GPS location from ``dumpsys location`` output.
@@ -154,6 +165,23 @@ def parse_current_location(dumpsys_output: str) -> Dict[str, Any]:
     }
 
     if not dumpsys_output:
+        return result
+
+    # Bracket form first — it is the shape a real device emits.
+    bracket = _RE_LOC_BRACKET.search(dumpsys_output)
+    if bracket:
+        result["provider"] = bracket.group(1).lower()
+        result["latitude"] = float(bracket.group(2))
+        result["longitude"] = float(bracket.group(3))
+        if bracket.group(4):
+            result["accuracy_m"] = float(bracket.group(4))
+        ts_b = _RE_LOC_TS.search(dumpsys_output)
+        if ts_b:
+            result["timestamp"] = _parse_timestamp(ts_b.group(1)) or ""
+        # `et=+1d2h34m` is elapsed-realtime since boot, not a wall clock. It cannot be
+        # turned into a timestamp without the boot epoch, so no time is claimed here.
+        if -90 <= result["latitude"] <= 90 and -180 <= result["longitude"] <= 180:
+            result["valid"] = True
         return result
 
     lat_m = _RE_LAT.search(dumpsys_output)

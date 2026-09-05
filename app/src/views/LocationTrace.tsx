@@ -278,6 +278,7 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
   if (data.length === 0) {
     return (
       <EmptyState
+        dataset="location_traces"
         title="No location trace for this case"
         detail={
           "No reachable artifact recorded a location. This is not evidence that the device " +

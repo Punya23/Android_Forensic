@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -121,12 +122,7 @@ class RealDeviceSource(AcquisitionSource):
         state = capture_device_state(
             self.shell_readonly,
             phase="pre",
-            extra={
-                "screen_locked": self.adb.is_screen_locked(),
-                "battery_level": self.adb.battery_level(),
-                "device_time": self.adb.device_time(),
-                "root_available": self.adb.is_root_available(),
-            },
+            extra=self._state_extras(),
         )
         return state
 
@@ -135,13 +131,23 @@ class RealDeviceSource(AcquisitionSource):
         return capture_device_state(
             self.shell_readonly,
             phase="post",
-            extra={
-                "screen_locked": self.adb.is_screen_locked(),
-                "battery_level": self.adb.battery_level(),
-                "device_time": self.adb.device_time(),
-                "root_available": self.adb.is_root_available(),
-            },
+            extra=self._state_extras(),
         )
+
+    def _state_extras(self) -> dict:
+        """Facts the caller already knows, merged into both state snapshots.
+
+        USB state is captured at both ends so the pre/post diff shows a cable that
+        was pulled mid-acquisition — which explains a truncated pull far better
+        than the pull error alone does.
+        """
+        return {
+            "screen_locked": self.adb.is_screen_locked(),
+            "battery_level": self.adb.battery_level(),
+            "device_time": self.adb.device_time(),
+            "root_available": self.adb.is_root_available(),
+            "usb_state": get_usb_state(self.adb),
+        }
 
     def shell_readonly(self, cmd: str) -> str:
         return self.adb.shell(cmd).stdout
@@ -192,122 +198,141 @@ class RealDeviceSource(AcquisitionSource):
 
 
 # ---------------------------------------------------------------------------
-# MODULE 4: USB Connection State (Non-root Tier 0)
+# USB connection state (Non-root Tier 0)
 # ---------------------------------------------------------------------------
 
+_USB_CONNECTED_ROLES = ("device", "ufp", "sink")
+
+
 def get_usb_state(adb: Adb) -> dict:
-    """Determine if a USB cable is physically connected using three independent probes.
-    
-    Uses three independent ADB probes to determine USB connection state:
-    1. Probe 1: Read '/sys/class/typec/port0/data_role' (if 'host', USB is active)
-    2. Probe 2: Read 'adb shell dumpsys battery' (check if 'USB' is power source)
-    3. Probe 3: Check 'adb devices' output (if shows 'device' state, cable present)
-    
-    Verdict: usb_connected = True if at least 2 out of 3 probes return true
-    
-    Args:
-        adb: Adb instance for running shell commands
-        
-    Returns:
-        Dict with:
-        - usb_connected: bool - True if USB cable is physically connected
-        - caveats: list[str] - Limitations and notes
-        - probe_results: dict - Individual probe outcomes
+    """Report whether a USB cable is attached, from read-only device probes.
+
+    Three probes, each answering a slightly different question, all reported
+    separately rather than averaged:
+
+    ``battery``
+        ``dumpsys battery`` → ``USB powered``. Authoritative for "a USB cable
+        supplying power is attached". A data-only cable or a charge-only port
+        can make this disagree with the others, which is why it does not decide
+        the verdict alone.
+    ``usb_state``
+        ``/sys/class/android_usb/android0/state`` → ``CONFIGURED`` when the
+        gadget stack has enumerated against a host. Absent on many recent
+        kernels, in which case it is unknown, not negative.
+    ``typec_role``
+        ``/sys/class/typec/port0/data_role``. Note the direction: a phone
+        plugged into a workstation is the **device** (UFP) side. Reading this
+        as connected-if-``host`` — as an earlier version did — inverts the test
+        and returns False on exactly the setup a forensic capture runs on.
+
+    Deliberately **not** probed: whether ``adb devices`` lists the device. We are
+    talking to it over ADB, so that check always passes, over USB or over TCP
+    alike. It voted "connected" unconditionally and, in a 2-of-3 majority, could
+    carry the verdict on its own.
+
+    Returns a dict whose ``usb_connected`` is tri-state: ``True``/``False``, or
+    ``None`` when no probe was legible — which is not the same as "no cable".
+    ``transport`` separately records whether *this* ADB session is running over
+    USB or TCP, which is a fact about the examiner's own setup, not the device.
     """
-    result = {
-        "usb_connected": False,
+    result: dict = {
+        "usb_connected": None,
+        "transport": "unknown",
         "caveats": [],
         "probe_results": {
-            "typec_data_role": None,
-            "battery_power_source": None,
-            "adb_device_state": None
+            "battery": None,
+            "usb_state": None,
+            "typec_role": None,
         },
-        "probe_votes": []
+        "probe_votes": [],
     }
-    
-    probe_count = 0
-    true_count = 0
-    
-    # Probe 1: Check Type-C data role
-    try:
-        typec_result = adb.shell("cat /sys/class/typec/port0/data_role").stdout.strip().lower()
-        result["probe_results"]["typec_data_role"] = typec_result
-        if typec_result == "host" or "host" in typec_result:
-            result["probe_votes"].append("typec_host")
-            true_count += 1
-        probe_count += 1
-    except Exception as e:
-        result["caveats"].append(f"Type-C probe failed: {e}")
-        result["probe_results"]["typec_data_role"] = f"error: {e}"
-    
-    # Probe 2: Check battery power source
-    try:
-        battery_output = adb.shell("dumpsys battery").stdout
-        result["probe_results"]["battery_power_source"] = battery_output[:500]  # Store first 500 chars
-        if "usb" in battery_output.lower() or "ac powered: true" in battery_output.lower():
-            # Look for specific patterns indicating USB power
-            for line in battery_output.lower().split('\n'):
-                if ('usb' in line and ('powered: true' in line or 'present: true' in line)) or \
-                   ('plugged:' in line and 'usb' in line):
-                    result["probe_votes"].append("battery_usb")
-                    true_count += 1
-                    break
-        probe_count += 1
-    except Exception as e:
-        result["caveats"].append(f"Battery probe failed: {e}")
-        result["probe_results"]["battery_power_source"] = f"error: {e}"
-    
-    # Probe 3: Check ADB devices list
-    try:
-        # Use subprocess to check adb devices
-        import subprocess
-        devices_output = subprocess.run(
-            adb._base() + ["devices"],
-            capture_output=True,
-            text=True,
-            timeout=10
-        ).stdout
-        result["probe_results"]["adb_device_state"] = devices_output
-        
-        # Look for 'device' state (not 'emulator' or 'offline')
-        for line in devices_output.split('\n'):
-            if '\tdevice' in line and 'emulator' not in line.lower():
-                result["probe_votes"].append("adb_device")
-                true_count += 1
-                break
-        probe_count += 1
-    except Exception as e:
-        result["caveats"].append(f"ADB devices probe failed: {e}")
-        result["probe_results"]["adb_device_state"] = f"error: {e}"
-    
-    # Verdict: require at least 2 out of 3 probes to agree
-    if probe_count >= 2:
-        result["usb_connected"] = (true_count >= 2)
-        result["caveats"].append(
-            f"USB connection verdict based on {true_count}/{probe_count} probes. "
-            f"Requires at least 2 out of 3 probes to confirm connection."
-        )
+
+    positive = 0
+    negative = 0
+
+    # Probe 1 — battery power source.
+    battery = adb.shell("dumpsys battery")
+    if battery.ok and battery.stdout.strip():
+        text = battery.stdout
+        result["probe_results"]["battery"] = text[:500]
+        match = re.search(r"USB\s+powered:\s*(true|false)", text, re.I)
+        if match:
+            if match.group(1).lower() == "true":
+                positive += 1
+                result["probe_votes"].append("battery:usb-powered")
+            else:
+                negative += 1
+        else:
+            result["caveats"].append(
+                "dumpsys battery carried no 'USB powered' line on this build; that "
+                "probe is unavailable, not negative."
+            )
     else:
+        result["probe_results"]["battery"] = "unavailable"
+        result["caveats"].append("dumpsys battery could not be read.")
+
+    # Probe 2 — gadget enumeration state.
+    usb_state = adb.shell("cat /sys/class/android_usb/android0/state")
+    value = (usb_state.stdout or "").strip().upper()
+    if usb_state.ok and value:
+        result["probe_results"]["usb_state"] = value
+        if value == "CONFIGURED":
+            positive += 1
+            result["probe_votes"].append("android_usb:CONFIGURED")
+        elif value in ("DISCONNECTED", "NOT ATTACHED"):
+            negative += 1
+    else:
+        result["probe_results"]["usb_state"] = "unavailable"
+
+    # Probe 3 — Type-C data role. The current role is the bracketed one when the
+    # node lists all supported roles, e.g. "[device] host".
+    typec = adb.shell("cat /sys/class/typec/port0/data_role")
+    raw = (typec.stdout or "").strip()
+    if typec.ok and raw:
+        result["probe_results"]["typec_role"] = raw
+        bracketed = re.search(r"\[(\w+)\]", raw)
+        role = (bracketed.group(1) if bracketed else raw).strip().lower()
+        if role in _USB_CONNECTED_ROLES:
+            positive += 1
+            result["probe_votes"].append(f"typec:{role}")
+        elif role:
+            # "host" means the phone is powering something over OTG. Still a cable,
+            # but a different situation, and not the workstation link.
+            result["caveats"].append(
+                f"Type-C data role is '{role}' — the device is acting as USB host "
+                f"(OTG), which is not the workstation-side link this probe tests for."
+            )
+    else:
+        result["probe_results"]["typec_role"] = "unavailable"
+
+    # Verdict. Any positive probe is enough; only an all-negative reading is a
+    # negative finding; nothing legible stays None.
+    if positive:
+        result["usb_connected"] = True
+    elif negative:
+        result["usb_connected"] = False
+
+    # Transport of THIS session — a fact about the capture setup, kept apart from
+    # the device-side probes so it can never stand in for them.
+    serial = getattr(adb, "serial", None) or ""
+    if re.match(r"^[\w.\-]+:\d+$", serial):
+        result["transport"] = "tcp"
         result["caveats"].append(
-            f"Insufficient probes succeeded ({probe_count}/3). "
-            "Cannot make reliable USB connection determination."
+            "This ADB session is running over TCP/IP, not USB. Network ADB leaves a "
+            "different device footprint and the cable state above is independent of it."
         )
-    
-    # Add standard caveats
+    elif serial:
+        result["transport"] = "usb"
+
     result["caveats"].append(
-        "USB connection state reflects the moment of capture only. "
-        "It does not establish how long the cable was connected or when it was first plugged in."
+        "USB state reflects the moment of capture only. It does not establish how "
+        "long a cable was attached, when it was first plugged in, or what host it "
+        "was attached to."
     )
-    
-    if result["usb_connected"]:
+    if result["usb_connected"] is None:
         result["caveats"].append(
-            "USB cable detected as physically connected. This confirms ADB access "
-            "was over USB (not Wi-Fi/network), but does not identify the host computer."
+            "No USB probe returned a legible value on this device. USB state is "
+            "UNKNOWN — this is not a finding that no cable was attached."
         )
-    else:
-        result["caveats"].append(
-            "USB cable not detected or insufficient evidence. Connection may be over "
-            "Wi-Fi/network ADB, or probes failed to read the state."
-        )
-    
+
     return result

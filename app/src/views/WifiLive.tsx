@@ -17,7 +17,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../lib/api";
 import { fmtTs } from "../lib/hooks";
-import { bytes } from "../components/common";
+import { bytes, SortTh, useSort } from "../components/common";
 
 // ---------------------------------------------------------------------------
 // Types (declared locally — this view owns its own contract)
@@ -210,18 +210,6 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
     };
   }, [caseId]);
 
-  if (loading) {
-    return (
-      <div className="p-8 text-muted text-sm animate-pulse">Loading live Wi-Fi state…</div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-8 text-sm text-deletion">Failed to load live Wi-Fi state: {error}</div>
-    );
-  }
-
   const current = report?.current ?? null;
   const saved = report?.saved ?? [];
   const scans = report?.scan_results ?? [];
@@ -251,6 +239,13 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
     ? usage.filter((u) => u.ssid?.toLowerCase().includes(q) || u.iface?.toLowerCase().includes(q))
     : usage;
 
+  // Hooks must run unconditionally on every render — computed here, before the
+  // loading/error/empty-state early returns below, one independent useSort instance
+  // per table so each of the three tables sorts on its own column/direction.
+  const savedSort = useSort<WifiLiveSavedNetwork>(savedFiltered);
+  const scansSort = useSort<WifiLiveScanResult>(scansFiltered);
+  const usageSort = useSort<WifiLiveUsageBucket>(usageFiltered);
+
   const anyRandomised =
     Boolean(current?.randomized_mac) || saved.some((s) => s.randomized_mac);
 
@@ -260,6 +255,18 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
     scans.length === 0 &&
     usage.length === 0 &&
     Object.keys(connectivity).length === 0;
+
+  if (loading) {
+    return (
+      <div className="p-8 text-muted text-sm animate-pulse">Loading live Wi-Fi state…</div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-8 text-sm text-deletion">Failed to load live Wi-Fi state: {error}</div>
+    );
+  }
 
   const header = (
     <div className="mb-5">
@@ -460,14 +467,14 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
           <table className="w-full text-sm">
             <thead>
               <tr>
-                <th className="th">SSID</th>
-                <th className="th w-20">Net ID</th>
-                <th className="th">Key mgmt</th>
-                <th className="th w-28">Ever connected</th>
-                <th className="th w-24">Assoc. count</th>
-                <th className="th w-28">MAC mode</th>
-                <th className="th">Last seen (not a join time)</th>
-                <th className="th">Source</th>
+                <SortTh className="th" label="SSID" sortKeyName="ssid" getValue={(s) => s.ssid} sort={savedSort} />
+                <SortTh className="th w-20" label="Net ID" sortKeyName="network_id" getValue={(s) => s.network_id} sort={savedSort} />
+                <SortTh className="th" label="Key mgmt" sortKeyName="key_mgmt" getValue={(s) => s.key_mgmt} sort={savedSort} />
+                <SortTh className="th w-28" label="Ever connected" sortKeyName="has_ever_connected" getValue={(s) => s.has_ever_connected} sort={savedSort} />
+                <SortTh className="th w-24" label="Assoc. count" sortKeyName="num_association" getValue={(s) => s.num_association} sort={savedSort} />
+                <SortTh className="th w-28" label="MAC mode" sortKeyName="randomized_mac" getValue={(s) => s.randomized_mac} sort={savedSort} />
+                <SortTh className="th" label="Last seen (not a join time)" sortKeyName="last_seen" getValue={(s) => s.last_seen} sort={savedSort} />
+                <SortTh className="th" label="Source" sortKeyName="source" getValue={(s) => s.source} sort={savedSort} />
               </tr>
             </thead>
             <tbody>
@@ -480,7 +487,7 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
                   </td>
                 </tr>
               ) : (
-                savedFiltered.map((s, i) => (
+                savedSort.sorted.map((s, i) => (
                   <tr key={i}>
                     <td className="td font-medium">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -551,12 +558,12 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
           <table className="w-full text-sm">
             <thead>
               <tr>
-                <th className="th">SSID</th>
-                <th className="th">BSSID</th>
-                <th className="th w-24">Freq</th>
-                <th className="th w-24">Level</th>
-                <th className="th">Capabilities</th>
-                <th className="th">Seen at (approximate — derived from age)</th>
+                <SortTh className="th" label="SSID" sortKeyName="ssid" getValue={(s) => s.ssid} sort={scansSort} />
+                <SortTh className="th" label="BSSID" sortKeyName="bssid" getValue={(s) => s.bssid} sort={scansSort} />
+                <SortTh className="th w-24" label="Freq" sortKeyName="frequency_mhz" getValue={(s) => s.frequency_mhz} sort={scansSort} />
+                <SortTh className="th w-24" label="Level" sortKeyName="level_dbm" getValue={(s) => s.level_dbm} sort={scansSort} />
+                <SortTh className="th" label="Capabilities" sortKeyName="capabilities" getValue={(s) => s.capabilities} sort={scansSort} />
+                <SortTh className="th" label="Seen at (approximate — derived from age)" sortKeyName="seen_at" getValue={(s) => s.seen_at} sort={scansSort} />
               </tr>
             </thead>
             <tbody>
@@ -569,7 +576,7 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
                   </td>
                 </tr>
               ) : (
-                scansFiltered.map((s, i) => (
+                scansSort.sorted.map((s, i) => (
                   <tr key={i}>
                     <td className="td font-medium">
                       {s.ssid || <span className="text-muted italic">&lt;hidden&gt;</span>}
@@ -621,12 +628,12 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
           <table className="w-full text-sm">
             <thead>
               <tr>
-                <th className="th">SSID</th>
-                <th className="th w-28">Interface</th>
-                <th className="th">Bucket window (APPROXIMATE — hour-bucketed)</th>
-                <th className="th w-32">Duration (approximate)</th>
-                <th className="th w-28">Rx</th>
-                <th className="th w-28">Tx</th>
+                <SortTh className="th" label="SSID" sortKeyName="ssid" getValue={(u) => u.ssid} sort={usageSort} />
+                <SortTh className="th w-28" label="Interface" sortKeyName="iface" getValue={(u) => u.iface} sort={usageSort} />
+                <SortTh className="th" label="Bucket window (APPROXIMATE — hour-bucketed)" sortKeyName="bucket_start" getValue={(u) => u.bucket_start} sort={usageSort} />
+                <SortTh className="th w-32" label="Duration (approximate)" sortKeyName="duration_ms" getValue={(u) => u.duration_ms} sort={usageSort} />
+                <SortTh className="th w-28" label="Rx" sortKeyName="rx_bytes" getValue={(u) => u.rx_bytes} sort={usageSort} />
+                <SortTh className="th w-28" label="Tx" sortKeyName="tx_bytes" getValue={(u) => u.tx_bytes} sort={usageSort} />
               </tr>
             </thead>
             <tbody>
@@ -639,7 +646,7 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
                   </td>
                 </tr>
               ) : (
-                usageFiltered.map((u, i) => (
+                usageSort.sorted.map((u, i) => (
                   <tr key={i}>
                     <td className="td font-medium">
                       {u.ssid || <span className="text-muted italic">—</span>}
