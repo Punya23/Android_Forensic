@@ -12,12 +12,15 @@ so report generation can never fail for want of an installed package.
 from __future__ import annotations
 
 import html
+import itertools
+import re
 from pathlib import Path
 from typing import Any
 
 from .. import TOOL_NAME, __version__
 from ..config import ACQUISITION_DISCLAIMER, STANDARDS_REFS
 from ..models import now_iso
+from . import charts
 
 # NOTE: a stub `_generate_hash_verification_section` returning "" used to sit here. It was
 # shadowed by the real implementation further down the module (last definition wins), so it
@@ -302,6 +305,120 @@ def _location_trace_section(traces: list, summary: dict, anomalies: list) -> str
 """
 
 
+_TOC_MARKER = "<!--__TOC_PLACEHOLDER__-->"
+_H2_RE = re.compile(r"<h2>(.*?)</h2>", re.DOTALL)
+
+
+def _plain_text(raw_html: str) -> str:
+    """Strip tags and unescape entities — used for both the TOC anchor slug and
+    its display text, so the two are always derived from the same string."""
+    return html.unescape(re.sub(r"<[^>]+>", "", raw_html))
+
+
+def _slugify(text: str) -> str:
+    """Turn plain (already tag-stripped) text into a URL-safe anchor id."""
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
+    return slug or "section"
+
+
+def _inject_toc(body: str) -> str:
+    """Post-process the fully-assembled report: number every top-level ``<h2>``
+    section with a stable anchor id and replace `_TOC_MARKER` with a jump-list.
+
+    This runs once, over the whole joined document, rather than threading an
+    `id=` through every section-generator function above — every existing and
+    future bare `<h2>...</h2>` (no attributes; that is the only form used
+    anywhere in this file, including ones rendered by other modules such as
+    the BSA certificate) is picked up automatically with no per-section change.
+    Multi-line heading text is matched (`re.DOTALL`), but a heading written as
+    `<h2 class="...">` would not be — match this file's existing convention of
+    bare `<h2>` tags for any new heading.
+    """
+    seen: dict[str, int] = {}
+    headings: list[tuple[str, str]] = []
+
+    def _repl(m: "re.Match[str]") -> str:
+        raw = m.group(1)
+        text = _plain_text(raw)
+        slug = _slugify(text)
+        n = seen.get(slug, 0)
+        seen[slug] = n + 1
+        anchor = slug if n == 0 else f"{slug}-{n}"
+        headings.append((anchor, text))
+        return f'<h2 id="{anchor}">{raw}</h2>'
+
+    body = _H2_RE.sub(_repl, body)
+
+    if not headings:
+        # Defensive only: every report unconditionally renders at least one
+        # <h2> ("Acquisition summary"), so this path is not currently
+        # reachable — kept so a future restructuring can't make a marker
+        # leak into the rendered report instead of degrading gracefully.
+        return body.replace(_TOC_MARKER, "", 1)
+
+    items = "".join(
+        f'<li><a href="#{_esc(anchor)}">{_esc(text)}</a></li>' for anchor, text in headings
+    )
+    toc_html = (
+        '<nav class="toc" aria-label="Table of contents">'
+        '<p class="toc-title">Contents</p>'
+        f"<ol>{items}</ol>"
+        "</nav>"
+    )
+    return body.replace(_TOC_MARKER, toc_html, 1)
+
+
+def _overview_charts_section(
+    composition: list[tuple[str, int]],
+    confidence_segments: list[tuple[str, int, str]],
+    severity_segments: list[tuple[str, int, str]],
+    timeline_buckets: list[tuple[str, int]],
+) -> str:
+    """Visual companion to the Acquisition summary tiles: a bird's-eye read of
+    artifact composition, the live/recovered/carved mix, review-flag severity,
+    and message/call activity over time — so a reader isn't scanning 20+
+    sections just to get oriented. A chart never carries a claim the detailed
+    tables below it don't already make; any chart with nothing to show is
+    simply omitted, never rendered empty or misleading.
+    """
+    cards: list[str] = []
+
+    comp_svg = charts.bar_chart(composition, color="#7a2e12")
+    if comp_svg:
+        cards.append(f'<div class="chart-card"><h4>Artifact composition</h4>{comp_svg}</div>')
+
+    conf_svg = charts.donut_chart(confidence_segments)
+    if conf_svg:
+        cards.append(
+            '<div class="chart-card"><h4>Evidence confidence mix</h4>'
+            f'{conf_svg}<p class="chart-caption">Every message, call, recovered/carved row, '
+            "and recovered chat/network artifact (Wi-Fi, Telegram, Instagram, Snapchat, "
+            "discovered chats, MediaStore trash) counted by confidence tier — recovered/carved "
+            "rows are never equivalent to live data, see each section's confidence badges. "
+            "Deletion-only findings are excluded here; they record that content is gone, not a "
+            "recovered value — see “Deletion detected” below. A row with a missing or "
+            "unrecognised tier is counted as UNKNOWN, never assumed live.</p></div>"
+        )
+
+    sev_svg = charts.donut_chart(severity_segments)
+    if sev_svg:
+        cards.append(f'<div class="chart-card"><h4>Flags by severity</h4>{sev_svg}</div>')
+
+    timeline_svg = charts.timeline_chart(timeline_buckets)
+    if timeline_svg:
+        cards.append(
+            '<div class="chart-card" style="grid-column:1/-1">'
+            "<h4>Message &amp; call activity over time</h4>"
+            f'{timeline_svg}<p class="chart-caption">Counts messages and calls by day '
+            "recovered on this device. Gaps may reflect no activity, or artifacts this "
+            "acquisition could not reach — absence here is not evidence of absence.</p></div>"
+        )
+
+    if not cards:
+        return ""
+    return f'<div class="charts">{"".join(cards)}</div>'
+
+
 def generate_report(case_dir: str | Path) -> Path:
     """Render report.html inside a case folder from its persisted JSON artifacts."""
     from ..custody import Case  # local import to avoid a cycle
@@ -395,6 +512,10 @@ def generate_report(case_dir: str | Path) -> Path:
 
     # Triage disclaimer banner
     parts.append(f'<div class="banner">{_esc(ACQUISITION_DISCLAIMER)}</div>')
+
+    # Table of contents — filled in by _inject_toc() once every section below has
+    # been appended, so it never has to be kept in sync by hand.
+    parts.append(_TOC_MARKER)
 
     # Traffic-light risk verdict
     if risk:
@@ -764,6 +885,102 @@ def generate_report(case_dir: str | Path) -> Path:
         )
     parts.append("</div>")
 
+    # Visual overview — same figures as the tiles above, charted for a faster
+    # at-a-glance read. Never a gate: a broken chart must never take the report
+    # down with it, so this is best-effort and wrapped defensively.
+    try:
+        # Mirrors the "Acquisition summary" tiles' own location split: a raw
+        # EXIF/photo location count is never relabelled as a "trace" row just
+        # because the (separately-built) unified trace happens to be empty.
+        composition = [
+            (label, value)
+            for label, value in (
+                ("Messages", len(messages)),
+                ("Calls", len(calls)),
+                ("Contacts", len(contacts)),
+                ("Media", len(media)),
+                ("Recovered/carved rows", len(recovered)),
+                ("Browser URLs", len(browser)),
+                ("Wi-Fi networks", len(wifi_networks)),
+                ("Call recordings", len(call_recordings)),
+                ("Notifications", len(notifications)),
+                ("Flags", len(flags)),
+                ("Apps of interest", len(notable_apps)),
+                ("Accounts", len(accounts)),
+                ("Locations", len(locations)),
+                *(
+                    [
+                        (
+                            "Location trace rows",
+                            location_trace_summary.get("total", len(location_traces)),
+                        )
+                    ]
+                    if location_traces
+                    else []
+                ),
+            )
+            if isinstance(value, (int, float)) and value > 0
+        ]
+
+        # Confidence mix — every content-bearing artifact type that this file tags
+        # with a live/recovered/carved confidence (deletion-evidence is deliberately
+        # excluded: it records that content is *gone*, not a recovered value, and
+        # mixing it in here would misstate what the donut counts). A missing or
+        # unrecognised tier is bucketed as UNKNOWN rather than assumed "live" —
+        # this is a legal report; the benefit of the doubt goes to disclosure, not
+        # the highest-trust tier.
+        discovered_msgs = discovered.get("messages") if isinstance(discovered, dict) else None
+        mst = case.read_derived("mediastore_trash") or {}
+        mst_items = mst.get("items") if isinstance(mst, dict) else None
+        conf_counts: dict[str, int] = {}
+        for row in itertools.chain(
+            messages,
+            calls,
+            recovered,
+            wifi_networks,
+            tg_messages,
+            tg_users,
+            tg_chats,
+            ig_messages,
+            sc_messages,
+            discovered_msgs or [],
+            mst_items or [],
+        ):
+            if isinstance(row, dict):
+                tier = row.get("confidence")
+                key = tier if isinstance(tier, str) and tier else "unknown"
+                conf_counts[key] = conf_counts.get(key, 0) + 1
+        _UNKNOWN_COLORS = ("#5b6570", "#eceeec")
+        conf_segments = [
+            (str(tier).upper(), n, _CONF_COLORS.get(tier, _UNKNOWN_COLORS)[0])
+            for tier, n in conf_counts.items()
+        ]
+
+        sev_counts: dict[str, int] = {}
+        for f in flags:
+            if isinstance(f, dict):
+                sev = f.get("severity")
+                key = sev if isinstance(sev, str) and sev else "unknown"
+                sev_counts[key] = sev_counts.get(key, 0) + 1
+        sev_segments = [
+            (str(tier).upper(), n, _SEV_COLORS.get(tier, _UNKNOWN_COLORS)[0])
+            for tier, n in sev_counts.items()
+        ]
+
+        timeline_ts = [row.get("timestamp") for row in itertools.chain(messages, calls) if isinstance(row, dict)]
+        timeline_buckets = charts.bucket_by_day(timeline_ts)
+
+        dashboard_html = _overview_charts_section(
+            composition, conf_segments, sev_segments, timeline_buckets
+        )
+        if dashboard_html:
+            parts.append(dashboard_html)
+    except Exception as exc:  # pragma: no cover - defensive; charts are a visual aid, never a gate
+        parts.append(
+            f'<p class="note" style="color:#a5322f">Overview charts could not be '
+            f"rendered: {_esc(exc)}</p>"
+        )
+
     # Communication graph — top contacts
     stats = graph.get("stats", {})
     if stats.get("top_contacts"):
@@ -773,6 +990,20 @@ def generate_report(case_dir: str | Path) -> Path:
             f'{_esc(stats.get("interactions", 0))} interactions across channels: '
             f'{_esc(", ".join(stats.get("channels", [])))}.</p>'
         )
+        try:
+            contacts_chart = charts.bar_chart(
+                [
+                    (t.get("label", "—"), t.get("weight", 0))
+                    for t in stats["top_contacts"]
+                    if isinstance(t, dict)
+                ],
+                color="#2258a8",
+                unit=" interaction(s)",
+            )
+        except Exception:  # pragma: no cover - defensive; a chart is never a gate
+            contacts_chart = ""
+        if contacts_chart:
+            parts.append(f'<div class="chart-card">{contacts_chart}</div>')
         parts.append(
             "<table><tr><th>Participant</th><th>Interactions</th><th>Channels</th></tr>"
         )
@@ -1079,10 +1310,20 @@ def generate_report(case_dir: str | Path) -> Path:
     for ref in STANDARDS_REFS:
         parts.append(f"<li>{_esc(ref)}</li>")
     parts.append("</ul>")
+    parts.append('<a class="back-to-top" href="#top" title="Back to top" aria-label="Back to top">↑</a>')
     parts.append("</div></body></html>")
 
+    # The TOC is a navigation aid, not part of the evidentiary content — a bug in it
+    # must never cost the examiner the whole report (every other risk-bearing section
+    # above is similarly never allowed to be a single point of failure).
+    joined = "".join(parts)
+    try:
+        body = _inject_toc(joined)
+    except Exception:  # pragma: no cover - defensive; TOC is a visual aid, never a gate
+        body = joined
+
     out = Path(case_dir) / "report.html"
-    out.write_text("".join(parts), encoding="utf-8")
+    out.write_text(body, encoding="utf-8")
     return out
 
 
@@ -2559,5 +2800,28 @@ _HEAD = """<!doctype html><html lang="en"><head><meta charset="utf-8">
   .cert ol{margin:10px 0;padding-left:20px}.cert li{margin-bottom:6px}
   .sign{margin-top:18px;display:flex;flex-direction:column;gap:10px;font-size:13px}
   .refs{color:var(--mut);font-size:12.5px}
-  @media print{body{background:#fff}.wrap{box-shadow:none;max-width:none}}
-</style></head><body><div class="wrap">"""
+  h2{scroll-margin-top:14px}
+  .toc{border:1px solid var(--line);border-radius:6px;padding:14px 20px 16px;background:#fcfcfb;margin-bottom:26px}
+  .toc-title{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);font-weight:700;margin:0 0 8px}
+  .toc ol{columns:2;column-gap:30px;margin:0;padding-left:20px;font-size:12.5px}
+  .toc li{break-inside:avoid;margin-bottom:4px}
+  .toc a{color:var(--ink);text-decoration:none}
+  .toc a:hover{color:var(--accent);text-decoration:underline}
+  .back-to-top{position:fixed;right:22px;bottom:22px;background:var(--accent);color:#fff;
+    border-radius:50%;width:38px;height:38px;line-height:38px;text-align:center;
+    text-decoration:none;font-size:17px;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+  .charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin:14px 0 6px}
+  .chart-card{border:1px solid var(--line);border-radius:6px;padding:14px 16px;background:#fcfcfb}
+  .chart-card h4{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
+  .chart-svg{width:100%;height:auto;display:block}
+  .chart-caption{font-size:11px;color:var(--mut);margin:6px 0 0}
+  .chart-legend{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:7px 14px;font-size:12px}
+  .chart-legend li{display:flex;align-items:center;gap:5px}
+  @media print{
+    body{background:#fff}.wrap{box-shadow:none;max-width:none}
+    .back-to-top{display:none}
+    .toc{break-after:page}
+    h2{break-after:avoid}
+    tr{break-inside:avoid}
+  }
+</style></head><body><div class="wrap" id="top">"""
