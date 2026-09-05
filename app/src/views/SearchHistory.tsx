@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { SectionHeader } from "../components/common";
@@ -113,7 +114,10 @@ function CaveatList({ items }: { items: string[] }) {
     <ul className="mt-1 space-y-0.5">
       {items.map((c, i) => (
         <li key={i} className="text-[11px] text-warn leading-snug">
-          ⚠ {c}
+          <span className="inline-flex items-center gap-1">
+            <AlertTriangle className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+            {c}
+          </span>
         </li>
       ))}
     </ul>

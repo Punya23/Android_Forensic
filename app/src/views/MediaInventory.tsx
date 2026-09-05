@@ -6,6 +6,7 @@
  * pulling gigabytes. This complements the pulled-file Media gallery.
  */
 import { useMemo, useState } from "react";
+import { Star } from "lucide-react";
 import type { MediaInventoryItem } from "../lib/types";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { SectionHeader, EmptyState, StatCard, Filters, bytes, SortTh, useSort } from "../components/common";
@@ -123,7 +124,11 @@ export function MediaInventoryView({ caseId }: { caseId: string }) {
                 <td className="td">
                   <div className="flex gap-1">
                     {m.is_trashed && <span className="text-[10px] px-1 rounded bg-deletion/20 text-deletion">trash</span>}
-                    {m.is_favorite && <span className="text-[10px] px-1 rounded bg-recovered/20 text-recovered">★</span>}
+                    {m.is_favorite && (
+                      <span className="text-[10px] px-1 rounded bg-recovered/20 text-recovered">
+                        <Star className="inline h-3.5 w-3.5" strokeWidth={1.75} fill="currentColor" aria-hidden />
+                      </span>
+                    )}
                     {m.gps && <span className="text-[10px] px-1 rounded bg-accent/20 text-accent">gps</span>}
                   </div>
                 </td>

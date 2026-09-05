@@ -6,6 +6,17 @@ import {
   PartialCollectionList,
   PlanNotes,
 } from "../components/PlanPanels";
+import {
+  Sparkles,
+  AlertTriangle,
+  Wifi,
+  Globe2,
+  Unlock,
+  Bluetooth,
+  Puzzle,
+  ShieldAlert,
+  AppWindow,
+} from "lucide-react";
 
 const STAGES = [
   "init", "device", "intel", "tier1", "enumerate", "screenshot", "pull", "location", "recover",
@@ -260,10 +271,13 @@ export function AcquisitionView({
         </div>
       </div>
 
-      {/* Case brief → AI collection plan */}
+      {/* Case brief -> AI collection plan */}
       <div className="card p-4 mb-4 border-accent/30">
         <div className="label mb-1">
-          <span className="text-accent">✦ Case brief</span> — targeted, intelligent triage (optional)
+          <span className="text-accent inline-flex items-center gap-1">
+            <Sparkles className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden /> Case brief
+          </span>{" "}
+          — targeted, intelligent triage (optional)
         </div>
         <p className="text-xs text-muted mb-3">
           Describe the case in plain language, naming each party and their role. The tool
@@ -385,7 +399,11 @@ export function AcquisitionView({
             {plan.profile.nomenclature_warnings.map((w, i) => (
               <div key={i} className="text-[11px] leading-relaxed">
                 <span className={w.severity === "warn" ? "text-warn" : "text-muted"}>
-                  {w.severity === "warn" ? "⚠" : "ℹ"}
+                  {w.severity === "warn" ? (
+                    <AlertTriangle className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                  ) : (
+                    "ℹ"
+                  )}
                 </span>{" "}
                 <span className="text-muted">{w.message}</span>
               </div>
@@ -683,7 +701,7 @@ export function AcquisitionView({
             />
             <div>
               <div className="text-sm font-medium flex items-center gap-1.5">
-                <span>📶</span> Wi-Fi Credentials
+                <Wifi className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Wi-Fi Credentials
               </div>
               <div className="text-xs text-muted mt-1">
                 Root-probe{" "}
@@ -708,7 +726,7 @@ export function AcquisitionView({
             />
             <div>
               <div className="text-sm font-medium flex items-center gap-1.5">
-                <span>🌐</span> Browser History
+                <Globe2 className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Browser History
               </div>
               <div className="text-xs text-muted mt-1">
                 Root-pull the real per-browser{" "}
@@ -734,7 +752,7 @@ export function AcquisitionView({
             />
             <div>
               <div className="text-sm font-medium flex items-center gap-1.5">
-                <span>🔓</span> WhatsApp Backup Recovery
+                <Unlock className="h-4 w-4" strokeWidth={1.75} aria-hidden /> WhatsApp Backup Recovery
               </div>
               <div className="text-xs text-muted mt-1">
                 Root-pull the encryption key, then decrypt and analyse daily{" "}
@@ -766,7 +784,7 @@ export function AcquisitionView({
           {[
             {
               key: "bt",
-              icon: "🔵",
+              icon: Bluetooth,
               label: "Bluetooth bond store",
               checked: tier2BtConfig,
               set: setTier2BtConfig,
@@ -782,7 +800,7 @@ export function AcquisitionView({
             },
             {
               key: "presence",
-              icon: "🧩",
+              icon: Puzzle,
               label: "App presence & execution",
               checked: tier2AppPresence,
               set: setTier2AppPresence,
@@ -798,7 +816,7 @@ export function AcquisitionView({
             },
             {
               key: "antiforensics",
-              icon: "🕵",
+              icon: ShieldAlert,
               label: "User containers & privacy apps",
               checked: tier2AntiForensics,
               set: setTier2AntiForensics,
@@ -814,7 +832,7 @@ export function AcquisitionView({
             },
             {
               key: "recents",
-              icon: "🪟",
+              icon: AppWindow,
               label: "Recent tasks & screen snapshots",
               checked: tier2RecentTasks,
               set: setTier2RecentTasks,
@@ -828,26 +846,29 @@ export function AcquisitionView({
                 </>
               ),
             },
-          ].map((t) => (
-            <label
-              key={t.key}
-              className="flex items-start gap-3 cursor-pointer border-t border-line pt-3 first:border-t-0 first:pt-0"
-            >
-              <input
-                type="checkbox"
-                className="mt-1"
-                disabled={!target || target.kind !== "real"}
-                checked={target?.kind === "real" ? t.checked : false}
-                onChange={(e) => t.set(e.target.checked)}
-              />
-              <div>
-                <div className="text-sm font-medium flex items-center gap-1.5">
-                  <span>{t.icon}</span> {t.label}
+          ].map((t) => {
+            const Icon = t.icon;
+            return (
+              <label
+                key={t.key}
+                className="flex items-start gap-3 cursor-pointer border-t border-line pt-3 first:border-t-0 first:pt-0"
+              >
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  disabled={!target || target.kind !== "real"}
+                  checked={target?.kind === "real" ? t.checked : false}
+                  onChange={(e) => t.set(e.target.checked)}
+                />
+                <div>
+                  <div className="text-sm font-medium flex items-center gap-1.5">
+                    <Icon className="h-4 w-4" strokeWidth={1.75} aria-hidden /> {t.label}
+                  </div>
+                  <div className="text-xs text-muted mt-1">{t.body}</div>
                 </div>
-                <div className="text-xs text-muted mt-1">{t.body}</div>
-              </div>
-            </label>
-          ))}
+              </label>
+            );
+          })}
         </div>
       </div>
 

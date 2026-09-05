@@ -1,4 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  MessageSquare,
+  Send,
+  Paperclip,
+  Phone,
+  Image,
+  FolderOpen,
+  MapPin,
+  Calendar,
+  Bell,
+  Bluetooth,
+  Link2,
+  Wifi,
+  RadioTower,
+  Hourglass,
+  Search,
+  Circle,
+  ArrowUpRight,
+  type LucideIcon,
+} from "lucide-react";
 import type { TimelineEvent } from "../lib/types";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { ConfidenceBadge } from "../components/Badges";
@@ -8,24 +28,24 @@ import type { ViewKey } from "../components/Sidebar";
 // Every event kind the engine's build_timeline() can emit. An unlisted kind still
 // renders (see the fallback at the row), but it loses its icon and colour, so anything
 // added on the engine side belongs here too.
-const KIND_META: Record<string, { icon: string; color: string }> = {
-  message: { icon: "💬", color: "border-recovered" },
-  telegram_message: { icon: "✈", color: "border-recovered" },
-  telegram_media: { icon: "📎", color: "border-carved" },
-  call: { icon: "📞", color: "border-live" },
-  media: { icon: "🖼", color: "border-carved" },
-  media_inventory: { icon: "🗂", color: "border-carved" },
-  location: { icon: "📍", color: "border-accent" },
-  calendar: { icon: "📅", color: "border-live" },
-  notification: { icon: "🔔", color: "border-accent" },
-  bluetooth: { icon: "🔵", color: "border-accent" },
+const KIND_META: Record<string, { icon: LucideIcon; color: string }> = {
+  message: { icon: MessageSquare, color: "border-recovered" },
+  telegram_message: { icon: Send, color: "border-recovered" },
+  telegram_media: { icon: Paperclip, color: "border-carved" },
+  call: { icon: Phone, color: "border-live" },
+  media: { icon: Image, color: "border-carved" },
+  media_inventory: { icon: FolderOpen, color: "border-carved" },
+  location: { icon: MapPin, color: "border-accent" },
+  calendar: { icon: Calendar, color: "border-live" },
+  notification: { icon: Bell, color: "border-accent" },
+  bluetooth: { icon: Bluetooth, color: "border-accent" },
   // A bond event is a pairing record, not a connection — the engine words the summary
   // accordingly; the distinct icon keeps it from reading as live connectivity.
-  bluetooth_bond: { icon: "🔗", color: "border-recovered" },
-  celltower: { icon: "📶", color: "border-muted" },
-  wifi: { icon: "📡", color: "border-accent" },
-  screen: { icon: "⏳", color: "border-live" },
-  search: { icon: "🔍", color: "border-accent" },
+  bluetooth_bond: { icon: Link2, color: "border-recovered" },
+  celltower: { icon: Wifi, color: "border-muted" },
+  wifi: { icon: RadioTower, color: "border-accent" },
+  screen: { icon: Hourglass, color: "border-live" },
+  search: { icon: Search, color: "border-accent" },
 };
 
 // Where each event kind's underlying record actually lives — the same "go to" jump
@@ -95,22 +115,25 @@ export function TimelineView({ caseId, setView }: { caseId: string; setView: (v:
       <SectionHeader title="Timeline" sub={`${data.length} events across calls, messages, media & locations`} />
       <Filters query={query} onQuery={setQuery} from={from} to={to} onFrom={setFrom} onTo={setTo} placeholder="Search events…" />
       <div className="flex flex-wrap gap-2 mb-4">
-        {allKinds.map((k) => (
-          <button
-            key={k}
-            onClick={() => toggleKind(k)}
-            className={`px-3 py-1 rounded-full text-xs border transition-colors ${
-              kinds.has(k) || kinds.size === 0 ? "border-accent/60 text-ink" : "border-line text-muted"
-            }`}
-          >
-            {KIND_META[k]?.icon} {k}
-          </button>
-        ))}
+        {allKinds.map((k) => {
+          const Icon = KIND_META[k]?.icon;
+          return (
+            <button
+              key={k}
+              onClick={() => toggleKind(k)}
+              className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                kinds.has(k) || kinds.size === 0 ? "border-accent/60 text-ink" : "border-line text-muted"
+              }`}
+            >
+              {Icon && <Icon className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />} {k}
+            </button>
+          );
+        })}
       </div>
       <div className="overflow-auto flex-1 pl-2">
         <div className="border-l-2 border-line ml-2">
           {visible.map((e, i) => {
-            const meta = KIND_META[e.kind] ?? { icon: "•", color: "border-muted" };
+            const meta = KIND_META[e.kind] ?? { icon: Circle, color: "border-muted" };
             const target = KIND_TO_VIEW[e.kind];
             return (
               <div key={i} className="relative pl-6 pb-4 group">
@@ -124,12 +147,15 @@ export function TimelineView({ caseId, setView }: { caseId: string; setView: (v:
                       onClick={() => setView(target)}
                       title={`Open the ${target} view — the timeline doesn't pin an exact row, only which view holds this record`}
                     >
-                      go to {target} ↗
+                      go to {target}{" "}
+                      <ArrowUpRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
                     </button>
                   )}
                 </div>
                 <div className="text-sm mt-0.5">
-                  <span className="mr-1.5">{meta.icon}</span>
+                  <span className="mr-1.5">
+                    <meta.icon className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                  </span>
                   {e.summary}
                 </div>
               </div>

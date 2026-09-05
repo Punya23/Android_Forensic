@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AlertTriangle, Stethoscope } from "lucide-react";
 import { api } from "../lib/api";
 import { fmtTs } from "../lib/hooks";
 import { StatCard } from "../components/common";
@@ -250,7 +251,7 @@ export function DeviceStateView({ caseId }: { caseId: string }) {
   const header = (
     <div className="mb-5">
       <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
-        <span>🩺</span> Device State &amp; Reversal
+        <Stethoscope className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Device State &amp; Reversal
         <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
           Tier 0 — Read-only probes
         </span>
@@ -617,7 +618,7 @@ export function DeviceStateView({ caseId }: { caseId: string }) {
           <ul className="space-y-2">
             {caveats.map((c, i) => (
               <li key={i} className="flex gap-2 text-sm text-warn leading-relaxed">
-                <span className="shrink-0">⚠</span>
+                <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden />
                 <span>{c}</span>
               </li>
             ))}

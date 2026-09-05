@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Clapperboard, Music, FileText, X, AlertTriangle } from "lucide-react";
 import type { MediaItem, Screenshot, WhatsAppMediaItem } from "../lib/types";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { api } from "../lib/api";
@@ -130,7 +131,15 @@ function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[
                   loading="lazy"
                 />
               ) : (
-                <span className="text-3xl opacity-40">{m.kind === "video" ? "🎬" : m.kind === "audio" ? "🎵" : "📄"}</span>
+                <span className="text-3xl opacity-40">
+                  {m.kind === "video" ? (
+                    <Clapperboard className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+                  ) : m.kind === "audio" ? (
+                    <Music className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+                  ) : (
+                    <FileText className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+                  )}
+                </span>
               )}
               {m.trashed && (
                 <span className="absolute top-1 left-1 bg-deletion/90 text-white text-[9px] px-1 rounded">TRASH</span>
@@ -163,7 +172,9 @@ function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[
           <div className="card max-w-2xl w-full p-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-start mb-3">
               <h3 className="font-mono text-sm">{selected.stored_path.split("/").pop()}</h3>
-              <button className="text-muted hover:text-ink" onClick={() => setSelected(null)}>✕</button>
+              <button className="text-muted hover:text-ink" onClick={() => setSelected(null)}>
+                <X className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+              </button>
             </div>
             {selected.kind === "image" && (
               <img src={api.mediaUrl(caseId, selected.artifact_id)} alt="" className="max-h-[50vh] mx-auto rounded" />
@@ -179,7 +190,12 @@ function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[
                   hasRealGps(selected)
                     ? `${selected.gps!.lat}, ${selected.gps!.lon}`
                     : selected.gps
-                    ? "⚠ no GPS fix (0, 0 — EXIF tag zero-filled)"
+                    ? (
+                        <span className="inline-flex items-center gap-1">
+                          <AlertTriangle className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                          no GPS fix (0, 0 — EXIF tag zero-filled)
+                        </span>
+                      )
                     : "—"
                 }
               />
@@ -232,7 +248,9 @@ function ScreenshotsSection({ caseId, data }: { caseId: string; data: Screenshot
           <div className="card max-w-2xl w-full p-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-start mb-3">
               <h3 className="font-mono text-sm">{selected.stored_path.split("/").pop()}</h3>
-              <button className="text-muted hover:text-ink" onClick={() => setSelected(null)}>✕</button>
+              <button className="text-muted hover:text-ink" onClick={() => setSelected(null)}>
+                <X className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+              </button>
             </div>
             <img src={api.mediaUrl(caseId, selected.artifact_id)} alt="" className="max-h-[50vh] mx-auto rounded" />
             <div className="mt-3 space-y-1 text-sm">
@@ -316,7 +334,7 @@ function WhatsAppMediaSection({ data }: { data: WhatsAppMediaItem[] }) {
   );
 }
 
-function MetaRow({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+function MetaRow({ k, v, mono }: { k: string; v: ReactNode; mono?: boolean }) {
   return (
     <div className="flex justify-between gap-4">
       <span className="text-muted">{k}</span>

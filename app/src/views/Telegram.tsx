@@ -3,8 +3,8 @@
  *
  * Data sources
  * ------------
- * GET /api/case/<id>/telegram/conversations  → TelegramConversationsMap
- * GET /api/case/<id>/media/<artifact_id>    → served file (thumbnails)
+ * GET /api/case/<id>/telegram/conversations  -> TelegramConversationsMap
+ * GET /api/case/<id>/media/<artifact_id>    -> served file (thumbnails)
  *
  * Layout
  * ------

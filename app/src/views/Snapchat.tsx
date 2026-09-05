@@ -9,13 +9,14 @@
  *   Tier 0/1 : NOT available — arroyo.db is in app-private storage.
  *   Tier 2   : Enable "Tier-2 Snapchat" on a rooted device (su pull of
  *              /data/data/com.snapchat.android/databases/arroyo.db).
- *   Import   : "Download My Data" ZIP from Snapchat → Settings → Privacy.
+ *   Import   : "Download My Data" ZIP from Snapchat -> Settings -> Privacy.
  *
  * The component delegates the full conversation + message UI to the shared
  * ChatView component, and adds a Snapchat-specific header with acquisition
  * tier guidance and stats when data is present.
  */
 import { useEffect, useState } from "react";
+import { Ghost } from "lucide-react";
 import { ChatView } from "../components/ChatView";
 import { api } from "../lib/api";
 import type { ChatConversationsMap } from "../lib/types";
@@ -32,7 +33,7 @@ function SnapchatHeader({ convCount, msgCount, carvedCount }: {
         className="h-8 w-8 rounded-lg flex items-center justify-center text-white text-lg shrink-0"
         style={{ background: "#FFFC00" }}
       >
-        👻
+        <Ghost className="h-4 w-4" strokeWidth={1.75} aria-hidden />
       </div>
       <div>
         <p className="text-sm font-semibold text-ink leading-none">Snapchat</p>
@@ -91,7 +92,7 @@ export function SnapchatView({ caseId }: { caseId: string }) {
           emptyDetail={
             "Snapchat chats (arroyo.db / protobuf) live in app-private storage and require " +
             "Tier-2 (root) access — enable 'Tier-2 Snapchat' on the Acquisition screen, " +
-            "or load a 'Download My Data' export from Snapchat → Settings → Privacy → Download My Data. " +
+            "or load a 'Download My Data' export from Snapchat -> Settings -> Privacy -> Download My Data. " +
             "Ephemeral messages are carved from WAL/freelist where present."
           }
         />

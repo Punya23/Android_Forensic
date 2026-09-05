@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Lock, Bluetooth, Upload, ArrowRight, ArrowLeft, RadioTower } from "lucide-react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { SectionHeader, StatCard } from "../components/common";
@@ -245,7 +246,10 @@ function LinkKeyCell({ bond }: { bond: BluetoothBond }) {
       {bond.has_link_key ? (
         // Deliberately renders only the *existence* of key material. No field of this
         // record is ever printed as key bytes, whatever the parser may have put there.
-        <span className="text-ink">🔒 link key present (not displayed)</span>
+        <span className="text-ink inline-flex items-center gap-1">
+          <Lock className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden /> link key present (not
+          displayed)
+        </span>
       ) : (
         <span className="text-muted italic">no link key in record</span>
       )}
@@ -408,7 +412,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
       {/* Header */}
       <div className="mb-5">
         <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
-          <span>🔵</span> Bluetooth
+          <Bluetooth className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Bluetooth
         </h1>
         <p className="text-sm text-muted">
           Devices the subject handset has seen, paired with, or holds a persistent pairing
@@ -440,7 +444,9 @@ export function BluetoothView({ caseId }: { caseId: string }) {
 
         {!dumpsysRan && devices.length === 0 ? (
           <div className="card p-8 text-center text-muted">
-            <div className="text-3xl mb-3 opacity-40">🔵</div>
+            <div className="mb-3 opacity-40 flex justify-center">
+              <Bluetooth className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+            </div>
             <div className="text-ink font-medium mb-1">Bluetooth was not collected</div>
             <p className="text-sm leading-relaxed max-w-lg mx-auto">
               No <code className="font-mono">bluetooth_summary</code> was written for this case, so
@@ -451,7 +457,9 @@ export function BluetoothView({ caseId }: { caseId: string }) {
           </div>
         ) : devices.length === 0 ? (
           <div className="card p-8 text-center text-muted">
-            <div className="text-3xl mb-3 opacity-40">🔵</div>
+            <div className="mb-3 opacity-40 flex justify-center">
+              <Bluetooth className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+            </div>
             <div className="text-ink font-medium mb-1">Collected — no devices in the dump</div>
             <p className="text-sm leading-relaxed max-w-lg mx-auto">
               <code className="font-mono">dumpsys bluetooth_manager</code> was read successfully and
@@ -620,7 +628,9 @@ export function BluetoothView({ caseId }: { caseId: string }) {
 
         {allBonds.length === 0 ? (
           <div className="card p-8 text-center text-muted">
-            <div className="text-3xl mb-3 opacity-40">🔒</div>
+            <div className="mb-3 opacity-40 flex justify-center">
+              <Lock className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+            </div>
             <div className="text-ink font-medium mb-1">
               {bondStoreEncrypted
                 ? "Bond store encrypted — contents unknown"
@@ -779,7 +789,9 @@ export function BluetoothView({ caseId }: { caseId: string }) {
 
         {transfers.length === 0 ? (
           <div className="card p-8 text-center text-muted">
-            <div className="text-3xl mb-3 opacity-40">📤</div>
+            <div className="mb-3 opacity-40 flex justify-center">
+              <Upload className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+            </div>
             <div className="text-ink font-medium mb-1">No Bluetooth file transfers recovered</div>
             <p className="text-sm leading-relaxed max-w-lg mx-auto">
               The OPP transfer log covers <strong>file transfers only</strong>. Audio streaming,
@@ -841,11 +853,17 @@ export function BluetoothView({ caseId }: { caseId: string }) {
                         )}
                       </td>
                       <td className="td text-xs">
-                        {t.direction === "outbound"
-                          ? "→ sent"
-                          : t.direction === "inbound"
-                            ? "← received"
-                            : <span className="text-muted italic">unknown</span>}
+                        {t.direction === "outbound" ? (
+                          <span className="inline-flex items-center gap-1">
+                            <ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden /> sent
+                          </span>
+                        ) : t.direction === "inbound" ? (
+                          <span className="inline-flex items-center gap-1">
+                            <ArrowLeft className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden /> received
+                          </span>
+                        ) : (
+                          <span className="text-muted italic">unknown</span>
+                        )}
                       </td>
                       <td className="td font-mono text-xs">
                         {t.peer_address || <span className="italic text-muted">unidentified</span>}
@@ -959,7 +977,9 @@ export function BluetoothView({ caseId }: { caseId: string }) {
 
         {collectorBt.length === 0 ? (
           <div className="card p-8 text-center text-muted">
-            <div className="text-3xl mb-3 opacity-40">📡</div>
+            <div className="mb-3 opacity-40 flex justify-center">
+              <RadioTower className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+            </div>
             <div className="text-ink font-medium mb-1">No helper-captured Bluetooth data for this case</div>
             <p className="text-sm leading-relaxed max-w-lg mx-auto">
               Absent here means the Tier-1 "collect all" helper stage either never ran on this

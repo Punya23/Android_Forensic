@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ArrowRight } from "lucide-react";
 import { api } from "../lib/api";
 import type { CaseSummary, Flag } from "../lib/types";
 import type { ViewKey } from "../components/Sidebar";
@@ -115,7 +116,9 @@ export function OverviewView({ caseId, setView }: { caseId: string; setView: (v:
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold">Apps of interest ({notableApps.length})</h3>
             <button className="text-xs text-accent hover:underline" onClick={() => setView("apps")}>
-              View all apps →
+              <span className="inline-flex items-center gap-1">
+                View all apps <ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+              </span>
             </button>
           </div>
           <div className="flex flex-wrap gap-2">
