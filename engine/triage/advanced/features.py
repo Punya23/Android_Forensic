@@ -117,6 +117,45 @@ def _resolve_sender(sender: str, lookup: Dict[str, str]) -> str:
     return lookup.get(digits, sender)
 
 
+# A sender carrying no letter at all is an identifier (phone number), not a name.
+_HAS_ALPHA_RE = re.compile(r"[A-Za-z]")
+
+
+def _sender_identity(sender: str, lookup: Dict[str, str]) -> Tuple[str, str]:
+    """Return ``(node_key, display_label)`` for a message sender.
+
+    The key is derived from the **identifier** (phone number / handle) and never
+    from the resolved contact name. A device routinely holds one saved name
+    against two numbers; keying nodes on the name fuses those two participants
+    into a single node whose count is the sum of both — an identity claim this
+    acquisition cannot support, and one that is invisible in the output. The
+    resolved name survives as a display label only.
+
+    Same namespaced form as :func:`triage.analysis.graph._key` (``num:…`` /
+    ``name:…``), with two deliberate differences, both measured against the
+    senders in CASE-REAL-005:
+
+    * numbers key on their **digits**, dropping any leading ``+``, because
+      ``+918879041080`` and ``918879041080`` are the same identifier written two
+      ways (the case holds both; ``graph._key`` keeps the ``+`` and so splits
+      them). Digits that differ — a local number vs the same number with a
+      country code — stay separate: nothing here may assume a region.
+    * handles are keyed **verbatim**, not case-folded, because folding fuses two
+      distinct sender strings (``JX-IRSMSa-S`` and ``JX-IRSMSA-S``, both present)
+      into one row with a summed count.
+
+    Splitting one participant in two is the honest failure direction; merging two
+    into one is not.
+    """
+    raw = (sender or "").strip()
+    digits = re.sub(r"\D", "", raw)
+    if raw and digits and not _HAS_ALPHA_RE.search(raw):
+        # Numeric identifier: key on the number, resolve a name for display only.
+        return "num:" + digits, lookup.get(digits, raw)
+    label = raw or "unknown"
+    return "name:" + label, label
+
+
 def _sorted_messages(messages: List[Message]) -> List[Message]:
     """Return messages sorted by timestamp (oldest first), skipping undated."""
     timed = [(m, _parse_iso(m.timestamp)) for m in messages if m.timestamp]
@@ -158,24 +197,35 @@ class AdvancedForensicFeatures:
         -------
         dict
             Keys: ``nodes``, ``edges``, ``stats``, ``top_contacts``.
+
+            Nodes (and therefore edge endpoints and ``top_contacts`` entries) are
+            keyed by ``id`` — a stable identifier-derived key, not the display
+            name — so two participants the device holds under one saved contact
+            name stay two nodes with separate counts. ``label``/``name`` carry
+            the human-readable name for display; consumers that show only the
+            name must fall back to ``id`` to tell duplicates apart.
         """
         lookup = _contacts_lookup(contacts or [])
         edge_counts: Dict[Tuple[str, str], int] = defaultdict(int)
         node_messages: Dict[str, int] = defaultdict(int)
         node_sent: Dict[str, int] = defaultdict(int)
         node_received: Dict[str, int] = defaultdict(int)
+        # node key -> display label. Two keys may share a label; that is the whole
+        # point — they are reported separately rather than summed together.
+        labels: Dict[str, str] = {"SUBJECT": "SUBJECT"}
 
         for m in messages:
-            sender = _resolve_sender(m.sender, lookup)
-            node_messages[sender] += 1
+            key, label = _sender_identity(m.sender, lookup)
+            labels.setdefault(key, label)
+            node_messages[key] += 1
             if m.direction == "outgoing":
                 node_sent["SUBJECT"] += 1
-                node_received[sender] += 1
-                edge_counts[("SUBJECT", sender)] += 1
+                node_received[key] += 1
+                edge_counts[("SUBJECT", key)] += 1
             elif m.direction == "incoming":
-                node_sent[sender] += 1
+                node_sent[key] += 1
                 node_received["SUBJECT"] += 1
-                edge_counts[(sender, "SUBJECT")] += 1
+                edge_counts[(key, "SUBJECT")] += 1
 
         edges = [
             {
@@ -190,12 +240,13 @@ class AdvancedForensicFeatures:
 
         nodes = [
             {
-                "id": name,
-                "messages": node_messages.get(name, 0),
-                "sent": node_sent.get(name, 0),
-                "received": node_received.get(name, 0),
+                "id": key,
+                "label": labels.get(key, key),
+                "messages": node_messages.get(key, 0),
+                "sent": node_sent.get(key, 0),
+                "received": node_received.get(key, 0),
             }
-            for name in set(node_messages) | {"SUBJECT"}
+            for key in set(node_messages) | {"SUBJECT"}
         ]
 
         top_contacts = sorted(
@@ -210,9 +261,20 @@ class AdvancedForensicFeatures:
             "stats": {
                 "unique_contacts": len(node_messages),
                 "total_edges": len(edges),
-                "most_active": top_contacts[0][0] if top_contacts else None,
+                # Display name of the busiest participant, plus its identifier —
+                # the name alone cannot identify which of two same-named
+                # participants this is.
+                "most_active": (
+                    labels.get(top_contacts[0][0], top_contacts[0][0])
+                    if top_contacts
+                    else None
+                ),
+                "most_active_id": top_contacts[0][0] if top_contacts else None,
             },
-            "top_contacts": [{"name": n, "messages": c} for n, c in top_contacts],
+            "top_contacts": [
+                {"id": k, "name": labels.get(k, k), "messages": c}
+                for k, c in top_contacts
+            ],
         }
 
     # -----------------------------------------------------------------------
