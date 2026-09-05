@@ -160,7 +160,7 @@ export default function App() {
           {caseId && view === "locations" && <LocationsView caseId={caseId} />}
           {caseId && view === "loctrace" && <LocationTraceView caseId={caseId} />}
           {caseId && view === "browser" && <BrowserView caseId={caseId} />}
-          {caseId && view === "timeline" && <TimelineView caseId={caseId} />}
+          {caseId && view === "timeline" && <TimelineView caseId={caseId} setView={setView} />}
           {caseId && view === "recovered" && <RecoveredView caseId={caseId} />}
           {caseId && view === "graph" && <GraphView caseId={caseId} />}
           {caseId && view === "advanced" && <AdvancedAnalyticsView caseId={caseId} setView={setView} />}

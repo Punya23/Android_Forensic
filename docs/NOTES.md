@@ -118,6 +118,39 @@ emptying the demo.
 
 ---
 
+## Dashboard UI audit — real vs. fake, and the Social Graph rebuild (2026-09-05)
+
+Full-codebase audit of every view (`app/src/views/`, 47 files) and shared component
+(`app/src/components/`, 7 files), cross-checked against `server.py`'s dataset allowlist:
+**no fabricated numbers, no fake loading states, no broken/404 wiring found anywhere.**
+Every stat rendered is either a plain count of real fetched rows or a value read
+straight off the API response.
+
+What the audit did find: the Social Graph (`Graph.tsx`) was a static radial SVG with a
+fixed 900×560 viewBox, no pan, no zoom, no drag — with a real case's 27+ participants it
+cramped into unreadable overlapping labels, which is what "doesn't look correct" was
+pointing at. Rebuilt as an actual explorable canvas: a hand-rolled force-directed layout
+(no library added — repulsion + spring + centring, settles in under 500 ticks and stops,
+so it doesn't spin the CPU forever), pointer-driven pan/zoom-to-cursor/drag-to-reposition
+a node (which then stays pinned where dropped), click-to-select with a persistent detail
+panel, and a name filter that dims non-matches instead of hiding them. Building it surfaced
+one real bug: a plain JSX `onWheel` is attached by React as a passive listener, so
+`e.preventDefault()` inside it is silently ignored and the page scrolls behind the canvas
+while it also tries to zoom — fixed by attaching the wheel listener natively with
+`{ passive: false }` instead.
+
+Four more views (`Messages.tsx`, `Recovered.tsx`, `Browser.tsx`, `Media.tsx`'s pulled-media
+grid) rendered every row/thumbnail into one unvirtualized table or grid with no cap — fine
+against the mock corpus, but a real device's SMS history or a full media pull can run into
+the tens of thousands. Capped at 1000–2000 with the same disclosed "showing first N of M —
+click to show all" control `Aleapp.tsx` already used, rather than a bare silent slice:
+the point of this project's honesty model is that a cap must be stated, not hidden.
+`Timeline.tsx` got the same cap plus a real "go to `<view>`" link per event — the same
+kind-to-view jump `Tagged.tsx` already offers, extended to cover every event kind the
+engine's `build_timeline()` emits. It switches view, same as `Tagged.tsx`/
+`GlobalSearch.tsx` already do; it does not claim to scroll to the exact row, because the
+timeline's own `ref` field is a source filename for most kinds, not a stable per-row id.
+
 ## Defects found building the deep-agent / cross-case features (2026-09-03)
 
 Two more, found the same way as above — by running the new code against real
