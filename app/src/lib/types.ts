@@ -1049,6 +1049,15 @@ export interface CapabilityState {
   requires: string;
   /** Acquisition flag that gates this stage, when one does. */
   flag: string;
+  /**
+   * True only when turning `flag` on and running the acquisition again would actually
+   * change this outcome. The engine decides it (`triage/capabilities.py`) because only
+   * the engine knows the whole picture: a Tier-2 flag left off on a handset that never
+   * gave up root is `not_collected` in neither spirit nor fact, and a missing case brief
+   * is a gap no re-acquisition closes. The UI reads this instead of re-deriving the
+   * distinction from `state`, so badge and engine cannot end up saying different things.
+   */
+  flag_actionable: boolean;
   count: number;
 }
 

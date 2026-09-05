@@ -244,14 +244,20 @@ function HostedStateBadge({ state }: { state: boolean | null | undefined }) {
 function HotspotPostureSection({ hotspot }: { hotspot: WifiLiveHotspot | null | undefined }) {
   // The backend always emits the hotspot key when the sub-step ran, even with empty
   // evidence. If the key is entirely absent, the step was not collected.
+  //
+  // The wording matches the capability layer's `not_collected` vocabulary on purpose
+  // (`lib/capabilities.tsx`): this section makes the same re-runnability claim the
+  // "Opt-in — re-run to collect" badge makes, about a Tier-0 step that genuinely does
+  // run again when it is re-enabled, and an examiner should not have to learn that two
+  // different sentences on two screens describe one state.
   if (hotspot === undefined) {
     return (
       <Section
         title="Hotspot Posture"
-        note="This dataset was not collected for this acquisition. Re-run with the Wi-Fi live collection step enabled to capture hotspot state."
+        note="Opt-in — re-run to collect: the Wi-Fi live collection step was off for this acquisition, so hotspot state was never captured. Re-run with it enabled."
       >
         <div className="card p-4 text-sm text-muted leading-relaxed">
-          <strong className="text-warn">Not collected.</strong>{" "}
+          <strong className="text-warn">Opt-in — left off for this acquisition.</strong>{" "}
           The hotspot sub-step did not run. Absence here is not evidence that the device
           had no hotspot activity — it is a gap in the acquisition, not a finding.
         </div>

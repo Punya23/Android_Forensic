@@ -19,16 +19,23 @@ its ``case.json`` into exactly one state:
 ``empty``
     Collected and parsed, and the artifact genuinely held nothing. A finding.
 ``not_collected``
-    The stage was gated off for this run — an opt-in Tier-1/Tier-2 flag left unticked —
-    *and* it would have worked had it been ticked. Re-runnable on this handset: the
-    reason names the flag, and the UI badges it as an opt-in the examiner can turn on.
+    The gap is still closable for this case, and the reason says how. Usually that is an
+    opt-in Tier-1/Tier-2 flag left unticked on a handset where the stage would have
+    worked — ``flag_actionable`` is then True and the UI offers the toggle by name. It is
+    also the state for a gap whose fix is *not* the flag: a case brief that was never
+    written, or a dataset whose on-device pull needed root but which a workstation-side
+    export import can still fill. Those carry ``flag_actionable`` False, and the badge
+    drops the "re-run to collect" promise it cannot keep.
 ``inaccessible``
     Attempted, but the precondition failed — no root, BFU encryption, the app is not
-    installed, the OEM build does not report it. Not re-runnable on this handset.
-    A Tier-2 stage on an unrooted handset lands here *even when its flag was also off*:
-    the flag is the smaller of the two facts, and offering a toggle that cannot change
-    the outcome would send the examiner back to the wizard for a second acquisition —
-    a second set of device-state changes on evidence — that returns the same nothing.
+    installed, the OEM build does not report it. Nothing available to this examiner
+    changes it. A Tier-2 stage on an unrooted handset lands here *even when its flag was
+    also off*: the flag is the smaller of the two facts, and offering a toggle that
+    cannot change the outcome would send the examiner back to the wizard for a second
+    acquisition — a second set of device-state changes on evidence — that returns the
+    same nothing. The exception is a dataset with a root-free route of its own
+    (``root_only`` False), which is a ``not_collected`` gap naming that route instead:
+    "n/a" on a view an examiner could fill this afternoon is as false as the reverse.
 ``planned``
     Not implemented yet. Named, dated to nothing, and never dressed up as an empty result.
 
@@ -68,9 +75,11 @@ class Capability:
     requires: str
     #: ``AcquireConfig`` flag that gates the stage, if any. When the flag is false in
     #: ``case.json`` and the stage could actually have run on this handset, the state is
-    #: ``not_collected`` and this names what to turn on. When the handset could never
-    #: have run it (Tier 2, no root) the state is ``inaccessible`` instead and the flag
-    #: is named inside that reason rather than offered as a fix.
+    #: ``not_collected``, ``flag_actionable`` is True, and this names what to turn on.
+    #: When the handset could never have run it (Tier 2, no root) the flag is named
+    #: inside the reason rather than offered as a fix, and ``flag_actionable`` is False —
+    #: the payload carries that boolean so the UI never has to re-derive the distinction
+    #: from the state string and get it subtly different from the engine.
     flag: str = ""
     #: Set for datasets that are not implemented. Never rendered as "empty".
     planned: bool = False
@@ -85,6 +94,19 @@ class Capability:
     #: corroborated by ``ran_if_present`` before it can be reported as "checked and
     #: empty" — otherwise a stage that never executed reads as a clean result.
     unconditional_write: bool = False
+    #: Whether a root shell is the *only* way this dataset can be filled. Root-dependence
+    #: used to be inferred from ``tier == 2`` alone, which swallowed the datasets that
+    #: also have a workstation-side route: Instagram, Snapchat and Telegram conversations
+    #: can be built from a "Download Your Data" / "My Data" export the examiner imports
+    #: over ``POST /api/case/<id>/import/<app>``, no handset involved. Badging those "n/a"
+    #: on an unrooted phone tells the examiner to stop looking at a view they could fill
+    #: from a ZIP file, which is the same overstatement as the reverse, pointed the other
+    #: way. Set False *only* where that route is implemented and writes this dataset.
+    root_only: bool = True
+    #: The root-free way to fill this dataset, in the examiner's own vocabulary. Required
+    #: whenever ``root_only`` is False: a reason that says "this gap is closable" without
+    #: saying how is worse than one that says nothing, because it costs a search.
+    non_root_route: str = ""
 
 
 _T0 = "Tier 0 — read-only, always attempted"
@@ -137,6 +159,11 @@ CATALOGUE: dict[str, Capability] = {
         "dumpsys account. Lists AccountManager identities; apps that manage their own "
         "session (Signal, most banking apps) never appear.",
     ),
+    # Written on every completed run (triage/pipeline.py, the end-of-run write block),
+    # so an empty search_history.json is equally consistent with "the browser history was
+    # read and nobody searched" and "no browser history was ever reachable" — on a
+    # non-rooted handset the second is the usual case, because the History DBs are
+    # app-private. The ``browser`` corroborator is what separates the two.
     "search_history": Capability(
         "search_history",
         "Search history",
@@ -144,6 +171,7 @@ CATALOGUE: dict[str, Capability] = {
         "Search queries reconstructed from pulled browser history. Cleared searches "
         "appear under Recovered, not here.",
         ran_if_present=("browser",),
+        unconditional_write=True,
     ),
     "maps_locations": Capability(
         "maps_locations",
@@ -216,12 +244,25 @@ CATALOGUE: dict[str, Capability] = {
         unconditional_write=True,
     ),
     # --- Tier 2: root ------------------------------------------------------
+    # The three messenger conversation sets are Tier 2 on the device *and* fillable
+    # without touching the device at all: ``POST /api/case/<id>/import/<app>`` parses an
+    # account-data export the examiner obtained by other means and writes the same
+    # ``*_conversations`` dataset the root pull would have (triage/server.py). Root
+    # therefore decides how they get filled, not whether they can be — hence
+    # ``root_only=False`` and a named route.
     "telegram_conversations": Capability(
         "telegram_conversations",
         "Telegram",
         2,
-        _T2 + ". cache4.db is app-private; there is no non-root path to it.",
+        _T2 + ", or a Telegram Desktop 'Export Telegram data' JSON export imported from "
+        "the Telegram tab. cache4.db itself is app-private; there is no non-root path "
+        "to the live database.",
         flag="tier2_telegram",
+        root_only=False,
+        non_root_route=(
+            "import a Telegram Desktop 'Export Telegram data' JSON export from the "
+            "Telegram tab"
+        ),
     ),
     "instagram_conversations": Capability(
         "instagram_conversations",
@@ -229,6 +270,10 @@ CATALOGUE: dict[str, Capability] = {
         2,
         _T2 + ", or a 'Download Your Data' export imported from the Instagram tab.",
         flag="tier2_instagram",
+        root_only=False,
+        non_root_route=(
+            "import an Instagram 'Download Your Data' export from the Instagram tab"
+        ),
     ),
     "snapchat_conversations": Capability(
         "snapchat_conversations",
@@ -238,6 +283,8 @@ CATALOGUE: dict[str, Capability] = {
         "app-private and schema-less protobuf; ephemeral snaps survive only as carved "
         "remnants, and often not at all.",
         flag="tier2_snapchat",
+        root_only=False,
+        non_root_route="import a Snapchat 'My Data' export from the Snapchat tab",
     ),
     "wifi": Capability(
         "wifi",
@@ -247,18 +294,24 @@ CATALOGUE: dict[str, Capability] = {
         "unreadable without root on every supported Android version.",
         flag="tier2_wifi",
     ),
+    # The backup file itself sits in shared storage, but its 64-character key does not:
+    # the key lives in the app sandbox and the stage verifies `su -c id` before it does
+    # anything at all (``_run_tier2_whatsapp_backup``, triage/pipeline.py). Saying only
+    # "a backup file plus its key" left the requires line contradicting the "Root was not
+    # available" reason printed directly above it.
     "whatsapp_backup_messages": Capability(
         "whatsapp_backup_messages",
         "WhatsApp backup recovery",
         2,
-        "An encrypted backup file plus its 64-character key. Without the key the "
-        "crypt15 container cannot be opened — that is the design, not a limitation "
-        "of this tool.",
+        _T2 + " to read the 64-character key out of the app sandbox, plus an encrypted "
+        "backup file in shared storage. Without the key the crypt15 container cannot be "
+        "opened — that is the design, not a limitation of this tool.",
         flag="tier2_whatsapp_backup",
     ),
     "whatsapp_backup_media": Capability(
         "whatsapp_backup_media", "WhatsApp backup media", 2,
-        "An encrypted backup file plus its key.", flag="tier2_whatsapp_backup",
+        _T2 + " for the backup key, plus an encrypted backup file.",
+        flag="tier2_whatsapp_backup",
     ),
     "bluetooth_bonds": Capability(
         "bluetooth_bonds",
@@ -322,12 +375,21 @@ CATALOGUE: dict[str, Capability] = {
     "task_snapshots": Capability(
         "task_snapshots", "Task snapshots", 2, _T2, flag="tier2_recent_tasks"
     ),
+    # Tier 2 even though ``scan_encrypted_apps`` is a Tier-0 flag that defaults on: the
+    # scan itself is a walk over the staging directory and costs the device nothing, but
+    # what it can find there is decided entirely by root. Signal/Threema/Wickr databases
+    # live in the app sandbox, so on an unrooted handset the walk completes and finds
+    # zero — and reporting that as Tier 0 "checked and empty" would be the exact false
+    # negative triage/parsers/encrypted_apps.py was written to prevent ("no messages
+    # found" for an app that is plainly installed). The tier is the honest cost of the
+    # *finding*, not of the loop that produces it.
     "encrypted_apps": Capability(
         "encrypted_apps",
         "Encrypted app databases",
         2,
-        _T2 + ". Catalogues app databases that exist but cannot be read — presence is "
-        "the finding, not the contents.",
+        _T2 + " for the app sandboxes; the scan itself is a Tier-0 walk over whatever "
+        "was acquired. Catalogues app databases that exist but cannot be read — "
+        "presence is the finding, not the contents.",
         flag="scan_encrypted_apps",
     ),
     "signal": Capability(
@@ -462,7 +524,15 @@ def resolve(
     *,
     root_available: Optional[bool] = None,
 ) -> dict:
-    """Resolve one capability against a case folder into a renderable state dict."""
+    """Resolve one capability against a case folder into a renderable state dict.
+
+    Every payload carries ``flag_actionable``: True only where turning ``cap.flag`` on
+    and running the acquisition again would actually change this outcome. It is decided
+    here, next to the reason text, rather than re-derived in the dashboard from the state
+    string — the two answers must not be allowed to disagree, and only this side knows
+    that (say) a missing case brief and an unticked Tier-2 flag are both
+    ``not_collected`` for entirely different fixes.
+    """
     config = config or {}
 
     if cap.planned:
@@ -474,6 +544,7 @@ def resolve(
             "reason": cap.planned_note,
             "requires": "",
             "flag": "",
+            "flag_actionable": False,
             "count": 0,
         }
 
@@ -489,6 +560,7 @@ def resolve(
             "reason": "",
             "requires": cap.requires,
             "flag": cap.flag,
+            "flag_actionable": False,
             "count": count,
         }
 
@@ -511,6 +583,7 @@ def resolve(
             ),
             "requires": cap.requires,
             "flag": cap.flag,
+            "flag_actionable": False,
             "count": 0,
         }
 
@@ -527,34 +600,63 @@ def resolve(
             ),
             "requires": cap.requires,
             "flag": cap.flag,
+            # 'run_ai_analysis' was on; what is missing is a paragraph of text, not a
+            # pull. Offering the flag here would send the examiner back to the handset
+            # to fix something they can fix from the keyboard.
+            "flag_actionable": False,
             "count": 0,
         }
 
     flag_off = bool(cap.flag) and cap.flag in config and not config.get(cap.flag)
+    flag_actionable = False
+    # Tier 2 is the only tier root gates, and ``root_only`` says whether root is the only
+    # way in. ``root_available is None`` is a third answer and stays one: an unknown root
+    # status is not evidence of an unrooted handset, so nothing below fires on it.
+    no_root = cap.tier == 2 and root_available is False
 
-    # No-root outranks flag-off, and the order matters. A Tier-2 stage on an unrooted
-    # handset could not have run whether or not its flag was ticked, so resolving it to
-    # ``not_collected`` would badge it as an opt-in the examiner can turn on and send
-    # them back to the wizard for a second acquisition — a second set of device-state
-    # changes on evidence — that returns exactly the same nothing. Neither fact is
-    # dropped, though: when the flag was off as well the reason says both, because
-    # suppressing half the explanation is its own kind of overstatement.
-    if cap.tier == 2 and root_available is False:
+    # No-root outranks flag-off, and the order matters. A root-only Tier-2 stage on an
+    # unrooted handset could not have run whether or not its flag was ticked, so
+    # resolving it to ``not_collected`` would badge it as an opt-in the examiner can turn
+    # on and send them back to the wizard for a second acquisition — a second set of
+    # device-state changes on evidence — that returns exactly the same nothing. Neither
+    # fact is dropped, though: when the flag was off as well the reason says both,
+    # because suppressing half the explanation is its own kind of overstatement.
+    if no_root and cap.root_only:
         state = INACCESSIBLE
         also_off = (
             f"'{cap.flag}' was also off for this acquisition, but enabling it would not "
-            "have helped: without root there is nothing for the stage to read. "
+            "have helped: without root there is nothing here for the stage to read. "
             if flag_off
             else ""
         )
         reason = (
-            "Root was not available on this handset, so the stage could not run. "
-            + also_off
-            + "This is not a finding about the device's contents. "
+            "Root was not available on this handset, so the stage had nothing it could "
+            "read. " + also_off + "This is not a finding about the device's contents. "
             + cap.requires
+        )
+    elif no_root:
+        # Same missing root, different conclusion: this dataset has a route that never
+        # touches the handset (``non_root_route``), so the gap is closable today even
+        # though the on-device pull is not. Badging it "could not check" would tell the
+        # examiner to stop looking at a view they can fill from an export ZIP, and
+        # badging it as the flag would send them back to the wizard for a pull that
+        # cannot succeed. Both facts, one actionable route, and the flag explicitly
+        # marked as not the fix.
+        state = NOT_COLLECTED
+        also_off = (
+            f"'{cap.flag}' was off for this acquisition, and turning it on would not "
+            "help either: the on-device pull needs root. "
+            if flag_off
+            else ""
+        )
+        reason = (
+            "Root was not available on this handset, so the on-device pull could not "
+            "run. " + also_off + "This gap is still closable without root — "
+            f"{cap.non_root_route}. Until then, nothing here says what the app held."
         )
     elif flag_off:
         state = NOT_COLLECTED
+        flag_actionable = True
         reason = (
             f"This stage is opt-in and was not run: '{cap.flag}' was off for this "
             f"acquisition. Re-run with it enabled to collect it. {cap.requires}".strip()
@@ -595,8 +697,56 @@ def resolve(
         "reason": reason,
         "requires": cap.requires,
         "flag": cap.flag,
+        "flag_actionable": flag_actionable,
         "count": 0,
     }
+
+
+def _root_available(case_dir: Path) -> Optional[bool]:
+    """Whether this handset gave up a root shell — read from whichever record exists.
+
+    Three sources hold the same fact, and they are written at very different points in
+    the run. ``derived/device_state.json`` is the richest, but the pipeline writes it in
+    the ``poststate`` stage at 95% — so on a run that crashed, was cancelled, or is still
+    in flight it is simply not there. Reading only that file meant every such case
+    resolved with ``root_available=None``, which skips the no-root branch entirely and
+    badges every Tier-2 dataset as an opt-in "re-run to collect" — on a handset the
+    engine had already recorded as unrooted at 3.5% of the same run.
+
+    So fall back, newest-and-richest first, to the two records written early enough to
+    survive an aborted run: ``case.json``'s ``pre_state`` (``case.set_pre_state`` in the
+    device-intake stage) and ``derived/encryption_state.json`` (the encryption-posture
+    stage immediately after it). Both take their value from the same
+    ``adb.is_root_available()`` probe, so they cannot disagree with the late one.
+
+    ``None`` is a real third answer and is returned when none of the three recorded it.
+    An unknown root status must not be rendered as either fact: "we never established
+    whether this phone was rooted" is not "it was not", and it is not "it was".
+    """
+    derived = case_dir / "derived"
+
+    state_blob = _read_derived(derived, "device_state")
+    if isinstance(state_blob, dict):
+        pre = state_blob.get("pre") or {}
+        if isinstance(pre, dict) and "root_available" in pre:
+            return bool(pre.get("root_available"))
+
+    case_path = case_dir / "case.json"
+    if case_path.exists():
+        try:
+            meta = json.loads(case_path.read_text())
+        except Exception:
+            meta = None
+        if isinstance(meta, dict):
+            pre_state = meta.get("pre_state") or {}
+            if isinstance(pre_state, dict) and "root_available" in pre_state:
+                return bool(pre_state.get("root_available"))
+
+    enc = _read_derived(derived, "encryption_state")
+    if isinstance(enc, dict) and "root_available" in enc:
+        return bool(enc.get("root_available"))
+
+    return None
 
 
 def case_capabilities(case_dir: Path, config: Optional[dict] = None) -> dict:
@@ -609,12 +759,7 @@ def case_capabilities(case_dir: Path, config: Optional[dict] = None) -> dict:
     derived = case_dir / "derived"
     config = config or {}
 
-    root_available: Optional[bool] = None
-    state_blob = _read_derived(derived, "device_state")
-    if isinstance(state_blob, dict):
-        pre = state_blob.get("pre") or {}
-        if isinstance(pre, dict) and "root_available" in pre:
-            root_available = bool(pre.get("root_available"))
+    root_available = _root_available(case_dir)
 
     items = [
         resolve(cap, derived, config, root_available=root_available)
@@ -635,9 +780,10 @@ def case_capabilities(case_dir: Path, config: Optional[dict] = None) -> dict:
             "Every dataset resolves to exactly one state. 'empty' means the source was "
             "read and held nothing — a finding about the device. 'not_collected' and "
             "'inaccessible' are findings about this acquisition, and neither may be "
-            "read as evidence that the device was clean. The two differ by whether this "
-            "handset could close the gap: 'not_collected' is an opt-in stage that was "
-            "left off and would run if re-enabled, while 'inaccessible' could not have "
-            "run here at all — re-running will not change it."
+            "read as evidence that the device was clean. The two differ by whether the "
+            "gap can still be closed for this case: 'not_collected' can be — usually by "
+            "re-running with the named flag on, sometimes by supplying something else "
+            "the reason names, such as an account-data export — while 'inaccessible' "
+            "could not be collected here at all, and re-running will not change it."
         ),
     }
