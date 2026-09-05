@@ -369,15 +369,17 @@ def _inject_toc(body: str) -> str:
 
 
 def _identity_normalisation_note(stats: dict) -> str:
-    """Disclose the numbering-plan assumption behind the participant counts.
+    """Disclose the assumptions behind the participant counts.
 
-    The graph folds identifiers that differ only by a dialing prefix into one participant
-    (see ``analysis/graph.py``). That changes every weight, the participant total and the
-    ordering of the table below, so the report has to say it was done and on what
-    assumption — a count that moves between two runs of the same case without the report
-    explaining why is exactly the kind of silent change this tool must not make.
+    The graph applies two of them (see ``analysis/graph.py``): identifiers that differ
+    only by a dialing prefix are one participant, and on a channel that addresses
+    subscribers by phone number a sender name that is itself a phone number is read as
+    that number rather than as a label. Both change every weight, the participant total
+    and the ordering of the table below, so the report has to say they were applied and on
+    what assumption — a count that moves between two runs of the same case without the
+    report explaining why is exactly the kind of silent change this tool must not make.
 
-    Rendered whether or not anything was actually merged: "nothing in this case differed
+    Rendered whether or not either one changed anything: "nothing in this case differed
     only by a dialing prefix" is a finding, not an absence worth hiding.
     """
     norm = stats.get("identity_normalisation")
@@ -439,6 +441,85 @@ def _identity_normalisation_note(stats: dict) -> str:
                 "participant(s) not listed; the full set is in "
                 "<span class=\"mono\">derived/graph.json</span> "
                 "(<span class=\"mono\">stats.identity_normalisation.merged</span>).</p>"
+            )
+    out.append(_name_address_note(norm))
+    return "".join(out)
+
+
+def _name_address_note(norm: dict) -> str:
+    """The second half of the same disclosure: which field a string was read as.
+
+    A message row carries its counterparty in the sender field and leaves the number field
+    empty, so a sender the device wrote as a bare number keyed as a name while the call log
+    and the contact list keyed that same subscriber as a number — one subscriber, two
+    participants, with the sender's interactions stranded off the real one. Reading such a
+    sender as the number it is corrects that, and changes counts, so it is disclosed here
+    beside the dialing-prefix merge rather than in a section of its own.
+    """
+    na = norm.get("name_addresses")
+    if not isinstance(na, dict):
+        return ""  # graph.json predating the field: say nothing rather than guess
+    entries = [e for e in na.get("entries", []) if isinstance(e, dict)]
+    count = na.get("count", len(entries))
+    channels = ", ".join(str(c) for c in na.get("channels", []))
+
+    out = [
+        '<p class="note"><strong>Sender names that are phone numbers.</strong> On the '
+        "channels that address a subscriber by phone number "
+        f'(<span class="mono">{_esc(channels)}</span>), <strong>a sender name that is '
+        "itself a phone number was treated as that number</strong>, because on those "
+        "channels that string is the address the device dialled or received from, not a "
+        "label someone chose. "
+    ]
+    if entries:
+        out.append(
+            f"That applied to {_esc(count)} sender name(s). "
+            f'{_esc(na.get("absorbed_participants", 0))} of them named a participant this '
+            "device also holds as a number elsewhere, moving "
+            f'{_esc(na.get("absorbed_interactions", 0))} interaction(s) onto those '
+            "participants; the rest named a participant known no other way, so nothing "
+            "moved onto anyone. Read as names instead, this case would report "
+            f'{_esc(na.get("participants_if_names_kept", "?"))} participants rather than '
+            f'{_esc(norm.get("participants", "?"))}.'
+        )
+    else:
+        out.append(
+            "No sender name in this case was itself a phone number, so no participant "
+            "count here was affected by that reading."
+        )
+    out.append(
+        " A sender name containing any letter is left as a name — a service sender ID "
+        'such as <span class="mono">JZ-JioPay-S</span> is not a number that can be '
+        "dialled — and channels whose sender field holds a platform user id rather than a "
+        "phone number (Instagram, Telegram, third-party chat databases) are excluded "
+        "outright, because a numeric user id is not a phone number and no test on its "
+        "shape could tell the two apart.</p>"
+    )
+    if entries:
+        shown = entries[:10]
+        out.append(
+            "<table><tr><th>Sender name on the device</th><th>Read as</th>"
+            "<th>Participant</th><th>Interactions moved</th></tr>"
+        )
+        for e in shown:
+            addrs = ", ".join(str(a) for a in e.get("addresses", []))
+            label = e.get("label", "—")
+            if not e.get("joined_a_number_participant"):
+                label = f"{label} (no other record of this participant)"
+            out.append(
+                f'<tr><td class="mono">{_esc(addrs)}</td>'
+                f'<td class="mono">{_esc(e.get("canonical", "—"))}</td>'
+                f"<td>{_esc(label)}</td>"
+                f'<td>{_esc(e.get("interactions", 0))}</td></tr>'
+            )
+        out.append("</table>")
+        if len(entries) > len(shown):
+            out.append(
+                f'<p class="note">{_esc(len(entries) - len(shown))} further sender '
+                "name(s) not listed; the full set is in "
+                '<span class="mono">derived/graph.json</span> '
+                "(<span class=\"mono\">stats.identity_normalisation.name_addresses"
+                "</span>).</p>"
             )
     return "".join(out)
 

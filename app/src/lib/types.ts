@@ -112,6 +112,29 @@ export interface IdentityNormalisation {
     identifiers: string[];
     weight: number;
   }[];
+  /** What reading a dialable name as an address did. On a channel that addresses a
+   * subscriber by phone number, a sender name that is itself a phone number is that
+   * number — otherwise the same subscriber is one node from the call log and another
+   * from the message thread. Optional: absent on graphs built before the field existed. */
+  name_addresses?: {
+    /** Distinct sender/contact names read as numbers. */
+    count: number;
+    /** How many of those named a participant already known from a number field. */
+    absorbed_participants: number;
+    /** Interactions that moved onto those participants. */
+    absorbed_interactions: number;
+    /** What `participants` would have been with a dialable name kept as a name. */
+    participants_if_names_kept: number;
+    /** The channels this reading is applied to; every other channel is excluded. */
+    channels: string[];
+    entries: {
+      label: string;
+      canonical: string;
+      addresses: string[];
+      interactions: number;
+      joined_a_number_participant: boolean;
+    }[];
+  };
 }
 
 export interface CaseSummary {

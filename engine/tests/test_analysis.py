@@ -445,3 +445,135 @@ def test_graph_folding_does_not_change_the_interaction_total():
     g = build_communication_graph(messages=[], calls=calls, contacts=[])
     assert g["stats"]["interactions"] == 3
     assert sum(n["weight"] for n in g["nodes"] if n["type"] != "owner") == 3
+
+
+def test_graph_reads_a_sender_name_that_is_a_phone_number_as_that_number():
+    """A message row addresses its counterparty in the sender field and nothing else.
+
+    Keyed as a name, an SMS sender the device wrote as a bare number was a second node
+    beside the one the call log and the contact list already held for that subscriber,
+    with its interactions stranded off the real participant.
+    """
+    messages = [
+        {"app": "sms", "sender": "+919022873952"},
+        {"app": "sms", "sender": "919022873952"},
+        {"app": "sms", "sender": "9022873952"},
+    ]
+    calls = [{"name": "Vishal Mache", "number": "+919022873952"}]
+    g = build_communication_graph(messages=messages, calls=calls, contacts=[])
+    assert g["stats"]["participants"] == 1
+    node = [n for n in g["nodes"] if n["type"] != "owner"][0]
+    assert node["id"] == "num:+919022873952"
+    assert node["weight"] == 4  # 3 messages + 1 call, none stranded
+    assert node["label"] == "Vishal Mache"  # a recorded name still wins the label
+
+
+def test_graph_keeps_alphanumeric_service_sender_ids_as_names():
+    """"JZ-JioPay-S" is not a number that can be dialled, so it is not read as one.
+
+    "AD-ICICIB2" is the trap: it contains a digit, so a digits-only test would key it as
+    participant "2".
+    """
+    messages = [
+        {"app": "sms", "sender": "JZ-JioPay-S"},
+        {"app": "sms", "sender": "AD-ICICIB2"},
+        {"app": "sms", "sender": "VM-HDFCBK"},
+    ]
+    g = build_communication_graph(messages=messages, calls=[], contacts=[])
+    assert sorted(n["id"] for n in g["nodes"] if n["type"] != "owner") == [
+        "name:ad-icicib2",
+        "name:jz-jiopay-s",
+        "name:vm-hdfcbk",
+    ]
+
+
+def test_graph_does_not_fold_a_short_code_sender_into_a_phone_number():
+    """A short code is a dialing address, but it is not a national number.
+
+    It keys on its own digits: it merges with an identical short code reached through the
+    call log, and with nothing else.
+    """
+    messages = [{"app": "sms", "sender": "57273121"}, {"app": "sms", "sender": "121"}]
+    calls = [{"name": "", "number": "57273121"}, {"name": "", "number": "9767143329"}]
+    g = build_communication_graph(messages=messages, calls=calls, contacts=[])
+    ids = {n["id"]: n["weight"] for n in g["nodes"] if n["type"] != "owner"}
+    assert ids == {"num:57273121": 2, "num:121": 1, "num:+919767143329": 1}
+
+
+def test_graph_never_reads_a_platform_user_id_as_a_phone_number():
+    """Instagram and Telegram senders are numeric user ids, and Telegram's are ~10 digits
+    — the same shape as an Indian national number. Only the channel separates them, so
+    the reading is gated on the channel and not on the shape of the string."""
+    messages = [
+        {"app": "instagram", "sender": "778812"},
+        {"app": "telegram", "sender": "9767143329"},
+        {"app": "app:chatcache", "sender": "9767143329"},
+    ]
+    calls = [{"name": "Mumma", "number": "+919767143329"}]
+    g = build_communication_graph(messages=messages, calls=calls, contacts=[])
+    ids = {n["id"] for n in g["nodes"] if n["type"] != "owner"}
+    assert ids == {
+        "name:778812",
+        "name:9767143329",
+        "num:+919767143329",
+    }
+    # the Telegram id and the chat-cache id are one *name*, and Mumma keeps her own count
+    assert {n["id"]: n["weight"] for n in g["nodes"] if n["type"] != "owner"}[
+        "num:+919767143329"
+    ] == 1
+
+
+def test_graph_does_not_read_a_whatsapp_group_jid_as_a_phone_number():
+    """A group JID is "<creator>-<created-at>": digits and a separator, but 20+ digits
+    once the separator is stripped, which no dialing plan permits."""
+    messages = [{"app": "whatsapp", "sender": "919767143329-1600000000"}]
+    g = build_communication_graph(messages=messages, calls=[], contacts=[])
+    node = [n for n in g["nodes"] if n["type"] != "owner"][0]
+    assert node["id"] == "name:919767143329-1600000000"
+
+
+def test_graph_discloses_the_sender_names_it_read_as_numbers():
+    messages = [
+        {"app": "sms", "sender": "+919022873952"},  # joins a known number
+        {"app": "sms", "sender": "9284156592"},  # known no other way
+        {"app": "sms", "sender": "JZ-JioPay-S"},  # not a number at all
+    ]
+    calls = [{"name": "Vishal Mache", "number": "+919022873952"}]
+    g = build_communication_graph(messages=messages, calls=calls, contacts=[])
+    na = g["stats"]["identity_normalisation"]["name_addresses"]
+    assert na["count"] == 2  # the service sender ID is not one of them
+    assert na["absorbed_participants"] == 1
+    assert na["absorbed_interactions"] == 1
+    # 3 participants (Vishal, the SMS-only number, the service ID) against 4 if the two
+    # numeric senders had been kept as names.
+    assert g["stats"]["participants"] == 3
+    assert na["participants_if_names_kept"] == 4
+    joined = [e for e in na["entries"] if e["joined_a_number_participant"]]
+    assert [e["canonical"] for e in joined] == ["+919022873952"]
+    assert [e["label"] for e in joined] == ["Vishal Mache"]
+    alone = [e for e in na["entries"] if not e["joined_a_number_participant"]]
+    assert [e["canonical"] for e in alone] == ["+919284156592"]
+
+
+def test_graph_reading_sender_names_as_numbers_does_not_change_the_interaction_total():
+    """It moves interactions onto the right participant; it must never create or lose one."""
+    messages = [
+        {"app": "sms", "sender": "+919022873952"},
+        {"app": "instagram", "sender": "778812"},
+        {"app": "sms", "sender": "JZ-JioPay-S"},
+    ]
+    calls = [{"name": "Vishal Mache", "number": "9022873952"}]
+    g = build_communication_graph(messages=messages, calls=calls, contacts=[])
+    assert g["stats"]["interactions"] == 4
+    assert sum(n["weight"] for n in g["nodes"] if n["type"] != "owner") == 4
+
+
+def test_graph_reads_a_contact_whose_only_address_is_its_name():
+    """A contact row with no number field is still a phone-addressed record."""
+    contacts = [{"name": "9767143329", "number": ""}]
+    calls = [{"name": "Mumma", "number": "+919767143329"}]
+    g = build_communication_graph(messages=[], calls=calls, contacts=contacts)
+    assert g["stats"]["participants"] == 1
+    node = [n for n in g["nodes"] if n["type"] != "owner"][0]
+    assert node["id"] == "num:+919767143329"
+    assert node["label"] == "Mumma"

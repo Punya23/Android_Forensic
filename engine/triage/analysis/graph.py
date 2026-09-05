@@ -37,6 +37,35 @@ from typing import Any
 DEFAULT_COUNTRY_CODE = "91"
 DEFAULT_NATIONAL_NUMBER_LENGTH = 10
 
+# --- Sender names that are themselves phone numbers ---------------------------------
+# The split above is reached through a second field as well. A message row records its
+# counterparty in the *sender* field and leaves the number field empty, so a chat/SMS
+# sender the device wrote as a bare number ("+919022873952") keyed as a name while the
+# call log and the contact list keyed the same subscriber as a number. Two nodes, one
+# subscriber, and the interactions on the name node are stranded off the real participant.
+#
+# On a channel that addresses subscribers by phone number, a sender string that is
+# dialable and nothing else *is* the address, so it is read as one. That is only true of
+# such channels: an Instagram or Telegram sender is a platform user id, which is numeric
+# and is not a phone number (Telegram ids are currently ~10 digits — the same shape as an
+# Indian national number), so those channels are excluded outright rather than filtered
+# afterwards on shape, which could not tell the two apart.
+PHONE_ADDRESSED_CHANNELS = frozenset(
+    {"sms", "mms", "rcs", "call", "whatsapp", "whatsapp-backup", "signal"}
+)
+
+# A dialing address: ASCII digits, an optional leading "+", and separators. Any letter
+# disqualifies it, which is what keeps alphanumeric service sender IDs ("JZ-JioPay-S",
+# "AD-ICICIB2") on the name path. Only ASCII digits count — a string of Devanagari digits
+# is not something to silently read as a number to dial.
+_DIALABLE_RE = re.compile(r"\+?[0-9 ()\-]*[0-9][0-9 ()\-]*")
+# E.164 permits at most 15 digits, and the shortest dialable strings (emergency short
+# codes) are 3. Outside that range a numeric string is not a dialing address: the bound is
+# what stops a WhatsApp group JID — "<creator>-<created-at>", 20+ digits once the
+# separator is stripped — from being read as somebody's phone number.
+MIN_DIALABLE_DIGITS = 3
+MAX_DIALABLE_DIGITS = 15
+
 
 def _digits(s: str) -> str:
     return re.sub(r"\D", "", s or "")
@@ -96,6 +125,37 @@ def _plan_key(
     return "+" + cc + nsn
 
 
+def _dialable(name: str) -> str:
+    """Return ``name`` unchanged if it is a dialing address and nothing else, else ""."""
+    s = (name or "").strip()
+    if not s or not _DIALABLE_RE.fullmatch(s):
+        return ""
+    n = len(_digits(s))
+    return s if MIN_DIALABLE_DIGITS <= n <= MAX_DIALABLE_DIGITS else ""
+
+
+def _as_address(name: str, number: str) -> tuple[str, str]:
+    """Read a (name, number) pair the way a phone-addressed record means it.
+
+    With no number recorded, a name that is itself a dialable string is the address rather
+    than a label, and belongs in the number slot so that it keys as the number it is — the
+    same subscriber the call log and the contact list key as a number. Callers pass pairs
+    only from channels that address subscribers by phone number; see
+    :data:`PHONE_ADDRESSED_CHANNELS`.
+
+    Note this decides only *which field the string is*. What it then merges with is still
+    :func:`_plan_key`'s business: a sender written as a short code keys on its own digits
+    and merges with an identical digit string and nothing else.
+    """
+    if _digits(number) or not _dialable(name):
+        return name, number
+    return "", name
+
+
+def _is_phone_addressed(channel: str) -> bool:
+    return (channel or "").strip().lower() in PHONE_ADDRESSED_CHANNELS
+
+
 def _key(
     name: str,
     number: str = "",
@@ -148,9 +208,42 @@ def build_communication_graph(
     edge_channels: dict[tuple, set] = defaultdict(set)
     # Every raw identifier folded into each node, so the report can name what was merged.
     node_variants: dict[str, set] = defaultdict(set)
+    # Sender/contact names that were read as dialing addresses: node key -> the raw
+    # strings, and the interactions they carried onto that node.
+    name_addresses: dict[str, set] = defaultdict(set)
+    name_address_weight: dict[str, int] = defaultdict(int)
+    # Node keys a genuine number field produced. A name-address node absent from this set
+    # was never known as a number, so reading it as one merged it with nothing.
+    number_field_keys: set[str] = set()
+    # The participant keys this case would have had if a dialable name were kept as a
+    # name — the exact counterfactual, so the effect on the total is measured, not
+    # estimated. The dialing-prefix folding is held constant in it.
+    keys_if_names_kept: set[str] = set()
 
     def key_of(name: str, number: str = "") -> str:
         return _key(name, number, country_code, national_number_length)
+
+    def read_address(
+        name: str, number: str, *, phone_addressed: bool, counts: bool = True
+    ) -> tuple[str, str]:
+        """Resolve one record's (name, number) and book-keep what that decided.
+
+        Returns the pair to key on: on a phone-addressed record a dialable name moves into
+        the number slot, everywhere else the pair is untouched. ``counts`` is False for the
+        contact seed, which creates nodes but logs no interaction.
+        """
+        keys_if_names_kept.add(key_of(name, number))
+        if not phone_addressed:
+            return name, number
+        resolved_name, resolved_number = _as_address(name, number)
+        k = key_of(resolved_name, resolved_number)
+        if resolved_name != name:  # the name was read as the address
+            name_addresses[k].add(_norm_number(resolved_number))
+            if counts:
+                name_address_weight[k] += 1
+        elif _digits(number):
+            number_field_keys.add(k)
+        return resolved_name, resolved_number
 
     def record_variant(k: str, number: str) -> None:
         raw = _norm_number(number)
@@ -160,14 +253,19 @@ def build_communication_graph(
     # Seed labels from contacts (best names available).
     contact_by_number: dict[str, str] = {}
     for c in contacts:
-        k = key_of(c.get("name", ""), c.get("number", ""))
-        record_variant(k, c.get("number", ""))
-        labels.setdefault(k, c.get("name") or c.get("number") or "unknown")
-        if c.get("name"):
-            names.setdefault(k, c["name"])
-        num = _plan_key(c.get("number", ""), country_code, national_number_length)
+        # A contact record is phone-addressed by definition: if it holds no number, a
+        # name that is a dialable string is the only address it has.
+        cname, cnumber = read_address(
+            c.get("name", ""), c.get("number", ""), phone_addressed=True, counts=False
+        )
+        k = key_of(cname, cnumber)
+        record_variant(k, cnumber)
+        labels.setdefault(k, cname or cnumber or "unknown")
+        if cname:
+            names.setdefault(k, cname)
+        num = _plan_key(cnumber, country_code, national_number_length)
         if num:
-            contact_by_number[num] = c.get("name") or num
+            contact_by_number[num] = cname or num
 
     owner_key = "owner:self"
     labels[owner_key] = owner_label
@@ -197,17 +295,21 @@ def build_communication_graph(
         sender = m.get("sender", "")
         if sender in ("<system>", "<recovered>", ""):
             continue
-        touch(sender, "", app)
+        touch(*read_address(sender, "", phone_addressed=_is_phone_addressed(app)), app)
 
     for c in calls:
-        touch(c.get("name", ""), c.get("number", ""), "call")
+        touch(
+            *read_address(c.get("name", ""), c.get("number", ""), phone_addressed=True),
+            "call",
+        )
 
     # Ensure isolated contacts still appear (they may be relevant even w/o logged comms).
     for c in contacts:
-        k = key_of(c.get("name", ""), c.get("number", ""))
+        cname, cnumber = _as_address(c.get("name", ""), c.get("number", ""))
+        k = key_of(cname, cnumber)
         if k not in node_weight:
             node_weight[k] = node_weight.get(k, 0)
-            labels.setdefault(k, c.get("name") or c.get("number") or "unknown")
+            labels.setdefault(k, cname or cnumber or "unknown")
 
     def display_label(k: str) -> str:
         """A recorded name wins; otherwise show a raw identifier the device held."""
@@ -291,6 +393,35 @@ def build_communication_graph(
         if n["type"] != "owner" and len(n["identifiers"]) > 1
     ]
     merged.sort(key=lambda m: (-m["weight"], m["canonical"]))
+
+    # What reading a dialable name as an address actually did. Kept apart from `merged`
+    # because it is a different claim: `merged` folds two spellings of one number, this
+    # decides which *field* a string was. Both land in the same report section.
+    node_by_id = {n["id"]: n for n in nodes}
+    name_address_rows = [
+        {
+            "label": node_by_id[k]["label"],
+            "canonical": k.split(":", 1)[-1],
+            "addresses": sorted(name_addresses[k]),
+            "interactions": name_address_weight.get(k, 0),
+            # False = this string was the only way the device named this participant, so
+            # reading it as a number moved nothing onto anyone else.
+            "joined_a_number_participant": k in number_field_keys,
+        }
+        for k in name_addresses
+        if k in node_by_id
+    ]
+    # The rows that actually moved a count lead: a truncated table must not spend its
+    # space on names that merged with nothing.
+    name_address_rows.sort(
+        key=lambda r: (
+            not r["joined_a_number_participant"],
+            -r["interactions"],
+            r["canonical"],
+        )
+    )
+    absorbed = [r for r in name_address_rows if r["joined_a_number_participant"]]
+
     participants = len(nodes) - 1
     # One participant per raw identifier is what a run without the plan assumption would
     # have produced, so the delta is exact rather than estimated.
@@ -312,6 +443,16 @@ def build_communication_graph(
                 "merged_participants": len(merged),
                 "merged_identifiers": unmerged_participants - participants,
                 "merged": merged,
+                "name_addresses": {
+                    "count": sum(len(r["addresses"]) for r in name_address_rows),
+                    "absorbed_participants": len(absorbed),
+                    "absorbed_interactions": sum(r["interactions"] for r in absorbed),
+                    # Exact counterfactual, not an estimate: the participant total this
+                    # case would report if a dialable name were kept as a name.
+                    "participants_if_names_kept": len(keys_if_names_kept),
+                    "channels": sorted(PHONE_ADDRESSED_CHANNELS),
+                    "entries": name_address_rows,
+                },
             },
         },
     }

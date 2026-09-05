@@ -788,6 +788,20 @@ def _all_indices(haystack: str, needle: str) -> list[int]:
 # ---------------------------------------------------------------------------
 # Identifier normalisation — the numbering-plan assumption must be disclosed
 # ---------------------------------------------------------------------------
+def _name_addresses(entries: list[dict], **over) -> dict:
+    absorbed = [e for e in entries if e.get("joined_a_number_participant")]
+    out = {
+        "count": sum(len(e["addresses"]) for e in entries),
+        "absorbed_participants": len(absorbed),
+        "absorbed_interactions": sum(e["interactions"] for e in absorbed),
+        "participants_if_names_kept": 2 + len(absorbed),
+        "channels": ["call", "sms", "whatsapp"],
+        "entries": entries,
+    }
+    out.update(over)
+    return out
+
+
 def _graph_with_normalisation(case: Case, merged: list[dict], **over) -> None:
     stats = {
         "participants": 2,
@@ -863,6 +877,101 @@ def test_report_escapes_merged_identifier_labels(case: Case):
     _graph_with_normalisation(
         case,
         [{"label": xss, "canonical": xss, "identifiers": [xss, "9767143329"], "weight": 2}],
+    )
+    html = render(case)
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_report_discloses_sender_names_it_read_as_phone_numbers(case: Case):
+    """Reading a sender name as a number moves interactions between participants, so the
+    same disclosure that covers the dialing-prefix merge has to state this claim too."""
+    _graph_with_normalisation(
+        case,
+        [],
+        name_addresses=_name_addresses(
+            [
+                {
+                    "label": "Vishal Mache",
+                    "canonical": "+919022873952",
+                    "addresses": ["+919022873952"],
+                    "interactions": 1,
+                    "joined_a_number_participant": True,
+                }
+            ]
+        ),
+    )
+    html = render(case)
+    assert "Identifier normalisation" in html  # one section, not two
+    # the claim, stated explicitly
+    assert (
+        "a sender name that is itself a phone number was treated as that number" in html
+    )
+    # what it did, and the counterfactual it moved the total away from
+    assert "1 interaction(s) onto those participants" in html
+    assert "would report 3 participants rather than 2" in html
+    # auditable from the report, not only from graph.json
+    assert "+919022873952" in html and "Vishal Mache" in html
+    # and the refusals
+    assert "JZ-JioPay-S" in html
+    assert "Instagram, Telegram" in html
+
+
+def test_report_says_when_no_sender_name_was_a_phone_number(case: Case):
+    """Nothing read is a finding too — silence would read as 'the question never arose'."""
+    _graph_with_normalisation(case, [], name_addresses=_name_addresses([]))
+    html = render(case)
+    assert "No sender name in this case was itself a phone number" in html
+
+
+def test_report_marks_a_sender_name_that_merged_with_nothing(case: Case):
+    """A sender known no other way moved no interactions onto anyone. Listing it beside a
+    real merge without saying so would overstate what the reading changed."""
+    _graph_with_normalisation(
+        case,
+        [],
+        name_addresses=_name_addresses(
+            [
+                {
+                    "label": "+917042967773",
+                    "canonical": "+917042967773",
+                    "addresses": ["+917042967773"],
+                    "interactions": 1,
+                    "joined_a_number_participant": False,
+                }
+            ]
+        ),
+    )
+    html = render(case)
+    assert "no other record of this participant" in html
+    assert "0 of them named a participant this device also holds as a number" in html
+
+
+def test_report_omits_the_sender_name_note_for_a_graph_predating_the_field(case: Case):
+    """A graph.json from before the field says nothing about it, so neither does the
+    report — the dialing-prefix half of the disclosure still renders."""
+    _graph_with_normalisation(case, [])
+    html = render(case)
+    assert "Identifier normalisation" in html
+    assert "Sender names that are phone numbers" not in html
+
+
+def test_report_escapes_sender_names_read_as_numbers(case: Case):
+    xss = "<script>alert(1)</script>"
+    _graph_with_normalisation(
+        case,
+        [],
+        name_addresses=_name_addresses(
+            [
+                {
+                    "label": xss,
+                    "canonical": xss,
+                    "addresses": [xss],
+                    "interactions": 1,
+                    "joined_a_number_participant": True,
+                }
+            ]
+        ),
     )
     html = render(case)
     assert "<script>" not in html
