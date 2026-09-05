@@ -320,6 +320,57 @@ def test_detect_upi_transactions():
     assert result[1]['receiver'] == 'bob'  # Reversed for "received"
 
 
+def test_detect_payment_confirmation_messages():
+    """Test detection of payment app confirmation messages"""
+    messages = [
+        {
+            'text': 'You paid ₹500 to Merchant Name via GooglePay. UPI Ref: ABC123456789XYZ',
+            'sender': 'GPay-noreply',
+            'timestamp': '2024-01-01T10:00:00'
+        },
+        {
+            'text': 'Rs.1000 debited from A/c XX1234 to VPA merchant@paytm on 01-Jan-24. UPI Ref: XYZ987654321ABC',
+            'sender': 'SBI-ALERT',
+            'timestamp': '2024-01-01T11:00:00'
+        },
+        {
+            'text': 'Payment of ₹250 to Shop Name successful. Transaction ID: TXN123456789',
+            'sender': 'PhonePe',
+            'timestamp': '2024-01-01T12:00:00'
+        },
+        {
+            'text': '₹2000 credited to your account from VPA sender@ybl. UPI Ref: REF123456789',
+            'sender': 'HDFC-Bank',
+            'timestamp': '2024-01-01T13:00:00'
+        },
+    ]
+    
+    result = detect_upi_transactions(messages)
+    
+    # Should detect all 4 transactions
+    assert len(result) >= 3, f"Expected at least 3 transactions, got {len(result)}"
+    
+    # Check amounts are detected correctly
+    amounts = [t['amount'] for t in result]
+    assert 500.0 in amounts
+    assert 1000.0 in amounts or 2000.0 in amounts  # At least one of these
+    
+    # Check that confirmation messages are detected
+    confirmation_txns = [t for t in result if t['message_type'] == 'payment_confirmation']
+    assert len(confirmation_txns) >= 2, "Should detect at least 2 payment confirmations"
+    
+    # Check GPay transaction
+    gpay_txn = [t for t in result if t.get('payment_app') == 'GPay']
+    assert len(gpay_txn) > 0, "Should detect GPay transaction"
+    assert gpay_txn[0]['amount'] == 500
+    assert gpay_txn[0]['transaction_id'] == 'ABC123456789XYZ'
+    assert gpay_txn[0]['confidence'] > 0.7
+    
+    # Check that transaction IDs are extracted
+    txns_with_ids = [t for t in result if t['transaction_id']]
+    assert len(txns_with_ids) >= 2, "Should extract transaction IDs from confirmation messages"
+
+
 def test_detect_bank_accounts():
     """Test bank account detection"""
     text = """
