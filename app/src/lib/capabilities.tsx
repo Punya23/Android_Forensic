@@ -100,6 +100,14 @@ export const STATE_STYLE: Record<
   },
 };
 
+/**
+ * The states in which the engine is asserting a gap in *this acquisition* rather than
+ * reporting something about the device. Wording that says "absence here is not evidence"
+ * belongs only to these; `empty` contradicts it, `planned` is about the build, and an
+ * unrecognised state renders with the `empty` palette and so must not carry it either.
+ */
+const GAP_STATES = new Set(["not_collected", "inaccessible"]);
+
 export function TierBadge({ tier }: { tier: number }) {
   if (tier < 0) return <span className="chip">Derived</span>;
   const style =
@@ -221,7 +229,15 @@ export function DatasetEmpty({
             {cap.requires}
           </p>
         )}
-        {cap.state !== "empty" && cap.state !== "planned" && (
+        {/*
+          Gated on membership in the known gap states, not on "everything except empty
+          and planned". Excluding by name leaves an unrecognised state inside the branch,
+          which is the one case that cannot support this sentence: the badge beside it
+          falls back to the `empty` palette, so the screen would carry "Checked — nothing
+          found" and "this is a fact about the acquisition" at once. Only these two states
+          are the engine asserting a gap, and only they may assert what a gap is not.
+        */}
+        {GAP_STATES.has(cap.state) && (
           <p className="text-[11px] text-warn/90 leading-relaxed mt-3">
             This is a fact about the acquisition, not about the device. It is not evidence
             that nothing was there.

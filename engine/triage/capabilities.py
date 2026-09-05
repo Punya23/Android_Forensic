@@ -15,7 +15,11 @@ it; :func:`case_capabilities` then resolves each one against a specific case fol
 its ``case.json`` into exactly one state:
 
 ``populated``
-    Collected, parsed, non-empty. The view renders data.
+    Collected, parsed, non-empty. The view renders data. "Non-empty" is a property of the
+    capability, not of the JSON: several stages persist a *fixed-shape envelope* — a dict
+    written on every run whose keys exist whether or not anything was collected — and a
+    bare length test reports every one of those as collected. ``content_paths`` says where
+    the content actually lives so a stage that never ran cannot badge itself "Collected".
 ``empty``
     Collected and parsed, and the artifact genuinely held nothing. A finding.
 ``not_collected``
@@ -107,6 +111,31 @@ class Capability:
     #: whenever ``root_only`` is False: a reason that says "this gap is closable" without
     #: saying how is worse than one that says nothing, because it costs a search.
     non_root_route: str = ""
+    #: Where the collected data lives inside a *fixed-shape envelope* — a dict the
+    #: pipeline writes on every run with all of its keys present even when the stage
+    #: never ran (``aleapp`` is ``{"available": False, "artifacts": {}, "report_dir": "",
+    #: "error": None}`` before ALEAPP is so much as looked for). ``len()`` on such a file
+    #: is four, so without this the dataset resolves ``populated`` and the sidebar badges
+    #: "Collected" for a stage that did nothing — the precise failure this module exists
+    #: to prevent, and the one that is hardest to catch because the badge looks healthy.
+    #: Entries are dotted paths ("stats.participants"); a path that is missing or whose
+    #: value is falsy (``[]``, ``{}``, ``""``, ``0``, ``None``) holds nothing, and the
+    #: dataset is empty when *every* path holds nothing. Counters count: an envelope
+    #: reports its own emptiness in ``meta.total_messages`` as readily as in a list.
+    content_paths: tuple[str, ...] = ()
+    #: A dotted path inside this dataset's own envelope that is truthy exactly when the
+    #: stage ran to completion. It corroborates an empty result the way
+    #: ``ran_if_present`` does, but from the file itself, for a stage whose envelope
+    #: records its own success (``aleapp``'s ``available``). Without it an envelope with
+    #: ``unconditional_write`` set can only ever be reported as unverified, which
+    #: understates a tool that genuinely ran and genuinely found nothing.
+    ran_when: str = ""
+    #: True when the missing input is a case brief rather than anything on the handset.
+    #: The ranking pass and the investigation pass on top of it both read the brief-derived
+    #: case profile, and the pipeline builds no profile without a brief — so neither
+    #: dataset is ever written, and neither gap is closed by a second acquisition. The
+    #: flag named above was on; re-ticking it would change nothing.
+    needs_case_brief: bool = False
 
 
 _T0 = "Tier 0 — read-only, always attempted"
@@ -120,7 +149,28 @@ CATALOGUE: dict[str, Capability] = {
     "messages": Capability("messages", "Messages", 0, _T0),
     "media": Capability("media", "Media", 0, _T0),
     "locations": Capability("locations", "Photo locations", 0, _T0),
-    "browser": Capability("browser", "Browser history", 0, _T0),
+    # Tier 0 in name only, and the catalogue has to say so. The Tier-0 parser reads a
+    # History file that happens to already sit in shared storage; on a real handset the
+    # per-browser History DBs are app-private, and the honest path is the Tier-2 root pull
+    # (``_run_tier2_browser_history``, triage/pipeline.py, whose own docstring says the
+    # Tier-0 path "only fires when a History file happens to already sit in shared
+    # storage"). The write at the end of the run is unconditional either way, so an empty
+    # browser.json is exactly as ambiguous as the empty search_history.json derived from
+    # it — and the two rows sit four apart in the sidebar. Rendering one "0 / checked,
+    # nothing found" and the other "n/a / could not check", from one source, is the
+    # dashboard contradicting itself. There is no corroborator to give this one: no stage
+    # writes a "browser history was reachable" record, so an empty file stays unverified.
+    "browser": Capability(
+        "browser",
+        "Browser history",
+        0,
+        "A browser History database that was actually reachable. The Tier-0 read only "
+        "sees one already sitting in shared storage; on a normal handset these live in "
+        "app-private storage and need the Tier-2 root pull "
+        "('tier2_browser_history'). Nothing records whether either found a database, so "
+        "an empty result here is not a finding about the device's browsing.",
+        unconditional_write=True,
+    ),
     "timeline": Capability("timeline", "Timeline", -1, "Derived from every parsed dataset"),
     "recovered": Capability("recovered", "Recovered / deleted rows", 0, _T0),
     "flags": Capability("flags", "Keyword & hash flags", -1, "Derived from parsed content"),
@@ -194,22 +244,48 @@ CATALOGUE: dict[str, Capability] = {
     "device_state": Capability(
         "device_state", "Device state (pre/post)", 0, "Snapshot either side of the run"
     ),
+    # Written on every run as ``{"items": [...], "summary": {...}}``, so the envelope is
+    # never length-zero. It fuses the MediaStore catalogue (``media_inventory``, Tier 1)
+    # with the ``.trashed-``/``.pending-`` files actually pulled (``media``, Tier 0); if
+    # neither side was collected the fusion has nothing to walk, and "no deleted media"
+    # would be a statement about the acquisition wearing a device finding's clothes.
     "mediastore_trash": Capability(
         "mediastore_trash",
         "Deleted media (trash)",
         0,
-        "`.trashed-` files in shared storage. Android purges these after 30 days.",
+        "`.trashed-` files in shared storage, cross-referenced against the MediaStore "
+        "catalogue. Android purges these after 30 days.",
+        unconditional_write=True,
+        content_paths=("items",),
+        # ``analyze_mediastore_trash`` is called inside a try/except and its result is
+        # only written if it returned, so a file with a ``summary`` block is the analysis
+        # saying it completed. That distinction is worth having here: the shared-storage
+        # side of the fusion is a Tier-0 walk that always happens, so "the analysis ran
+        # and found no trashed media" really is a finding about the device — whereas a
+        # missing file means the run never reached it, and stays unverified.
+        ran_when="summary",
     ),
     "url_locations": Capability(
         "url_locations", "Locations from map links", -1, "Derived from browser history",
         ran_if_present=("browser",),
     ),
+    # The envelope that made this rule necessary. ``aleapp_result`` is initialised to
+    # ``{"available": False, "artifacts": {}, "report_dir": "", "error": None}`` and
+    # written unconditionally at the end of the run (triage/pipeline.py), so with
+    # ``run_aleapp`` off the file is a four-key dict — length four, resolved
+    # ``populated``, badged "Collected", no banner and no empty-state override, for a
+    # stage that was never started. ``artifacts`` is where the parsed modules land, and
+    # ``available`` is the tool's own record of whether it ran, so an ALEAPP that ran and
+    # found nothing is still separable from an ALEAPP that was never on PATH.
     "aleapp": Capability(
         "aleapp",
         "ALEAPP artifacts",
         0,
         "The external ALEAPP tool on PATH. Not bundled — install it to enable this view.",
         flag="run_aleapp",
+        unconditional_write=True,
+        content_paths=("artifacts",),
+        ran_when="available",
     ),
     # --- Tier 1: sideloaded Collector APK ----------------------------------
     "contacts": Capability(
@@ -351,12 +427,20 @@ CATALOGUE: dict[str, Capability] = {
     "usage_events": Capability(
         "usage_events", "Usage event log", 2, _T2, flag="tier2_app_presence"
     ),
+    # The flag has to be the one that gates the write, not the one the dataset sits next
+    # to. fcm_records is written from ``encrypted_apps_result`` inside
+    # ``if cfg.scan_encrypted_apps`` (triage/pipeline.py) and 'tier2_app_presence' does
+    # not reach it: with app-presence off and the encrypted-app scan on the reason offered
+    # a toggle whose re-ticking collects nothing, which is the false opt-in promise this
+    # whole layer removes. Tier stays 2 for the same reason ``encrypted_apps`` does — the
+    # scan is a Tier-0 walk, but the FCM store is app-private and only root reaches it.
     "fcm_records": Capability(
         "fcm_records",
         "Push-message records",
         2,
-        _T2 + ". The FCM LevelDB store.",
-        flag="tier2_app_presence",
+        _T2 + " for the FCM LevelDB store in the Play-services sandbox; the scan itself "
+        "is a Tier-0 walk over whatever was acquired, and finds nothing there without it.",
+        flag="scan_encrypted_apps",
     ),
     "antiforensic_findings": Capability(
         "antiforensic_findings",
@@ -401,8 +485,41 @@ CATALOGUE: dict[str, Capability] = {
         "view reports whether the database is present, never its contents.",
     ),
     # --- derived / analysis ------------------------------------------------
-    "graph": Capability("graph", "Social graph", -1, "Derived from parsed communications"),
-    "advanced": Capability("advanced", "Advanced analytics", -1, "Derived from messages"),
+    # Both are envelopes, and both are scaffolded even on a case that collected nothing.
+    # ``build_communication_graph`` always emits the owner hub node, so ``nodes`` is never
+    # empty and ``len()`` never reaches zero; ``stats.participants`` is ``len(nodes) - 1``,
+    # which is exactly "anybody but the device owner" and is the honest content test.
+    #
+    # Neither gets a corroborator, and that is deliberate rather than an omission. Both
+    # derive from datasets that would make *this* one non-empty if they held anything, so
+    # a ``ran_if_present`` sibling could only ever fire on a case where this file is
+    # missing — manufacturing "the stage ran and found nothing" for a stage that
+    # demonstrably never wrote. An empty envelope therefore stays unverified, and the
+    # inputs carry their own honest badges, which is where the examiner looks.
+    "graph": Capability(
+        "graph",
+        "Social graph",
+        -1,
+        "Derived from parsed communications — messages, calls and contacts. The owner "
+        "node is drawn from the device record and is present whether or not anything "
+        "was collected, so it is not itself a finding.",
+        unconditional_write=True,
+        content_paths=("edges", "stats.participants"),
+    ),
+    # ``run_advanced_analysis`` returns its full seven-key shape for zero input — an
+    # empty social graph, empty patterns, empty anomalies and a ``meta`` block of zeroes —
+    # and the pipeline writes it unconditionally. The counters are the content test: this
+    # view analyses messages and recovered rows, and with none of either there is nothing
+    # here to have been analysed.
+    "advanced": Capability(
+        "advanced",
+        "Advanced analytics",
+        -1,
+        "Derived from parsed messages and recovered rows. With neither collected there "
+        "is nothing to analyse, and an empty analysis is not a finding about the device.",
+        unconditional_write=True,
+        content_paths=("meta.total_messages", "recovery_metrics.total"),
+    ),
     "location_traces": Capability(
         "location_traces", "Unified location trace", -1, "Derived from every location source"
     ),
@@ -413,8 +530,23 @@ CATALOGUE: dict[str, Capability] = {
         "Needs at least two timestamped location points far enough apart to test.",
         ran_if_present=("location_traces",),
     ),
+    # Pre-declared as ``{"tables": [], "messages": []}`` and written on every run, so the
+    # file is a two-key dict on a case where the finder never opened a database. It is
+    # also flag-gated — ``run_app_finder`` — which the catalogue never recorded, so the
+    # one gap here that a re-run does close was not being offered. What the finder can see
+    # is bounded by what was acquired: unrecognised apps keep their databases in the app
+    # sandbox, so on a non-root acquisition it walks nothing and finding nothing says
+    # nothing about which chat apps the device had.
     "discovered_chats": Capability(
-        "discovered_chats", "Discovered chats", -1, "Derived by scanning unknown app databases"
+        "discovered_chats",
+        "Discovered chats",
+        -1,
+        "Derived by scanning acquired-but-unrecognised SQLite databases for chat tables. "
+        "It can only see databases the acquisition actually pulled; app-private ones need "
+        "root, so an empty result is not a finding about which apps the device carried.",
+        flag="run_app_finder",
+        unconditional_write=True,
+        content_paths=("tables", "messages"),
     ),
     "ai_findings": Capability(
         "ai_findings",
@@ -423,6 +555,7 @@ CATALOGUE: dict[str, Capability] = {
         "A case brief. Findings are ranked against the brief, so without one there is "
         "nothing to rank against.",
         flag="run_ai_analysis",
+        needs_case_brief=True,
     ),
     "validation_report": Capability(
         "validation_report", "Tool self-validation", -1, "Known-answer tests, per acquisition",
@@ -436,6 +569,12 @@ CATALOGUE: dict[str, Capability] = {
         "a brief and at least one AI finding to have something to investigate.",
         flag="run_ai_analysis",
         ran_if_present=("ai_findings",),
+        # Same gap as ai_findings, and it was badging "n/a" for it. investigate_case()
+        # reads the brief-derived case profile, and the pipeline builds no profile without
+        # a brief — so on a briefless case this file is never written, the ai_findings
+        # corroborator is absent too, and the old path fell through to "could not check".
+        # A text field closes it; a second acquisition does not.
+        needs_case_brief=True,
     ),
     # --- named, not built --------------------------------------------------
     "ios_acquisition": Capability(
@@ -494,6 +633,72 @@ def _read_derived(derived_dir: Path, name: str) -> Any:
         return None
 
 
+def _path_value(blob: Any, path: str) -> Any:
+    """Walk a dotted ``content_paths`` / ``ran_when`` path. Missing is ``None``."""
+    cur = blob
+    for part in path.split("."):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    return cur
+
+
+def _content(cap: Capability, value: Any) -> list:
+    """The parts of a dataset's JSON that actually carry collected data.
+
+    For an ordinary dataset that is the whole file. For a fixed-shape envelope it is only
+    the paths named in ``content_paths``: the envelope's other keys are scaffolding the
+    pipeline writes whether or not the stage ran, and counting them is what let a stage
+    that never started resolve ``populated``.
+    """
+    if not cap.content_paths or not isinstance(value, dict):
+        return [value]
+    return [_path_value(value, path) for path in cap.content_paths]
+
+
+def _dataset_is_empty(cap: Capability, value: Any) -> bool:
+    """Whether this dataset holds nothing, as *this capability* defines holding nothing.
+
+    Plain falsiness on the content paths, not :func:`_is_empty`: an envelope states its
+    own emptiness in a counter as readily as in a collection (``meta.total_messages`` is
+    ``0``, ``stats.participants`` is ``0``, ``artifacts`` is ``{}``), and all of those
+    mean the stage collected nothing.
+    """
+    if not cap.content_paths:
+        return _is_empty(value)
+    return all(not part for part in _content(cap, value))
+
+
+def _content_count(cap: Capability, value: Any) -> int:
+    """How much was collected — sized parts by length, counters by their own value."""
+    total = 0
+    for part in _content(cap, value):
+        if isinstance(part, (list, dict, str)):
+            total += len(part)
+        elif isinstance(part, bool):
+            total += int(part)
+        elif isinstance(part, (int, float)):
+            total += int(part)
+        elif part is not None:
+            total += 1
+    return total
+
+
+def _sibling_has_data(derived_dir: Path, name: str) -> bool:
+    """Whether a corroborating sibling dataset actually holds something.
+
+    Resolved through the sibling's *own* capability where there is one, so an envelope
+    can never corroborate anything merely by existing — the bug this module just fixed
+    for ``aleapp`` would otherwise reappear one level down, with a scaffolded file
+    standing as proof that some other stage ran.
+    """
+    value = _read_derived(derived_dir, name)
+    sibling = CATALOGUE.get(name)
+    if sibling is None:
+        return not _is_empty(value)
+    return not _dataset_is_empty(sibling, value)
+
+
 #: Datasets where the engine writes its own "what happened" record. That record is
 #: authoritative — it was written by the stage that ran, and it knows things this
 #: module can only guess at (BFU encryption, a mock source, an app that is not
@@ -549,9 +754,9 @@ def resolve(
         }
 
     value = _read_derived(derived_dir, cap.dataset)
-    count = len(value) if isinstance(value, (list, dict)) else (0 if value is None else 1)
+    count = _content_count(cap, value)
 
-    if not _is_empty(value):
+    if not _dataset_is_empty(cap, value):
         return {
             "dataset": cap.dataset,
             "label": cap.label,
@@ -569,9 +774,20 @@ def resolve(
     reason = ""
 
     # A stage that recorded its own outcome outranks anything inferred here: it ran,
-    # and it knows why it came back empty.
+    # and it knows why it came back empty. That record is kept verbatim below — it is
+    # authoritative about *why the pull failed* and nothing here may discard it.
+    #
+    # It is not, however, authoritative about whether the gap is closable, and treating it
+    # as though it were short-circuited the non-root carve-out further down for the one
+    # dataset that has both an outcome record and a route around the handset.
+    # ``telegram_conversations`` is the only entry in OUTCOME_RECORDS, and on an unrooted
+    # phone with 'tier2_telegram' ticked on — the exact handset the carve-out was written
+    # for — the stage runs, the ``su cp`` fails, ``telegram_presence`` records it, and
+    # this branch badged "n/a: nothing you can do here" over a view the examiner can fill
+    # this afternoon from a Telegram Desktop export. So the record decides the wording and
+    # ``root_only`` decides the state, exactly as in the no-root branch below.
     recorded = _outcome_reason(cap, derived_dir)
-    if recorded:
+    if recorded and cap.root_only:
         return {
             "dataset": cap.dataset,
             "label": cap.label,
@@ -586,17 +802,36 @@ def resolve(
             "flag_actionable": False,
             "count": 0,
         }
-
-    if cap.dataset == "ai_findings" and not config.get("case_description_present", True):
+    if recorded:
         return {
             "dataset": cap.dataset,
             "label": cap.label,
             "tier": cap.tier,
             "state": NOT_COLLECTED,
             "reason": (
-                "No case brief was supplied for this acquisition, so there was nothing "
-                "to rank findings against. Add a brief on the Case Intelligence tab and "
-                "re-run the analysis — the collected evidence does not need re-pulling."
+                f"The stage ran and could not reach the source on the device: {recorded}. "
+                "Nothing here says anything about what the app contained. The gap is "
+                f"still closable without the handset — {cap.non_root_route}."
+            ),
+            "requires": cap.requires,
+            "flag": cap.flag,
+            # The flag was on and the pull it enables still failed, so re-ticking it is
+            # not the fix; the route named in the reason is.
+            "flag_actionable": False,
+            "count": 0,
+        }
+
+    if cap.needs_case_brief and not config.get("case_description_present", True):
+        return {
+            "dataset": cap.dataset,
+            "label": cap.label,
+            "tier": cap.tier,
+            "state": NOT_COLLECTED,
+            "reason": (
+                "No case brief was supplied for this acquisition, so this stage had "
+                "nothing to work from — it is never run without one. Add a brief on the "
+                "Case Intelligence tab and re-run the analysis; the collected evidence "
+                "does not need re-pulling."
             ),
             "requires": cap.requires,
             "flag": cap.flag,
@@ -665,23 +900,40 @@ def resolve(
         # Either the file was never written — the stage did not reach its write — or it
         # is one the pipeline writes unconditionally, where an empty file is equally
         # consistent with "ran and found nothing" and "never executed". Both need
-        # corroboration before anything is claimed.
+        # corroboration before anything is claimed. Corroboration comes from a sibling
+        # dataset that could only be non-empty if the stage got that far, or from the
+        # envelope's own record of having run (``ran_when``).
         ran = any(
-            not _is_empty(_read_derived(derived_dir, sibling))
-            for sibling in cap.ran_if_present
+            _sibling_has_data(derived_dir, sibling) for sibling in cap.ran_if_present
         )
+        if not ran and cap.ran_when:
+            ran = bool(_path_value(value, cap.ran_when))
         if ran:
             state = EMPTY
             reason = (
                 "The stage ran and the source held nothing matching. "
                 "Absence here is a finding about the device."
             )
-        else:
+        elif value is None:
             state = INACCESSIBLE
             reason = (
                 "No result was recorded for this stage — it did not complete, or the "
                 "source was not reachable on this device. Not the same as 'checked and "
                 "empty'. " + cap.requires
+            ).strip()
+        else:
+            # The file *was* written, so saying the stage "did not complete" would be an
+            # overstatement of its own — the run reached the end-of-run write block and
+            # persisted this. What is unknown is whether anything upstream of that write
+            # ever reached a source, and for an unconditionally-written dataset the file
+            # cannot tell us. Say exactly that, and no more.
+            state = INACCESSIBLE
+            reason = (
+                "This dataset is written on every run whether or not the stage reached a "
+                "source, so an empty file records only that nothing was collected — it "
+                "does not establish that a source was read and held nothing. Nothing "
+                "else in this case corroborates that it got that far, so this is "
+                "reported as unverified rather than as a clean result. " + cap.requires
             ).strip()
     else:
         reason = (
