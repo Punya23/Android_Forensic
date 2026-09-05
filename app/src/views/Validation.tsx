@@ -11,6 +11,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { FlaskConical } from "lucide-react";
 import { api } from "../lib/api";
 import { fmtTs } from "../lib/hooks";
 
@@ -207,7 +208,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
   const header = (
     <div className="mb-5">
       <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
-        <span>🧪</span> Tool Validation
+        <FlaskConical className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Tool Validation
         <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
           Tier 0 — Read-only
         </span>

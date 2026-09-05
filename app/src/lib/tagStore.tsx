@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { Star } from "lucide-react";
 import { api } from "./api";
 import type { Tag } from "./types";
 
@@ -57,7 +58,7 @@ export function TagButton({ refId, kind, label }: { refId: string; kind: string;
       title={tagged ? "Remove bookmark" : "Bookmark this item"}
       className={`text-sm leading-none transition-colors ${tagged ? "text-accent" : "text-muted/40 hover:text-muted"}`}
     >
-      {tagged ? "★" : "☆"}
+      <Star className="inline h-3.5 w-3.5" strokeWidth={1.75} fill={tagged ? "currentColor" : "none"} aria-hidden />
     </button>
   );
 }

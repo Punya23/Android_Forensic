@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { AlertTriangle, Smartphone, ArrowRight } from "lucide-react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { SectionHeader } from "../components/common";
@@ -167,14 +168,17 @@ function CaveatList({ items }: { items: string[] }) {
     <ul className="mt-1 space-y-0.5">
       {items.map((c, i) => (
         <li key={i} className="text-[11px] text-warn leading-snug">
-          ⚠ {c}
+          <span className="inline-flex items-center gap-1">
+            <AlertTriangle className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+            {c}
+          </span>
         </li>
       ))}
     </ul>
   );
 }
 
-function StatTile({ value, label, note, tone }: { value: string; label: string; note?: string; tone?: string }) {
+function StatTile({ value, label, note, tone }: { value: string; label: string; note?: ReactNode; tone?: string }) {
   return (
     <div className="card px-4 py-3 min-w-[140px] flex-1">
       <div className={`text-2xl font-bold ${tone ?? "text-ink"}`}>{value}</div>
@@ -451,7 +455,9 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
 
       {helperUsage.length === 0 ? (
         <div className="card p-8 text-center text-muted">
-          <div className="text-3xl mb-3 opacity-40">📲</div>
+          <div className="text-3xl mb-3 opacity-40">
+            <Smartphone className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+          </div>
           <div className="text-ink font-medium mb-1">
             {usageCollectorEntry?.status === "denied"
               ? "Usage-stats access was denied"
@@ -668,7 +674,11 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
         <StatTile
           value={summary.total_sessions != null ? String(summary.total_sessions) : "—"}
           label="Screen-on sessions"
-          note="Paired ON→OFF transitions only"
+          note={
+            <span className="inline-flex items-center gap-1">
+              Paired ON<ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />OFF transitions only
+            </span>
+          }
         />
         <StatTile
           value={fmtMinutes(summary.total_screen_time_min)}

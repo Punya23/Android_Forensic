@@ -15,6 +15,7 @@
  */
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { ArrowRight, RadioTower } from "lucide-react";
 import { api } from "../lib/api";
 import { fmtTs } from "../lib/hooks";
 import { bytes, SortTh, useSort } from "../components/common";
@@ -271,7 +272,7 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
   const header = (
     <div className="mb-5">
       <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
-        <span>📡</span> Wi-Fi — Live State
+        <RadioTower className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Wi-Fi — Live State
         <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
           Tier 0 — Read-only, volatile
         </span>
@@ -654,8 +655,10 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
                     <td className="td font-mono text-xs text-muted">{u.iface || "—"}</td>
                     <td className="td">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono text-xs">
-                          ≈ {fmtTs(u.bucket_start)} → ≈ {fmtTs(u.bucket_end)}
+                        <span className="font-mono text-xs inline-flex items-center gap-1">
+                          ≈ {fmtTs(u.bucket_start)}{" "}
+                          <ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />{" "}
+                          ≈ {fmtTs(u.bucket_end)}
                         </span>
                         <ApproxChip label="approximate · hour bucket" />
                       </div>

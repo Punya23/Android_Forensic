@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ArrowRight } from "lucide-react";
 import { api } from "../lib/api";
 import type {
   AIFindings,
@@ -261,7 +262,10 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
                   <div className="flex items-center gap-2">
                     <span className="text-ink">{a.label}</span>
                     <span className="text-muted">
-                      {a.doctrine_priority} →{" "}
+                      {a.doctrine_priority}{" "}
+                      <span className="inline-flex items-center gap-1">
+                        <ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                      </span>{" "}
                       <span className={a.adjustment === "promoted" ? "text-live" : "text-warn"}>
                         {a.priority}
                       </span>

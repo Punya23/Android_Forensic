@@ -1,3 +1,5 @@
+import { ArrowRight } from "lucide-react";
+
 /**
  * Shown once per session right after sign-in, before the case dashboard. Not a
  * feature tour — three honesty facts an examiner needs before they start an
@@ -48,7 +50,10 @@ export function OnboardingView({ username, onContinue }: { username: string | nu
         </p>
 
         <button className="btn-accent w-full" onClick={onContinue}>
-          Continue to dashboard →
+          <span className="inline-flex items-center gap-1">
+            Continue to dashboard
+            <ArrowRight className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+          </span>
         </button>
       </div>
     </div>

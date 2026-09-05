@@ -5,6 +5,7 @@
 //
 // Shared by the acquisition preview and the case-intelligence view so the two can
 // never drift apart on wording that is load-bearing for honesty.
+import { ArrowRight } from "lucide-react";
 import type { ArtifactPlan, DeprioritisedArtifact, Precedent } from "../lib/types";
 
 /** The corpus records provenance in free text; "synthetic" marks a teaching exemplar. */
@@ -172,7 +173,7 @@ export function RerankedArtifacts({ artifacts }: { artifacts: ArtifactPlan[] }) 
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-ink">{a.label}</span>
             <span className="text-muted">
-              {a.doctrine_priority || "—"} →{" "}
+              {a.doctrine_priority || "—"} <ArrowRight className="inline h-3 w-3" strokeWidth={1.75} aria-hidden />{" "}
               <span className={a.adjustment === "promoted" ? "text-live" : "text-warn"}>
                 {a.priority}
               </span>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ArrowRight } from "lucide-react";
 import { api } from "../lib/api";
 import { bytes, EmptyState, SectionHeader, StatCard } from "../components/common";
 import { fmtTs } from "../lib/hooks";
@@ -250,7 +251,9 @@ function ReportHistory({ caseId }: { caseId: string }) {
               target="_blank"
               rel="noreferrer"
             >
-              Open →
+              <span className="inline-flex items-center gap-1">
+                Open <ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+              </span>
             </a>
           </div>
         ))}

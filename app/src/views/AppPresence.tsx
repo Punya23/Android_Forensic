@@ -10,6 +10,7 @@
  * are shared across users on multi-user devices, and inherit the device's clock.
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Package, FolderOpen } from "lucide-react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { SortTh, StatCard, useSort } from "../components/common";
@@ -140,7 +141,10 @@ function Caveats({ items }: { items: string[] }) {
     <ul className="mt-1 space-y-0.5">
       {items.map((c, i) => (
         <li key={i} className="text-[11px] text-warn leading-relaxed">
-          ⚠ {c}
+          <span className="inline-flex items-center gap-1">
+            <AlertTriangle className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+            {c}
+          </span>
         </li>
       ))}
     </ul>
@@ -277,7 +281,7 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
       {/* Header */}
       <div className="mb-5">
         <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
-          <span>📦</span> App Presence
+          <Package className="h-4 w-4" strokeWidth={1.75} aria-hidden /> App Presence
           <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
             Tier 2 — Root
           </span>
@@ -636,7 +640,7 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
           cases where no presence reconstruction ends up derived from it. */}
       <div className="mt-8 mb-5">
         <h2 className="text-base font-semibold mb-1 flex items-center gap-2">
-          <span>🗂</span> Package database (packages.xml)
+          <FolderOpen className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Package database (packages.xml)
           <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
             Tier 2 — Root
           </span>

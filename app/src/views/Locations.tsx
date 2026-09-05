@@ -57,6 +57,7 @@ import L from "leaflet";
 // react-leaflet v3's context API and crashes under v4 with "No context provided:
 // useLeafletContext()"; this fork is built on @react-leaflet/core for v4.
 import MarkerClusterGroup from "@changey/react-leaflet-markercluster";
+import { ArrowRight, ArrowUpRight, AlertTriangle, Image } from "lucide-react";
 import type { LocationPoint, Severity } from "../lib/types";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { api } from "../lib/api";
@@ -295,12 +296,14 @@ function PlaceRow({ label, place }: { label: string; place: PlaceCluster | null 
           rel="noreferrer"
           className="text-accent"
         >
-          Map ↗
+          Map <ArrowUpRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
         </a>
       </td>
       <td className="td text-xs">{place.count}</td>
       <td className="td text-xs text-muted">
-        {fmtTs(place.first_visit)} → {fmtTs(place.last_visit)}
+        {fmtTs(place.first_visit)}{" "}
+        <ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />{" "}
+        {fmtTs(place.last_visit)}
       </td>
       <td className="td text-xs">{fmtPct(place.confidence)}</td>
     </tr>
@@ -542,7 +545,11 @@ export function LocationsView({ caseId }: { caseId: string }) {
 
       {photoNullIslandCount > 0 && (
         <p className="text-xs text-warn bg-warn/5 border border-warn/30 rounded px-3 py-2 shrink-0 leading-relaxed">
-          ⚠ {photoNullIslandCount} photo{photoNullIslandCount === 1 ? "" : "s"} carried EXIF GPS of exactly
+          <span className="inline-flex items-center gap-1">
+            <AlertTriangle className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+            {photoNullIslandCount}
+          </span>{" "}
+          photo{photoNullIslandCount === 1 ? "" : "s"} carried EXIF GPS of exactly
           0.000000, 0.000000 — almost certainly a camera/app writing a placeholder when GPS tagging failed,
           not a real position. Excluded from the map and count above; still listed in the raw table below,
           flagged, for completeness.
@@ -726,7 +733,8 @@ export function LocationsView({ caseId }: { caseId: string }) {
                               rel="noreferrer"
                               style={{ color: "#d8823c", fontSize: 11 }}
                             >
-                              Open in Google Maps ↗
+                              Open in Google Maps{" "}
+                              <ArrowUpRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
                             </a>
                           </div>
                         </div>
@@ -787,7 +795,8 @@ export function LocationsView({ caseId }: { caseId: string }) {
                                 rel="noreferrer"
                                 style={{ color: "#d8823c", fontSize: 11 }}
                               >
-                                Open in Google Maps ↗
+                                Open in Google Maps{" "}
+                                <ArrowUpRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
                               </a>
                             </div>
                           </div>
@@ -879,11 +888,16 @@ export function LocationsView({ caseId }: { caseId: string }) {
                           className="w-full h-full object-cover"
                           onError={(e) => {
                             const el = e.currentTarget.parentElement;
-                            if (el) el.innerHTML = "<span style='font-size:18px'>🖼</span>";
+                            // Plain DOM fallback (onError can't render a React component here) —
+                            // markup mirrors lucide-react's Image icon so it matches the JSX
+                            // fallback below.
+                            if (el)
+                              el.innerHTML =
+                                "<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect width='18' height='18' x='3' y='3' rx='2' ry='2'/><circle cx='9' cy='9' r='2'/><path d='m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21'/></svg>";
                           }}
                         />
                       ) : (
-                        <span className="text-lg">🖼</span>
+                        <Image className="h-4 w-4" strokeWidth={1.75} aria-hidden />
                       )}
                     </div>
 
@@ -955,7 +969,10 @@ export function LocationsView({ caseId }: { caseId: string }) {
                     <td className="td font-mono text-xs">{fmtTs(p.timestamp)}</td>
                     {nullIsland ? (
                       <td className="td text-xs text-warn" colSpan={2} title="GPS tag present but zero-filled — no real fix">
-                        ⚠ no GPS fix (0.000000, 0.000000)
+                        <span className="inline-flex items-center gap-1">
+                          <AlertTriangle className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                          no GPS fix (0.000000, 0.000000)
+                        </span>
                       </td>
                     ) : (
                       <>
@@ -1019,7 +1036,11 @@ export function LocationsView({ caseId }: { caseId: string }) {
 
             {mediaNullIslandCount > 0 && (
               <p className="text-xs text-warn bg-warn/5 border border-warn/30 rounded px-3 py-2 mb-4 leading-relaxed">
-                ⚠ {mediaNullIslandCount} point{mediaNullIslandCount === 1 ? "" : "s"} carried EXIF GPS of
+                <span className="inline-flex items-center gap-1">
+                  <AlertTriangle className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                  {mediaNullIslandCount}
+                </span>{" "}
+                point{mediaNullIslandCount === 1 ? "" : "s"} carried EXIF GPS of
                 exactly 0.000000, 0.000000 — almost certainly a camera/app writing a placeholder when GPS
                 tagging failed, not a real position. Excluded from the map overlay and from "with real
                 coordinates" above; still listed in the raw table below for completeness.
@@ -1061,7 +1082,11 @@ export function LocationsView({ caseId }: { caseId: string }) {
                       <th className="th w-24">Type</th>
                       <th className="th">Coordinates</th>
                       <th className="th w-16">Visits</th>
-                      <th className="th w-56">First → last visit</th>
+                      <th className="th w-56">
+                        <span className="inline-flex items-center gap-1">
+                          First <ArrowRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden /> last visit
+                        </span>
+                      </th>
                       <th className="th w-24">Confidence</th>
                     </tr>
                   </thead>
@@ -1117,7 +1142,7 @@ export function LocationsView({ caseId }: { caseId: string }) {
                           rel="noreferrer"
                           className="text-xs text-accent"
                         >
-                          Map ↗
+                          Map <ArrowUpRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
                         </a>
                       )}
                       <div className="w-full text-xs text-muted leading-relaxed">
@@ -1171,7 +1196,12 @@ export function LocationsView({ caseId }: { caseId: string }) {
                           <td className="td font-mono text-xs">{fmtTs(m.timestamp)}</td>
                           <td className="td font-mono text-xs">
                             {lat != null ? lat.toFixed(6) : "—"}
-                            {nullIsland && <span className="text-warn ml-1">⚠ likely no GPS</span>}
+                            {nullIsland && (
+                              <span className="inline-flex items-center gap-1 text-warn ml-1">
+                                <AlertTriangle className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                                likely no GPS
+                              </span>
+                            )}
                           </td>
                           <td className="td font-mono text-xs">{lon != null ? lon.toFixed(6) : "—"}</td>
                           <td className="td text-xs text-muted">

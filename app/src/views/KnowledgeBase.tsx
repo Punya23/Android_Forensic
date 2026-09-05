@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Check } from "lucide-react";
 import { api } from "../lib/api";
 import type {
   ArtifactPrior,
@@ -314,7 +315,12 @@ function PriorRow({ p }: { p: ArtifactPrior }) {
       <td className="py-1 text-right font-mono text-muted">
         {p.observations || "—"}
         {p.observations > 0 && (
-          <span className="text-[10px] ml-1">({p.decisive}✓)</span>
+          <span className="text-[10px] ml-1">
+            <span className="inline-flex items-center gap-1">
+              ({p.decisive}
+              <Check className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />)
+            </span>
+          </span>
         )}
       </td>
       <td className="py-1 pl-3">

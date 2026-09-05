@@ -3,12 +3,12 @@
  *
  * Data sources
  * ------------
- * GET /api/case/<id>/whatsapp_backup/messages  → WhatsAppBackupMessage[]
- * GET /api/case/<id>/whatsapp_backup/summary   → WhatsAppBackupSummary
- * GET /api/case/<id>/whatsapp_backup/media     → WhatsAppBackupMedia[]
+ * GET /api/case/<id>/whatsapp_backup/messages  -> WhatsAppBackupMessage[]
+ * GET /api/case/<id>/whatsapp_backup/summary   -> WhatsAppBackupSummary
+ * GET /api/case/<id>/whatsapp_backup/media     -> WhatsAppBackupMedia[]
  *
  * The media route returns files that were actually pulled off the device
- * while recovering backup messages (msgstore.db.crypt* → media_path
+ * while recovering backup messages (msgstore.db.crypt* -> media_path
  * references) — distinct from the on-device `whatsapp_media` folder catalogue
  * shown elsewhere. Each item carries a real case manifest artifact_id (so it
  * is workstation-viewable via the same media-serving route as the main Media
@@ -35,6 +35,19 @@ import type {
   WhatsAppBackupMessage,
   WhatsAppBackupSummary,
 } from "../lib/types";
+import {
+  Image,
+  Clapperboard,
+  Music,
+  FileText,
+  Drama,
+  Film,
+  User,
+  MapPin,
+  Paperclip,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { ConfidenceBadge } from "../components/Badges";
 import { SectionHeader, EmptyState, bytes } from "../components/common";
 import { fmtTs } from "../lib/hooks";
@@ -58,19 +71,19 @@ const CONF_RING: Record<string, string> = {
   deletion: "ring-deletion/50",
 };
 
-const MEDIA_ICON: Record<string, string> = {
-  image: "🖼",
-  video: "🎬",
-  audio: "🎵",
-  document: "📄",
-  sticker: "🎭",
-  gif: "🎞",
-  vcard: "👤",
-  location: "📍",
+const MEDIA_ICON: Record<string, LucideIcon> = {
+  image: Image,
+  video: Clapperboard,
+  audio: Music,
+  document: FileText,
+  sticker: Drama,
+  gif: Film,
+  vcard: User,
+  location: MapPin,
 };
 
-function mediaIcon(mediaType: string): string {
-  return MEDIA_ICON[mediaType] ?? "📎";
+function mediaIcon(mediaType: string): LucideIcon {
+  return MEDIA_ICON[mediaType] ?? Paperclip;
 }
 
 // WhatsAppBackupMedia carries no media_type — only a file name — so a
@@ -166,6 +179,7 @@ function MessageBubble({ msg }: { msg: WhatsAppBackupMessage }) {
   const bg = CONF_BG[conf] ?? CONF_BG.live;
   const ring = CONF_RING[conf] ?? "";
   const hasMedia = Boolean(msg.media_type || msg.media_path);
+  const MediaIcon = mediaIcon(msg.media_type);
 
   return (
     <div className={`flex ${isMe ? "justify-end" : "justify-start"} mb-3`}>
@@ -188,7 +202,7 @@ function MessageBubble({ msg }: { msg: WhatsAppBackupMessage }) {
         {/* Media indicator */}
         {hasMedia && (
           <div className="text-xs text-muted mb-1 flex items-center gap-1">
-            <span>{mediaIcon(msg.media_type)}</span>
+            <MediaIcon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden />
             <span className="truncate opacity-70">{msg.media_path || msg.media_type}</span>
           </div>
         )}
@@ -236,7 +250,7 @@ function MediaCard({
           />
         ) : (
           <div className="flex flex-col items-center justify-center gap-1 px-2 text-center">
-            <span className="text-2xl opacity-40">📎</span>
+            <Paperclip className="h-4 w-4 opacity-40" strokeWidth={1.75} aria-hidden />
             <span className="text-[9px] italic text-muted opacity-70">not previewable on this workstation</span>
           </div>
         )}
@@ -468,7 +482,7 @@ export function WhatsAppBackupView({ caseId }: { caseId: string }) {
                 />
                 {search && (
                   <button onClick={() => setSearch("")} className="text-muted hover:text-fg text-xs">
-                    ✕
+                    <X className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
                   </button>
                 )}
                 <span className="text-xs text-muted shrink-0">

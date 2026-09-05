@@ -9,13 +9,14 @@
  *   Tier 0/1 : NOT available — direct.db is in app-private storage.
  *   Tier 2   : Enable "Tier-2 Instagram" on a rooted device (su pull of
  *              /data/data/com.instagram.android/databases/direct.db).
- *   Import   : "Download Your Data" ZIP from Instagram Settings → Privacy.
+ *   Import   : "Download Your Data" ZIP from Instagram Settings > Privacy.
  *
  * The component delegates the full conversation + message UI to the shared
  * ChatView component, and adds an Instagram-specific header with acquisition
  * tier guidance and a stats bar when data is present.
  */
 import { useEffect, useState } from "react";
+import { Camera } from "lucide-react";
 import { ChatView } from "../components/ChatView";
 import { api } from "../lib/api";
 import type { ChatConversationsMap } from "../lib/types";
@@ -31,7 +32,7 @@ function InstagramHeader({ convCount, msgCount }: { convCount: number; msgCount:
             "radial-gradient(circle at 30% 107%, #fdf497 0%, #fdf497 5%, #fd5949 45%, #d6249f 60%, #285AEB 90%)",
         }}
       >
-        📸
+        <Camera className="h-4 w-4" strokeWidth={1.75} aria-hidden />
       </div>
       <div>
         <p className="text-sm font-semibold text-ink leading-none">Instagram Direct</p>
@@ -77,7 +78,7 @@ export function InstagramView({ caseId }: { caseId: string }) {
           emptyDetail={
             "Instagram Direct (direct.db) lives in app-private storage and requires " +
             "Tier-2 (root) access — enable 'Tier-2 Instagram' on the Acquisition screen, " +
-            "or load a 'Download Your Data' export from Instagram → Settings → Privacy."
+            "or load a 'Download Your Data' export from Instagram > Settings > Privacy."
           }
         />
       </div>

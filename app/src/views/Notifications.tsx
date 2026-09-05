@@ -8,6 +8,7 @@
  * result here proves nothing about what was actually shown on the device.
  */
 import { useMemo, useState } from "react";
+import { Bell } from "lucide-react";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { StatCard, SortTh, useSort } from "../components/common";
 
@@ -95,7 +96,7 @@ export function NotificationsView({ caseId }: { caseId: string }) {
   const Header = (
     <div className="mb-5">
       <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
-        <span>🔔</span> Notifications
+        <Bell className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Notifications
         <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
           Tier 0 — Read-only
         </span>

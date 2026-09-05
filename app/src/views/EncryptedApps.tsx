@@ -17,6 +17,7 @@
  */
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { Lock } from "lucide-react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { bytes } from "../components/common";
@@ -395,7 +396,7 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
   const header = (
     <div className="mb-5">
       <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
-        <span>🔒</span> Encrypted Apps
+        <Lock className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Encrypted Apps
         <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
           Tier 2 — Root
         </span>

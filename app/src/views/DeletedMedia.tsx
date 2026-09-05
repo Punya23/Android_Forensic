@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { api } from "../lib/api";
 import type { MediaStoreTrash, MediaStoreTrashItem } from "../lib/types";
 import { SectionHeader, EmptyState } from "../components/common";
@@ -64,7 +65,10 @@ export function DeletedMediaView({ caseId }: { caseId: string }) {
 
       {s && s.expiring_within_3_days > 0 && (
         <div className="rounded-md border border-warn/50 bg-warn/5 p-3 mb-4 text-xs text-warn">
-          ⚠ {s.expiring_within_3_days} recovered item(s) will be auto-purged by Android within 3 days.
+          <span className="inline-flex items-center gap-1">
+            <AlertTriangle className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+            {s.expiring_within_3_days} recovered item(s) will be auto-purged by Android within 3 days.
+          </span>{" "}
           Preserve the exported evidence now — once purged, the content is unrecoverable.
         </div>
       )}
