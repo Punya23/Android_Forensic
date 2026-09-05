@@ -141,8 +141,6 @@ from .flagging import (
     scan_carved,
     scan_known_hashes,
     scan_messages,
-    evaluate_flags,
-    get_artifact_display_label,
 )
 from .models import LocationPoint, MediaItem, now_iso
 from .cancellation import CancellationToken, AcquisitionCancelled
