@@ -23,12 +23,20 @@ export const BASE = import.meta.env.DEV ? "" : "http://127.0.0.1:5057";
 // localStorage so a page reload doesn't force a re-login; the engine drops it
 // on restart, so a stale token still gets rejected and onUnauthorized fires.
 const TOKEN_KEY = "snagr_token";
+const CSRF_KEY = "snagr_csrf_token";
 let authToken: string | null = localStorage.getItem(TOKEN_KEY);
+let csrfToken: string | null = localStorage.getItem(CSRF_KEY);
 
-export function setAuthToken(token: string | null) {
+export function setAuthToken(token: string | null, csrf?: string | null) {
   authToken = token;
   if (token) localStorage.setItem(TOKEN_KEY, token);
   else localStorage.removeItem(TOKEN_KEY);
+  
+  if (csrf !== undefined) {
+    csrfToken = csrf;
+    if (csrf) localStorage.setItem(CSRF_KEY, csrf);
+    else localStorage.removeItem(CSRF_KEY);
+  }
 }
 export function hasAuthToken(): boolean {
   return !!authToken;
@@ -41,8 +49,16 @@ export function setOnUnauthorized(fn: () => void) {
   onUnauthorized = fn;
 }
 
-function authHeaders(extra?: Record<string, string>): Record<string, string> {
-  return authToken ? { ...extra, Authorization: `Bearer ${authToken}` } : { ...extra };
+function authHeaders(opts: RequestInit = {}): Record<string, string> {
+  const extra = (opts.headers as Record<string, string>) || {};
+  const headers = { ...extra };
+  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+  
+  const method = (opts.method || "GET").toUpperCase();
+  if (csrfToken && ["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    headers["X-CSRF-Token"] = csrfToken;
+  }
+  return headers;
 }
 
 /** Shared fetch wrapper: attaches the bearer token, unwraps JSON, and routes 401s
@@ -50,7 +66,7 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...opts,
-    headers: { ...authHeaders(opts.headers as Record<string, string> | undefined) },
+    headers: authHeaders(opts),
   });
   if (res.status === 401) {
     setAuthToken(null);
@@ -80,8 +96,9 @@ export const api = {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as { error?: string }).error || "invalid credentials");
     const token = (data as { token: string }).token;
-    setAuthToken(token);
-    return data as { token: string; expires_in: number; username: string };
+    const csrf = (data as { csrf_token: string }).csrf_token;
+    setAuthToken(token, csrf);
+    return data as { token: string; csrf_token: string; expires_in: number; username: string };
   },
   logout: async () => {
     try {

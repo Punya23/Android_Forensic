@@ -72,6 +72,9 @@ export function AcquisitionView({
   const [planError, setPlanError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [running, setRunning] = useState(false);
+  const [completed, setCompleted] = useState(false);
+  const [reportReady, setReportReady] = useState(false);
+  const [acquiredCaseId, setAcquiredCaseId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [tier1Contacts, setTier1Contacts] = useState(false);
   const [tier1Calllog, setTier1Calllog] = useState(false);
@@ -127,19 +130,30 @@ export function AcquisitionView({
     );
     s.on("complete", (c: { case_id: string }) => {
       stopTimer();
-      setRunning(false);
-      onCaseReady(c.case_id);
+      setAcquiredCaseId(c.case_id);
+      setCompleted(true);
+      // Wait for user to click "View Case" before calling onCaseReady
+    });
+    s.on("report_ready", () => {
+      setReportReady(true);
     });
     s.on("failed", (f: { error: string }) => {
       stopTimer();
       setRunning(false);
       setError(f.error);
     });
+    s.on("cancelled", (c: { case_id: string }) => {
+      stopTimer();
+      setRunning(false);
+      setError("Acquisition was cancelled by the user.");
+    });
     return () => {
       s.off("progress");
       s.off("acq_event");
       s.off("complete");
+      s.off("report_ready");
       s.off("failed");
+      s.off("cancelled");
     };
   }, [onCaseReady]);
 
@@ -244,6 +258,8 @@ export function AcquisitionView({
     if (!target || !examiner) return;
     setError(null);
     setRunning(true);
+    setCompleted(false);
+    setReportReady(false);
     setProgress({ stage: "init", pct: 0, detail: "Starting…", case_id: "" });
     setElapsed(0);
     setAcqEvents([]);  // clear feed from any prior run
@@ -283,7 +299,19 @@ export function AcquisitionView({
   }
 
   if (running) {
-    return <ProgressScreen progress={progress} elapsed={elapsed} acqEvents={acqEvents} />;
+    return (
+      <ProgressScreen 
+        progress={progress} 
+        elapsed={elapsed} 
+        acqEvents={acqEvents} 
+        completed={completed}
+        reportReady={reportReady}
+        onViewCase={() => {
+          setRunning(false);
+          onCaseReady(acquiredCaseId || caseId);
+        }}
+      />
+    );
   }
 
 
@@ -1158,10 +1186,16 @@ function ProgressScreen({
   progress,
   elapsed,
   acqEvents,
+  completed,
+  reportReady,
+  onViewCase,
 }: {
   progress: Progress | null;
   elapsed: number;
   acqEvents: AcqEvent[];
+  completed?: boolean;
+  reportReady?: boolean;
+  onViewCase?: () => void;
 }) {
   const pct = Math.round((progress?.pct ?? 0) * 100);
   const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
@@ -1171,7 +1205,7 @@ function ProgressScreen({
     <div className="max-w-2xl mx-auto p-8 flex flex-col items-center justify-center min-h-[70vh]">
       <div className="w-full card p-8 mb-4">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-semibold">Acquisition in progress</h2>
+          <h2 className="text-lg font-semibold">{completed ? "Acquisition complete" : "Acquisition in progress"}</h2>
           <span className="font-mono text-2xl tabular-nums text-accent">
             {mm}:{ss}
           </span>
@@ -1199,6 +1233,27 @@ function ProgressScreen({
           Target: readable preview within 5–10 minutes. Every action is being written to the
           append-only audit log as it happens.
         </p>
+
+        {completed && (
+          <div className="mt-6 flex flex-col sm:flex-row items-center gap-4 justify-between border-t border-line pt-4">
+             <div className="flex items-center gap-2">
+               {reportReady ? (
+                 <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-accent/20 text-accent text-sm font-medium">
+                   📄 Report ready
+                 </span>
+               ) : (
+                 <span className="inline-flex items-center gap-1.5 px-2 py-1 text-muted text-sm animate-pulse">
+                   Generating HTML report...
+                 </span>
+               )}
+             </div>
+             {onViewCase && (
+               <button onClick={onViewCase} className="btn-primary">
+                 View Case
+               </button>
+             )}
+          </div>
+        )}
       </div>
 
       {/* Live activity feed */}

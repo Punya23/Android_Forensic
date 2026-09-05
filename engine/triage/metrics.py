@@ -39,6 +39,9 @@ _stage_times: Dict[str, List[float]] = {}  # stage → list of elapsed seconds
 _bytes_total: int = 0  # cumulative bytes processed
 _run_start: Optional[float] = None  # monotonic timestamp of run start
 
+_cache_stats = {"hits": 0, "misses": 0}
+_status_counts = {"completed": 0, "skipped": 0, "failed": 0}
+
 
 # ---------------------------------------------------------------------------
 # Public API — timers
@@ -88,6 +91,25 @@ def reset() -> None:
         _stage_times.clear()
         _bytes_total = 0
         _run_start = time.monotonic()
+        _cache_stats["hits"] = 0
+        _cache_stats["misses"] = 0
+        _status_counts["completed"] = 0
+        _status_counts["skipped"] = 0
+        _status_counts["failed"] = 0
+
+
+def record_cache(hit: bool) -> None:
+    with _lock:
+        if hit:
+            _cache_stats["hits"] += 1
+        else:
+            _cache_stats["misses"] += 1
+
+
+def record_status(status: str) -> None:
+    with _lock:
+        if status in _status_counts:
+            _status_counts[status] += 1
 
 
 def track_stage_time(stage: str, elapsed: float) -> None:
@@ -163,7 +185,26 @@ def get_performance_report() -> Dict:
         "bytes_processed": bytes_snap,
         "mb_per_min": round(mb_per_min, 1),
         "eta_s": None,  # populated by display_speed_metrics when we know total files
+        "cache_stats": dict(_cache_stats),
+        "status_counts": dict(_status_counts),
+        "slowest_stages": slowest_stages(5),
     }
+
+
+def slowest_stages(top_n: int = 5) -> List[Dict]:
+    """Return the N slowest stages based on total_s."""
+    with _lock:
+        stages_snapshot = {k: list(v) for k, v in _stage_times.items()}
+
+    agg = []
+    for name, samples in stages_snapshot.items():
+        if name == "total":
+            continue
+        total_s = sum(samples)
+        agg.append({"stage": name, "total_s": total_s, "count": len(samples)})
+
+    agg.sort(key=lambda x: x["total_s"], reverse=True)
+    return agg[:top_n]
 
 
 def display_speed_metrics(

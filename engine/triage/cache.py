@@ -44,6 +44,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional, Dict
@@ -62,6 +63,40 @@ DEFAULT_MAX_AGE: int = 3600
 
 #: 24-hour cache expiry in seconds.
 CACHE_24H: int = 86400
+
+# ---------------------------------------------------------------------------
+# Run-level cache statistics (reset by reset_run_stats; thread-safe)
+# ---------------------------------------------------------------------------
+
+_stats_lock = threading.Lock()
+_run_hits: int = 0
+_run_misses: int = 0
+
+
+def reset_run_stats() -> None:
+    """Reset per-run cache hit/miss counters.  Call at the start of each run."""
+    global _run_hits, _run_misses
+    with _stats_lock:
+        _run_hits = 0
+        _run_misses = 0
+
+
+def get_run_stats() -> Dict[str, int]:
+    """Return ``{hits, misses}`` counters for the current run."""
+    with _stats_lock:
+        return {"hits": _run_hits, "misses": _run_misses}
+
+
+def _inc_hits() -> None:
+    global _run_hits
+    with _stats_lock:
+        _run_hits += 1
+
+
+def _inc_misses() -> None:
+    global _run_misses
+    with _stats_lock:
+        _run_misses += 1
 
 
 # ---------------------------------------------------------------------------
@@ -279,3 +314,147 @@ def get_cache_stats(max_age: int = CACHE_24H) -> Dict[str, int]:
             stats["expired"] += 1
 
     return stats
+
+
+# ---------------------------------------------------------------------------
+# SHA-256 content-addressed cache
+# ---------------------------------------------------------------------------
+# Unlike the time-based cache above, these entries are keyed by the SHA-256
+# hash of the artifact content combined with a hash of the acquisition
+# configuration that was in effect when it was parsed.  A SHA-256 cache hit
+# means the bytes are identical to a previously seen artifact AND the config
+# (keyword lists, tier flags, etc.) has not changed — so the parsed result
+# can be reused without re-running expensive parsers.
+#
+# Entries are immutable by content: the same (sha256, acq_meta) always maps
+# to the same parse result.  They are invalidated only when
+# ``invalidate_for_source`` wipes the cache for a given corpus root.
+# ---------------------------------------------------------------------------
+
+
+def _acq_meta_hash(acq_meta: Dict[str, Any]) -> str:
+    """Return a short hash of the acquisition-config subset that affects parsing."""
+    # Stable, sorted JSON → SHA-256 truncated to 16 hex chars is unique enough
+    # for cache keying (collision probability negligible for our use-case).
+    meta_bytes = json.dumps(acq_meta, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(meta_bytes).hexdigest()[:16]
+
+
+def _artifact_cache_path(sha256_hex: str, acq_meta: Dict[str, Any]) -> Path:
+    meta_h = _acq_meta_hash(acq_meta)
+    return _CACHE_ROOT / "sha256" / f"{sha256_hex[:2]}" / f"{sha256_hex}_{meta_h}.json"
+
+
+def get_artifact_cached(
+    sha256_hex: str,
+    acq_meta: Dict[str, Any],
+) -> Optional[Any]:
+    """Return cached parse result for an artifact with the given SHA-256, or None.
+
+    Parameters
+    ----------
+    sha256_hex:
+        Hex-encoded SHA-256 of the pulled artifact bytes.
+    acq_meta:
+        Dict of scalar acquisition-config fields that affect how the artifact
+        is parsed (e.g. keyword lists, tier flags).  Used to bust the cache
+        when the run configuration changes.
+
+    Returns
+    -------
+    Optional[Any]
+        Previously cached parse result, or ``None`` on miss.
+    """
+    path = _artifact_cache_path(sha256_hex, acq_meta)
+    if not path.is_file():
+        _inc_misses()
+        return None
+    try:
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+        result = envelope.get("data")
+        _inc_hits()
+        logger.debug("SHA-256 cache hit: %s", sha256_hex[:16])
+        return result
+    except Exception as exc:
+        logger.warning("SHA-256 cache read error for %s: %s", sha256_hex[:16], exc)
+        _inc_misses()
+        return None
+
+
+def set_artifact_cached(
+    sha256_hex: str,
+    acq_meta: Dict[str, Any],
+    data: Any,
+    corpus_path: str = "",
+) -> None:
+    """Persist *data* in the SHA-256 content-addressed cache.
+
+    Parameters
+    ----------
+    sha256_hex:
+        Hex-encoded SHA-256 of the pulled artifact bytes.
+    acq_meta:
+        Acquisition config subset (same dict used for the lookup).
+    data:
+        JSON-serialisable parse result to cache.
+    corpus_path:
+        Optional: the corpus/device path this artifact came from.  Stored so
+        ``invalidate_for_source`` can find and remove it.
+    """
+    path = _artifact_cache_path(sha256_hex, acq_meta)
+    envelope = {
+        "sha256": sha256_hex,
+        "acq_meta_hash": _acq_meta_hash(acq_meta),
+        "corpus_path": corpus_path,
+        "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "data": data,
+    }
+    try:
+        text = json.dumps(envelope, default=str, ensure_ascii=False)
+        _atomic_write(path, text)
+        logger.debug("SHA-256 cache set: %s", sha256_hex[:16])
+    except Exception as exc:
+        logger.warning("SHA-256 cache write error for %s: %s", sha256_hex[:16], exc)
+
+
+def invalidate_for_source(corpus_path: str) -> int:
+    """Remove all SHA-256 cache entries whose ``corpus_path`` matches.
+
+    Call this when a mock corpus folder has changed (e.g. a file was modified
+    or the corpus was regenerated) so stale parse results are not reused.
+
+    Parameters
+    ----------
+    corpus_path:
+        The corpus/source path to invalidate (compared as a prefix).
+
+    Returns
+    -------
+    int
+        Number of cache entries removed.
+    """
+    sha_root = _CACHE_ROOT / "sha256"
+    if not sha_root.is_dir():
+        return 0
+    removed = 0
+    for shard in sha_root.iterdir():
+        if not shard.is_dir():
+            continue
+        for entry in shard.glob("*.json"):
+            try:
+                envelope = json.loads(entry.read_text(encoding="utf-8"))
+                stored = envelope.get("corpus_path", "")
+                if stored and (
+                    stored == corpus_path or stored.startswith(corpus_path)
+                ):
+                    entry.unlink()
+                    removed += 1
+            except Exception:
+                # Corrupt entry — remove it
+                try:
+                    entry.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+    logger.debug("SHA-256 cache: invalidated %d entries for %s", removed, corpus_path)
+    return removed

@@ -96,6 +96,9 @@ from .metrics import (
     track_stage_time,
     add_bytes,
     display_speed_metrics,
+    record_cache,
+    record_status,
+    get_performance_report,
 )
 from .checkpoint import (
     checkpoint_exists,
@@ -138,8 +141,12 @@ from .flagging import (
     scan_carved,
     scan_known_hashes,
     scan_messages,
+    evaluate_flags,
+    get_artifact_display_label,
 )
 from .models import LocationPoint, MediaItem, now_iso
+from .cancellation import CancellationToken, AcquisitionCancelled
+from .cache import get_artifact_cached, set_artifact_cached, invalidate_for_source
 from .parsers import (
     extract_gps,
     parse_app_db,
@@ -391,6 +398,7 @@ def run_acquisition(
     cfg: PipelineConfig,
     progress: ProgressFn = _noop,
     socketio: Any = None,
+    cancel_token: Optional[CancellationToken] = None,
 ) -> dict[str, Any]:
     """Execute a full triage acquisition and return a summary dict.
 
@@ -412,6 +420,8 @@ def run_acquisition(
     _TIER1_LEDGER = TeardownLedger()  # fresh teardown ledger for this run (P2-3)
     _run_t0 = start_timer()  # wall-clock start for the whole run
     _autosave_thread = None
+
+    if cancel_token: cancel_token.raise_if_cancelled()
 
     progress("init", 0.0, "Opening case folder")
     meta = CaseMeta(
@@ -1037,6 +1047,7 @@ def run_acquisition(
         ingest_lock=_ingest_lock,
         use_priority_filter=cfg.use_priority_filter,
         max_workers=min(cfg.parallel_workers, max(len(ordered_files), 1)),
+        cancel_token=cancel_token,
     )
 
     # Fold parallel results into accumulators ──────────────────────────────
@@ -2947,8 +2958,6 @@ def run_acquisition(
     _total_elapsed = stop_timer(_run_t0)
     track_stage_time("total", _total_elapsed)
 
-    from .metrics import get_performance_report
-
     _perf_report = get_performance_report()
     _perf_report["speed_summary"] = display_speed_metrics(
         files_done=len(case.manifest), files_total=len(case.manifest)
@@ -3047,6 +3056,23 @@ def run_acquisition(
             "report": str(report_path),
         }
     )
+
+    # Write acquisition_timing derived JSON for the dashboard
+    _write_case_derived(case, "acquisition_timing", _perf_report)
+
+    # Emit timing_update so the frontend can show stage breakdown immediately
+    if socketio:
+        try:
+            socketio.emit(
+                "timing_update",
+                {
+                    "case_id": cfg.case_id,
+                    "timing": _perf_report,
+                },
+            )
+        except Exception:
+            pass
+
     return summary
 
 
@@ -3199,6 +3225,22 @@ def _process_pulled_file(
     app = rec.app
     name = stored.name
 
+    acq_meta = getattr(case.meta, "acquisition_config", {})
+
+    def _restore_messages(cached_list: list) -> list:
+        from .config import Confidence as _C
+        from .models import Message as _M
+        out = []
+        for item in cached_list:
+            d = dict(item)
+            if "confidence" in d and isinstance(d["confidence"], str):
+                d["confidence"] = getattr(_C, d["confidence"].split(".")[-1], _C.LIVE)
+            out.append(_M(**d))
+        return out
+
+    def _to_dicts(msgs: list) -> list:
+        return [m.to_dict() if hasattr(m, "to_dict") else m.__dict__ for m in msgs]
+
     # Media → catalogue + GPS/date. Photos carry GPS in EXIF; videos carry it in the MP4/MOV
     # `udta` location box instead, which the EXIF reader cannot see — gating the whole block on
     # `category == "image"` meant every geotagged clip on the device was silently dropped.
@@ -3298,7 +3340,15 @@ def _process_pulled_file(
             app == "whatsapp" and name.lower().startswith("msgstore")
         ):
             try:
-                wa_msgs = parse_whatsapp_db(stored)
+                _cache_meta = acq_meta | {"parser": "whatsapp_db"} if acq_meta else {"parser": "whatsapp_db"}
+                cached = get_artifact_cached(_rec_sha, _cache_meta) if _rec_sha else None
+                if cached is not None:
+                    wa_msgs = _restore_messages(cached)
+                else:
+                    wa_msgs = parse_whatsapp_db(stored)
+                    if _rec_sha and wa_msgs:
+                        set_artifact_cached(_rec_sha, _cache_meta, _to_dicts(wa_msgs), corpus_path=dev_path)
+
                 if wa_msgs:
                     result["app_messages"].extend(wa_msgs)
                     case.log(
@@ -3316,7 +3366,15 @@ def _process_pulled_file(
                 )
             # E2E recovery after live parse
             try:
-                e2e_msgs = recover_e2e_messages(stored)
+                _cache_meta_e2e = acq_meta | {"parser": "whatsapp_e2e"} if acq_meta else {"parser": "whatsapp_e2e"}
+                cached_e2e = get_artifact_cached(_rec_sha, _cache_meta_e2e) if _rec_sha else None
+                if cached_e2e is not None:
+                    e2e_msgs = _restore_messages(cached_e2e)
+                else:
+                    e2e_msgs = recover_e2e_messages(stored)
+                    if _rec_sha and e2e_msgs:
+                        set_artifact_cached(_rec_sha, _cache_meta_e2e, _to_dicts(e2e_msgs), corpus_path=dev_path)
+
                 if e2e_msgs:
                     result["app_messages"].extend(e2e_msgs)
                     case.log(
@@ -3336,10 +3394,19 @@ def _process_pulled_file(
         # ---- Other recognised messaging-app stores -----------------------
         elif app in ("telegram", "signal") or "cache4" in name.lower():
             try:
-                if app == "telegram" or "cache4" in name.lower():
-                    chat = parse_telegram_db(stored)
+                _parser_name = "telegram_db" if (app == "telegram" or "cache4" in name.lower()) else "app_db"
+                _cache_meta_app = acq_meta | {"parser": _parser_name} if acq_meta else {"parser": _parser_name}
+                cached_app = get_artifact_cached(_rec_sha, _cache_meta_app) if _rec_sha else None
+                if cached_app is not None:
+                    chat = _restore_messages(cached_app)
                 else:
-                    chat = parse_app_db(stored)
+                    if _parser_name == "telegram_db":
+                        chat = parse_telegram_db(stored)
+                    else:
+                        chat = parse_app_db(stored)
+                    if _rec_sha and chat:
+                        set_artifact_cached(_rec_sha, _cache_meta_app, _to_dicts(chat), corpus_path=dev_path)
+
                 if chat:
                     result["app_messages"].extend(chat)
                     case.log(
@@ -3459,6 +3526,7 @@ def _pull_and_process_file(
     ingest_lock: threading.Lock,
     pull_start: float,
     use_priority_filter: bool,
+    cancel_token: Optional[CancellationToken] = None,
 ) -> Optional[Dict]:
     """Pull a single file and process it immediately.
 
@@ -3490,6 +3558,8 @@ def _pull_and_process_file(
     Optional[Dict]
         Processed result dict, or None if the file was skipped/failed.
     """
+    if cancel_token: cancel_token.raise_if_cancelled()
+
     elapsed = time.monotonic() - pull_start
     if use_priority_filter and not should_pull_file(device_path, elapsed):
         return None  # defer or skip based on time budget
@@ -3549,6 +3619,7 @@ def _parallel_pull_files(
     ingest_lock: threading.Lock,
     use_priority_filter: bool,
     max_workers: int = 8,
+    cancel_token: Optional[CancellationToken] = None,
 ) -> List[Dict]:
     """Pull multiple files in parallel using ThreadPoolExecutor.
 
@@ -3606,11 +3677,13 @@ def _parallel_pull_files(
                 ingest_lock,
                 pull_start,
                 use_priority_filter,
+                cancel_token,
             ): dev_path
             for dev_path in to_pull
         }
 
         for future in concurrent.futures.as_completed(future_to_path):
+            if cancel_token: cancel_token.raise_if_cancelled()
             dev_path = future_to_path[future]
             done_count += 1
             pct = 0.10 + 0.42 * (done_count / max(total, 1))

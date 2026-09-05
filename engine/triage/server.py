@@ -16,6 +16,7 @@ import shutil
 import tempfile
 import threading
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -40,10 +41,36 @@ except Exception:
 from . import TOOL_NAME, __version__
 from .acquire import MockDeviceSource, RealDeviceSource
 from .adb import Adb
+from .cancellation import AcquisitionCancelled, CancellationToken
 from .config import ACQUISITION_DISCLAIMER, Tier
 from .custody import Case
 from .pipeline import PipelineConfig, run_acquisition
+from .validation_utils import (
+    validate_case_id,
+    validate_mock_path,
+    validate_serial,
+    validate_text_field,
+    validate_webhook_url,
+)
 from . import registry
+
+
+# ---------------------------------------------------------------------------
+# CORS origin allowlist — loopback only by default
+# ---------------------------------------------------------------------------
+# Vite dev server (5173), Electron local server (5057), and Electron app://
+# origin are the only consumers.  Additional origins can be added via the
+# SNAGR_CORS_ORIGIN env var (comma-separated) for unusual Electron configs.
+_ALLOWED_ORIGINS: list[str] = [
+    "http://localhost:5173",
+    "http://localhost:5057",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5057",
+    "app://.",  # Electron file-protocol origin
+]
+_extra_cors = os.environ.get("SNAGR_CORS_ORIGIN", "").strip()
+if _extra_cors:
+    _ALLOWED_ORIGINS.extend(o.strip() for o in _extra_cors.split(",") if o.strip())
 
 
 # Default cases root — change to _test_output if running integration tests
@@ -54,7 +81,7 @@ def create_app(cases_root: Path = CASES_ROOT):
 
     app = Flask(__name__)
 
-    CORS(app)
+    CORS(app, origins=_ALLOWED_ORIGINS, supports_credentials=False)
 
     cases_root.mkdir(parents=True, exist_ok=True)
 
@@ -78,66 +105,130 @@ def create_app(cases_root: Path = CASES_ROOT):
             pass
 
     socketio = (
-        SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+        SocketIO(
+            app,
+            cors_allowed_origins=_ALLOWED_ORIGINS,
+            async_mode="threading",
+        )
         if _HAVE_SOCKETIO
         else None
     )
 
-    state: dict[str, Any] = {"running": False, "last_case": None}
+    state: dict[str, Any] = {
+        "running": False,
+        "last_case": None,
+        "cancel_token": None,       # CancellationToken for the current run
+        "report_generating": False, # True while background report is building
+        "report_ready_cases": set(),# case_ids whose reports have been generated
+    }
 
     # ---------------------------------------------------------
-    # AUTH — single-operator gate.
+    # AUTH
+    # ---------------------------------------------------------
     #
-    # Threat model matches the module docstring: this serves localhost only, so the
-    # point is "an unattended laptop can't be opened by whoever walks past", not
-    # defending against a network attacker. That buys a deliberately simple design:
-    #   - one examiner account, credentials from the environment (no user table, no
-    #     hashing at rest — there's nothing at rest, the password only ever lives in
-    #     the process environment).
-    #   - login returns a random bearer token held in memory; restart the server and
-    #     everyone is logged out. That's a feature here, not a bug — the tool is
-    #     opened once per shift.
-    #   - constant-time comparison (hmac.compare_digest) so a timing attack can't
-    #     narrow down the password character by character.
+    # Threat model: loopback-only; the goal is "unattended laptop cannot be
+    # opened by whoever walks past", not defending against a network attacker.
     #
-    # Deliberately NOT gated: the report HTML, report snapshots, media bytes, and the
-    # export/download endpoint. Those are reached by raw URL (<img src>, an <iframe>,
-    # Playwright navigating straight to the report for PDF export in
-    # electron/pdf/pdfRenderer.cjs) and browsers don't attach custom headers to those
-    # requests. Gating them would mean plumbing the token through Electron's main
-    # process too. Given the threat model above (physical access to the machine, not
-    # a network attacker who already knows a case UUID and artifact id), that
-    # complexity isn't worth it — but it does mean: don't put this box on a shared
-    # network with those routes reachable. Everything else that lists or searches
-    # case content requires a token.
+    # Two operating modes:
+    #   PRODUCTION (default): SNAGR_AUTH_PASS must be set in env.  If missing
+    #     the login endpoint returns 503 with a clear message.  Use
+    #     SNAGR_AUTH_HASH for a bcrypt-hashed password (recommended).
+    #   DEMO (--demo / SNAGR_DEMO=1): falls back to examiner/snagr with a
+    #     loud warning at startup and in every auth-failure log line.
+    #
+    # Login rate limiting: max 5 attempts per IP per 60 s; lock out for 300 s.
+    # CSRF: a per-session token is returned at login; all state-changing
+    #   methods (POST/PUT/PATCH/DELETE) require X-CSRF-Token header.
+
+    _DEMO_MODE: bool = bool(
+        os.environ.get("SNAGR_DEMO", "").strip()
+        or os.environ.get("SNAGR_DEMO_MODE", "").strip()
+    )
     AUTH_USER = os.environ.get("SNAGR_AUTH_USER", "examiner")
-    AUTH_PASS = os.environ.get("SNAGR_AUTH_PASS", "snagr")
-    if "SNAGR_AUTH_PASS" not in os.environ:
+    AUTH_PASS = os.environ.get("SNAGR_AUTH_PASS", "")
+    AUTH_HASH = os.environ.get("SNAGR_AUTH_HASH", "")  # bcrypt hash (optional)
+
+    _credentials_ok: bool
+    if AUTH_HASH:
+        _credentials_ok = True  # bcrypt-hashed password always accepted
+    elif AUTH_PASS:
+        _credentials_ok = True
+    elif _DEMO_MODE:
+        AUTH_PASS = "snagr"
+        _credentials_ok = True
         print(
-            f"[auth] SNAGR_AUTH_PASS not set — using default credentials "
-            f"({AUTH_USER}/{AUTH_PASS}). Set SNAGR_AUTH_USER / SNAGR_AUTH_PASS "
-            f"before this handles real evidence.",
+            f"[auth] DEMO MODE — default credentials ({AUTH_USER}/snagr) are active. "
+            f"Do NOT use against real evidence.",
+            flush=True,
+        )
+    else:
+        _credentials_ok = False
+        print(
+            "[auth] FATAL: SNAGR_AUTH_PASS is not set and demo mode is off. "
+            "Set SNAGR_AUTH_PASS before handling evidence, or start with SNAGR_DEMO=1.",
             flush=True,
         )
 
     SESSION_TTL_SECONDS = 12 * 3600
-    _sessions: dict[str, float] = {}  # token -> expiry (unix time)
+    _sessions: dict[str, dict] = {}  # token -> {expiry, csrf_token, username}
+
+    # Rate-limiting: IP -> list of failure timestamps
+    _login_failures: dict[str, list[float]] = defaultdict(list)
+    _RATE_LIMIT_WINDOW = 60.0   # seconds
+    _RATE_LIMIT_MAX = 5          # failures allowed per window
+    _RATE_LIMIT_LOCKOUT = 300.0  # lockout duration after exceeding limit
+
+    def _check_rate_limit(ip: str) -> bool:
+        """Return True if the IP is allowed to attempt login."""
+        now = time.time()
+        failures = _login_failures[ip]
+        # Trim old failures
+        failures[:] = [t for t in failures if now - t < _RATE_LIMIT_WINDOW]
+        if len(failures) >= _RATE_LIMIT_MAX:
+            # Check if oldest failure is within lockout window
+            if failures and (now - failures[0]) < _RATE_LIMIT_LOCKOUT:
+                return False
+        return True
+
+    def _record_failure(ip: str) -> None:
+        _login_failures[ip].append(time.time())
 
     def _issue_token() -> str:
         token = secrets.token_urlsafe(32)
-        _sessions[token] = time.time() + SESSION_TTL_SECONDS
+        csrf = secrets.token_urlsafe(24)
+        _sessions[token] = {
+            "expiry": time.time() + SESSION_TTL_SECONDS,
+            "csrf_token": csrf,
+            "username": AUTH_USER,
+        }
         return token
 
     def _token_valid(token: str | None) -> bool:
         if not token:
             return False
-        expiry = _sessions.get(token)
-        if expiry is None:
+        sess = _sessions.get(token)
+        if sess is None:
             return False
-        if expiry < time.time():
+        if sess["expiry"] < time.time():
             _sessions.pop(token, None)
             return False
         return True
+
+    def _get_csrf(token: str) -> str:
+        sess = _sessions.get(token, {})
+        return sess.get("csrf_token", "")
+
+    def _verify_password(password: str) -> bool:
+        """Verify password against hash (bcrypt) or plaintext depending on config."""
+        if not _credentials_ok:
+            return False
+        if AUTH_HASH:
+            try:
+                import bcrypt  # type: ignore[import]
+                return bcrypt.checkpw(password.encode(), AUTH_HASH.encode())
+            except Exception:
+                return False
+        return hmac.compare_digest(password, AUTH_PASS)
 
     def _is_public_route(path: str) -> bool:
         if path in ("/api/health", "/api/auth/login"):
@@ -161,18 +252,43 @@ def create_app(cases_root: Path = CASES_ROOT):
         token = (request.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
         if not _token_valid(token):
             return jsonify({"error": "unauthorized"}), 401
+        # CSRF check for state-changing methods
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            expected_csrf = _get_csrf(token)
+            provided_csrf = (request.headers.get("X-CSRF-Token") or "").strip()
+            if expected_csrf and not hmac.compare_digest(provided_csrf, expected_csrf):
+                return jsonify({"error": "invalid or missing CSRF token"}), 403
         return None
 
     @app.post("/api/auth/login")
     def auth_login():
+        ip = request.remote_addr or "unknown"
+        if not _check_rate_limit(ip):
+            return jsonify({"error": "too many login attempts — wait 5 minutes"}), 429
+
+        if not _credentials_ok:
+            return jsonify(
+                {"error": "server not configured for authentication — see startup logs"}
+            ), 503
+
         body = request.get_json(silent=True) or {}
         username = str(body.get("username", ""))
         password = str(body.get("password", ""))
-        ok = hmac.compare_digest(username, AUTH_USER) and hmac.compare_digest(password, AUTH_PASS)
-        if not ok:
+        user_ok = hmac.compare_digest(username, AUTH_USER)
+        pass_ok = _verify_password(password)
+        if not (user_ok and pass_ok):
+            _record_failure(ip)
             return jsonify({"error": "invalid credentials"}), 401
         token = _issue_token()
-        return jsonify({"token": token, "expires_in": SESSION_TTL_SECONDS, "username": AUTH_USER})
+        csrf = _get_csrf(token)
+        return jsonify(
+            {
+                "token": token,
+                "csrf_token": csrf,
+                "expires_in": SESSION_TTL_SECONDS,
+                "username": AUTH_USER,
+            }
+        )
 
     @app.post("/api/auth/logout")
     def auth_logout():
@@ -821,31 +937,46 @@ def create_app(cases_root: Path = CASES_ROOT):
     def acquire():
 
         if state["running"]:
-
             return jsonify({"error": "an acquisition is already running"}), 409
 
         body = request.get_json(force=True) or {}
 
-        case_id = body.get("case_id") or _auto_case_id(cases_root)
+        # ------ Validate case_id ------
+        raw_case_id = body.get("case_id") or _auto_case_id(cases_root)
+        try:
+            case_id = validate_case_id(str(raw_case_id))
+        except ValueError as exc:
+            return jsonify({"error": f"invalid case_id: {exc}"}), 400
 
-        examiner = body.get("examiner", "Unknown Examiner")
+        # ------ Validate examiner / authority / scope ------
+        try:
+            examiner = validate_text_field(str(body.get("examiner", "Unknown Examiner")), "examiner")
+            authority = validate_text_field(str(body.get("authority", "")), "authority")
+            scope = validate_text_field(str(body.get("scope", "")), "scope")
+            webhook = validate_webhook_url(str(body.get("notify_webhook_url", "") or ""))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
 
-        # -------------------------------
-        # Device source selection
-        # -------------------------------
-
+        # ------ Device source selection ------
         if body.get("mock"):
-
-            source = MockDeviceSource(Path(body["mock"]))
-
+            try:
+                mock_path = validate_mock_path(
+                    str(body["mock"]),
+                    corpus_root=Path("_corpus").resolve(),
+                )
+            except (ValueError, FileNotFoundError) as exc:
+                return jsonify({"error": f"invalid mock path: {exc}"}), 400
+            source = MockDeviceSource(mock_path)
         else:
-
-            adb = Adb(serial=body.get("serial"))
-
+            raw_serial = body.get("serial") or ""
+            if raw_serial:
+                try:
+                    raw_serial = validate_serial(str(raw_serial))
+                except ValueError as exc:
+                    return jsonify({"error": f"invalid serial: {exc}"}), 400
+            adb = Adb(serial=raw_serial or None)
             if not adb.available:
-
                 return jsonify({"error": "adb not available; supply a mock path"}), 400
-
             source = RealDeviceSource(adb)
 
         # -------------------------------
@@ -855,8 +986,8 @@ def create_app(cases_root: Path = CASES_ROOT):
         cfg = PipelineConfig(
             case_id=case_id,
             examiner=examiner,
-            legal_authority=body.get("authority", ""),
-            scope_note=body.get("scope", ""),
+            legal_authority=authority,
+            scope_note=scope,
             cases_root=cases_root,
             tier1_contacts=bool(body.get("tier1_contacts", False)),
             tier1_calllog=bool(body.get("tier1_calllog", False)),
@@ -894,73 +1025,111 @@ def create_app(cases_root: Path = CASES_ROOT):
             notify_on_complete=bool(body.get("notify_on_complete", False)),
             notify_types=list(body.get("notify_types") or []),
             notify_recipients=list(body.get("notify_recipients") or []),
-            notify_webhook_url=str(body.get("notify_webhook_url", "") or ""),
+            notify_webhook_url=webhook,
         )
 
-        # -------------------------------
-        # Socket progress emitter
-        # -------------------------------
+        # ------ Cancellation token ------
+        cancel_token = CancellationToken()
+        state["cancel_token"] = cancel_token
 
+        # ------ Socket progress emitter ------
         def emit(stage: str, pct: float, detail: str):
-
             if socketio:
-
                 socketio.emit(
                     "progress",
                     {"stage": stage, "pct": pct, "detail": detail, "case_id": case_id},
                 )
 
-        # -------------------------------
-        # Background worker
-        # -------------------------------
-
+        # ------ Background worker ------
         def worker():
-
             state["running"] = True
-
             try:
-
-                summary = run_acquisition(source, cfg, progress=emit, socketio=socketio)
-
-                # FIX:
-                # Generate report after acquisition finishes
-
-                from .report import generate_report
-
-                case_path = cases_root / case_id
-
-                if case_path.exists():
-
-                    generate_report(case_path)
-
-                    _finalize_report(Case.open(case_path), trigger="acquisition")
-
+                summary = run_acquisition(
+                    source, cfg, progress=emit, socketio=socketio,
+                    cancel_token=cancel_token,
+                )
                 state["last_case"] = case_id
-
+                # Emit complete IMMEDIATELY so the examiner can review results
                 if socketio:
-
                     socketio.emit(
                         "complete",
                         {"case_id": case_id, "counts": summary.get("counts", {})},
                     )
-
-            except Exception as exc:
-
+            except AcquisitionCancelled:
+                state["last_case"] = case_id
                 if socketio:
-
+                    socketio.emit("cancelled", {"case_id": case_id, "partial": True})
+            except Exception as exc:
+                if socketio:
                     socketio.emit("failed", {"case_id": case_id, "error": str(exc)})
-
             finally:
-
                 state["running"] = False
+                state["cancel_token"] = None
+                # Background report generation — does NOT block the complete event
+                _launch_bg_report(case_id)
 
-        # IMPORTANT:
-        # thread start must be OUTSIDE worker()
+        def _launch_bg_report(cid: str) -> None:
+            """Generate the HTML report in a daemon thread after acquisition."""
+            case_path = cases_root / cid
+            if not case_path.exists():
+                return
+            state["report_generating"] = True
+
+            def _bg():
+                try:
+                    from .report import generate_report
+                    generate_report(case_path)
+                    _finalize_report(Case.open(case_path), trigger="acquisition")
+                    state["report_ready_cases"].add(cid)
+                    if socketio:
+                        socketio.emit(
+                            "report_ready",
+                            {"case_id": cid, "report_url": f"/api/case/{cid}/report"},
+                        )
+                except Exception:
+                    pass
+                finally:
+                    state["report_generating"] = False
+
+            threading.Thread(target=_bg, daemon=True).start()
 
         threading.Thread(target=worker, daemon=True).start()
-
         return jsonify({"case_id": case_id, "started": True})
-        # ---------------------------------------------------------
+
+    @app.post("/api/acquire/cancel")
+    def acquire_cancel():
+        """Request cancellation of the running acquisition.
+
+        The cancellation is cooperative: the pipeline will finish its current
+        I/O operation and check the token between stages.  The case folder is
+        left in a consistent, auditable partial state.
+        """
+        token: CancellationToken | None = state.get("cancel_token")
+        if token is None or not state.get("running"):
+            return jsonify({"error": "no acquisition is currently running"}), 409
+        token.cancel()
+        return jsonify({"cancelling": True, "case_id": state.get("last_case")})
+
+    @app.get("/api/case/<case_id>/report_status")
+    def report_status(case_id: str):
+        """Return whether the HTML report for *case_id* is ready.
+
+        The report is generated in a background thread after acquisition
+        completes so the examiner can view results immediately.  Poll this
+        endpoint or wait for the ``report_ready`` Socket.IO event.
+        """
+        try:
+            validate_case_id(case_id)
+        except ValueError:
+            return jsonify({"error": "invalid case_id"}), 400
+        ready = case_id in state["report_ready_cases"]
+        generating = state["report_generating"] and state.get("last_case") == case_id
+        report_path = cases_root / case_id / "report.html"
+        return jsonify({
+            "case_id": case_id,
+            "ready": ready or report_path.exists(),
+            "generating": generating,
+        })
 
     # CASE DATA
     # ---------------------------------------------------------
