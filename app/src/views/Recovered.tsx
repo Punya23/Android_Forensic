@@ -264,10 +264,15 @@ function RowidGapsPanel({ caseId }: { caseId: string }) {
   );
 }
 
+// Freelist/freeblock/WAL carving on a busy database can produce thousands of
+// fragments — capped like Aleapp.tsx's table, with the same disclosed "show all".
+const TABLE_CAP = 1000;
+
 export function RecoveredView({ caseId }: { caseId: string }) {
   const { data, loading } = useDataset<RecoveredRow>(caseId, "recovered");
   const [query, setQuery] = useState("");
   const [conf, setConf] = useState<Confidence | "all">("all");
+  const [showAll, setShowAll] = useState(false);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
@@ -277,6 +282,9 @@ export function RecoveredView({ caseId }: { caseId: string }) {
       return r.values.some((v) => typeof v === "string" && v.toLowerCase().includes(q));
     });
   }, [data, query, conf]);
+
+  useEffect(() => setShowAll(false), [query, conf]);
+  const visible = showAll ? filtered : filtered.slice(0, TABLE_CAP);
 
   const byConf = useMemo(() => {
     const m: Record<string, number> = { live: 0, recovered: 0, carved: 0, deletion: 0 };
@@ -349,7 +357,7 @@ export function RecoveredView({ caseId }: { caseId: string }) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r, i) => (
+            {visible.map((r, i) => (
               <tr key={i} className="align-top">
                 <td className="td"><TagButton refId={`recovered:${i}`} kind="recovered" label={r.values.filter((v) => typeof v === "string").join(" ").slice(0, 40)} /></td>
                 <td className="td"><ConfidenceBadge c={r.confidence} title={r.warnings[0]} /></td>
@@ -375,6 +383,13 @@ export function RecoveredView({ caseId }: { caseId: string }) {
             ))}
           </tbody>
         </table>
+        {!showAll && filtered.length > TABLE_CAP && (
+          <div className="text-center py-3">
+            <button className="btn-ghost text-xs" onClick={() => setShowAll(true)}>
+              Showing first {TABLE_CAP.toLocaleString()} of {filtered.length.toLocaleString()} rows — click to show all
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { MediaItem, Screenshot, WhatsAppMediaItem } from "../lib/types";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { api } from "../lib/api";
@@ -64,9 +64,15 @@ export function MediaView({ caseId }: { caseId: string }) {
 
 // ── Pulled Media (existing gallery, unchanged behaviour) ─────────────────────
 
+// A real Tier-0 pull can return thousands of media files — capped like this file's own
+// WhatsAppMediaSection below, with the disclosed "show all" control Aleapp.tsx uses
+// rather than a bare, unexplained slice.
+const GRID_CAP = 2000;
+
 function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[] }) {
   const [filter, setFilter] = useState<"all" | "image" | "video" | "trashed" | "gps">("all");
   const [selected, setSelected] = useState<MediaItem | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   const filtered = useMemo(() => {
     return data.filter((m) => {
@@ -76,6 +82,9 @@ function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[
       return m.kind === filter;
     });
   }, [data, filter]);
+
+  useEffect(() => setShowAll(false), [filter]);
+  const visible = showAll ? filtered : filtered.slice(0, GRID_CAP);
 
   if (data.length === 0)
     return (
@@ -109,8 +118,8 @@ function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[
           </button>
         ))}
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 overflow-auto flex-1 pb-4">
-        {filtered.map((m) => (
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 overflow-auto flex-1 pb-4 auto-rows-min">
+        {visible.map((m) => (
           <button key={m.artifact_id} onClick={() => setSelected(m)} className="card overflow-hidden group text-left">
             <div className="aspect-square bg-panel flex items-center justify-center relative overflow-hidden">
               {m.kind === "image" ? (
@@ -139,6 +148,14 @@ function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[
             </div>
           </button>
         ))}
+        {!showAll && filtered.length > GRID_CAP && (
+          <button
+            className="col-span-full text-center py-3 text-xs text-muted hover:text-ink"
+            onClick={() => setShowAll(true)}
+          >
+            Showing first {GRID_CAP.toLocaleString()} of {filtered.length.toLocaleString()} files — click to show all
+          </button>
+        )}
       </div>
 
       {selected && (
