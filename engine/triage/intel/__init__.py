@@ -54,6 +54,9 @@ from .planner import (
     plan_case,
     retrieve_precedents,
 )
+from .prioritization import EvidencePrioritizer
+from .social_network import SocialNetworkAnalyst
+from .summarization import ConversationSummarizer
 
 __all__ = [
     # planning
@@ -90,6 +93,10 @@ __all__ = [
     "record_provisional",
     "record_confirmed",
     "promote_case_to_study",
+    # new AI modules
+    "EvidencePrioritizer",
+    "ConversationSummarizer",
+    "SocialNetworkAnalyst",
     # infrastructure
     "get_provider",
     "LLMProvider",

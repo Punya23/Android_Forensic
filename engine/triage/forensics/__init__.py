@@ -188,3 +188,14 @@ __all__ = [
     "parse_trash_filename",
     "TRASH_WINDOW_DAYS",
 ]
+
+
+# --- New AI modules ---
+from .behavioral_analysis import BehavioralAnomalyDetector
+from .multilingual_advanced import MultiLanguageNLP
+
+# Update __all__ to include new modules
+__all__.extend([
+    "BehavioralAnomalyDetector",
+    "MultiLanguageNLP",
+])
