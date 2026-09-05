@@ -588,8 +588,164 @@ def test_every_catalogue_entry_explains_itself():
             )
 
 
+def test_ran_if_present_is_only_meaningful_with_unconditional_write():
+    """A declared corroborator that ``resolve()`` never reaches is worse than none: it
+    reads as a safeguard in the catalogue while doing nothing.
+
+    ``ran_if_present`` is read in exactly one place, and only from inside the
+    ``value is None or cap.unconditional_write`` branch. This is exactly how 'contacts'
+    broke: ``ran_if_present=("calls",)`` was declared, but contacts.json is written
+    unconditionally (triage/pipeline.py) and ``unconditional_write`` was left ``False`` —
+    so with the file always present, that branch was never reached, and an unrooted or
+    helper-less run fell straight through to "the stage ran and found nothing" regardless
+    of what 'calls' held. 'location_impossible_travel' and 'investigation_trace' carried
+    the identical, silent gap.
+
+    'url_locations' is the one deliberate exception. triage/pipeline.py only calls
+    ``write_derived`` for it inside ``if url_locations:``, so an empty result never
+    leaves a file behind at all — ``resolve()`` reaches its corroborator through the
+    independent ``value is None`` half of the same check, with nothing left for
+    ``unconditional_write`` to add. Setting the flag there anyway would be inert for
+    ``resolve()`` and false as documentation (the field means the file *is* written
+    every run, which is not true here), so it stays off and is named here explicitly
+    rather than quietly exempted — a future conditionally-written entry needs the same
+    justification to join it, not just the absence of the flag.
+    """
+    conditionally_written = {"url_locations"}
+    for cap in CATALOGUE.values():
+        if not cap.ran_if_present or cap.dataset in conditionally_written:
+            continue
+        assert cap.unconditional_write, (
+            f"{cap.dataset} declares ran_if_present={cap.ran_if_present!r} without "
+            "unconditional_write=True, so resolve() never reaches the branch that "
+            "reads it once the file is written empty-but-present"
+        )
+
+
 def test_populated_state_carries_no_excuse(case_dir: Path):
     """A populated dataset must not ship a reason — there is nothing to explain."""
     write(case_dir, "messages", [{"body": "hi"}])
     out = resolve(CATALOGUE["messages"], case_dir / "derived")
     assert out["reason"] == ""
+
+
+# ---------------------------------------------------------------------------
+# The same class of bug, found the same way, in the plain list-valued datasets the
+# fixed-shape-envelope sweep did not cover: a dataset the pipeline writes
+# unconditionally at the end of every run, catalogued with neither
+# unconditional_write nor a working corroborator.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "dataset", ["media_inventory", "apps", "accounts", "calendar", "usage"]
+)
+def test_dump_all_datasets_need_the_collector_manifest_to_read_as_clean(
+    case_dir: Path, dataset: str
+):
+    """``_run_tier1_collect_all`` (triage/pipeline.py) returns having touched none of
+    these five lists the moment the Collector APK is missing or ``pm install`` fails —
+    both plain early returns before a pull. All five are still written, empty, at the
+    end of the run, so without ``unconditional_write`` that empty file read as "0 /
+    device is clean" instead of "the helper never ran".
+    """
+    write(case_dir, dataset, [])
+    out = resolve(CATALOGUE[dataset], case_dir / "derived", {"tier1_collect_all": True})
+    assert out["state"] == INACCESSIBLE
+
+    # collector_manifest.json is the Collector's own last write of dump_all — only
+    # reached past both early returns — so its presence corroborates all five the same
+    # way it already does for collector_wifi/collector_bluetooth.
+    write(case_dir, "collector_manifest", {"ran": True})
+    out2 = resolve(CATALOGUE[dataset], case_dir / "derived", {"tier1_collect_all": True})
+    assert out2["state"] == EMPTY
+
+
+def test_contacts_corroborator_now_actually_fires(case_dir: Path):
+    """``ran_if_present=("calls",)`` was declared on 'contacts' before this sweep too,
+    but contacts.json is written unconditionally and ``unconditional_write`` was left
+    False — so the branch that reads a corroborator was never reached, and an unrooted
+    or helper-less run fell straight to "the stage ran and found nothing" regardless of
+    what 'calls' held. Same shape as the dump_all datasets above, one row up.
+    """
+    write(case_dir, "contacts", [])
+    out = resolve(CATALOGUE["contacts"], case_dir / "derived", {"tier1_contacts": True})
+    assert out["state"] == INACCESSIBLE
+
+    write(case_dir, "calls", [{"number": "+15551234567"}])
+    out2 = resolve(CATALOGUE["contacts"], case_dir / "derived", {"tier1_contacts": True})
+    assert out2["state"] == EMPTY
+
+
+def test_screen_events_and_screen_app_usage_corroborate_each_other(case_dir: Path):
+    """Both come from the same dumpsys try-block (triage/pipeline.py) and are both
+    written unconditionally a second time at the end of the run — dumpsys power and
+    dumpsys batterystats/usagestats either all answered or none did, so either one
+    holding data proves the block ran for both.
+    """
+    write(case_dir, "screen_events", [])
+    write(case_dir, "screen_app_usage", [])
+    out = resolve(CATALOGUE["screen_events"], case_dir / "derived")
+    assert out["state"] == INACCESSIBLE
+
+    write(case_dir, "screen_app_usage", [{"app": "com.example", "foreground_ms": 900}])
+    out2 = resolve(CATALOGUE["screen_events"], case_dir / "derived")
+    assert out2["state"] == EMPTY
+
+
+@pytest.mark.parametrize(
+    "dataset", ["google_accounts", "maps_locations", "location_traces", "recovered"]
+)
+def test_unconditional_writes_with_no_corroborator_stay_unverified(
+    case_dir: Path, dataset: str
+):
+    """None of these four has a sibling that can corroborate it without risking the
+    same overstatement one level down (location_traces fuses six sources including the
+    Tier-1 'tier1_collect_all'-gated media_inventory; recovered mixes the always-on
+    db_artifacts scan with root-gated Telegram and browser-history recovery; the dumpsys
+    account and location probes behind google_accounts/maps_locations have no sibling in
+    their own try-block). An empty result is reported unverified rather than clean.
+    """
+    write(case_dir, dataset, [])
+    out = resolve(CATALOGUE[dataset], case_dir / "derived")
+    assert out["state"] == INACCESSIBLE
+    assert out["state"] != EMPTY
+
+
+def test_location_impossible_travel_is_corroborated_by_location_traces(case_dir: Path):
+    """Written unconditionally right after location_traces, from the same try-block,
+    with no guard of its own — the far more common case is "the trace exists and
+    nothing in it was impossible", which must read as a finding, not as unverified.
+    """
+    write(case_dir, "location_impossible_travel", [])
+    write(case_dir, "location_traces", [])
+    out = resolve(CATALOGUE["location_impossible_travel"], case_dir / "derived")
+    assert out["state"] == INACCESSIBLE
+
+    write(case_dir, "location_traces", [{"lat": 1.0, "lon": 2.0, "timestamp": "t"}])
+    out2 = resolve(CATALOGUE["location_impossible_travel"], case_dir / "derived")
+    assert out2["state"] == EMPTY
+
+
+def test_messages_names_sms_without_flag_off_reads_as_the_whole_view(case_dir: Path):
+    """'tier1_sms' is the only non-root route to mmssms.db, but 'messages' also carries
+    app-chat content from separate Tier-1/Tier-2 stages with their own flags. The
+    generic not_collected wording ("re-run with it enabled to collect it") would read
+    "it" as the whole Messages view, promising Instagram/Snapchat/Telegram/WhatsApp
+    content that 'tier1_sms' cannot add — PARTIAL_FLAG_SCOPE keeps the reason to the
+    slice this flag actually restores.
+    """
+    write(case_dir, "messages", [])
+    out = resolve(CATALOGUE["messages"], case_dir / "derived", {"tier1_sms": False})
+    assert out["state"] == NOT_COLLECTED
+    assert out["flag_actionable"] is True
+    assert "SMS" in out["reason"]
+    assert "tier1_sms" in out["reason"]
+    # Must not claim the whole view — that is the exact overclaim this wording exists
+    # to avoid.
+    assert "collect it" not in out["reason"]
+
+    # An unknown 'tier1_sms' (older case, key absent) must not be read as a deliberate
+    # skip — same rule as every other flag in this catalogue.
+    out_unknown = resolve(CATALOGUE["messages"], case_dir / "derived", {})
+    assert out_unknown["state"] != NOT_COLLECTED

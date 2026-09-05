@@ -146,7 +146,16 @@ _T2 = "Tier 2 — root shell on the device (opt-in)"
 #: ``/api/case/<id>/<dataset>``, so a view can look itself up by the name it fetches.
 CATALOGUE: dict[str, Capability] = {
     # --- Tier 0: shared storage + read-only dumpsys ------------------------
-    "messages": Capability("messages", "Messages", 0, _T0),
+    # Tier 0 because the baseline is a read-only walk of shared storage plus whatever
+    # app-chat recovery already ran — but 'tier1_sms' (Tier 1) is the only non-root route
+    # to mmssms.db, and its write (all_messages, triage/pipeline.py) is unconditional. With
+    # no flag recorded here at all an unrooted handset with the SMS helper off badged this
+    # row "0 / a finding about the device" — the most user-visible row in the sidebar
+    # claiming a clean phone when SMS was simply never asked for. The flag is named so the
+    # gap is offered; PARTIAL_FLAG_SCOPE keeps the reason from then overclaiming that
+    # ticking it collects the Instagram/Snapchat/Telegram/WhatsApp content this view also
+    # carries, which are separate Tier-2 stages with their own flags untouched by this one.
+    "messages": Capability("messages", "Messages", 0, _T0, flag="tier1_sms"),
     "media": Capability("media", "Media", 0, _T0),
     "locations": Capability("locations", "Photo locations", 0, _T0),
     # Tier 0 in name only, and the catalogue has to say so. The Tier-0 parser reads a
@@ -172,7 +181,17 @@ CATALOGUE: dict[str, Capability] = {
         unconditional_write=True,
     ),
     "timeline": Capability("timeline", "Timeline", -1, "Derived from every parsed dataset"),
-    "recovered": Capability("recovered", "Recovered / deleted rows", 0, _T0),
+    # Tier 0 in name only, same shape as browser above: recovered_rows takes rows from
+    # the always-on db_artifacts scan (Tier 0, no flag) but also from Tier-2 Telegram
+    # recovery ('tier2_telegram', root) and Tier-2 browser-history recovery
+    # ('tier2_browser_history', root) — both append into the same list (triage/
+    # pipeline.py). An empty result written at the end of the run is exactly as
+    # consistent with "the Tier-0 walk found nothing to recover" as with "the Tier-2
+    # stages that would have added to it never ran", and nothing here can tell those
+    # apart, so it is unverified rather than a clean result.
+    "recovered": Capability(
+        "recovered", "Recovered / deleted rows", 0, _T0, unconditional_write=True
+    ),
     "flags": Capability("flags", "Keyword & hash flags", -1, "Derived from parsed content"),
     "screenshots": Capability("screenshots", "Screen capture", 0, _T0, flag="capture_screenshot"),
     "notifications": Capability(
@@ -196,18 +215,39 @@ CATALOGUE: dict[str, Capability] = {
         "dumpsys telephony.registry. Reports the serving cell at capture time; history "
         "depends on the modem and is not guaranteed on any build.",
     ),
+    # screen_events/screen_app_usage are built in the same dumpsys try-block (triage/
+    # pipeline.py) and both are written a second time, unconditionally, in the
+    # end-of-run block — the first write is itself guarded on ``if screen_events or
+    # screen_app_usage:``, so it never fires for a genuinely-empty pair either. They
+    # corroborate each other: dumpsys power/batterystats/usagestats either all answered
+    # or none did, so either one holding data proves the block ran.
     "screen_events": Capability(
-        "screen_events", "Screen on/off events", 0, "dumpsys power"
+        "screen_events",
+        "Screen on/off events",
+        0,
+        "dumpsys power",
+        ran_if_present=("screen_app_usage",),
+        unconditional_write=True,
     ),
     "screen_app_usage": Capability(
-        "screen_app_usage", "Per-app usage", 0, "dumpsys batterystats + usagestats"
+        "screen_app_usage",
+        "Per-app usage",
+        0,
+        "dumpsys batterystats + usagestats",
+        ran_if_present=("screen_events",),
+        unconditional_write=True,
     ),
+    # Written twice the same way as screen_events above (a guarded write inside the
+    # dumpsys try-block, then unconditionally again at the end of the run), but its
+    # dumpsys account probe has no sibling in the same block to corroborate it — an
+    # empty result falls to the plain "written on every run, unverified" wording instead.
     "google_accounts": Capability(
         "google_accounts",
         "Registered accounts",
         0,
         "dumpsys account. Lists AccountManager identities; apps that manage their own "
         "session (Signal, most banking apps) never appear.",
+        unconditional_write=True,
     ),
     # Written on every completed run (triage/pipeline.py, the end-of-run write block),
     # so an empty search_history.json is equally consistent with "the browser history was
@@ -223,12 +263,16 @@ CATALOGUE: dict[str, Capability] = {
         ran_if_present=("browser",),
         unconditional_write=True,
     ),
+    # Same double-write shape as google_accounts above (guarded write inside its own
+    # try-block, unconditional rewrite at the end of the run) and no corroborating
+    # sibling of its own, so it gets the same plain unverified-when-empty treatment.
     "maps_locations": Capability(
         "maps_locations",
         "Maps / location history",
         0,
         "dumpsys location fix, plus any Takeout export or Maps cache present in "
         "shared storage.",
+        unconditional_write=True,
     ),
     "wifi_live": Capability(
         "wifi_live",
@@ -289,17 +333,77 @@ CATALOGUE: dict[str, Capability] = {
         ran_when="available",
     ),
     # --- Tier 1: sideloaded Collector APK ----------------------------------
+    # contacts.json is written unconditionally at the end of the run, same as the five
+    # dump_all datasets above, so the declared 'calls' corroborator was dead: resolve()
+    # only reads ran_if_present from the ``value is None or unconditional_write`` branch,
+    # and with the file always present that branch was never reached — an unrooted or
+    # helper-less run fell straight to "the stage ran and found nothing" regardless.
     "contacts": Capability(
-        "contacts", "Contacts", 1, _T1, flag="tier1_contacts", ran_if_present=("calls",)
+        "contacts",
+        "Contacts",
+        1,
+        _T1,
+        flag="tier1_contacts",
+        ran_if_present=("calls",),
+        unconditional_write=True,
     ),
     "calls": Capability("calls", "Call log", 1, _T1, flag="tier1_calllog"),
+    # All five are written unconditionally at the end of the run
+    # (media_inventory/installed_apps/accounts/calendar_events/app_usage, triage/
+    # pipeline.py) from lists that ``_run_tier1_collect_all`` only ever appends to —
+    # it returns having touched none of them the moment the Collector APK is missing
+    # (``_find_helper_apk()`` failed) or ``pm install`` fails, both plain early
+    # returns before a single byte is pulled. Without ``unconditional_write`` an
+    # unrooted handset with the APK simply absent badged all five "0 / checked, device
+    # is clean" instead of "never ran". ``collector_manifest`` is the Collector's own
+    # last write of ``dump_all`` (only reached past both early returns), so it
+    # corroborates all five exactly as it already does for collector_wifi/
+    # collector_bluetooth below.
     "media_inventory": Capability(
-        "media_inventory", "Media inventory", 1, _T1, flag="tier1_collect_all"
+        "media_inventory",
+        "Media inventory",
+        1,
+        _T1,
+        flag="tier1_collect_all",
+        ran_if_present=("collector_manifest",),
+        unconditional_write=True,
     ),
-    "apps": Capability("apps", "Installed apps", 1, _T1, flag="tier1_collect_all"),
-    "accounts": Capability("accounts", "Accounts", 1, _T1, flag="tier1_collect_all"),
-    "calendar": Capability("calendar", "Calendar", 1, _T1, flag="tier1_collect_all"),
-    "usage": Capability("usage", "App usage", 1, _T1, flag="tier1_collect_all"),
+    "apps": Capability(
+        "apps",
+        "Installed apps",
+        1,
+        _T1,
+        flag="tier1_collect_all",
+        ran_if_present=("collector_manifest",),
+        unconditional_write=True,
+    ),
+    "accounts": Capability(
+        "accounts",
+        "Accounts",
+        1,
+        _T1,
+        flag="tier1_collect_all",
+        ran_if_present=("collector_manifest",),
+        unconditional_write=True,
+    ),
+    "calendar": Capability(
+        "calendar",
+        "Calendar",
+        1,
+        _T1,
+        flag="tier1_collect_all",
+        ran_if_present=("collector_manifest",),
+        unconditional_write=True,
+    ),
+    "usage": Capability(
+        "usage",
+        "App usage",
+        1,
+        _T1,
+        flag="tier1_collect_all",
+        ran_if_present=("collector_manifest",),
+        unconditional_write=True,
+    ),
     # Both are written on every run, so their emptiness is only meaningful when the
     # Collector's own run manifest is there to say it executed.
     "collector_wifi": Capability(
@@ -528,15 +632,30 @@ CATALOGUE: dict[str, Capability] = {
         unconditional_write=True,
         content_paths=("meta.total_messages", "recovery_metrics.total"),
     ),
+    # Written unconditionally inside a try (not gated by any flag or ``if``) fusing six
+    # sources — locations, shared_locations, url_locations, maps_locations, cell_towers,
+    # media_inventory (triage/pipeline.py). One of those, media_inventory, is itself
+    # gated by the Tier-1 'tier1_collect_all' flag, so an all-empty fusion can mean
+    # either "every source genuinely held nothing" or "the one opt-in contributor never
+    # ran" — this dataset's own file cannot distinguish them, and no single sibling
+    # corroborates a six-way fusion without risking the same overstatement one level
+    # down, so it falls to the plain unverified wording instead of a clean result.
     "location_traces": Capability(
-        "location_traces", "Unified location trace", -1, "Derived from every location source"
+        "location_traces",
+        "Unified location trace",
+        -1,
+        "Derived from every location source",
+        unconditional_write=True,
     ),
+    # Fed from the same unconditional try-block as location_traces immediately above,
+    # right after it, with no guard of its own.
     "location_impossible_travel": Capability(
         "location_impossible_travel",
         "Impossible travel",
         -1,
         "Needs at least two timestamped location points far enough apart to test.",
         ran_if_present=("location_traces",),
+        unconditional_write=True,
     ),
     # Pre-declared as ``{"tables": [], "messages": []}`` and written on every run, so the
     # file is a two-key dict on a case where the finder never opened a database. It is
@@ -583,6 +702,11 @@ CATALOGUE: dict[str, Capability] = {
         # corroborator is absent too, and the old path fell through to "could not check".
         # A text field closes it; a second acquisition does not.
         needs_case_brief=True,
+        # investigate() (triage/intel/investigator.py) writes its bundle unconditionally
+        # whenever it is called at all, so the 'ai_findings' corroborator above is only
+        # ever read from the ``value is None or unconditional_write`` branch — without
+        # this it is declared and dead, the same bug this sweep fixed for 'contacts'.
+        unconditional_write=True,
     ),
     # --- named, not built --------------------------------------------------
     "ios_acquisition": Capability(
@@ -713,6 +837,17 @@ def _sibling_has_data(derived_dir: Path, name: str) -> bool:
 #: installed). Maps dataset -> the derived file holding the outcome.
 OUTCOME_RECORDS: dict[str, str] = {
     "telegram_conversations": "telegram_presence",
+}
+
+#: Datasets whose ``flag`` restores only part of an aggregate view, not the whole row.
+#: The generic not_collected wording ("re-run with it enabled to collect it") reads "it"
+#: as the whole dataset, which overclaims for anything built from more than one source.
+#: Maps dataset -> the plain-language name of the slice the named flag actually restores.
+PARTIAL_FLAG_SCOPE: dict[str, str] = {
+    # 'messages' fuses SMS with app-chat content collected by separate Tier-1/Tier-2
+    # stages that carry their own flags (Instagram, Snapchat, Telegram, WhatsApp backup).
+    # 'tier1_sms' reaches only the SMS slice.
+    "messages": "SMS",
 }
 
 
@@ -912,10 +1047,23 @@ def resolve(
     elif flag_off:
         state = NOT_COLLECTED
         flag_actionable = True
-        reason = (
-            f"This stage is opt-in and was not run: '{cap.flag}' was off for this "
-            f"acquisition. Re-run with it enabled to collect it. {cap.requires}".strip()
-        )
+        _partial = PARTIAL_FLAG_SCOPE.get(cap.dataset)
+        if _partial:
+            # The plain wording below reads "collect it" as the whole dataset. For an
+            # aggregate that is false: re-enabling this one flag adds only the named
+            # slice, and saying otherwise would send the examiner looking for content
+            # this flag was never going to add.
+            reason = (
+                f"'{cap.flag}' was off for this acquisition, so {_partial} was never "
+                f"attempted. Re-run with it enabled to add {_partial}; the rest of this "
+                "view comes from separate opt-in stages with their own flags, which "
+                "this one does not affect."
+            )
+        else:
+            reason = (
+                f"This stage is opt-in and was not run: '{cap.flag}' was off for this "
+                f"acquisition. Re-run with it enabled to collect it. {cap.requires}".strip()
+            )
     elif value is None or cap.unconditional_write:
         # Either the file was never written — the stage did not reach its write — or it
         # is one the pipeline writes unconditionally, where an empty file is equally
