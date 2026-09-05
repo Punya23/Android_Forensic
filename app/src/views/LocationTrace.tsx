@@ -371,7 +371,7 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
       )}
 
       {/* The distinction this whole screen exists to preserve. Stated before any map. */}
-      <div className="rounded-md border border-amber-300/40 bg-amber-50/60 px-4 py-3 text-sm leading-relaxed">
+      <div className="rounded-md border border-warn/40 bg-warn/10 px-4 py-3 text-sm leading-relaxed">
         <strong>Read the category before the coordinate.</strong> Only{" "}
         <strong>{presence}</strong> row(s) place this device at a coordinate. The other{" "}
         {interest} record a place that was searched, viewed or saved — that evidences interest
@@ -381,7 +381,7 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
       </div>
 
       {anomalies.length > 0 && (
-        <div className="rounded-md border border-red-300/40 bg-red-50/60 px-4 py-3 text-sm">
+        <div className="rounded-md border border-critical/40 bg-critical/10 px-4 py-3 text-sm">
           <div className="font-medium mb-1">
             {anomalies.length} impossible-travel anomaly(ies) — requires verification
           </div>
@@ -477,7 +477,7 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
                   {r.place_name && <div>{r.place_name}</div>}
                   {r.address && <div className="opacity-70">{r.address}</div>}
                   {r.flags.includes("counterparty-position") && (
-                    <div className="text-red-700">
+                    <div className="text-critical">
                       Position claimed by the other party, not this device.
                     </div>
                   )}

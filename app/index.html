@@ -1,9 +1,23 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SNAGR — Forensic Preview</title>
+    <script>
+      // Set the theme class before first paint — stored choice, else OS preference —
+      // so there's no flash of the wrong theme while React boots. Kept in sync with
+      // src/lib/theme.ts (duplicated, not imported: this must run before any module
+      // loads).
+      (function () {
+        try {
+          var stored = localStorage.getItem("snagr-theme");
+          var dark = stored ? stored === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.classList.toggle("dark", dark);
+          document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
