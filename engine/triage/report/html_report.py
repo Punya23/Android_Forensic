@@ -306,6 +306,26 @@ def _location_trace_section(traces: list, summary: dict, anomalies: list) -> str
 
 
 _TOC_MARKER = "<!--__TOC_PLACEHOLDER__-->"
+
+# Fallback swatch for a confidence/severity tier this report does not recognise.
+# Deliberately neutral grey: an unknown tier must never inherit the colour of the
+# most-trusted or least-severe one.
+_UNKNOWN_COLORS = ("#5b6570", "#eceeec")
+
+
+def _tier_key(raw: Any) -> str:
+    """Normalise a confidence/severity tier for counting and colour lookup.
+
+    Case is folded because two spellings of one tier are one tier — left raw,
+    "critical" and "CRITICAL" become two dict keys that render as two identically
+    labelled legend rows in different colours. Anything missing, blank or
+    non-string becomes "unknown" rather than silently defaulting to the
+    highest-trust / lowest-severity bucket.
+    """
+    if not isinstance(raw, str):
+        return "unknown"
+    key = raw.strip().lower()
+    return key or "unknown"
 _H2_RE = re.compile(r"<h2>(.*?)</h2>", re.DOTALL)
 
 
@@ -383,28 +403,37 @@ def _overview_charts_section(
     """
     cards: list[str] = []
 
-    comp_svg = charts.bar_chart(composition, color="#7a2e12")
+    def _draw(fn: Any, *args: Any, **kwargs: Any) -> str:
+        """One bad dataset must cost at most its own chart, not the other three."""
+        try:
+            return fn(*args, **kwargs)
+        except Exception:  # pragma: no cover - defensive; a chart is never a gate
+            return ""
+
+    comp_svg = _draw(charts.bar_chart, composition, color="#7a2e12")
     if comp_svg:
         cards.append(f'<div class="chart-card"><h4>Artifact composition</h4>{comp_svg}</div>')
 
-    conf_svg = charts.donut_chart(confidence_segments)
+    conf_svg = _draw(charts.donut_chart, confidence_segments)
     if conf_svg:
         cards.append(
             '<div class="chart-card"><h4>Evidence confidence mix</h4>'
-            f'{conf_svg}<p class="chart-caption">Every message, call, recovered/carved row, '
+            f'{conf_svg}<p class="chart-caption">Counts every message, call, recovered/carved row '
             "and recovered chat/network artifact (Wi-Fi, Telegram, Instagram, Snapchat, "
-            "discovered chats, MediaStore trash) counted by confidence tier — recovered/carved "
-            "rows are never equivalent to live data, see each section's confidence badges. "
-            "Deletion-only findings are excluded here; they record that content is gone, not a "
-            "recovered value — see “Deletion detected” below. A row with a missing or "
-            "unrecognised tier is counted as UNKNOWN, never assumed live.</p></div>"
+            "discovered chats, MediaStore trash) by confidence tier; recovered/carved rows are "
+            "never equivalent to live data — see each section's badges. Deletion-only findings "
+            "are excluded: they record that content is gone, not a recovered value (see "
+            "“Deletion detected” below). A missing or unrecognised tier counts as UNKNOWN, "
+            "never as live.</p></div>"
         )
 
-    sev_svg = charts.donut_chart(severity_segments)
+    sev_svg = _draw(charts.donut_chart, severity_segments)
     if sev_svg:
         cards.append(f'<div class="chart-card"><h4>Flags by severity</h4>{sev_svg}</div>')
 
-    timeline_svg = charts.timeline_chart(timeline_buckets)
+    # Rendered full-width, so its viewBox is sized to match — an SVG coordinate
+    # plot scaled up would print its axis type larger than the rest of the report.
+    timeline_svg = _draw(charts.timeline_chart, timeline_buckets, width=980)
     if timeline_svg:
         cards.append(
             '<div class="chart-card" style="grid-column:1/-1">'
@@ -947,23 +976,20 @@ def generate_report(case_dir: str | Path) -> Path:
             mst_items or [],
         ):
             if isinstance(row, dict):
-                tier = row.get("confidence")
-                key = tier if isinstance(tier, str) and tier else "unknown"
+                key = _tier_key(row.get("confidence"))
                 conf_counts[key] = conf_counts.get(key, 0) + 1
-        _UNKNOWN_COLORS = ("#5b6570", "#eceeec")
         conf_segments = [
-            (str(tier).upper(), n, _CONF_COLORS.get(tier, _UNKNOWN_COLORS)[0])
+            (tier.upper(), n, _CONF_COLORS.get(tier, _UNKNOWN_COLORS)[0])
             for tier, n in conf_counts.items()
         ]
 
         sev_counts: dict[str, int] = {}
         for f in flags:
             if isinstance(f, dict):
-                sev = f.get("severity")
-                key = sev if isinstance(sev, str) and sev else "unknown"
+                key = _tier_key(f.get("severity"))
                 sev_counts[key] = sev_counts.get(key, 0) + 1
         sev_segments = [
-            (str(tier).upper(), n, _SEV_COLORS.get(tier, _UNKNOWN_COLORS)[0])
+            (tier.upper(), n, _SEV_COLORS.get(tier, _UNKNOWN_COLORS)[0])
             for tier, n in sev_counts.items()
         ]
 
@@ -984,33 +1010,64 @@ def generate_report(case_dir: str | Path) -> Path:
     # Communication graph — top contacts
     stats = graph.get("stats", {})
     if stats.get("top_contacts"):
+        tops = [t for t in stats["top_contacts"] if isinstance(t, dict)]
+        # A device can hold one contact name against two identifiers (two numbers,
+        # or a number and an account handle). Those are two participants and their
+        # counts must NOT be combined — this report cannot establish that two
+        # identifiers belong to one person. They are instead told apart by name,
+        # so the reader is never shown the same label twice with no way to
+        # distinguish the rows.
+        _name_counts: dict[str, int] = {}
+        for t in tops:
+            label = str(t.get("label", "—"))
+            _name_counts[label] = _name_counts.get(label, 0) + 1
+
+        def _participant_label(t: dict) -> str:
+            label = str(t.get("label", "—"))
+            if _name_counts.get(label, 0) < 2:
+                return label
+            ident = str(t.get("id", "")).split(":", 1)[-1]  # "num:+9178…" -> "+9178…"
+            if not ident or ident == label:
+                return label  # graph.json predating the id field: degrade quietly
+            return f"{label} ({ident})"
+
+        ambiguous = any(c > 1 for c in _name_counts.values())
+
         parts.append("<h2>Communication network — key participants</h2>")
         parts.append(
             f'<p class="note">{_esc(stats.get("participants", 0))} participants, '
             f'{_esc(stats.get("interactions", 0))} interactions across channels: '
             f'{_esc(", ".join(stats.get("channels", [])))}.</p>'
         )
+        if ambiguous:
+            parts.append(
+                '<p class="note">A contact name below appears on more than one row: the '
+                "device holds several identifiers (e.g. two phone numbers) under that name. "
+                "The identifier is shown in brackets and the counts are reported "
+                "<strong>separately</strong> — they are not combined, because this "
+                "acquisition cannot establish that two identifiers belong to the same "
+                "person.</p>"
+            )
         try:
             contacts_chart = charts.bar_chart(
-                [
-                    (t.get("label", "—"), t.get("weight", 0))
-                    for t in stats["top_contacts"]
-                    if isinstance(t, dict)
-                ],
+                [(_participant_label(t), t.get("weight", 0)) for t in tops],
                 color="#2258a8",
-                unit=" interaction(s)",
             )
         except Exception:  # pragma: no cover - defensive; a chart is never a gate
             contacts_chart = ""
         if contacts_chart:
-            parts.append(f'<div class="chart-card">{contacts_chart}</div>')
+            parts.append(
+                '<div class="chart-card"><h4>Top participants by interaction volume</h4>'
+                f"{contacts_chart}</div>"
+            )
         parts.append(
             "<table><tr><th>Participant</th><th>Interactions</th><th>Channels</th></tr>"
         )
-        for t in stats["top_contacts"]:
+        for t in tops:
             parts.append(
-                f'<tr><td>{_esc(t["label"])}</td><td>{_esc(t["weight"])}</td>'
-                f'<td>{_esc(", ".join(t["channels"]))}</td></tr>'
+                f'<tr><td>{_esc(_participant_label(t))}</td>'
+                f'<td>{_esc(t.get("weight", 0))}</td>'
+                f'<td>{_esc(", ".join(t.get("channels", [])))}</td></tr>'
             )
         parts.append("</table>")
 
@@ -2791,9 +2848,13 @@ _HEAD = """<!doctype html><html lang="en"><head><meta charset="utf-8">
   .stat{border:1px solid var(--line);border-radius:6px;padding:12px;text-align:center;background:#fcfcfb}
   .stat .n{font-size:22px;font-weight:700}.stat .l{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
   table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px}
-  th,td{text-align:left;padding:6px 9px;border-bottom:1px solid var(--line);vertical-align:top}
+  /* overflow-wrap — device-sourced message bodies and URLs arrive as single
+     unbroken runs; without this a cell forces the whole page wider than the
+     viewport and the right-hand text is unreachable on screen and in print. */
+  th,td{text-align:left;padding:6px 9px;border-bottom:1px solid var(--line);vertical-align:top;
+        overflow-wrap:anywhere}
   th{background:#f0f1ee;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
-  .mono{font-family:ui-monospace,monospace;font-size:11.5px}
+  .mono{font-family:ui-monospace,monospace;font-size:11.5px;overflow-wrap:anywhere}
   .hash{word-break:break-all;color:var(--mut)}
   .note{color:var(--mut);font-size:12.5px;margin:4px 0 8px}
   .cert{border:1px solid var(--line);border-radius:6px;padding:16px 20px;background:#fcfcfb}
@@ -2810,18 +2871,35 @@ _HEAD = """<!doctype html><html lang="en"><head><meta charset="utf-8">
   .back-to-top{position:fixed;right:22px;bottom:22px;background:var(--accent);color:#fff;
     border-radius:50%;width:38px;height:38px;line-height:38px;text-align:center;
     text-decoration:none;font-size:17px;box-shadow:0 1px 4px rgba(0,0,0,.35)}
-  .charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin:14px 0 6px}
-  .chart-card{border:1px solid var(--line);border-radius:6px;padding:14px 16px;background:#fcfcfb}
+  /* align-items:start — without it every card stretches to the tallest in its
+     row, leaving a chart with few bars sitting above hundreds of px of void. */
+  /* min(360px,100%) rather than a bare 360px floor: a bare floor cannot shrink, so
+     on a screen narrower than the floor the track overflows the page instead of
+     collapsing to one column. */
+  .charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(360px,100%),1fr));gap:16px;
+          margin:14px 0 6px;align-items:start}
+  .chart-card{border:1px solid var(--line);border-radius:6px;padding:14px 16px;background:#fcfcfb;min-width:0}
   .chart-card h4{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
   .chart-svg{width:100%;height:auto;display:block}
   .chart-caption{font-size:11px;color:var(--mut);margin:6px 0 0}
+  .donut-wrap{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
   .chart-legend{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:7px 14px;font-size:12px}
-  .chart-legend li{display:flex;align-items:center;gap:5px}
+  .chart-legend li{display:flex;align-items:center;gap:5px;min-width:0;overflow-wrap:anywhere}
+  /* Bar charts: HTML text either side of an SVG bar. Text keeps its true size at
+     any container width and the browser decides where it wraps, so a label or a
+     value can never be clipped the way SVG <text> in a fixed viewBox is. */
+  .bar-chart{display:flex;flex-direction:column;gap:7px;margin-top:2px}
+  .bar-row{display:flex;align-items:center;gap:9px;font-size:12px}
+  .bar-label{flex:0 0 32%;max-width:230px;min-width:0;text-align:right;overflow-wrap:anywhere}
+  .bar-track{flex:1 1 auto;min-width:36px;height:17px}
+  .bar-track svg{display:block;width:100%;height:100%}
+  .bar-val{flex:0 0 auto;white-space:nowrap;color:var(--mut);font-variant-numeric:tabular-nums}
   @media print{
     body{background:#fff}.wrap{box-shadow:none;max-width:none}
     .back-to-top{display:none}
     .toc{break-after:page}
     h2{break-after:avoid}
     tr{break-inside:avoid}
+    .chart-card{break-inside:avoid}
   }
 </style></head><body><div class="wrap" id="top">"""

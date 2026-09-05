@@ -138,9 +138,18 @@ def build_communication_graph(
         for e, w in sorted(edge_weight.items(), key=lambda kv: -kv[1])
     ]
 
-    # Top contacts by interaction volume.
+    # Top contacts by interaction volume. The node id is carried through because
+    # it is the only thing separating two participants the device holds under the
+    # same display name (e.g. one contact saved against two numbers) — without it
+    # a consumer renders them as one name listed twice, and cannot tell which row
+    # is which.
     top = [
-        {"label": n["label"], "weight": n["weight"], "channels": n["channels"]}
+        {
+            "id": n["id"],
+            "label": n["label"],
+            "weight": n["weight"],
+            "channels": n["channels"],
+        }
         for n in nodes
         if n["type"] != "owner"
     ][:10]
