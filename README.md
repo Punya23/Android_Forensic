@@ -126,6 +126,72 @@ result = hotspot.analyze_hotspot_indicators(wifi_dumpsys, netstats, wifi_config)
 
 **All modules production-ready and tested** ✅
 
+## 🤖 AI Enhancement Modules (New)
+
+Five new AI-powered modules for intelligent forensic analysis:
+
+### Module Overview
+| Module | Purpose |
+|--------|---------|
+| **Evidence Prioritization** | ML-based scoring and ranking of findings |
+| **Conversation Summarization** | AI-powered chat summaries with entity extraction |
+| **Behavioral Analysis** | Pattern detection and anomaly identification |
+| **Multi-Language NLP** | Indian language support with slang/emoji processing |
+| **Social Network Analysis** | Graph metrics, community detection, influence scoring |
+
+### Quick Setup
+
+```bash
+cd engine
+
+# Run AI module tests (17 tests)
+python -m pytest tests/test_ai_modules.py -v
+```
+
+**Expected output**: `17 passed` ✅
+
+### Key Features
+- ✅ **LLM Integration**: With graceful fallbacks
+- ✅ **Multi-Language**: 7 Indian languages, 50+ slang terms, 30+ emojis
+- ✅ **Forensically Sound**: Explicit caveats, confidence levels
+- ✅ **Graph Analysis**: 4 centrality metrics, community detection
+- ✅ **Behavioral Detection**: 6 pattern types (timing, bursts, switches)
+
+### Example Usage
+
+```python
+# Evidence Prioritization
+from triage.intel import EvidencePrioritizer
+prioritizer = EvidencePrioritizer()
+scored = prioritizer.score_evidence(finding, case_context)
+
+# Conversation Summarization
+from triage.intel import ConversationSummarizer
+summarizer = ConversationSummarizer()
+summary = summarizer.summarize_conversation(messages, chat_id)
+
+# Behavioral Analysis
+from triage.forensics import BehavioralAnomalyDetector
+detector = BehavioralAnomalyDetector()
+patterns = detector.detect_patterns(messages, calls)
+
+# Multi-Language NLP
+from triage.forensics import MultiLanguageNLP
+nlp = MultiLanguageNLP()
+processed = nlp.process_message("kal milte hain bro 🤙")
+
+# Social Network Analysis
+from triage.intel import SocialNetworkAnalyst
+analyst = SocialNetworkAnalyst()
+graph = analyst.build_enhanced_graph(messages, contacts)
+```
+
+### Documentation
+- 📖 **[AI Modules Complete Guide](AI_MODULES_COMPLETE.md)** - Full documentation
+- 🧪 **Tests**: `tests/test_ai_modules.py` - 17 comprehensive tests
+
+**All modules production-ready and tested** ✅
+
 ## 📚 Full documentation
 
 | | |
@@ -149,8 +215,8 @@ deliberately not wired up.
 
 <div align="center">
 
-**1007 tests passing** · **+19 forensic module tests** · Runs fully offline · No account, no cloud, no telemetry
+**1007 tests passing** · **+19 forensic module tests** · **+17 AI module tests** · Runs fully offline · No account, no cloud, no telemetry
 
-**New**: [Forensic Modules Documentation](FORENSIC_MODULES_INDEX.md) · [Setup Guide](FORENSIC_MODULES_SETUP.md)
+**New**: [Forensic Modules](FORENSIC_MODULES_INDEX.md) · [AI Modules](AI_MODULES_COMPLETE.md)
 
 </div>
