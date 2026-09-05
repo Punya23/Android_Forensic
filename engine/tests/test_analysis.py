@@ -340,3 +340,108 @@ def test_sqbrite_corrupt_db_does_not_crash(tmp_path):
     bad.write_bytes(b"\x00\xff\xfe\xfd" * 100)
     rows = sqbrite_scan(bad)
     assert isinstance(rows, list)
+
+
+def test_graph_folds_dialing_prefix_variants_of_one_number():
+    """+91… / 0… / bare national forms of one number are one participant, not three.
+
+    Keyed on the raw string they were three nodes, which split one subscriber's
+    interaction count three ways and inflated the participant total.
+    """
+    messages = []
+    calls = [
+        {"name": "", "number": "+919767143329"},
+        {"name": "", "number": "09767143329"},
+        {"name": "", "number": "9767143329"},
+        {"name": "", "number": "00919767143329"},
+    ]
+    contacts = [{"name": "Mumma", "number": "+91 97671 43329"}]
+    g = build_communication_graph(messages=messages, calls=calls, contacts=contacts)
+    assert g["stats"]["participants"] == 1
+    node = [n for n in g["nodes"] if n["type"] != "owner"][0]
+    assert node["id"] == "num:+919767143329"
+    assert node["weight"] == 4
+    assert node["label"] == "Mumma"
+    # The raw forms are kept so the report can show what was folded.
+    assert node["identifiers"] == [
+        "+919767143329",
+        "00919767143329",
+        "09767143329",
+        "9767143329",
+    ] or set(node["identifiers"]) == {
+        "+919767143329",
+        "00919767143329",
+        "09767143329",
+        "9767143329",
+    }
+
+
+def test_graph_does_not_fold_numbers_differing_by_more_than_a_dialing_prefix():
+    """Only dialing prefixes fold. A shared digit suffix is not an identity claim."""
+    calls = [
+        {"name": "", "number": "+919767143329"},  # assumed plan
+        {"name": "", "number": "+449767143329"},  # different country code
+        {"name": "", "number": "12129767143329"},  # not a shape the plan describes
+        {"name": "", "number": "57575"},  # short code
+    ]
+    g = build_communication_graph(messages=[], calls=calls, contacts=[])
+    assert g["stats"]["participants"] == 4
+    assert all(len(n.get("identifiers", [])) <= 1 for n in g["nodes"] if n["type"] != "owner")
+
+
+def test_graph_label_is_always_an_identifier_the_device_held():
+    """No contact name: show a form the device stored, never a synthesised E.164.
+
+    Displaying "+919513886363" for a number the device only ever held as
+    "09513886363" would assert a country code that was inferred, not observed.
+    """
+    g = build_communication_graph(
+        messages=[], calls=[{"name": "", "number": "09513886363"}], contacts=[]
+    )
+    node = [n for n in g["nodes"] if n["type"] != "owner"][0]
+    assert node["id"] == "num:+919513886363"  # canonical key, for matching
+    assert node["label"] == "09513886363"  # displayed as held, for the reader
+
+
+def test_graph_discloses_what_the_numbering_plan_assumption_merged():
+    calls = [
+        {"name": "Daddy", "number": "+919028066664"},
+        {"name": "Daddy", "number": "9028066664"},
+        {"name": "Solo", "number": "+919999000011"},
+    ]
+    g = build_communication_graph(messages=[], calls=calls, contacts=[])
+    norm = g["stats"]["identity_normalisation"]
+    assert norm["country_code"] == "+91"
+    assert norm["national_number_length"] == 10
+    assert norm["merged_participants"] == 1
+    assert norm["merged_identifiers"] == 1
+    assert norm["participants"] == 2
+    assert norm["participants_if_unmerged"] == 3
+    merged = norm["merged"][0]
+    assert merged["canonical"] == "+919028066664"
+    assert sorted(merged["identifiers"]) == ["+919028066664", "9028066664"]
+    assert merged["weight"] == 2
+
+
+def test_graph_numbering_plan_is_configurable():
+    """The plan is an assumption, so it is a parameter — not baked into the folding."""
+    calls = [{"name": "", "number": "+12125550100"}, {"name": "", "number": "2125550100"}]
+    default = build_communication_graph(messages=[], calls=calls, contacts=[])
+    assert default["stats"]["participants"] == 2  # +1 is not the assumed plan
+    us = build_communication_graph(
+        messages=[], calls=calls, contacts=[], country_code="1", national_number_length=10
+    )
+    assert us["stats"]["participants"] == 1
+    assert us["stats"]["identity_normalisation"]["country_code"] == "+1"
+
+
+def test_graph_folding_does_not_change_the_interaction_total():
+    """Folding moves interactions between participants; it must never create or lose one."""
+    calls = [
+        {"name": "", "number": "+919767143329"},
+        {"name": "", "number": "9767143329"},
+        {"name": "", "number": "57575"},
+    ]
+    g = build_communication_graph(messages=[], calls=calls, contacts=[])
+    assert g["stats"]["interactions"] == 3
+    assert sum(n["weight"] for n in g["nodes"] if n["type"] != "owner") == 3

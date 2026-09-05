@@ -783,3 +783,87 @@ def _all_indices(haystack: str, needle: str) -> list[int]:
             return out
         out.append(i)
         start = i + 1
+
+
+# ---------------------------------------------------------------------------
+# Identifier normalisation — the numbering-plan assumption must be disclosed
+# ---------------------------------------------------------------------------
+def _graph_with_normalisation(case: Case, merged: list[dict], **over) -> None:
+    stats = {
+        "participants": 2,
+        "interactions": 5,
+        "channels": ["call", "sms"],
+        "top_contacts": [
+            {"id": "num:+919767143329", "label": "Mumma", "weight": 4, "channels": ["call"]}
+        ],
+        "identity_normalisation": {
+            "country_code": "+91",
+            "national_number_length": 10,
+            "participants": 2,
+            "participants_if_unmerged": 2 + sum(len(m["identifiers"]) - 1 for m in merged),
+            "merged_participants": len(merged),
+            "merged_identifiers": sum(len(m["identifiers"]) - 1 for m in merged),
+            "merged": merged,
+        },
+    }
+    stats["identity_normalisation"].update(over)
+    case.write_derived("graph", {"stats": stats})
+
+
+def test_report_discloses_the_numbering_plan_used_to_merge_identifiers(case: Case):
+    """Merging identifiers changes every weight and the participant total. A report that
+    does so silently misstates the evidence between two runs of the same case."""
+    _graph_with_normalisation(
+        case,
+        [
+            {
+                "label": "Mumma",
+                "canonical": "+919767143329",
+                "identifiers": ["+919767143329", "9767143329"],
+                "weight": 4,
+            }
+        ],
+    )
+    html = render(case)
+    assert "Identifier normalisation" in html
+    assert "+91" in html and "10-digit national number" in html
+    assert "one participant" in html
+    # the merge itself must be auditable from the report, not only from graph.json
+    assert "9767143329" in html
+    # and the claim it does NOT make must be stated
+    assert "cannot establish that two different numbers belong to the same person" in html
+
+
+def test_report_says_when_no_identifiers_were_merged(case: Case):
+    """Nothing merged is a finding too — silence would read as 'the question never arose'."""
+    _graph_with_normalisation(case, [])
+    html = render(case)
+    assert "Identifier normalisation" in html
+    assert "No identifier in this case differed from another by only a dialing prefix" in html
+
+
+def test_report_omits_the_note_for_a_graph_predating_the_field(case: Case):
+    case.write_derived(
+        "graph",
+        {
+            "stats": {
+                "participants": 1,
+                "interactions": 1,
+                "channels": ["sms"],
+                "top_contacts": [{"label": "X", "weight": 1, "channels": ["sms"]}],
+            }
+        },
+    )
+    html = render(case)
+    assert "Identifier normalisation" not in html
+
+
+def test_report_escapes_merged_identifier_labels(case: Case):
+    xss = "<script>alert(1)</script>"
+    _graph_with_normalisation(
+        case,
+        [{"label": xss, "canonical": xss, "identifiers": [xss, "9767143329"], "weight": 2}],
+    )
+    html = render(case)
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html

@@ -84,7 +84,34 @@ export interface GraphStats {
   participants: number;
   interactions: number;
   channels: string[];
-  top_contacts: { label: string; weight: number; channels: string[] }[];
+  top_contacts: {
+    id?: string;
+    label: string;
+    weight: number;
+    channels: string[];
+    identifiers?: string[];
+  }[];
+  /** What the numbering-plan assumption merged. Identifiers differing only by a dialing
+   * prefix (+91 / 00 / leading 0) are one participant, which changes every weight and the
+   * participant total — so the counts above are only comparable across runs alongside
+   * this. Optional: absent on graphs built before the field existed. */
+  identity_normalisation?: IdentityNormalisation;
+}
+
+export interface IdentityNormalisation {
+  country_code: string;
+  national_number_length: number;
+  participants: number;
+  /** What `participants` would have been with no folding at all. */
+  participants_if_unmerged: number;
+  merged_participants: number;
+  merged_identifiers: number;
+  merged: {
+    label: string;
+    canonical: string;
+    identifiers: string[];
+    weight: number;
+  }[];
 }
 
 export interface CaseSummary {
@@ -490,6 +517,10 @@ export interface GraphNode {
    * Drives the explorable channel sub-nodes in the Social Graph view. Optional —
    * absent on synthetic sub-nodes and on graphs built before this field existed. */
   channel_weights?: Record<string, number>;
+  /** Every raw phone identifier folded into this node ("+919767143329", "9767143329").
+   * More than one entry means the numbering-plan assumption was applied here. Optional —
+   * absent on synthetic sub-nodes and on graphs built before this field existed. */
+  identifiers?: string[];
 }
 
 export interface GraphEdge {

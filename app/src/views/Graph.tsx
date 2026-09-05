@@ -552,8 +552,20 @@ export function GraphView({ caseId }: { caseId: string }) {
         </div>
         <div className="card overflow-auto">
           <div className="px-3 py-2 text-[11px] uppercase tracking-wider text-muted border-b border-line">Key participants</div>
+          {(graph.stats.identity_normalisation?.merged_participants ?? 0) > 0 && (
+            <div className="px-3 py-2 text-[10px] leading-relaxed text-muted border-b border-line">
+              {graph.stats.identity_normalisation!.merged_identifiers} identifier(s) differing
+              only by a dialing prefix ({graph.stats.identity_normalisation!.country_code}, 00 or a
+              leading 0) are counted as one participant, so these totals are higher than a
+              per-identifier count. Two different numbers are never merged. Full list in the report.
+            </div>
+          )}
           {graph.stats.top_contacts.map((t, i) => {
-            const node = graph.nodes.find((n) => n.label === t.label && n.type !== "owner");
+            // Match on id, not label: a device can hold two numbers under one contact
+            // name, and matching by label would focus the wrong node for the second row.
+            const node = graph.nodes.find((n) =>
+              t.id ? n.id === t.id : n.label === t.label && n.type !== "owner",
+            );
             return (
               <button
                 key={i}

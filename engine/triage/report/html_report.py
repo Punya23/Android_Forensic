@@ -368,6 +368,81 @@ def _inject_toc(body: str) -> str:
     return body.replace(_TOC_MARKER, toc_html, 1)
 
 
+def _identity_normalisation_note(stats: dict) -> str:
+    """Disclose the numbering-plan assumption behind the participant counts.
+
+    The graph folds identifiers that differ only by a dialing prefix into one participant
+    (see ``analysis/graph.py``). That changes every weight, the participant total and the
+    ordering of the table below, so the report has to say it was done and on what
+    assumption — a count that moves between two runs of the same case without the report
+    explaining why is exactly the kind of silent change this tool must not make.
+
+    Rendered whether or not anything was actually merged: "nothing in this case differed
+    only by a dialing prefix" is a finding, not an absence worth hiding.
+    """
+    norm = stats.get("identity_normalisation")
+    if not isinstance(norm, dict):
+        return ""  # graph.json predating the field: say nothing rather than guess
+    cc = _esc(norm.get("country_code", "?"))
+    nsn = _esc(norm.get("national_number_length", "?"))
+    merged = [m for m in norm.get("merged", []) if isinstance(m, dict)]
+    n_participants = norm.get("merged_participants", len(merged))
+    n_identifiers = norm.get("merged_identifiers", 0)
+
+    out = [
+        '<p class="note"><strong>Identifier normalisation.</strong> Identifiers that '
+        f"differ only by a dialing prefix — the country code {cc}, the international "
+        "access prefix 00, or a leading national trunk 0 — are counted as "
+        "<strong>one participant</strong>, because under the numbering plan assumed here "
+        f"({cc}, {nsn}-digit national number) they address the same subscriber. "
+    ]
+    if merged:
+        out.append(
+            f"That applied to {_esc(n_identifiers)} identifier(s), folded into "
+            f"{_esc(n_participants)} participant(s): the participant total above is "
+            f'{_esc(norm.get("participants", "?"))} where it would otherwise be '
+            f'{_esc(norm.get("participants_if_unmerged", "?"))}, and the interaction '
+            "counts for those participants are correspondingly higher than in a report "
+            "generated before this normalisation. The identifiers folded into each are "
+            "listed below so the merge can be checked against the assumed plan."
+        )
+    else:
+        out.append(
+            "No identifier in this case differed from another by only a dialing prefix, "
+            "so no participant count here was affected by that assumption."
+        )
+    out.append(
+        " Nothing else was merged: two <em>different</em> numbers held under one contact "
+        "name remain separate participants, and identifiers the plan does not describe "
+        "(short codes, foreign numbers, alphanumeric sender IDs) are counted exactly as "
+        "the device held them — this acquisition cannot establish that two different "
+        "numbers belong to the same person.</p>"
+    )
+    if merged:
+        shown = merged[:10]
+        out.append(
+            '<table><tr><th>Participant</th><th>Counted as</th>'
+            "<th>Identifiers on the device</th><th>Interactions</th></tr>"
+        )
+        for m in shown:
+            idents = ", ".join(str(i) for i in m.get("identifiers", []))
+            out.append(
+                f'<tr><td>{_esc(m.get("label", "—"))}</td>'
+                f'<td class="mono">{_esc(m.get("canonical", "—"))}</td>'
+                f'<td class="mono">{_esc(idents)}</td>'
+                f'<td>{_esc(m.get("weight", 0))}</td></tr>'
+            )
+        out.append("</table>")
+        if len(merged) > len(shown):
+            out.append(
+                f'<p class="note">{_esc(len(merged) - len(shown))} further merged '
+                "participant(s) not listed; the full set is in "
+                "<span class=\"mono\">derived/graph.json</span> "
+                "(<span class=\"mono\">stats.identity_normalisation.merged</span>).</p>"
+            )
+    return "".join(out)
+
+
 def _overview_charts_section(
     composition: list[tuple[str, int]],
     confidence_segments: list[tuple[str, int, str]],
@@ -990,6 +1065,7 @@ def generate_report(case_dir: str | Path) -> Path:
             f'{_esc(stats.get("interactions", 0))} interactions across channels: '
             f'{_esc(", ".join(stats.get("channels", [])))}.</p>'
         )
+        parts.append(_identity_normalisation_note(stats))
         try:
             contacts_chart = charts.bar_chart(
                 [
