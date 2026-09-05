@@ -298,6 +298,25 @@ export function GraphView({ caseId }: { caseId: string }) {
     [graph]
   );
 
+  // The device can hold one saved contact name against several identifiers, so two
+  // "Key participants" rows can carry an identical label (CASE-REAL-005 has "Vedant Yeole"
+  // as both num:+917875091022 and num:+919284078848). Append the identifier only when a
+  // name appears on more than one row — the common case stays clean, and the duplicate
+  // rows become tellable apart. The counts stay separate: merging them would be an
+  // unevidenced claim that the two identifiers are one person. Mirrors _participant_label
+  // in engine/triage/report/html_report.py.
+  const participantLabel = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const t of graph?.stats.top_contacts ?? []) counts.set(t.label, (counts.get(t.label) ?? 0) + 1);
+    return (t: { id?: string; label: string }): string => {
+      if ((counts.get(t.label) ?? 0) < 2) return t.label;
+      const id = t.id ?? "";
+      const ident = id.includes(":") ? id.slice(id.indexOf(":") + 1) : id; // "num:+9178…" -> "+9178…"
+      if (!ident || ident === t.label) return t.label; // graph.json predating the id: degrade quietly
+      return `${t.label} (${ident})`;
+    };
+  }, [graph]);
+
   const matchesQuery = useCallback(
     (n: GraphNode) => !query.trim() || n.label.toLowerCase().includes(query.trim().toLowerCase()),
     [query]
@@ -553,7 +572,12 @@ export function GraphView({ caseId }: { caseId: string }) {
         <div className="card overflow-auto">
           <div className="px-3 py-2 text-[11px] uppercase tracking-wider text-muted border-b border-line">Key participants</div>
           {graph.stats.top_contacts.map((t, i) => {
-            const node = graph.nodes.find((n) => n.label === t.label && n.type !== "owner");
+            // Resolve by id: matching on the label alone picks the first node with that
+            // name, which silently pans to the wrong participant when a name is duplicated.
+            // The label match remains only for graph.json files written before the id existed.
+            const node =
+              (t.id ? nodeById.get(t.id) : undefined) ??
+              graph.nodes.find((n) => n.label === t.label && n.type !== "owner");
             return (
               <button
                 key={i}
@@ -569,7 +593,9 @@ export function GraphView({ caseId }: { caseId: string }) {
                 }}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium truncate">{t.label}</span>
+                  <span className="text-sm font-medium truncate" title={participantLabel(t)}>
+                    {participantLabel(t)}
+                  </span>
                   <span className="text-xs font-mono text-accent">{t.weight}</span>
                 </div>
                 <div className="flex gap-1 mt-1 flex-wrap">

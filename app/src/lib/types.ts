@@ -84,7 +84,17 @@ export interface GraphStats {
   participants: number;
   interactions: number;
   channels: string[];
-  top_contacts: { label: string; weight: number; channels: string[] }[];
+  top_contacts: {
+    /** Graph node id (e.g. "num:+917875091022"). The only thing separating two
+     * participants the device holds under the same display name — one saved contact
+     * against two numbers produces two rows with an identical label. Optional:
+     * graph.json files generated before the id was carried through omit it, and a
+     * consumer must fall back to the label there. */
+    id?: string;
+    label: string;
+    weight: number;
+    channels: string[];
+  }[];
 }
 
 export interface CaseSummary {
