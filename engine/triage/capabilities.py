@@ -257,13 +257,14 @@ CATALOGUE: dict[str, Capability] = {
         "catalogue. Android purges these after 30 days.",
         unconditional_write=True,
         content_paths=("items",),
-        # ``analyze_mediastore_trash`` is called inside a try/except and its result is
-        # only written if it returned, so a file with a ``summary`` block is the analysis
-        # saying it completed. That distinction is worth having here: the shared-storage
-        # side of the fusion is a Tier-0 walk that always happens, so "the analysis ran
-        # and found no trashed media" really is a finding about the device — whereas a
-        # missing file means the run never reached it, and stays unverified.
-        ran_when="summary",
+        # No ``ran_when``, deliberately. ``analyze_mediastore_trash`` returns
+        # ``{"items": [...], "summary": {...}}`` unconditionally — ``_summarise()`` builds
+        # a ``summary`` block even when it was handed empty ``media_inventory`` and an
+        # empty manifest, so a ``summary`` key proves only that the function did not
+        # raise, not that either side of the fusion had anything to walk. Treating it as
+        # proof-of-run was the exact overstatement this module exists to catch, just
+        # pointed at ``empty`` instead of ``populated``. With no corroborator this falls
+        # through to the honest, unverified "written on every run" wording instead.
     ),
     "url_locations": Capability(
         "url_locations", "Locations from map links", -1, "Derived from browser history",
@@ -476,6 +477,12 @@ CATALOGUE: dict[str, Capability] = {
         "presence is the finding, not the contents.",
         flag="scan_encrypted_apps",
     ),
+    # Written twice: conditionally right after the scan (pipeline.py, only if a plaintext
+    # row or an encrypted database turned up), then unconditionally again in the
+    # end-of-run write block. The second write means an empty ``signal.json`` is not
+    # proof the scan ran — a run that never reached the scan produces the same empty
+    # dict as one that ran and found nothing. Unverified, not clean, until something
+    # corroborates it.
     "signal": Capability(
         "signal",
         "Signal",
@@ -483,6 +490,7 @@ CATALOGUE: dict[str, Capability] = {
         "Signal's database key is held in the hardware-backed Keystore. It is not "
         "extractable by any software method on a supported device, rooted or not. This "
         "view reports whether the database is present, never its contents.",
+        unconditional_write=True,
     ),
     # --- derived / analysis ------------------------------------------------
     # Both are envelopes, and both are scaffolded even on a case that collected nothing.
@@ -821,7 +829,21 @@ def resolve(
             "count": 0,
         }
 
+    flag_off = bool(cap.flag) and cap.flag in config and not config.get(cap.flag)
+    flag_actionable = False
+
     if cap.needs_case_brief and not config.get("case_description_present", True):
+        # 'run_ai_analysis' can be on or off independently of the brief, and both gaps
+        # have to be named or the examiner fixes one and re-runs into the other. When
+        # the flag is also off, re-ticking it is real work (a second acquisition) that
+        # the brief alone will not replace — say so rather than implying a keyboard fix
+        # closes the whole gap.
+        also_off = (
+            f" '{cap.flag}' was also off for this acquisition; that needs re-enabling "
+            "and re-running too, not just the brief."
+            if flag_off
+            else ""
+        )
         return {
             "dataset": cap.dataset,
             "label": cap.label,
@@ -831,19 +853,17 @@ def resolve(
                 "No case brief was supplied for this acquisition, so this stage had "
                 "nothing to work from — it is never run without one. Add a brief on the "
                 "Case Intelligence tab and re-run the analysis; the collected evidence "
-                "does not need re-pulling."
+                "does not need re-pulling." + also_off
             ),
             "requires": cap.requires,
             "flag": cap.flag,
-            # 'run_ai_analysis' was on; what is missing is a paragraph of text, not a
-            # pull. Offering the flag here would send the examiner back to the handset
-            # to fix something they can fix from the keyboard.
+            # The brief alone is never the fix when the flag is also off — and even
+            # when the flag is on, what is missing is a paragraph of text, not a pull.
+            # Offering the flag as *the* fix here would send the examiner back to the
+            # handset for something they can, at least partly, fix from the keyboard.
             "flag_actionable": False,
             "count": 0,
         }
-
-    flag_off = bool(cap.flag) and cap.flag in config and not config.get(cap.flag)
-    flag_actionable = False
     # Tier 2 is the only tier root gates, and ``root_only`` says whether root is the only
     # way in. ``root_available is None`` is a third answer and stays one: an unknown root
     # status is not evidence of an unrooted handset, so nothing below fires on it.

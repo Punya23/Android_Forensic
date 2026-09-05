@@ -311,6 +311,21 @@ def test_every_brief_gated_dataset_gets_the_same_treatment(case_dir: Path):
         assert "does not need re-pulling" in out["reason"], dataset
 
 
+def test_no_brief_and_flag_off_names_both_gaps(case_dir: Path):
+    """Fixing the brief alone would not be enough here — the flag needs re-enabling too.
+
+    Re-running the analysis needs both a brief and ``run_ai_analysis`` on. Naming only
+    the brief would send the examiner back to a "fixed" case that still produces
+    nothing, for a reason the reason text never mentioned.
+    """
+    both_off = {"run_ai_analysis": False, "case_description_present": False}
+    out = resolve(CATALOGUE["ai_findings"], case_dir / "derived", both_off)
+    assert out["state"] == NOT_COLLECTED
+    assert out["flag_actionable"] is False
+    assert "brief" in out["reason"].lower()
+    assert "run_ai_analysis" in out["reason"]
+
+
 # ---------------------------------------------------------------------------
 # Fixed-shape envelopes: a stage that never ran must not badge itself "Collected"
 # ---------------------------------------------------------------------------
@@ -396,6 +411,39 @@ def test_unrun_envelope_offers_its_flag_when_the_flag_is_what_was_off(case_dir: 
     assert out["state"] == NOT_COLLECTED
     assert out["flag_actionable"] is True
     assert "run_aleapp" in out["reason"]
+
+
+def test_mediastore_trash_summary_key_is_not_proof_the_fusion_had_inputs(
+    case_dir: Path,
+):
+    """``analyze_mediastore_trash`` builds ``summary`` even for empty inputs.
+
+    A ``ran_when="summary"`` corroborator was added and then removed here: the function
+    returns ``{"items": [...], "summary": {...}}`` unconditionally, so the ``summary``
+    key is truthy on every non-exception call — proof the function did not raise, not
+    proof either side of the fusion (``media_inventory``, ``media``) had anything to
+    walk. Treating it as proof-of-run was the exact overstatement the envelope tests
+    above catch, just pointed at ``empty`` instead of ``populated``.
+    """
+    assert CATALOGUE["mediastore_trash"].ran_when == ""
+    write(case_dir, "mediastore_trash", {"items": [], "summary": {"total": 0}})
+    out = resolve(CATALOGUE["mediastore_trash"], case_dir / "derived", {})
+    assert out["state"] == INACCESSIBLE
+    assert "written on every run" in out["reason"]
+
+
+def test_signal_second_unconditional_write_is_not_read_as_a_clean_scan(case_dir: Path):
+    """``signal_result`` is written twice: conditionally after the scan, then again,
+
+    unconditionally, in the end-of-run block. The second write means an empty
+    ``signal.json`` no longer proves the scan ran — a run that never reached it writes
+    the same ``{}`` as one that ran and found nothing.
+    """
+    assert CATALOGUE["signal"].unconditional_write is True
+    write(case_dir, "signal", {})
+    out = resolve(CATALOGUE["signal"], case_dir / "derived", {})
+    assert out["state"] == INACCESSIBLE
+    assert "written on every run" in out["reason"]
 
 
 def test_written_but_empty_is_never_described_as_a_stage_that_did_not_complete(
