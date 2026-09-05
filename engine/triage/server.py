@@ -66,6 +66,22 @@ def create_app(cases_root: Path = CASES_ROOT):
     except Exception:  # pragma: no cover - the registry must never block startup
         pass
 
+    # Auto-connect a local Ollama model, if one is available and the operator hasn't
+    # explicitly pinned a back-end. Case data still never leaves the workstation —
+    # this only decides which already-installed *local* model backs the case
+    # intelligence layer. Probe failure (Ollama not running) is not an error: the
+    # engine just stays on the always-available heuristic back-end.
+    try:
+        from .intel.llm import autodetect_and_configure
+
+        _llm_auto = autodetect_and_configure()
+        if _llm_auto.get("autodetected"):
+            print(f"[llm] auto-connected: ollama/{_llm_auto['model']}")
+        else:
+            print(f"[llm] {_llm_auto.get('provider', 'heuristic')} ({_llm_auto.get('reason', '')})")
+    except Exception:  # pragma: no cover - LLM wiring must never block startup
+        pass
+
     def _finalize_report(case: Case, *, trigger: str) -> None:
         """After (re-)generating a report: snapshot it into history and refresh the
         case's registry row. Called from every call site that writes report.html so
