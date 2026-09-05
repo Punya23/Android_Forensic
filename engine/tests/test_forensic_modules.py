@@ -520,6 +520,68 @@ ident=[{networkId="AndroidAP5678", type=WIFI}] uid=-1 set=ALL tag=0x0
         self.assertIn("nor does it log client mac", caveat_text)
         self.assertIn("active at capture time", caveat_text)
 
+    def test_multiple_hotspot_networks_distinct_count(self):
+        """Multiple different hotspot-named networks produce the correct distinct SSID count."""
+        wifi_config = [
+            {"ssid": "AndroidAP1234"},
+            {"ssid": "AndroidAP5678"},   # same brand, different AP \u2014 counts as 2 distinct SSIDs
+            {"ssid": "iPhoneXR"},
+            {"ssid": "MyHomeWifi"},       # non-hotspot name \u2014 must not be counted
+        ]
+        result = hotspot.analyze_hotspot_indicators("", "", wifi_config)
+
+        self.assertTrue(result["connected_indicator"])
+        named_ssids_in_evidence = []
+        for ev in result["details"]["connected_evidence"]:
+            import re
+            m = re.search(r"Known network '([^']+)'", ev)
+            if m:
+                named_ssids_in_evidence.append(m.group(1))
+        distinct_count = len(set(named_ssids_in_evidence))
+        # Must find all 3 hotspot-named networks
+        self.assertEqual(distinct_count, 3, named_ssids_in_evidence)
+        # Must NOT include the plain home network
+        self.assertNotIn("MyHomeWifi", named_ssids_in_evidence)
+
+    def test_saved_list_empty_means_check_could_not_run_not_no_hotspot(self):
+        """Empty wifi_config (not root-readable) must produce connected_indicator=None.
+
+        An empty saved-network list means Android 10+ refused to expose it,
+        which is not the same as the device having no saved hotspot networks.
+        """
+        result = hotspot.analyze_hotspot_indicators("", "", [])
+        self.assertIsNone(result["connected_indicator"])
+        # The caveat must say the check could NOT run, not that no hotspot was found
+        caveat_text = " ".join(result["caveats"])
+        self.assertIn("could not run", caveat_text.lower())
+        # Must NOT say "no hotspot" or anything that reads as a negative finding
+        self.assertNotIn("no hotspot", caveat_text.lower())
+
+    def test_no_evidence_statement_does_not_exclude_prior_use(self):
+        """When hosted=False and no connected networks, caveats must say prior use is not excluded."""
+        result = hotspot.analyze_hotspot_indicators(
+            "SoftApManager - current state: IdleState", "", [{"ssid": "PlainNetwork"}]
+        )
+        self.assertIs(result["hosted_indicator"], False)
+        caveat_text = " ".join(result["caveats"])
+        # The 'off' caveat must explicitly say earlier use is not excluded
+        self.assertIn("neither shown nor excluded", caveat_text)
+
+    def test_tether_active_via_connectivity_dump_overrides_wifi_unknown(self):
+        """A tethered-interface line in connectivity is sufficient to set hosted_indicator=True
+        even when the wifi dumpsys says nothing about SoftAp state.
+        """
+        result = hotspot.analyze_hotspot_indicators(
+            "mWifiInfo SSID: <unknown>",   # no SoftAp state line
+            "",
+            [],
+            connectivity="Tethered ifaces: [wlan1]",
+        )
+        self.assertTrue(result["hosted_indicator"])
+        hosted_ev = " ".join(result["details"]["hosted_evidence"])
+        self.assertIn("wlan1", hosted_ev)
+
+
 
 class TestDataclassStructures(unittest.TestCase):
     """Test that dataclasses have required fields"""

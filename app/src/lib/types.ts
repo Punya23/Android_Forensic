@@ -741,6 +741,23 @@ export interface Progress {
   case_id: string;
 }
 
+/** One live acquisition activity event, emitted at a real collection boundary. */
+export type AcqStatus = "queued" | "accessing" | "completed" | "skipped" | "failed";
+
+export interface AcqEvent {
+  id: string;               // UUID — stable for deduplication / React key
+  timestamp: string;        // ISO-8601 UTC
+  tier: string;             // "tier0" | "tier1" | "tier2"
+  source: string;           // source key, e.g. "telegram", "wifi"
+  icon: string;             // icon key used by AcquisitionActivityPanel
+  action: string;           // human-readable action sentence
+  status: AcqStatus;
+  artifact_path?: string;   // logical path (already redacted by engine)
+  item_count?: number;      // items processed, when known
+  skip_reason?: string;     // populated for "skipped" / "failed" status
+  extra?: Record<string, unknown>;
+}
+
 // --- Telegram deep-recovery types ------------------------------------------
 
 export interface TelegramMessage {

@@ -2,6 +2,7 @@
 // :5057; in the packaged Electron app we hit the engine directly on localhost.
 import { io, Socket } from "socket.io-client";
 import type {
+  AcqEvent,
   AuditEvent,
   CaseSummary,
   DeviceListing,
@@ -13,6 +14,7 @@ import type {
   RegistryCasesResponse,
   ReportVersion,
 } from "./types";
+
 
 export const BASE = import.meta.env.DEV ? "" : "http://127.0.0.1:5057";
 
@@ -332,6 +334,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  caseActivity: (caseId: string) =>
+    get<{ events: AcqEvent[] }>(`/api/cases/${caseId}/activity`),
 };
 
 let socket: Socket | null = null;
@@ -341,5 +345,3 @@ export function getSocket(): Socket {
   }
   return socket;
 }
-
-export type { Progress };

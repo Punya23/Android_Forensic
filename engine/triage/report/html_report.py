@@ -350,6 +350,7 @@ def generate_report(case_dir: str | Path) -> Path:
     collect_plan = case.read_derived("collection_plan") or {}
     case_learning = case.read_derived("case_learning") or {}
     wifi_networks = case.read_derived("wifi") or []
+    wifi_live_data = case.read_derived("wifi_live") or None
     # --- Encryption posture, device state, and the newly-wired artifact datasets ---
     # Each of these is absent on a run that did not collect it; every renderer below
     # distinguishes "not collected" from "collected and empty".
@@ -879,6 +880,15 @@ def generate_report(case_dir: str | Path) -> Path:
     # Wi-Fi credentials (Tier 2)
     if wifi_networks:
         parts.append(_wifi_section(wifi_networks))
+
+    # Hotspot posture (Tier 0 — from wifi_live dataset)
+    try:
+        parts.append(_hotspot_posture_section(wifi_live_data))
+    except Exception as exc:  # pragma: no cover - defensive
+        parts.append(
+            "<h2>Hotspot Posture</h2>"
+            f'<p class="note" style="color:#a5322f">Could not render hotspot section: {_esc(exc)}</p>'
+        )
 
     # Bluetooth (seen + bonded) and serving-cell artifacts (P1-3 / P1-4)
     parts.append(
@@ -1961,6 +1971,186 @@ def _mediastore_trash_section(trash: dict) -> str:
             f'<td class="mono">{_esc(purge_txt)}</td></tr>'
         )
     parts.append("</table>")
+    return "\n".join(parts)
+
+
+def _hotspot_posture_section(wifi_live_data: dict | None) -> str:
+    """Render the Hotspot Posture section for the forensic report.
+
+    Renders three sub-sections:
+    1. Current tethering / SoftAP state (tri-state: active / off / unknown)
+    2. Saved hosted-hotspot configuration (configured != active)
+    3. Probable phone-hotspot networks the device joined (name heuristic only)
+
+    If wifi_live_data is None (the step was not collected), renders a distinct
+    'not collected' notice rather than a blank or a false negative.
+    """
+    parts: list[str] = []
+    parts.append("<h2>Hotspot Posture (Tier\u00a00 — Non-root, Volatile)</h2>")
+
+    # Fixed capability limitation — always shown, never conditional.
+    parts.append(
+        '<div style="border:1px solid #a5322f;background:#fff5f5;border-left:4px solid #a5322f;'
+        'border-radius:4px;padding:10px 14px;margin-bottom:14px;font-size:12.5px">'
+        '<b>Fixed capability limitation: filesystem slack space and unallocated-block '
+        'carving are intentionally not supported.</b> '
+        'On any device shipped with Android 10+ File-Based Encryption (FBE) makes '
+        '/data unallocated space AES-XTS ciphertext; F2FS real-time discard destroys '
+        'invalid blocks within hours; and the managed-NAND FTL means no host command '
+        'reaches a physical NAND page. Building such a carver would present ciphertext '
+        'noise as &#8220;recovered data&#8221; &#8212; a direct honesty-model violation. '
+        'This tool intentionally has no block-level or file-slack carver. '
+        'Report unallocated space as '
+        '<em>Not supported &#8212; intentionally not collected</em> in any summary or '
+        'capability table, never as a per-case &#8220;nothing found&#8221;.'
+        '</div>'
+    )
+
+    if not isinstance(wifi_live_data, dict) or not wifi_live_data:
+        parts.append(
+            '<p class="note" style="color:#a6741a"><b>Hotspot data: not collected.</b> '
+            'The Wi-Fi live collection step did not run for this acquisition, or the '
+            'result was empty. '
+            'This is a gap in the acquisition, not a finding — '
+            'absence here is <b>not</b> evidence that the device had no tethering or '
+            'hotspot history.</p>'
+        )
+        return "\n".join(parts)
+
+    hotspot = wifi_live_data.get("hotspot")
+    if not isinstance(hotspot, dict):
+        parts.append(
+            '<p class="note" style="color:#a6741a"><b>Hotspot analysis was not available '
+            'in this dataset.</b> The wifi_live artifact exists but contains no hotspot '
+            'sub-block. This is not evidence that the device had no hotspot activity.</p>'
+        )
+        return "\n".join(parts)
+
+    details = hotspot.get("details") or {}
+    hosted_evidence = details.get("hosted_evidence") or []
+    connected_evidence = details.get("connected_evidence") or []
+    traffic_evidence = details.get("traffic_evidence") or []
+    hosted_indicator = hotspot.get("hosted_indicator")  # True / False / None
+    connected_indicator = hotspot.get("connected_indicator")  # True / False / None
+    hosted_configured = bool(hotspot.get("hosted_configured"))
+    caveats = hotspot.get("caveats") or []
+
+    # Extract SSID names from connected_evidence for display and distinct count
+    import re as _re
+    connected_ssids: list[str] = []
+    for ev in connected_evidence:
+        m = _re.search(r"Known network '([^']+)'", ev)
+        if m:
+            connected_ssids.append(m.group(1))
+    distinct_count = len(set(connected_ssids))
+
+    # --- Sub-section 1: Current tethering / SoftAP state ---------------------
+    parts.append("<h3>Current tethering / SoftAP state</h3>")
+    if hosted_indicator is True:
+        state_badge = _badge("ACTIVE AT COLLECTION", ("#a5322f", "#f6dedd"))
+        state_note = (
+            "The device's tethering / mobile hotspot was <b>active at capture time</b>. "
+            "This does not identify which devices connected to it or what data moved."
+        )
+    elif hosted_indicator is False:
+        state_badge = _badge("OFF AT COLLECTION", ("#666", "#f0f0f0"))
+        state_note = (
+            "The device reported its hotspot as off at collection time. "
+            "<b>This is a snapshot reading of the current state only</b> &#8212; "
+            "Android keeps no hotspot history, so earlier hotspot use is "
+            "neither shown nor excluded."
+        )
+    else:
+        state_badge = _badge("UNKNOWN &#8212; NOT REPORTED", ("#a6741a", "#f6ecd4"))
+        state_note = (
+            "No SoftAp state was reported by this build&#8217;s dumpsys output. "
+            "This is <b>not</b> a finding that the hotspot was off &#8212; "
+            "it means the state was not observable at Tier 0."
+        )
+
+    parts.append(f"<p>{state_badge}</p>")
+    if hosted_configured:
+        parts.append(
+            f"{_badge('HOTSPOT CONFIGURED (SoftAp.xml present)', ('#2258a8', '#e2ecfa'))} "
+            '<br><span style="font-size:12px">A saved SoftAp configuration exists on the device. '
+            "This proves the hotspot was <b>configured</b> &#8212; not that it was ever "
+            "switched on, and the record carries no date.</span>"
+        )
+    parts.append(f'<p class="note">{state_note}</p>')
+    if hosted_evidence:
+        parts.append("<ul style=\"font-family:monospace;font-size:12px\">")
+        for e in hosted_evidence:
+            parts.append(f"<li>{_esc(e)}</li>")
+        parts.append("</ul>")
+
+    # --- Sub-section 2: Probable hotspot networks joined ----------------------
+    parts.append("<h3>Probable phone-hotspot networks joined (name heuristic)</h3>")
+    if connected_indicator is None:
+        parts.append(
+            '<p class="note" style="color:#a6741a"><b>Saved-network list unavailable.</b> '
+            "Android 10+ hides the saved-network list from non-root shells. "
+            "The naming check could not run. "
+            "This is <b>not</b> evidence that no hotspot network was joined.</p>"
+        )
+    elif not connected_ssids:
+        parts.append(
+            '<p class="note">No known network is named like a phone hotspot. '
+            "Because the check is only a naming convention, this "
+            "<em>does not exclude</em> hotspot use &#8212; the hotspot could "
+            "have been renamed to anything.</p>"
+        )
+    else:
+        parts.append(
+            f'<p class="note"><b>{_esc(distinct_count)} distinct probable hotspot network'
+            f"{'s' if distinct_count != 1 else ''} connected to</b> "
+            "(name-based heuristic only &#8212; treat as a lead for investigation, "
+            "not a conclusion). SSIDs are freely chosen: a home router can carry "
+            "the same name.</p>"
+        )
+        parts.append(
+            "<table><tr>"
+            "<th>SSID (name match)</th>"
+            "<th>Hint matched</th>"
+            "<th>Evidence note</th>"
+            "</tr>"
+        )
+        for ssid, ev in zip(connected_ssids, connected_evidence):
+            hint_m = _re.search(r"convention '([^']+)'", ev)
+            hint = hint_m.group(1) if hint_m else "&#8212;"
+            tail = ev.replace(f"Known network '{ssid}' ", "")
+            parts.append(
+                f"<tr>"
+                f"<td><b>{_esc(ssid)}</b></td>"
+                f"<td class=\"mono\">{_esc(hint)}</td>"
+                f"<td style=\"font-size:12px\">"
+                f"{_badge('PROBABLE HISTORICAL CONNECTION', ('#a6741a', '#f6ecd4'))} "
+                f"{_esc(tail)}</td>"
+                f"</tr>"
+            )
+        parts.append("</table>")
+
+    # --- Sub-section 3: Traffic evidence over hotspot-named SSIDs -------------
+    if traffic_evidence:
+        parts.append("<h3>Data-usage evidence over hotspot-named SSIDs (netstats)</h3>")
+        parts.append(
+            '<p class="note">The following byte-counter records appear in '
+            "<code>dumpsys netstats</code> for SSIDs matching phone hotspot naming. "
+            "Netstats uses hour-long buckets &#8212; these counters prove data moved, "
+            "but cannot establish precise connection times or durations.</p>"
+        )
+        parts.append("<ul style=\"font-family:monospace;font-size:12px\">")
+        for ev in traffic_evidence:
+            parts.append(f"<li>{_esc(ev)}</li>")
+        parts.append("</ul>")
+
+    # --- Caveats (skip the first generic scope note, show the contextual ones) ---
+    contextual_caveats = caveats[1:] if len(caveats) > 1 else []
+    if contextual_caveats:
+        parts.append("<h3>Collector caveats</h3><ul style=\"font-size:12.5px\">")
+        for c in contextual_caveats:
+            parts.append(f"<li>{_esc(c)}</li>")
+        parts.append("</ul>")
+
     return "\n".join(parts)
 
 
