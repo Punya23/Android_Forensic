@@ -10,6 +10,7 @@ export function ReportView({ caseId }: { caseId: string }) {
   const [history, setHistory] = useState<ReportVersion[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   function loadHistory() {
     api.caseReports(caseId).then(setHistory).catch(() => setHistory([]));
@@ -18,6 +19,33 @@ export function ReportView({ caseId }: { caseId: string }) {
   useEffect(() => {
     loadHistory();
   }, [caseId]);
+
+  async function handleDownloadPdf() {
+    setExportError(null);
+    // Electron path — native PDF renderer via IPC
+    if (typeof window !== "undefined" && (window as any).snagr?.exportAndPreviewReport) {
+      try {
+        await (window as any).snagr.exportAndPreviewReport(caseId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setExportError(msg);
+        console.error("PDF export failed:", err);
+      }
+      return;
+    }
+    // Browser path — open the report HTML in a new tab and trigger browser print-to-PDF
+    const win = window.open(url, "_blank", "noopener,noreferrer");
+    if (win) {
+      win.addEventListener("load", () => {
+        // Short delay so styles finish loading before the print dialog opens
+        setTimeout(() => win.print(), 600);
+      });
+    } else {
+      setExportError(
+        "Pop-up blocked. Please allow pop-ups for this site, or use 'Open in new tab' and print from there (Ctrl+P → Save as PDF)."
+      );
+    }
+  }
 
   return (
     <div className="p-6 h-full flex flex-col">
@@ -38,10 +66,13 @@ export function ReportView({ caseId }: { caseId: string }) {
               disabled={regenerating}
               onClick={async () => {
                 setRegenerating(true);
+                setExportError(null);
                 try {
                   await api.regenerateReport(caseId);
                   loadHistory();
                 } catch (error) {
+                  const msg = error instanceof Error ? error.message : String(error);
+                  setExportError(`Regeneration failed: ${msg}`);
                   console.error("Report regeneration failed:", error);
                 } finally {
                   setRegenerating(false);
@@ -52,19 +83,19 @@ export function ReportView({ caseId }: { caseId: string }) {
             </button>
             <button
               className="btn-accent text-sm"
-              onClick={async () => {
-                try {
-                  await window.snagr.exportAndPreviewReport(caseId);
-                } catch (error) {
-                  console.error("PDF export failed:", error);
-                }
-              }}
+              onClick={handleDownloadPdf}
             >
               Download PDF
             </button>
           </div>
         }
       />
+      {exportError && (
+        <div className="card border-deletion/50 bg-deletion/10 p-3 mb-4 text-sm text-deletion flex items-center justify-between gap-2">
+          <span>{exportError}</span>
+          <button className="text-xs opacity-70 hover:opacity-100" onClick={() => setExportError(null)}>✕</button>
+        </div>
+      )}
       {showHistory && (
         <div className="card p-3 mb-4 text-sm">
           <div className="text-[11px] uppercase tracking-wider text-muted mb-2">

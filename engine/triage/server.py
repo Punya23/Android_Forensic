@@ -445,7 +445,7 @@ def create_app(cases_root: Path = CASES_ROOT):
 
                     mocks.append(
                         {
-                            "id": str(d),
+                            "id": d.name,
                             "kind": "mock",
                             "label": meta.get("device", {}).get("model", d.name),
                         }
