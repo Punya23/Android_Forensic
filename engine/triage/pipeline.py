@@ -87,6 +87,7 @@ def _ce_gate(case: "Case", device_path: str, label: str) -> bool:
     )
     return False
 
+from .acq_activity import emit_acq_event, emit_mock_events
 from .priority import get_priority_files, should_pull_file
 from .metrics import (
     reset as _metrics_reset,
@@ -473,6 +474,8 @@ def run_acquisition(
 
     # -- device intake + pre-state ------------------------------------------
     progress("device", 0.03, "Reading device identifiers")
+    emit_acq_event(case, socketio, source="device", tier="tier0",
+                   action="Reading device identifiers", status="accessing")
     device = source.device_info()
     # Chain of custody: record the device identity and pre-acquisition snapshot. (These
     # four calls were dropped by an upstream merge — without them the case carries no
@@ -483,6 +486,9 @@ def run_acquisition(
         f"{device.manufacturer} {device.model} / Android {device.android_version}",
         tier=Tier.TIER0.value,
     )
+    emit_acq_event(case, socketio, source="device", tier="tier0",
+                   action=f"Device intake: {device.manufacturer} {device.model} / Android {device.android_version}",
+                   status="completed")
     pre = source.pre_state()
     case.set_pre_state(pre)
     case.log(
@@ -496,6 +502,8 @@ def run_acquisition(
     # reported that as "not found", which reads as "the data was not there". It is
     # read-only: getprop / ls / cat / dumpsys queries only.
     progress("encryption", 0.035, "Determining encryption state (FBE / AFU-BFU)")
+    emit_acq_event(case, socketio, source="encryption", tier="tier0",
+                   action="Determining encryption state (FBE / AFU-BFU)", status="accessing")
     global _ENCRYPTION_STATE
     _ENCRYPTION_STATE = None
     try:
@@ -916,6 +924,8 @@ def run_acquisition(
 
     # -- Tier 0: shared-storage pull ----------------------------------------
     progress("enumerate", 0.06, "Enumerating shared storage")
+    emit_acq_event(case, socketio, source="filesystem", tier="tier0",
+                   action="Enumerating shared storage", status="accessing")
     all_files: list[str] = []
     for root in TIER0_PULL_ROOTS:
         found = source.list_files(root)
@@ -1089,6 +1099,8 @@ def run_acquisition(
 
     # -- dumpsys notifications (read-only) ----------------------------------
     progress("notification", 0.575, "Reading notification history")
+    emit_acq_event(case, socketio, source="notifications", tier="tier0",
+                   action="Reading notification history (dumpsys)", status="accessing")
     dumpsys_notif = source.shell_readonly("dumpsys notification --history")
     if not dumpsys_notif.strip():
         dumpsys_notif = source.shell_readonly("dumpsys notification")
@@ -1103,9 +1115,18 @@ def run_acquisition(
                 command="dumpsys notification --history",
                 tier=Tier.TIER0.value,
             )
+            emit_acq_event(case, socketio, source="notifications", tier="tier0",
+                           action="Notification history parsed", status="completed",
+                           item_count=len(notifications))
+    else:
+        emit_acq_event(case, socketio, source="notifications", tier="tier0",
+                       action="Notification history checked", status="completed",
+                       skip_reason="No output from dumpsys notification")
 
     # -- dumpsys bluetooth (read-only) --------------------------------------
     progress("bluetooth", 0.58, "Reading bluetooth history")
+    emit_acq_event(case, socketio, source="bluetooth", tier="tier0",
+                   action="Reading Bluetooth history (dumpsys)", status="accessing")
     dumpsys_bt = source.shell_readonly("dumpsys bluetooth_manager")
 
     if dumpsys_bt:
@@ -1118,9 +1139,18 @@ def run_acquisition(
                 command="dumpsys bluetooth_manager",
                 tier=Tier.TIER0.value,
             )
+            emit_acq_event(case, socketio, source="bluetooth", tier="tier0",
+                           action="Bluetooth history parsed", status="completed",
+                           item_count=len(bluetooth_devices))
+    else:
+        emit_acq_event(case, socketio, source="bluetooth", tier="tier0",
+                       action="Bluetooth history checked", status="completed",
+                       skip_reason="No output from dumpsys bluetooth_manager")
 
     # -- dumpsys celltower (read-only) --------------------------------------
     progress("celltower", 0.585, "Reading cell tower history")
+    emit_acq_event(case, socketio, source="celltower", tier="tier0",
+                   action="Reading cell tower history (dumpsys)", status="accessing")
     dumpsys_cell = source.shell_readonly("dumpsys telephony.registry")
 
     if dumpsys_cell:
@@ -1133,6 +1163,13 @@ def run_acquisition(
                 command="dumpsys telephony.registry",
                 tier=Tier.TIER0.value,
             )
+            emit_acq_event(case, socketio, source="celltower", tier="tier0",
+                           action="Cell tower history parsed", status="completed",
+                           item_count=len(cell_towers))
+    else:
+        emit_acq_event(case, socketio, source="celltower", tier="tier0",
+                       action="Cell tower history checked", status="completed",
+                       skip_reason="No output from dumpsys telephony.registry")
 
     # -- P1-2: live Wi-Fi surface via dumpsys (non-root, VOLATILE) ------------
     # The existing Wi-Fi capture is root-only saved credentials. Everything about the
@@ -1142,6 +1179,9 @@ def run_acquisition(
     wifi_live_result: dict = {}
     if cfg.wifi_live:
         progress("wifi_live", 0.5855, "Capturing live Wi-Fi state (volatile)")
+        emit_acq_event(case, socketio, source="wifi_live", tier="tier0",
+                       action="Capturing live Wi-Fi state (volatile, lost on reboot)",
+                       status="accessing")
         try:
             from .parsers.wifi_live import (
                 build_wifi_timeline,
@@ -1157,6 +1197,7 @@ def run_acquisition(
             wifi_live_result = wifi_live_json(wifi_live_result)
             case.write_derived("wifi_live", wifi_live_result)
             _cur = wifi_live_result.get("current")
+            _saved_count = len(wifi_live_result.get("saved", []))
             case.log(
                 "shell.dumpsys",
                 "live Wi-Fi captured: "
@@ -1165,7 +1206,7 @@ def run_acquisition(
                     if _cur
                     else "no current association"
                 )
-                + f"; {len(wifi_live_result.get('saved', []))} saved, "
+                + f"; {_saved_count} saved, "
                 f"{len(wifi_live_result.get('scan_results', []))} scan result(s), "
                 f"{len(wifi_live_result.get('usage', []))} usage bucket(s) "
                 f"(hour-bucketed and approximate — dumpsys carries no reliable "
@@ -1173,6 +1214,9 @@ def run_acquisition(
                 command="dumpsys wifi | netstats | connectivity",
                 tier=Tier.TIER0.value,
             )
+            emit_acq_event(case, socketio, source="wifi_live", tier="tier0",
+                           action="Live Wi-Fi state captured", status="completed",
+                           item_count=_saved_count)
         except Exception as exc:
             case.log(
                 "shell.dumpsys",
@@ -1191,6 +1235,8 @@ def run_acquisition(
 
     # Screen on/off + per-app foreground usage (dumpsys power / batterystats / usagestats)
     progress("screentime", 0.586, "Reading screen and app-usage events")
+    emit_acq_event(case, socketio, source="screentime", tier="tier0",
+                   action="Reading screen on/off and app-usage events", status="accessing")
     try:
         dumpsys_power = source.shell_readonly("dumpsys power")
         if dumpsys_power:
@@ -1515,6 +1561,9 @@ def run_acquisition(
     recovered_rows: list = []
     if cfg.tier2_telegram and _tier2_battery_ok():
         progress("tier2", 0.60, "Running Tier-2 Telegram recovery (root)")
+        emit_acq_event(case, socketio, source="telegram", tier="tier2",
+                       action="Checking app-private database (root)",
+                       status="accessing", artifact_path="/data/data/org.telegram.messenger/files/cache4.db")
         if isinstance(source, RealDeviceSource):
             _run_tier2_telegram(
                 source,
@@ -1531,6 +1580,10 @@ def run_acquisition(
                 result="skipped",
                 tier=Tier.TIER2.value,
             )
+            emit_acq_event(case, socketio, source="telegram", tier="tier2",
+                           action="Skipped — mock source does not have app-private storage",
+                           status="skipped",
+                           skip_reason="mock/synthetic source — no real device to pull cache4.db from")
             _write_case_derived(
                 case,
                 "telegram_presence",
@@ -1544,6 +1597,9 @@ def run_acquisition(
 
     if cfg.tier2_instagram and _tier2_battery_ok():
         progress("tier2", 0.61, "Running Tier-2 Instagram recovery (root)")
+        emit_acq_event(case, socketio, source="instagram", tier="tier2",
+                       action="Checking app-private database (root)",
+                       status="accessing", artifact_path="/data/data/com.instagram.android/databases/direct.db")
         if isinstance(source, RealDeviceSource):
             instagram_result = (
                 _run_tier2_instagram(
@@ -1558,9 +1614,16 @@ def run_acquisition(
                 result="skipped",
                 tier=Tier.TIER2.value,
             )
+            emit_acq_event(case, socketio, source="instagram", tier="tier2",
+                           action="Skipped — mock source does not have app-private storage",
+                           status="skipped",
+                           skip_reason="mock/synthetic source — no real device to pull direct.db from")
 
     if cfg.tier2_snapchat and _tier2_battery_ok():
         progress("tier2", 0.62, "Running Tier-2 Snapchat recovery (root)")
+        emit_acq_event(case, socketio, source="snapchat", tier="tier2",
+                       action="Checking app-private database (root)",
+                       status="accessing", artifact_path="/data/data/com.snapchat.android/databases/arroyo.db")
         if isinstance(source, RealDeviceSource):
             snapchat_result = (
                 _run_tier2_snapchat(source, case, staging, app_messages, recovered_rows)
@@ -1573,9 +1636,16 @@ def run_acquisition(
                 result="skipped",
                 tier=Tier.TIER2.value,
             )
+            emit_acq_event(case, socketio, source="snapchat", tier="tier2",
+                           action="Skipped — mock source does not have app-private storage",
+                           status="skipped",
+                           skip_reason="mock/synthetic source — no real device to pull arroyo.db from")
 
     if cfg.tier2_wifi and _tier2_battery_ok():
         progress("tier2", 0.63, "Running Tier-2 Wi-Fi credential recovery (root)")
+        emit_acq_event(case, socketio, source="wifi", tier="tier2",
+                       action="Checking WifiConfigStore / wpa_supplicant (root)",
+                       status="accessing", artifact_path="/data/misc/wifi/WifiConfigStore.xml")
         if isinstance(source, RealDeviceSource):
             wifi_networks = _run_tier2_wifi(source, case, staging)
         else:
@@ -1588,6 +1658,9 @@ def run_acquisition(
 
     if cfg.tier2_browser_history and _tier2_battery_ok():
         progress("tier2", 0.636, "Running Tier-2 browser history recovery (root)")
+        emit_acq_event(case, socketio, source="browser", tier="tier2",
+                       action="Pulling browser History DB (root)",
+                       status="accessing", artifact_path="/data/data/com.android.chrome/app_chrome/Default/History")
         if isinstance(source, RealDeviceSource):
             _run_tier2_browser_history(
                 source, case, staging, browser_history, search_history, recovered_rows
@@ -1684,6 +1757,9 @@ def run_acquisition(
 
     if cfg.tier2_whatsapp_backup and _tier2_battery_ok():
         progress("tier2", 0.635, "Running Tier-2 WhatsApp backup recovery (root)")
+        emit_acq_event(case, socketio, source="whatsapp", tier="tier2",
+                       action="Pulling encryption key + decrypting backup (root)",
+                       status="accessing", artifact_path="/sdcard/WhatsApp/Databases/msgstore.db.crypt*")
         if isinstance(source, RealDeviceSource):
             wa_backup_messages, wa_backup_media = _run_tier2_whatsapp_backup(
                 source,
@@ -1702,6 +1778,9 @@ def run_acquisition(
 
     # -- SQLite deleted-record recovery -------------------------------------
     progress("recover", 0.62, "Recovering deleted records")
+    emit_acq_event(case, socketio, source="recovery", tier="tier0",
+                   action="Recovering deleted records from pulled SQLite databases",
+                   status="accessing")
     for stored, rec in db_artifacts:
         try:
             stored_name = stored.name.lower()

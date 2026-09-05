@@ -842,7 +842,7 @@ def create_app(cases_root: Path = CASES_ROOT):
 
             try:
 
-                summary = run_acquisition(source, cfg, progress=emit)
+                summary = run_acquisition(source, cfg, progress=emit, socketio=socketio)
 
                 # FIX:
                 # Generate report after acquisition finishes
@@ -887,7 +887,30 @@ def create_app(cases_root: Path = CASES_ROOT):
     # CASE DATA
     # ---------------------------------------------------------
 
+    @app.get("/api/cases/<case_id>/activity")
+    @require_auth
+    def case_activity(case_id: str):
+        """Return acquisition activity events from the audit log for a given case.
+
+        Filters the hash-chained audit trail to entries whose ``action`` field
+        starts with ``acq.`` and returns them as a JSON array, newest last.
+        """
+        case_dir = cases_root / case_id
+        audit_path = case_dir / "audit.jsonl"
+        if not audit_path.exists():
+            return jsonify({"error": "case not found"}), 404
+        events = []
+        for line in audit_path.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+                if str(row.get("action", "")).startswith("acq."):
+                    events.append(row)
+            except Exception:
+                continue
+        return jsonify({"events": events})
+
     @app.get("/api/cases")
+
     def list_cases():
 
         out = []

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, getSocket } from "../lib/api";
-import type { DeviceListing, LlmStatus, PlanResponse, Progress } from "../lib/types";
+import type { AcqEvent, DeviceListing, LlmStatus, PlanResponse, Progress } from "../lib/types";
+import { AcquisitionActivityPanel } from "../components/AcquisitionActivityPanel";
+
 import {
   DeprioritisedList,
   PartialCollectionList,
@@ -73,7 +75,9 @@ export function AcquisitionView({
   const [tier2AntiForensics, setTier2AntiForensics] = useState(false);
   const [tier2RecentTasks, setTier2RecentTasks] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [acqEvents, setAcqEvents] = useState<AcqEvent[]>([]);
   const timerRef = useRef<number | null>(null);
+
 
   useEffect(() => {
     api
@@ -91,6 +95,13 @@ export function AcquisitionView({
   useEffect(() => {
     const s = getSocket();
     s.on("progress", (p: Progress) => setProgress(p));
+    s.on("acq_event", (e: AcqEvent) =>
+      setAcqEvents((prev) => {
+        // Deduplicate by id in case socket re-delivers
+        if (prev.some((x) => x.id === e.id)) return prev;
+        return [...prev, e];
+      })
+    );
     s.on("complete", (c: { case_id: string }) => {
       stopTimer();
       setRunning(false);
@@ -103,10 +114,12 @@ export function AcquisitionView({
     });
     return () => {
       s.off("progress");
+      s.off("acq_event");
       s.off("complete");
       s.off("failed");
     };
   }, [onCaseReady]);
+
 
   function stopTimer() {
     if (timerRef.current) window.clearInterval(timerRef.current);
@@ -166,7 +179,9 @@ export function AcquisitionView({
     setRunning(true);
     setProgress({ stage: "init", pct: 0, detail: "Starting…", case_id: "" });
     setElapsed(0);
+    setAcqEvents([]);  // clear feed from any prior run
     timerRef.current = window.setInterval(() => setElapsed((e) => e + 1), 1000);
+
     try {
       await api.acquire({
         [target.kind === "mock" ? "mock" : "serial"]: target.id,
@@ -201,8 +216,9 @@ export function AcquisitionView({
   }
 
   if (running) {
-    return <ProgressScreen progress={progress} elapsed={elapsed} />;
+    return <ProgressScreen progress={progress} elapsed={elapsed} acqEvents={acqEvents} />;
   }
+
 
   return (
     <div className="max-w-4xl mx-auto p-8">
@@ -950,14 +966,22 @@ function DeviceOption({
   );
 }
 
-function ProgressScreen({ progress, elapsed }: { progress: Progress | null; elapsed: number }) {
+function ProgressScreen({
+  progress,
+  elapsed,
+  acqEvents,
+}: {
+  progress: Progress | null;
+  elapsed: number;
+  acqEvents: AcqEvent[];
+}) {
   const pct = Math.round((progress?.pct ?? 0) * 100);
   const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
   const ss = String(elapsed % 60).padStart(2, "0");
   const stageIdx = STAGES.indexOf(progress?.stage ?? "init");
   return (
     <div className="max-w-2xl mx-auto p-8 flex flex-col items-center justify-center min-h-[70vh]">
-      <div className="w-full card p-8">
+      <div className="w-full card p-8 mb-4">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-semibold">Acquisition in progress</h2>
           <span className="font-mono text-2xl tabular-nums text-accent">
@@ -987,6 +1011,11 @@ function ProgressScreen({ progress, elapsed }: { progress: Progress | null; elap
           Target: readable preview within 5–10 minutes. Every action is being written to the
           append-only audit log as it happens.
         </p>
+      </div>
+
+      {/* Live activity feed */}
+      <div className="w-full">
+        <AcquisitionActivityPanel events={acqEvents} live />
       </div>
     </div>
   );
