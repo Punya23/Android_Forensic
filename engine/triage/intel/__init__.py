@@ -17,7 +17,7 @@ An investigating officer describes a case in plain language; this package:
     5. feeds what actually produced evidence back into the knowledge graph
        (:mod:`~triage.intel.feedback`), so the next similar case is planned better.
 
-The LLM is pluggable (heuristic / local Ollama / Anthropic) so sensitive evidence can stay
+The LLM is pluggable (heuristic / local Ollama) so sensitive evidence always stays
 on-device; retrieval and the graph are pure Python and need no network at all. See
 [[erakshak-project]] for the honesty model this layer is built to respect.
 """

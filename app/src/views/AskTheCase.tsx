@@ -62,7 +62,7 @@ export function AskTheCaseView({ caseId }: { caseId: string }) {
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [asking, setAsking] = useState(false);
-  const [provider, setProvider] = useState<"heuristic" | "ollama" | "anthropic">("heuristic");
+  const [provider, setProvider] = useState<"heuristic" | "ollama">("heuristic");
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 

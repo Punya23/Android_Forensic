@@ -216,10 +216,11 @@ def test_get_provider_defaults_heuristic(monkeypatch):
     assert get_provider().name == "heuristic"
 
 
-def test_get_provider_degrades_when_unavailable(monkeypatch):
-    # Anthropic with no API key must degrade to heuristic, not crash.
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+def test_get_provider_unrecognized_kind_falls_back_to_heuristic():
+    # A stale/unknown provider string (e.g. a leftover "anthropic" from an old
+    # config) must degrade to heuristic, not crash.
     assert get_provider("anthropic").name == "heuristic"
+    assert get_provider("some-unknown-provider").name == "heuristic"
 
 
 def test_safe_json_parsing():

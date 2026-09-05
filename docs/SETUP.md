@@ -157,10 +157,9 @@ Vite 5 / Electron 31's own requirements, not enforced in-repo.
 | Variable | Default | Purpose |
 |---|---|---|
 | `SNAGR_AUTH_USER` / `SNAGR_AUTH_PASS` | `examiner` / `snagr` | Sign-in credentials — set real values in `engine/.env` before real evidence |
-| `SNAGR_LLM` | `heuristic` | Case-intelligence backend: `heuristic` (offline, default) / `ollama` / `anthropic` |
+| `SNAGR_LLM` | `heuristic` | Case-intelligence backend: `heuristic` (offline, default) / `ollama` |
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` | Local LLM endpoint, if `SNAGR_LLM=ollama` |
-| `ANTHROPIC_API_KEY` | — | Cloud LLM key, if `SNAGR_LLM=anthropic` |
-| `SNAGR_LLM_MODEL` | `llama3.1` / `claude-sonnet-5` | Model name per backend |
+| `SNAGR_LLM_MODEL` | `llama3.1` | Ollama model name |
 | `SNAGR_EMBED_MODEL` | `nomic-embed-text` | Local embedding model used for semantic precedent retrieval. Pull it with `ollama pull nomic-embed-text` |
 | `SNAGR_EMBEDDINGS` | *(on)* | Set to `off` to force pure BM25 retrieval — for an air-gapped box, or to reproduce a plan exactly as a lexical-only run produced it |
 | `ANDROID_HOME` | — | Android SDK location, for locating `adb` |

@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument(
         "--llm",
         default="",
-        help="LLM provider for the intelligence layer: heuristic|ollama|anthropic",
+        help="LLM provider for the intelligence layer: heuristic|ollama",
     )
     a.add_argument(
         "--no-case-bank",

@@ -1012,7 +1012,7 @@ export interface CaseCapabilities {
 
 // --- case-intelligence back-ends (engine: triage/intel/llm.py) -------------
 export interface LlmProviderInfo {
-  name: "heuristic" | "ollama" | "anthropic";
+  name: "heuristic" | "ollama";
   label: string;
   available: boolean;
   /** True when the back-end runs on this workstation and case text never leaves it. */

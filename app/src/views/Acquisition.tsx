@@ -38,11 +38,10 @@ export function AcquisitionView({
   const [authority, setAuthority] = useState("");
   const [scope, setScope] = useState("");
   const [brief, setBrief] = useState("");
-  // Case-intelligence back-end. "heuristic" (offline, zero-config) is the only safe
-  // default for real evidence — "anthropic" sends case text off-device, so it must
-  // always be a deliberate, visible choice, never silently inherited from a server
-  // env var the examiner never sees.
-  const [llmProvider, setLlmProvider] = useState<"heuristic" | "ollama" | "anthropic">("heuristic");
+  // Case-intelligence back-end. Both options keep case text on this workstation —
+  // "heuristic" (offline, zero-config) or a local model over Ollama. There is no
+  // cloud back-end: evidence text must never leave the machine.
+  const [llmProvider, setLlmProvider] = useState<"heuristic" | "ollama">("heuristic");
   // What this workstation can actually run, asked of the engine rather than assumed.
   // Offering a back-end the machine has no model for turns a deliberate choice into a
   // silent fallback discovered only after the acquisition.
