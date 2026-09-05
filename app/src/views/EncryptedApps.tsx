@@ -164,15 +164,28 @@ function StatBlock({
   detail,
   tone,
   derived,
+  onClick,
+  active,
 }: {
   n: ReactNode;
   label: string;
   detail: string;
   tone: string;
   derived: boolean;
+  onClick?: () => void;
+  active?: boolean;
 }) {
+  const clickable = !!onClick;
   return (
-    <div className="card p-3 flex-1 min-w-[190px]">
+    <div
+      className={`card p-3 flex-1 min-w-[190px] ${
+        clickable ? "cursor-pointer transition-colors hover:bg-panel-2" : ""
+      } ${active ? "ring-1 ring-accent border-accent/50" : ""}`}
+      onClick={onClick}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => (e.key === "Enter" || e.key === " ") && onClick!() : undefined}
+    >
       <div className={`text-2xl font-bold ${tone}`}>{n}</div>
       <div className="text-[11px] uppercase tracking-wider text-muted mt-0.5">{label}</div>
       <p className="text-[11px] text-muted leading-relaxed mt-1.5">{detail}</p>
@@ -319,6 +332,11 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
   const [signal, setSignal] = useState<SignalReport>({});
   const [objLoading, setObjLoading] = useState(true);
   const [filter, setFilter] = useState("");
+  // Which summary tile (if any) the "Message stores" list below is currently
+  // narrowed to. Clicking the same tile again clears it — see the StatBlock
+  // onClick wiring below. Declared here, unconditionally and before either
+  // early return, per the Rules of Hooks.
+  const [presenceFilter, setPresenceFilter] = useState<Presence | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -362,16 +380,17 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
     apps.reduce((acc, r) => acc + (presenceOf(r) === "present" ? r.size_bytes ?? 0 : 0), 0);
 
   const q = filter.trim().toLowerCase();
-  const filtered = q
-    ? apps.filter(
-        (r) =>
-          r.app?.toLowerCase().includes(q) ||
-          r.package?.toLowerCase().includes(q) ||
-          r.path?.toLowerCase().includes(q) ||
-          r.encryption_format?.toLowerCase().includes(q) ||
-          r.status?.toLowerCase().includes(q),
-      )
-    : apps;
+  const filtered = apps
+    .filter((r) => !presenceFilter || presenceOf(r) === presenceFilter)
+    .filter(
+      (r) =>
+        !q ||
+        r.app?.toLowerCase().includes(q) ||
+        r.package?.toLowerCase().includes(q) ||
+        r.path?.toLowerCase().includes(q) ||
+        r.encryption_format?.toLowerCase().includes(q) ||
+        r.status?.toLowerCase().includes(q),
+    );
 
   const header = (
     <div className="mb-5">
@@ -442,6 +461,8 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
           detail="Database located on device. Existence, size and mtime are evidence even though contents are not readable."
           tone="text-live"
           derived={summary.present === undefined}
+          onClick={() => setPresenceFilter((f) => (f === "present" ? null : "present"))}
+          active={presenceFilter === "present"}
         />
         <StatBlock
           n={notPresent}
@@ -449,6 +470,8 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
           detail="Path was checked and positively reported absent at acquisition time."
           tone="text-muted"
           derived={summary.not_present === undefined}
+          onClick={() => setPresenceFilter((f) => (f === "not-present" ? null : "not-present"))}
+          active={presenceFilter === "not-present"}
         />
         <StatBlock
           n={notAcquired}
@@ -456,6 +479,8 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
           detail="Never checked — no observation was made. Nothing may be concluded about these, in either direction."
           tone="text-carved"
           derived={summary.not_acquired === undefined}
+          onClick={() => setPresenceFilter((f) => (f === "not-acquired" ? null : "not-acquired"))}
+          active={presenceFilter === "not-acquired"}
         />
         <StatBlock
           n={bytes(totalBytes)}
@@ -463,6 +488,8 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
           detail="Total size of located-but-unreadable message stores. A volume indicator, not a message count."
           tone="text-accent"
           derived={summary.total_bytes === undefined}
+          onClick={() => setPresenceFilter((f) => (f === "present" ? null : "present"))}
+          active={presenceFilter === "present"}
         />
       </div>
       <p className="text-xs text-muted leading-relaxed mb-4">

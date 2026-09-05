@@ -16,9 +16,12 @@ export function DiscoveredChatsView({ caseId }: { caseId: string }) {
   const [data, setData] = useState<DiscoveredChats | null>(null);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
+  // Which summary-table row (db + table) the messages list below is scoped to, if any.
+  const [selectedTable, setSelectedTable] = useState<{ db: string; table: string } | null>(null);
 
   useEffect(() => {
     setLoading(true);
+    setSelectedTable(null); // a case switch can drop the db/table this was scoped to
     api
       .discoveredChats(caseId)
       .then((d: DiscoveredChats) => setData(d))
@@ -29,10 +32,20 @@ export function DiscoveredChatsView({ caseId }: { caseId: string }) {
   const messages = data?.messages ?? [];
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
-    return messages.filter(
-      (m) => !q || (m.body || "").toLowerCase().includes(q) || (m.app || "").toLowerCase().includes(q)
-    );
-  }, [messages, query]);
+    return messages.filter((m) => {
+      const matchesQuery =
+        !q || (m.body || "").toLowerCase().includes(q) || (m.app || "").toLowerCase().includes(q);
+      if (!matchesQuery) return false;
+      if (!selectedTable) return true;
+      // m.app is stamped "<db-label>:<table>" and m.source_file is the db filename (see
+      // engine/triage/parsers/appfinder.py scan_sqlite_for_chats) — the same two fields the
+      // summary row below is built from (t.db / t.table), so match on both.
+      if (m.source_file !== selectedTable.db) return false;
+      const app = m.app ?? "";
+      const table = app.includes(":") ? app.slice(app.lastIndexOf(":") + 1) : app;
+      return table === selectedTable.table;
+    });
+  }, [messages, query, selectedTable]);
 
   if (loading) return <div className="p-8 text-muted">Scanning discovered chats…</div>;
   if (!data || (data.tables.length === 0 && messages.length === 0))
@@ -76,19 +89,46 @@ export function DiscoveredChatsView({ caseId }: { caseId: string }) {
               </tr>
             </thead>
             <tbody>
-              {data.tables.map((t, i) => (
-                <tr key={i}>
-                  <td className="td font-mono text-xs">{t.db}</td>
-                  <td className="td font-medium">{t.table}</td>
-                  <td className="td font-mono text-xs text-muted">{t.roles.text ?? "—"}</td>
-                  <td className="td font-mono text-xs text-muted">{t.roles.timestamp ?? "—"}</td>
-                  <td className="td font-mono text-xs text-muted">{t.roles.sender ?? "—"}</td>
-                  <td className="td">{t.live}</td>
-                  <td className="td">{t.recovered}</td>
-                </tr>
-              ))}
+              {data.tables.map((t, i) => {
+                const isActive = selectedTable?.db === t.db && selectedTable?.table === t.table;
+                return (
+                  <tr
+                    key={i}
+                    onClick={() =>
+                      setSelectedTable(isActive ? null : { db: t.db, table: t.table })
+                    }
+                    className={`cursor-pointer transition-colors ${
+                      isActive ? "bg-accent/15" : "hover:bg-panel-2/50"
+                    }`}
+                    title={isActive ? "Click to clear filter" : "Click to show only this table's messages"}
+                  >
+                    <td className="td font-mono text-xs">{t.db}</td>
+                    <td className="td font-medium">{t.table}</td>
+                    <td className="td font-mono text-xs text-muted">{t.roles.text ?? "—"}</td>
+                    <td className="td font-mono text-xs text-muted">{t.roles.timestamp ?? "—"}</td>
+                    <td className="td font-mono text-xs text-muted">{t.roles.sender ?? "—"}</td>
+                    <td className="td">{t.live}</td>
+                    <td className="td">{t.recovered}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {selectedTable && (
+        <div className="flex items-center gap-2 mb-3 text-xs">
+          <span className="text-muted">
+            Showing messages from{" "}
+            <span className="font-mono text-ink">
+              {selectedTable.db}:{selectedTable.table}
+            </span>{" "}
+            only
+          </span>
+          <button className="btn-ghost text-xs" onClick={() => setSelectedTable(null)}>
+            Clear filter
+          </button>
         </div>
       )}
 

@@ -141,6 +141,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [covFilter, setCovFilter] = useState("");
   const [covStatus, setCovStatus] = useState<"all" | CoverageStatus>("all");
+  const [caseStatus, setCaseStatus] = useState<"all" | "passed" | "failed" | "undetermined">("all");
 
   useEffect(() => {
     let alive = true;
@@ -161,6 +162,15 @@ export function ValidationView({ caseId }: { caseId: string }) {
 
   const cases = useMemo(() => report?.cases ?? [], [report]);
   const coverage = useMemo(() => report?.coverage ?? [], [report]);
+
+  const casesFiltered = useMemo(() => {
+    if (caseStatus === "all") return cases;
+    return cases.filter((c) => {
+      if (caseStatus === "passed") return c.passed === true;
+      if (caseStatus === "failed") return c.passed === false;
+      return c.passed !== true && c.passed !== false; // undetermined
+    });
+  }, [cases, caseStatus]);
 
   const covCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -400,12 +410,18 @@ export function ValidationView({ caseId }: { caseId: string }) {
 
         <div className="flex flex-wrap gap-3 mb-3">
           {[
-            { label: "Passed", value: passed, tone: "text-live" },
-            { label: "Failed", value: failed, tone: "text-deletion" },
-            { label: "Undetermined", value: undetermined, tone: "text-carved" },
-            { label: "Total cases", value: cases.length, tone: "text-accent" },
-          ].map(({ label, value, tone }) => (
-            <div key={label} className="card px-4 py-2 flex flex-col items-center min-w-[110px]">
+            { label: "Passed", value: passed, tone: "text-live", status: "passed" as const },
+            { label: "Failed", value: failed, tone: "text-deletion", status: "failed" as const },
+            { label: "Undetermined", value: undetermined, tone: "text-carved", status: "undetermined" as const },
+            { label: "Total cases", value: cases.length, tone: "text-accent", status: "all" as const },
+          ].map(({ label, value, tone, status }) => (
+            <div
+              key={label}
+              className={`card px-4 py-2 flex flex-col items-center min-w-[110px] cursor-pointer transition-colors hover:bg-panel-2 ${
+                caseStatus === status ? "ring-1 ring-accent border-accent/50" : ""
+              }`}
+              onClick={() => setCaseStatus(status)}
+            >
               <span className={`text-xl font-bold ${tone}`}>{value}</span>
               <span className="text-xs text-muted mt-0.5">{label}</span>
             </div>
@@ -432,35 +448,43 @@ export function ValidationView({ caseId }: { caseId: string }) {
                 </tr>
               </thead>
               <tbody>
-                {cases.map((c, i) => (
-                  <tr key={`${c.case_id}-${i}`} className={c.passed === false ? "bg-deletion/5" : ""}>
-                    <td className="td">
-                      {c.passed === true ? (
-                        <Chip tone={STATUS_TONE.met}>pass</Chip>
-                      ) : c.passed === false ? (
-                        <Chip tone={STATUS_TONE["not-met"]}>fail</Chip>
-                      ) : (
-                        <Chip tone={STATUS_TONE["partially-met"]}>undetermined</Chip>
-                      )}
-                    </td>
-                    <td className="td font-mono text-[11px] break-all">{c.case_id || "—"}</td>
-                    <td className="td text-xs leading-relaxed">{c.description || "—"}</td>
-                    <td className="td text-xs">{c.artifact_class || "—"}</td>
-                    <td className="td font-mono text-[11px] break-all">{fmtValue(c.expected)}</td>
-                    <td className="td font-mono text-[11px] break-all">
-                      {fmtValue(c.actual)}
-                      {(c.anomalies ?? []).length > 0 && (
-                        <ul className="list-disc pl-4 mt-1.5 space-y-0.5">
-                          {(c.anomalies ?? []).map((a, j) => (
-                            <li key={j} className="text-[11px] text-warn font-sans leading-relaxed">
-                              {a}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
+                {casesFiltered.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="td text-center text-muted text-xs py-6">
+                      No test cases match the current filter.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  casesFiltered.map((c, i) => (
+                    <tr key={`${c.case_id}-${i}`} className={c.passed === false ? "bg-deletion/5" : ""}>
+                      <td className="td">
+                        {c.passed === true ? (
+                          <Chip tone={STATUS_TONE.met}>pass</Chip>
+                        ) : c.passed === false ? (
+                          <Chip tone={STATUS_TONE["not-met"]}>fail</Chip>
+                        ) : (
+                          <Chip tone={STATUS_TONE["partially-met"]}>undetermined</Chip>
+                        )}
+                      </td>
+                      <td className="td font-mono text-[11px] break-all">{c.case_id || "—"}</td>
+                      <td className="td text-xs leading-relaxed">{c.description || "—"}</td>
+                      <td className="td text-xs">{c.artifact_class || "—"}</td>
+                      <td className="td font-mono text-[11px] break-all">{fmtValue(c.expected)}</td>
+                      <td className="td font-mono text-[11px] break-all">
+                        {fmtValue(c.actual)}
+                        {(c.anomalies ?? []).length > 0 && (
+                          <ul className="list-disc pl-4 mt-1.5 space-y-0.5">
+                            {(c.anomalies ?? []).map((a, j) => (
+                              <li key={j} className="text-[11px] text-warn font-sans leading-relaxed">
+                                {a}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

@@ -190,6 +190,18 @@ export function AntiForensicsView({ caseId }: { caseId: string }) {
   const lockedUsers = users.filter((u) => u.extractable === "present-locked").length;
   const loading = usersLoading || findingsLoading;
 
+  // Which StatCard tile (if any) the users table / observations list is narrowed to.
+  // Clicking the same tile again (or the tile representing "all") clears it — see the
+  // StatCard onClick wiring below. Hooks must run unconditionally on every render, so
+  // these — and the derived list they drive — are computed here, before the early
+  // returns below, never after them.
+  const [userFilter, setUserFilter] = useState<AndroidUserRecord["extractable"] | null>(null);
+  const [findingFilter, setFindingFilter] = useState<AntiForensicFinding["severity"] | null>(null);
+  const visibleUsers = useMemo(
+    () => (userFilter ? users.filter((u) => u.extractable === userFilter) : users),
+    [users, userFilter]
+  );
+
   if (loading) return <div className="p-8 text-muted text-sm animate-pulse">Loading structural observations…</div>;
 
   return (
@@ -255,13 +267,32 @@ export function AntiForensicsView({ caseId }: { caseId: string }) {
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-            <StatCard n={users.length} label="Users / containers" />
-            <StatCard n={lockedUsers} label="Present, locked" tone="text-deletion" />
-            <StatCard n={findings.length} label="Observations" tone="text-accent" />
+            <StatCard
+              n={users.length}
+              label="Users / containers"
+              onClick={() => setUserFilter(null)}
+              active={userFilter === null}
+            />
+            <StatCard
+              n={lockedUsers}
+              label="Present, locked"
+              tone="text-deletion"
+              onClick={() => setUserFilter((f) => (f === "present-locked" ? null : "present-locked"))}
+              active={userFilter === "present-locked"}
+            />
+            <StatCard
+              n={findings.length}
+              label="Observations"
+              tone="text-accent"
+              onClick={() => setFindingFilter(null)}
+              active={findingFilter === null}
+            />
             <StatCard
               n={(grouped.get("critical") ?? []).length}
               label="Notable"
               tone="text-deletion"
+              onClick={() => setFindingFilter((f) => (f === "critical" ? null : "critical"))}
+              active={findingFilter === "critical"}
             />
           </div>
 
@@ -272,6 +303,14 @@ export function AntiForensicsView({ caseId }: { caseId: string }) {
               No user records were parsed. Observations below were derived from other sources; the
               absence of a user table is a collection gap, not a finding that the device has one
               user.
+            </div>
+          ) : visibleUsers.length === 0 ? (
+            <div className="card p-4 mb-6 text-xs text-muted leading-relaxed">
+              No users match the "{EXTRACTABILITY[userFilter as AndroidUserRecord["extractable"]]?.label ?? userFilter}"
+              filter.{" "}
+              <button className="underline text-ink" onClick={() => setUserFilter(null)}>
+                Clear filter
+              </button>
             </div>
           ) : (
             <div className="card overflow-auto mb-2">
@@ -287,7 +326,7 @@ export function AntiForensicsView({ caseId }: { caseId: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map((u, i) => {
+                  {visibleUsers.map((u, i) => {
                     const ex = EXTRACTABILITY[u.extractable] ?? EXTRACTABILITY.unknown;
                     return (
                       <tr key={i}>
@@ -346,7 +385,15 @@ export function AntiForensicsView({ caseId }: { caseId: string }) {
             </div>
           ) : (
             <div className="space-y-5">
-              {SEVERITY_ORDER.map((sev) => {
+              {findingFilter && (grouped.get(findingFilter) ?? []).length === 0 && (
+                <div className="card p-4 text-xs text-muted leading-relaxed">
+                  No "{SEVERITY_META[findingFilter].label}" observations were recorded.{" "}
+                  <button className="underline text-ink" onClick={() => setFindingFilter(null)}>
+                    Clear filter
+                  </button>
+                </div>
+              )}
+              {(findingFilter ? [findingFilter] : SEVERITY_ORDER).map((sev) => {
                 const rows = grouped.get(sev) ?? [];
                 if (rows.length === 0) return null;
                 const meta = SEVERITY_META[sev];
