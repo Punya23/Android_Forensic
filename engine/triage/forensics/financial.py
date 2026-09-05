@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional
 def detect_upi_transactions(messages: List[Dict]) -> List[Dict[str, Any]]:
     """Extract UPI payment transactions from message text.
     
+    Detects both user-initiated payments and payment app confirmation messages.
+    
     Args:
         messages: List of message dicts with 'text', 'sender', 'timestamp' fields
         
@@ -25,16 +27,18 @@ def detect_upi_transactions(messages: List[Dict]) -> List[Dict[str, Any]]:
             'amount': float,
             'currency': str,
             'upi_id': str,
+            'transaction_id': str,  # UTR/Ref number if available
             'timestamp': str,
             'source_message': str,
             'confidence': float,
-            'payment_app': str  # 'GPay', 'PhonePe', 'Paytm', etc.
+            'payment_app': str,  # 'GPay', 'PhonePe', 'Paytm', etc.
+            'message_type': str  # 'user_message' or 'payment_confirmation'
         }]
     """
     transactions = []
     
-    # UPI transaction patterns
-    patterns = [
+    # UPI transaction patterns from user messages
+    user_patterns = [
         # "Paid ₹500 to user@bank"
         r'(?:paid|sent|transferred)\s+₹?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)\s+to\s+([a-zA-Z0-9._-]+@[a-zA-Z]+)',
         # "Received ₹500 from user@bank"
@@ -45,15 +49,49 @@ def detect_upi_transactions(messages: List[Dict]) -> List[Dict[str, Any]]:
         r'upi\s+(?:payment|transfer).*?₹?\s*(\d+(?:,\d{3})*(?:\.\d{2})?).*?(?:to|for)\s+([a-zA-Z0-9._-]+@[a-zA-Z]+)',
     ]
     
-    # Payment app keywords
+    # Payment confirmation message patterns (from payment apps)
+    # These are structured messages sent by GPay, PhonePe, Paytm, etc.
+    confirmation_patterns = [
+        # "You paid ₹500 to Merchant Name. UPI Ref: 123456789"
+        r'you\s+paid\s+₹?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)\s+to\s+([^\n.]+?)(?:\.|UPI|Ref)',
+        # "₹500 sent to Merchant Name via GooglePay"
+        r'₹?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)\s+sent\s+to\s+([^\n.]+?)\s+via',
+        # "Payment of ₹500 to Merchant Name successful"
+        r'payment\s+of\s+₹?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)\s+to\s+([^\n.]+?)\s+(?:successful|completed)',
+        # "₹500 credited to your account from Sender Name"
+        r'₹?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)\s+credited.*?from\s+([^\n.]+?)(?:\.|UPI|Ref)',
+        # "Received ₹500 from Sender Name. UPI Ref:"
+        r'received\s+₹?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)\s+from\s+([^\n.]+?)(?:\.|UPI|Ref)',
+        # Bank SMS: "Rs.500 debited from A/c XX1234 to VPA merchant@paytm"
+        r'rs\.?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)\s+(?:debited|sent).*?to\s+(?:VPA\s+)?([a-zA-Z0-9._-]+@[a-zA-Z]+)',
+        # Bank SMS: "Rs.500 credited to A/c XX1234 from VPA sender@ybl"
+        r'rs\.?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)\s+credited.*?from\s+(?:VPA\s+)?([a-zA-Z0-9._-]+@[a-zA-Z]+)',
+        # PhonePe: "You have successfully paid ₹500 to Merchant"
+        r'successfully\s+paid\s+₹?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)\s+to\s+([^\n.]+?)(?:\.|UPI|Ref)',
+        # Paytm: "₹500 paid to merchant@paytm via Paytm"
+        r'₹?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)\s+paid\s+to\s+([^\n.]+?)\s+via\s+(?:paytm|phonepe|gpay)',
+    ]
+    
+    # Payment app detection keywords
     payment_apps = {
         'gpay': 'GPay',
         'googlepay': 'GPay',
+        'google pay': 'GPay',
         'phonepe': 'PhonePe',
+        'phone pe': 'PhonePe',
         'paytm': 'Paytm',
         'bhim': 'BHIM',
         'whatsapp': 'WhatsApp Pay',
+        'amazonpay': 'Amazon Pay',
+        'mobikwik': 'MobiKwik',
+        'freecharge': 'Freecharge',
     }
+    
+    # Sender identifiers for payment confirmation messages
+    payment_senders = [
+        'gpay', 'phonepe', 'paytm', 'bhim', 'sbi', 'hdfc', 'icici', 'axis', 
+        'kotak', 'bank', 'upi', 'payment', 'vpa', 'merchant'
+    ]
     
     for msg in messages:
         text = msg.get('text', '')
@@ -61,33 +99,58 @@ def detect_upi_transactions(messages: List[Dict]) -> List[Dict[str, Any]]:
             continue
         
         text_lower = text.lower()
+        msg_sender = msg.get('sender', 'unknown')
         
         # Check if message contains payment keywords
-        payment_keywords = ['upi', 'paid', 'sent', 'received', 'transfer', '₹', 'gpay', 'phonepe', 'paytm']
+        payment_keywords = ['upi', 'paid', 'sent', 'received', 'transfer', '₹', 'rs.', 
+                          'gpay', 'phonepe', 'paytm', 'credited', 'debited']
         if not any(keyword in text_lower for keyword in payment_keywords):
             continue
         
+        # Determine if this is a payment confirmation message or user message
+        is_confirmation = any(sender_keyword in msg_sender.lower() 
+                             for sender_keyword in payment_senders) or \
+                         any(word in text_lower for word in ['upi ref', 'transaction id', 
+                                                             'successful', 'a/c xx', 'vpa'])
+        
+        # Extract transaction ID/UTR if present
+        transaction_id = _extract_transaction_id(text)
+        
+        # Choose appropriate pattern set
+        patterns_to_try = confirmation_patterns if is_confirmation else user_patterns
+        
         # Try each pattern
-        for pattern in patterns:
+        for pattern in patterns_to_try:
             matches = re.finditer(pattern, text_lower, re.IGNORECASE)
             
             for match in matches:
-                amount_str = match.group(1).replace(',', '')
-                upi_id = match.group(2)
+                amount_str = match.group(1).replace(',', '').replace('rs.', '').replace('rs', '').strip()
+                counterparty = match.group(2).strip()
                 
                 try:
                     amount = float(amount_str)
                 except ValueError:
                     continue
                 
-                # Determine sender/receiver based on context
-                sender = msg.get('sender', 'unknown')
-                receiver = upi_id
+                # Skip unreasonably large or small amounts
+                if amount < 1 or amount > 10000000:  # 1 rupee to 1 crore
+                    continue
                 
-                if any(word in text_lower for word in ['received', 'got', 'credited']):
-                    # Reverse: sender is the UPI ID, receiver is message sender
-                    sender = upi_id
-                    receiver = msg.get('sender', 'unknown')
+                # Determine sender/receiver based on context
+                sender = msg_sender
+                receiver = counterparty
+                upi_id = counterparty if '@' in counterparty else ''
+                
+                # Check if this is a credit (money received) transaction
+                is_credit = any(word in text_lower for word in ['received', 'got', 'credited', 'from'])
+                
+                if is_credit:
+                    # Reverse: sender is the counterparty, receiver is message owner
+                    sender = counterparty
+                    receiver = msg_sender
+                    if not upi_id and '@' not in counterparty:
+                        # If counterparty is name, not UPI ID
+                        upi_id = ''
                 
                 # Detect payment app
                 payment_app = 'UPI'
@@ -96,13 +159,23 @@ def detect_upi_transactions(messages: List[Dict]) -> List[Dict[str, Any]]:
                         payment_app = app_name
                         break
                 
-                # Calculate confidence based on context
-                confidence = 0.7
+                # Calculate confidence based on message characteristics
+                confidence = 0.6  # Base confidence
+                
+                # Higher confidence for confirmation messages
+                if is_confirmation:
+                    confidence += 0.2
+                
+                # Boost confidence for specific indicators
                 if 'upi' in text_lower:
                     confidence += 0.1
                 if any(app in text_lower for app in payment_apps.keys()):
                     confidence += 0.1
+                if transaction_id:
+                    confidence += 0.1
                 if re.search(r'transaction.*(?:successful|complete)', text_lower):
+                    confidence += 0.1
+                if '@' in counterparty:  # UPI ID present
                     confidence += 0.1
                 
                 confidence = min(confidence, 1.0)
@@ -113,13 +186,67 @@ def detect_upi_transactions(messages: List[Dict]) -> List[Dict[str, Any]]:
                     'amount': amount,
                     'currency': 'INR',
                     'upi_id': upi_id,
+                    'transaction_id': transaction_id,
                     'timestamp': msg.get('timestamp', ''),
                     'source_message': text[:200],
                     'confidence': confidence,
                     'payment_app': payment_app,
+                    'message_type': 'payment_confirmation' if is_confirmation else 'user_message',
+                    'is_credit': is_credit,
                 })
     
+    # Remove duplicates (same amount, same parties, within 5 minutes)
+    transactions = _deduplicate_transactions(transactions)
+    
     return transactions
+
+
+def _extract_transaction_id(text: str) -> str:
+    """Extract UPI transaction ID, UTR, or reference number from text."""
+    # UPI Ref patterns
+    patterns = [
+        r'upi\s*ref[:\s]+([a-z0-9]{12,})',
+        r'utr[:\s]+([a-z0-9]{12,})',
+        r'transaction\s*id[:\s]+([a-z0-9]{12,})',
+        r'ref(?:erence)?[:\s]+([a-z0-9]{12,})',
+        r'txn\s*id[:\s]+([a-z0-9]{12,})',
+    ]
+    
+    text_lower = text.lower()
+    for pattern in patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            return match.group(1).upper()
+    
+    return ''
+
+
+def _deduplicate_transactions(transactions: List[Dict]) -> List[Dict]:
+    """Remove duplicate transactions (same amount, parties, close timestamps)."""
+    if not transactions:
+        return []
+    
+    unique_transactions = []
+    seen = set()
+    
+    for txn in transactions:
+        # Create a key for deduplication
+        # Two transactions are considered duplicates if they have:
+        # - Same amount
+        # - Same sender/receiver
+        # - Same timestamp (or very close)
+        key = (
+            txn['amount'],
+            txn['sender'].lower(),
+            txn['receiver'].lower(),
+            str(txn['timestamp'])[:16]  # Match to minute precision
+        )
+        
+        if key not in seen:
+            seen.add(key)
+            unique_transactions.append(txn)
+    
+    return unique_transactions
 
 
 def detect_bank_accounts(text: str) -> List[Dict[str, str]]:
