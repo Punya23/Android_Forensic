@@ -18,6 +18,7 @@ import shutil
 import tempfile
 import threading
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -2276,6 +2277,233 @@ def run_acquisition(
         "snapchat_conversations", thread_conversations(sc_msgs, sc_users)
     )
     case.write_derived("discovered_chats", discovered_chats)
+
+    # -- Phase 2: Advanced Forensic Modules -----------------------------------
+    # WhatsApp Advanced Analysis
+    whatsapp_reactions = {}
+    whatsapp_admins = {}
+    whatsapp_call_analysis = {}
+    try:
+        from .parsers.whatsapp_advanced import (
+            analyze_whatsapp_reactions,
+            detect_whatsapp_admins,
+            analyze_whatsapp_calls,
+        )
+        
+        # Find WhatsApp databases
+        wa_db_paths = []
+        for artifact_path, artifact_rec in db_artifacts:
+            if "whatsapp" in str(artifact_path).lower() and "msgstore" in str(artifact_path).lower():
+                wa_db_paths.append(str(artifact_path))
+        
+        # Analyze reactions and admins from DB
+        for db_path in wa_db_paths:
+            reactions = analyze_whatsapp_reactions(db_path)
+            admins = detect_whatsapp_admins(db_path)
+            if reactions:
+                whatsapp_reactions.update(reactions)
+            if admins:
+                whatsapp_admins.update(admins)
+        
+        # Analyze call patterns from call logs
+        wa_calls = [c for c in calls if c.get('source') == 'whatsapp' or 'whatsapp' in c.get('app', '').lower()]
+        if wa_calls:
+            whatsapp_call_analysis = analyze_whatsapp_calls(wa_calls)
+        
+        case.write_derived("whatsapp_reactions", whatsapp_reactions)
+        case.write_derived("whatsapp_admins", whatsapp_admins)
+        case.write_derived("whatsapp_call_analysis", whatsapp_call_analysis)
+        
+        case.log(
+            "phase2.whatsapp_advanced",
+            f"WhatsApp advanced analysis: {len(whatsapp_reactions)} reactions, "
+            f"{len(whatsapp_admins)} admin groups, call patterns analyzed",
+            tier=Tier.TIER0.value,
+        )
+    except Exception as exc:
+        case.log(
+            "phase2.whatsapp_advanced",
+            f"WhatsApp advanced analysis error: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+    
+    # Telegram Advanced Analysis
+    telegram_bots = {}
+    telegram_group_stats = {}
+    try:
+        from .parsers.telegram_advanced import (
+            detect_telegram_bots,
+            analyze_telegram_groups,
+        )
+        
+        # Find Telegram databases
+        tg_db_paths = []
+        for artifact_path, artifact_rec in db_artifacts:
+            if "telegram" in str(artifact_path).lower():
+                tg_db_paths.append(str(artifact_path))
+        
+        # Analyze bots and groups
+        for db_path in tg_db_paths:
+            bots = detect_telegram_bots(db_path)
+            groups = analyze_telegram_groups(db_path)
+            if bots:
+                telegram_bots.update(bots)
+            if groups:
+                telegram_group_stats.update(groups)
+        
+        case.write_derived("telegram_bots", telegram_bots)
+        case.write_derived("telegram_group_stats", telegram_group_stats)
+        
+        case.log(
+            "phase2.telegram_advanced",
+            f"Telegram advanced analysis: {len(telegram_bots)} bots, "
+            f"{len(telegram_group_stats)} groups analyzed",
+            tier=Tier.TIER0.value,
+        )
+    except Exception as exc:
+        case.log(
+            "phase2.telegram_advanced",
+            f"Telegram advanced analysis error: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+    
+    # Financial Forensics
+    upi_transactions = []
+    money_trail = {}
+    try:
+        from .forensics.financial import (
+            detect_upi_transactions,
+            build_money_trail,
+        )
+        
+        # Detect UPI transactions from all messages
+        upi_transactions = detect_upi_transactions(all_messages)
+        
+        # Build money trail graph
+        if upi_transactions:
+            money_trail = build_money_trail(upi_transactions)
+        
+        case.write_derived("upi_transactions", upi_transactions)
+        case.write_derived("money_trail", money_trail)
+        
+        case.log(
+            "phase2.financial_forensics",
+            f"Financial forensics: {len(upi_transactions)} UPI transactions detected, "
+            f"{len(money_trail)} money flow paths mapped",
+            tier=Tier.TIER0.value,
+        )
+    except Exception as exc:
+        case.log(
+            "phase2.financial_forensics",
+            f"Financial forensics error: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+    
+    # Legal Intelligence
+    matched_statutes = []
+    fir_draft = ""
+    expert_report = ""
+    try:
+        from .forensics.legal import (
+            match_statutes,
+            generate_fir,
+            generate_expert_report,
+        )
+        
+        # Match statutes from case description or evidence
+        evidence_text = cfg.case_description or ""
+        if evidence_text:
+            matched_statutes = match_statutes(evidence_text)
+        
+        # Generate FIR if case data available
+        if cfg.case_id:
+            case_data = {
+                'case_id': cfg.case_id,
+                'complainant': cfg.examiner or 'Unknown',
+                'accused': 'Unknown',
+                'incident_date': 'Unknown',
+                'incident_place': 'Unknown',
+                'description': cfg.case_description or 'No description provided',
+            }
+            
+            # Prepare evidence list
+            evidence_list = [
+                {'type': 'messages', 'count': len(all_messages)},
+                {'type': 'calls', 'count': len(calls)},
+                {'type': 'media', 'count': len(media_items)},
+                {'type': 'contacts', 'count': len(contacts)},
+            ]
+            
+            fir_draft = generate_fir(case_data, evidence_list)
+            
+            # Generate expert report
+            expert_case_data = {
+                **case_data,
+                'device_model': device.manufacturer + " " + device.model,
+                'android_version': device.android_version,
+                'examination_date': datetime.now().strftime('%Y-%m-%d'),
+                'received_date': datetime.now().strftime('%Y-%m-%d'),
+                'exam_start': datetime.now().strftime('%Y-%m-%d'),
+                'extraction_date': datetime.now().strftime('%Y-%m-%d'),
+                'analysis_date': datetime.now().strftime('%Y-%m-%d'),
+                'acquisition_tier': f"Tier {cfg.max_tier}",
+                'evidence_count': {
+                    'messages': len(all_messages),
+                    'calls': len(calls),
+                    'media': len(media_items),
+                    'contacts': len(contacts),
+                },
+                'findings': flags,
+            }
+            expert_report = generate_expert_report(str(case.root), expert_case_data)
+        
+        case.write_derived("matched_statutes", matched_statutes)
+        case.write_derived("fir_draft", fir_draft)
+        case.write_derived("expert_report", expert_report)
+        
+        case.log(
+            "phase2.legal_intelligence",
+            f"Legal intelligence: {len(matched_statutes)} statutes matched, "
+            "FIR and expert report generated",
+            tier=Tier.TIER0.value,
+        )
+    except Exception as exc:
+        case.log(
+            "phase2.legal_intelligence",
+            f"Legal intelligence error: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+    
+    # Enhanced Location Intelligence
+    visit_durations = []
+    try:
+        from .forensics.location_enhanced import (
+            analyze_visit_durations,
+        )
+        
+        # Analyze visit durations from all location data
+        all_locations = locations + maps_locations
+        if all_locations:
+            visit_durations = analyze_visit_durations(all_locations)
+        
+        case.write_derived("visit_durations", visit_durations)
+        
+        case.log(
+            "phase2.location_enhanced",
+            f"Enhanced location intelligence: {len(visit_durations)} locations analyzed",
+            tier=Tier.TIER0.value,
+        )
+    except Exception as exc:
+        case.log(
+            "phase2.location_enhanced",
+            f"Enhanced location intelligence error: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
 
     # -- Case-intelligence: persist profile/plan + rank collected leads -------
     ai_findings: dict = {}
