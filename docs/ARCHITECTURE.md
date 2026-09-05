@@ -85,7 +85,7 @@ flowchart LR
         E1["Acquisition<br/>adbutils orchestration"]
         E2["Parsers<br/>38 modules — WhatsApp/Telegram/IG/Snap/SMS/browser/…"]
         E3["Recovery<br/>WAL / freelist / freeblock / rollback-journal carving"]
-        E4["Case Intelligence<br/>ontology + hybrid RAG (BM25 + local embeddings)<br/>pluggable LLM (heuristic/Ollama/Anthropic)"]
+        E4["Case Intelligence<br/>ontology + hybrid RAG (BM25 + local embeddings)<br/>pluggable LLM (heuristic/Ollama, both local)"]
         E5["Custody<br/>hash-chained audit log + SHA-256 manifest"]
         E6["Report Engine<br/>HTML/PDF + BSA s.63 certificate"]
     end

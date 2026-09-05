@@ -359,7 +359,7 @@ class PipelineConfig:
     learn_from_case: bool = (
         True  # feed this run's outcome back into the knowledge graph
     )
-    llm_provider: str = ""  # "" → SNAGR_LLM env (heuristic|ollama|anthropic)
+    llm_provider: str = ""  # "" → SNAGR_LLM env (heuristic|ollama)
     # -- Performance options --------------------------------------------------
     use_priority_filter: bool = (
         False  # sort files by forensic value; skip low-value until budget allows
@@ -855,6 +855,7 @@ def run_acquisition(
                 wifi_networks=collector_wifi,
                 bluetooth_devices=collector_bluetooth,
                 skip_paths=tier1_skip_paths,
+                oem_quirks=device.oem_quirks,
             )
         else:
             case.log(
@@ -869,7 +870,7 @@ def run_acquisition(
         progress("tier1", 0.05, "Running Tier-1 helper (contacts)")
         if isinstance(source, RealDeviceSource):
             tier1_contacts, tier1_skip_paths = _run_tier1_contacts_helper(
-                source, case, staging
+                source, case, staging, oem_quirks=device.oem_quirks
             )
             contacts.extend(tier1_contacts)
         else:
@@ -884,7 +885,7 @@ def run_acquisition(
         progress("tier1", 0.051, "Running Tier-1 helper (call-log)")
         if isinstance(source, RealDeviceSource):
             tier1_calls, tier1_calllog_skip_paths = _run_tier1_calllog_helper(
-                source, case, staging
+                source, case, staging, oem_quirks=device.oem_quirks
             )
             calls.extend(tier1_calls)
             tier1_skip_paths.update(tier1_calllog_skip_paths)
@@ -901,7 +902,7 @@ def run_acquisition(
         progress("tier1", 0.052, "Running Tier-1 helper (SMS)")
         if isinstance(source, RealDeviceSource):
             tier1_sms_msgs, tier1_sms_skip_paths = _run_tier1_sms_helper(
-                source, case, staging
+                source, case, staging, oem_quirks=device.oem_quirks
             )
             app_messages.extend(tier1_sms_msgs)
             tier1_skip_paths.update(tier1_sms_skip_paths)
@@ -5449,8 +5450,74 @@ def _pull_telegram_media(
     return pulled
 
 
+# OEM quirks (see config.OEM_QUIRKS) that mean the collector needs a human to clear an
+# on-device dialog — a runtime permission prompt, a lock-screen PIN, a Mi Account login —
+# before it can finish. A short fixed sleep after `am start` pulls whatever happened to be
+# written in that window; on these builds that is reliably nothing, not an occasional miss.
+_TIER1_INTERACTIVE_QUIRKS = {
+    "pm_grant_blocked",             # OnePlus — runtime permission dialog per permission
+    "usb_install_password_prompt",  # OPPO/Realme — lock-screen PIN prompt on install
+    "usb_install_verify_prompt",    # Vivo/iQOO — 'Verify apps over USB' prompt
+    "mi_account_usb_auth",          # Xiaomi/Redmi/POCO — Mi Account login
+    "aggressive_battery_kill",      # Xiaomi/Redmi/POCO — battery saver may need disabling first
+    "aggressive_process_kill",      # OPPO/Realme — collector may get killed and need reopening
+    "funtouch_background_kill",     # Vivo/iQOO — same background-kill risk
+    "usb_debug_timeout",            # Honor — ADB authorization itself may need re-doing
+}
+
+
+def _wait_for_tier1_manifest(
+    source: RealDeviceSource,
+    case: Case,
+    *,
+    oem_quirks: Optional[list[str]] = None,
+    poll_interval: float = 1.5,
+) -> bool:
+    """Poll for ``collector_manifest.json`` instead of guessing a fixed sleep.
+
+    The helper writes ``collector_manifest.json`` last, after every requested collector has
+    run (see ``MainActivity.writeManifest`` — this holds for a single ``dump_<x>`` action as
+    much as for ``dump_all``), so its presence on-device is proof the run actually finished,
+    including any OEM dialog the examiner had to clear first. A brand with a known
+    interactive quirk gets a much longer window and a logged heads-up telling the examiner
+    what to expect; a timeout is not an error — the caller pulls whatever exists either way,
+    so a slow OEM turns into delayed data, never silently dropped data.
+    """
+    matched = set(oem_quirks or []) & _TIER1_INTERACTIVE_QUIRKS
+    timeout = 90.0 if matched else 20.0
+    if matched:
+        case.log(
+            "tier1.helper.wait",
+            "this device's OEM build needs an on-screen step to finish granting "
+            f"permissions (quirks: {', '.join(sorted(matched))}); waiting up to "
+            f"{timeout:.0f}s for the collector to finish — complete any dialog or PIN "
+            "prompt on the device now",
+            tier=Tier.TIER1.value,
+        )
+    deadline = time.monotonic() + timeout
+    check_cmd = "[ -f /sdcard/Download/collector_manifest.json ] && echo READY"
+    while time.monotonic() < deadline:
+        res = source.adb.shell(check_cmd, timeout=10)
+        if res.ok and "READY" in res.stdout:
+            case.log(
+                "tier1.helper.wait",
+                "collector_manifest.json present on device — collection finished",
+                tier=Tier.TIER1.value,
+            )
+            return True
+        time.sleep(poll_interval)
+    case.log(
+        "tier1.helper.wait",
+        f"collector_manifest.json not seen within {timeout:.0f}s; pulling whatever the "
+        "device has written so far",
+        result="partial",
+        tier=Tier.TIER1.value,
+    )
+    return False
+
+
 def _run_tier1_calllog_helper(
-    source: RealDeviceSource, case: Case, staging: Path
+    source: RealDeviceSource, case: Case, staging: Path, *, oem_quirks: Optional[list[str]] = None
 ) -> tuple[list, set[str]]:
     """Run helper-APK call-log workflow and ingest calllog.json as Tier-1 evidence."""
     package = "io.erakshak.collector"
@@ -5509,7 +5576,7 @@ def _run_tier1_calllog_helper(
         _best_effort_uninstall(source, case, package)
         return [], set()
 
-    time.sleep(1.5)
+    _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks)
 
     local_calllog = staging / "tier1_calllog.json"
     pull = source.adb.pull(remote_calllog, local_calllog)
@@ -5546,7 +5613,7 @@ def _run_tier1_calllog_helper(
 
 
 def _run_tier1_sms_helper(
-    source: RealDeviceSource, case: Case, staging: Path
+    source: RealDeviceSource, case: Case, staging: Path, *, oem_quirks: Optional[list[str]] = None
 ) -> tuple[list, set[str]]:
     """Run helper-APK SMS workflow and ingest sms.json as Tier-1 evidence."""
     package = "io.erakshak.collector"
@@ -5602,7 +5669,7 @@ def _run_tier1_sms_helper(
         _best_effort_uninstall(source, case, package)
         return [], set()
 
-    time.sleep(1.5)
+    _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks)
 
     local_sms = staging / "tier1_sms.json"
     pull = source.adb.pull(remote_sms, local_sms)
@@ -5639,7 +5706,7 @@ def _run_tier1_sms_helper(
 
 
 def _run_tier1_contacts_helper(
-    source: RealDeviceSource, case: Case, staging: Path
+    source: RealDeviceSource, case: Case, staging: Path, *, oem_quirks: Optional[list[str]] = None
 ) -> tuple[list, set[str]]:
     """Run helper-APK contacts workflow and ingest contacts.json as Tier-1 evidence."""
     package = "io.erakshak.collector"
@@ -5695,7 +5762,7 @@ def _run_tier1_contacts_helper(
         _best_effort_uninstall(source, case, package)
         return [], set()
 
-    time.sleep(1.5)
+    _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks)
 
     local_contacts = staging / "tier1_contacts.json"
     pull = source.adb.pull(remote_contacts, local_contacts)
@@ -5746,6 +5813,7 @@ def _run_tier1_collect_all(
     wifi_networks: list,
     bluetooth_devices: list,
     skip_paths: set[str],
+    oem_quirks: Optional[list[str]] = None,
 ) -> None:
     """Drive the Collector helper's ``dump_all`` action and ingest every output.
 
@@ -5844,8 +5912,10 @@ def _run_tier1_collect_all(
     if not dump.ok:
         _best_effort_uninstall(source, case, package)
         return
-    # MediaStore enumeration + app inventory take a few seconds on a real device.
-    time.sleep(6.0)
+    # MediaStore enumeration + app inventory take a few seconds even on a clean stock
+    # build; on an OEM with an interactive quirk (a permission dialog, a lock-screen PIN)
+    # the examiner needs real time to clear it. Poll for the manifest rather than guess.
+    _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks)
 
     outputs = [
         (

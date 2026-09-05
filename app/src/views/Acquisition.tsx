@@ -1,6 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { api, getSocket } from "../lib/api";
-import type { DeviceListing, LlmStatus, PlanResponse, Progress } from "../lib/types";
+import type {
+  DeviceCheckResponse,
+  DeviceConnectionState,
+  DeviceListing,
+  LlmStatus,
+  PlanResponse,
+  Progress,
+} from "../lib/types";
+
+// Brands with known extra Developer-Options friction (see triage/preflight.py) — the
+// dashboard's only source for this list is the engine itself, but a fixed set here lets
+// the examiner pick a brand before any device is even plugged in.
+const COMMON_BRANDS = [
+  "samsung", "xiaomi", "redmi", "poco", "oppo", "realme", "oneplus",
+  "vivo", "iqoo", "honor", "huawei", "google", "motorola", "nothing",
+];
 import {
   DeprioritisedList,
   PartialCollectionList,
@@ -38,11 +53,10 @@ export function AcquisitionView({
   const [authority, setAuthority] = useState("");
   const [scope, setScope] = useState("");
   const [brief, setBrief] = useState("");
-  // Case-intelligence back-end. "heuristic" (offline, zero-config) is the only safe
-  // default for real evidence — "anthropic" sends case text off-device, so it must
-  // always be a deliberate, visible choice, never silently inherited from a server
-  // env var the examiner never sees.
-  const [llmProvider, setLlmProvider] = useState<"heuristic" | "ollama" | "anthropic">("heuristic");
+  // Case-intelligence back-end. Both options keep case text on this workstation —
+  // "heuristic" (offline, zero-config) or a local model over Ollama. There is no
+  // cloud back-end: evidence text must never leave the machine.
+  const [llmProvider, setLlmProvider] = useState<"heuristic" | "ollama">("heuristic");
   // What this workstation can actually run, asked of the engine rather than assumed.
   // Offering a back-end the machine has no model for turns a deliberate choice into a
   // silent fallback discovered only after the acquisition.
@@ -75,6 +89,14 @@ export function AcquisitionView({
   const [tier2RecentTasks, setTier2RecentTasks] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<number | null>(null);
+  // Device pre-flight — Developer Options / USB debugging. Entirely dashboard-driven:
+  // the examiner never runs a CLI command for this (see triage/preflight.py + the
+  // /api/devices/check, /api/devices/reassert-dev-options endpoints).
+  const [deviceCheck, setDeviceCheck] = useState<DeviceCheckResponse | null>(null);
+  const [checkingDevice, setCheckingDevice] = useState(false);
+  const [manualBrand, setManualBrand] = useState("");
+  const [reasserting, setReasserting] = useState(false);
+  const [reassertMsg, setReassertMsg] = useState<string | null>(null);
 
   useEffect(() => {
     api
@@ -112,6 +134,50 @@ export function AcquisitionView({
   function stopTimer() {
     if (timerRef.current) window.clearInterval(timerRef.current);
     timerRef.current = null;
+  }
+
+  // Auto-check the selected real device's connection state so "no devices found" is
+  // never the only signal — re-runs whenever the target changes.
+  useEffect(() => {
+    if (target?.kind === "real") {
+      runDeviceCheck(target.id);
+    } else {
+      setDeviceCheck(null);
+      setReassertMsg(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.kind, target?.id]);
+
+  async function runDeviceCheck(serial?: string, brand?: string) {
+    setCheckingDevice(true);
+    setReassertMsg(null);
+    try {
+      const res = await api.checkDevice({ serial, brand: brand ?? manualBrand ?? undefined });
+      setDeviceCheck(res);
+    } catch {
+      setDeviceCheck(null);
+    } finally {
+      setCheckingDevice(false);
+    }
+  }
+
+  async function fixDeveloperOptions() {
+    if (!target || target.kind !== "real") return;
+    setReasserting(true);
+    setReassertMsg(null);
+    try {
+      const res = await api.reassertDevOptions(target.id);
+      const ok = res.development_settings_enabled.ok && res.adb_enabled.ok;
+      setReassertMsg(
+        ok
+          ? "Re-asserted — development_settings_enabled + adb_enabled set to 1."
+          : `Failed: ${res.development_settings_enabled.stderr || res.adb_enabled.stderr || "see engine log"}`
+      );
+    } catch (e) {
+      setReassertMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReasserting(false);
+    }
   }
 
   async function previewPlan() {
@@ -249,7 +315,93 @@ export function AcquisitionView({
             </div>
           )}
         </div>
+
+        {/* No real device on the bus yet — most likely Developer Options / USB
+            debugging isn't on. Let the examiner pick a brand and see the exact steps
+            without leaving the dashboard or remembering a CLI command. */}
+        {!devices?.real.length && (
+          <div className="mt-3 pt-3 border-t border-line flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted">No device on the ADB bus yet — pick a brand for setup steps:</span>
+            <select className="input w-auto" value={manualBrand} onChange={(e) => setManualBrand(e.target.value)}>
+              <option value="">Generic Android</option>
+              {COMMON_BRANDS.map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+            <button
+              className="btn-ghost text-xs"
+              disabled={checkingDevice}
+              onClick={() => runDeviceCheck(undefined, manualBrand)}
+            >
+              {checkingDevice ? "Checking…" : "Show setup steps"}
+            </button>
+          </div>
+        )}
+
+        {/* Checklist rendered here too when no REAL device is targeted yet (brand-picker
+            path above) — a mock corpus can be auto-selected as the default target, so
+            this checks target.kind rather than target being null. Separate from the
+            post-selection readiness card below, which takes over once a real device is
+            targeted. */}
+        {target?.kind !== "real" && deviceCheck && !deviceCheck.ready && (
+          <DevOptionsChecklist deviceCheck={deviceCheck} />
+        )}
       </div>
+
+      {/* Device readiness — Developer Options / USB debugging state for the selected
+          real device. Fully dashboard-driven: see triage/preflight.py for why the
+          first-time enable itself can never be automated, on any brand. */}
+      {target?.kind === "real" && (
+        <div className="card p-4 mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="label mb-0">Device readiness</div>
+            <button className="btn-ghost text-xs" disabled={checkingDevice} onClick={() => runDeviceCheck(target.id)}>
+              {checkingDevice ? "Checking…" : "Re-check"}
+            </button>
+          </div>
+
+          {checkingDevice && !deviceCheck && <p className="text-xs text-muted">Checking ADB connection…</p>}
+
+          {deviceCheck && (
+            <>
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                <StateBadge state={deviceCheck.state} />
+                {deviceCheck.device && (
+                  <span className="text-xs text-muted">
+                    {deviceCheck.device.manufacturer} {deviceCheck.device.model} —{" "}
+                    {deviceCheck.device.os_skin || deviceCheck.device.brand} / Android{" "}
+                    {deviceCheck.device.android_version}
+                  </span>
+                )}
+              </div>
+
+              {deviceCheck.note && <p className="text-xs text-muted mb-2">{deviceCheck.note}</p>}
+
+              {deviceCheck.ready ? (
+                <>
+                  {!!deviceCheck.device?.oem_quirks.length && (
+                    <p className="text-[11px] text-warn mb-2">
+                      OEM quirks: {deviceCheck.device!.oem_quirks.join(", ")} — the Tier-1 helper
+                      already accounts for these (see apk/README.md).
+                    </p>
+                  )}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button className="btn-ghost text-xs" disabled={reasserting} onClick={fixDeveloperOptions}>
+                      {reasserting ? "Re-asserting…" : "Re-assert Developer Options"}
+                    </button>
+                    <span className="text-[11px] text-muted">
+                      Only fixes an OEM (e.g. MIUI) silently disabling it mid-case — not a first-time enable.
+                    </span>
+                  </div>
+                  {reassertMsg && <p className="text-[11px] text-muted mt-1.5">{reassertMsg}</p>}
+                </>
+              ) : (
+                <DevOptionsChecklist deviceCheck={deviceCheck} />
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Case metadata */}
       <div className="card p-4 mb-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -920,6 +1072,41 @@ function PriorityPill({ p }: { p: "high" | "medium" | "low" }) {
     low: "text-muted border-line bg-panel",
   }[p];
   return <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${cls}`}>{p}</span>;
+}
+
+function StateBadge({ state }: { state: DeviceConnectionState }) {
+  const map: Record<DeviceConnectionState, { label: string; cls: string }> = {
+    device: { label: "Ready", cls: "text-live border-live/40 bg-live/10" },
+    unauthorized: { label: "Unauthorized", cls: "text-warn border-warn/40 bg-warn/10" },
+    offline: { label: "Offline", cls: "text-warn border-warn/40 bg-warn/10" },
+    no_device: { label: "No device", cls: "text-muted border-line bg-panel" },
+    no_adb_binary: { label: "adb not found", cls: "text-deletion border-deletion/40 bg-deletion/10" },
+  };
+  const m = map[state] ?? map.no_device;
+  return <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${m.cls}`}>{m.label}</span>;
+}
+
+/** The Developer-Options/USB-debugging checklist, rendered wherever a non-ready device
+ * check needs it. Never a "click here to enable" button — that step needs a finger on
+ * the device screen, on every brand, and no dashboard control can substitute for it. */
+function DevOptionsChecklist({ deviceCheck }: { deviceCheck: DeviceCheckResponse }) {
+  return (
+    <div className="rounded-md border border-warn/40 bg-warn/5 p-3 mt-2">
+      <div className="text-xs uppercase tracking-wider text-warn mb-2">
+        Developer Options / USB debugging checklist{deviceCheck.brand ? ` — ${deviceCheck.brand}` : ""}
+      </div>
+      <ol className="list-decimal list-inside space-y-1 text-xs text-ink">
+        {deviceCheck.checklist.map((step, i) => (
+          <li key={i}>{step}</li>
+        ))}
+      </ol>
+      <p className="text-[11px] text-muted mt-2 leading-relaxed">
+        This needs a finger on the device's own screen — Android requires it before any
+        tool, this one included, can talk to the device over ADB. Nothing on this
+        workstation can do it for you.
+      </p>
+    </div>
+  );
 }
 
 function DeviceOption({

@@ -93,6 +93,10 @@ DEVICE_PROPS: dict[str, str] = {
     "ro.nothing.version": "nothing_os_version",       # Nothing OS
     "ro.build.version.magic": "magicos_version",      # Honor MagicOS
     "ro.build.version.harmonyos": "harmonyos_version",# Huawei HarmonyOS
+    # Vivo/iQOO OriginOS — best-effort only. Not verified against a physical device;
+    # absent on any build where the prop doesn't exist, and the brand/manufacturer
+    # fallback in _derive_os_skin() covers Vivo either way.
+    "ro.vivo.os.build.display.id": "origin_os_version",
 }
 
 # ---------------------------------------------------------------------------
@@ -161,6 +165,15 @@ OEM_QUIRKS: dict[str, list[str]] = {
         "adb_may_be_absent",       # HarmonyOS NEXT devices may lack standard ADB
         "google_services_absent",  # No Google Play, no GMS artifacts
     ],
+    # Vivo / iQOO — Funtouch OS / OriginOS (same BBK lineage as OPPO/Realme/OnePlus).
+    "vivo": [
+        "usb_install_verify_prompt",  # 'Verify apps over USB' toggle can block `adb install`
+        "funtouch_background_kill",   # i Manager / background-app-limit may kill the collector
+    ],
+    "iqoo": [
+        "usb_install_verify_prompt",
+        "funtouch_background_kill",
+    ],
 }
 
 # ---------------------------------------------------------------------------
@@ -207,6 +220,8 @@ OEM_SPECIFIC_PATHS: dict[str, list[str]] = {
     "nothing": [],
     "honor": [],
     "huawei": [],
+    "vivo": [],
+    "iqoo": [],
 }
 
 # --- Standards references quoted verbatim in the report footer ---------------

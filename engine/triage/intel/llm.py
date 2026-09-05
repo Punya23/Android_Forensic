@@ -1,6 +1,6 @@
 """Pluggable LLM provider for the case-intelligence layer.
 
-Three interchangeable back-ends, selected by the ``SNAGR_LLM`` environment variable:
+Two interchangeable back-ends, selected by the ``SNAGR_LLM`` environment variable:
 
     * ``heuristic`` (default)  — no external calls at all. Pure regex/lexical extraction.
       The tool is fully functional offline with zero configuration, which matters for a
@@ -8,9 +8,9 @@ Three interchangeable back-ends, selected by the ``SNAGR_LLM`` environment varia
     * ``ollama``               — a local model over Ollama's HTTP API (``localhost:11434``).
       Case data never leaves the machine → the legally-safest option for real seized
       evidence.
-    * ``anthropic``            — the Claude API. Best extraction/analysis quality, but it
-      sends case text off-device, so it is opt-in only and must never be the default for
-      real evidence handling.
+
+There is deliberately no cloud/hosted back-end: case text must never leave the
+workstation, so no provider in this module makes an off-device call.
 
 Every provider implements the same two-method contract:
     * ``extract_json(system, prompt, schema_hint)`` → dict | None
@@ -131,86 +131,20 @@ class OllamaProvider(LLMProvider):
         return self._chat(system, prompt, force_json=False)
 
 
-# --- Anthropic / Claude (cloud, opt-in) -------------------------------------
-class AnthropicProvider(LLMProvider):
-    """Claude API back-end. Highest quality; sends case text off-device, so opt-in only.
-
-    Implemented over plain ``urllib`` against the Messages API so the engine needs no extra
-    Python dependency. Requires ``ANTHROPIC_API_KEY``.
-    """
-
-    name = "anthropic"
-    API_URL = "https://api.anthropic.com/v1/messages"
-    API_VERSION = "2023-06-01"
-
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        timeout: float = 60.0,
-    ) -> None:
-        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        # Default to a current, capable general model; override via env.
-        self.model = model or os.environ.get("SNAGR_LLM_MODEL", "claude-sonnet-5")
-        self.timeout = timeout
-        self.available = bool(self.api_key)
-
-    def _messages(self, system: str, prompt: str) -> Optional[str]:
-        if not self.api_key:
-            return None
-        body = {
-            "model": self.model,
-            "max_tokens": 2048,
-            "temperature": 0.1,
-            "system": system,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        try:
-            data = json.dumps(body).encode("utf-8")
-            req = urllib.request.Request(
-                self.API_URL,
-                data=data,
-                headers={
-                    "Content-Type": "application/json",
-                    "x-api-key": self.api_key,
-                    "anthropic-version": self.API_VERSION,
-                },
-            )
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-            blocks = payload.get("content", [])
-            return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
-        except Exception:
-            return None
-
-    def extract_json(self, system, prompt, schema_hint=None):
-        hint = ""
-        if schema_hint:
-            hint = (
-                "\n\nReturn ONLY a JSON object matching this shape (no prose, no "
-                f"markdown fences):\n{json.dumps(schema_hint, indent=2)}"
-            )
-        return _safe_json(self._messages(system, prompt + hint))
-
-    def generate(self, system, prompt):
-        return self._messages(system, prompt)
-
-
 # --- selection ---------------------------------------------------------------
 def get_provider(kind: Optional[str] = None) -> LLMProvider:
     """Return the configured provider, falling back to heuristic when unavailable.
 
     Selection order: explicit *kind* arg → ``SNAGR_LLM`` env → ``heuristic``. If the
-    chosen back-end reports itself unavailable (no key / server down), we degrade to the
+    chosen back-end reports itself unavailable (server down), we degrade to the
     heuristic provider rather than fail — the analysis still runs, just deterministically.
+    Any unrecognized *kind* (including a stale ``"anthropic"``/``"claude"`` from an old
+    config) also falls through to heuristic rather than erroring.
     """
     kind = (kind or os.environ.get("SNAGR_LLM", "heuristic")).strip().lower()
     if kind == "ollama":
         p = OllamaProvider()
         return p if p.available else _degraded("ollama")
-    if kind in ("anthropic", "claude"):
-        p = AnthropicProvider()
-        return p if p.available else _degraded(kind)
     return HeuristicProvider()
 
 
@@ -266,7 +200,6 @@ def provider_status(kind: Optional[str] = None) -> dict:
     configured = (kind or os.environ.get("SNAGR_LLM", "heuristic")).strip().lower()
     models = list_ollama_models()
     chat_models = [m for m in models if not m["embedding_only"]]
-    has_key = bool(os.environ.get("ANTHROPIC_API_KEY", ""))
     return {
         "configured": configured,
         "chat_model": os.environ.get("SNAGR_LLM_MODEL", "llama3.1"),
@@ -291,14 +224,6 @@ def provider_status(kind: Optional[str] = None) -> dict:
                 ),
                 "models": [m["name"] for m in chat_models],
                 "note": "Case text never leaves this machine — the safest option for real evidence.",
-            },
-            {
-                "name": "anthropic",
-                "label": "Claude API (cloud)",
-                "available": has_key,
-                "local": False,
-                "reason": "" if has_key else "ANTHROPIC_API_KEY is not set on the engine.",
-                "note": "Sends case text off-device. Opt-in only; never a default for seized evidence.",
             },
         ],
         "embedding_models": [m["name"] for m in models if m["embedding_only"]],

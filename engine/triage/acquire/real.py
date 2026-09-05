@@ -40,6 +40,10 @@ def _derive_os_skin(props: dict[str, str]) -> str:
     # Nothing OS
     if props.get("nothing_os_version"):
         return f"Nothing OS {props['nothing_os_version']}"
+    # Vivo/iQOO OriginOS — best-effort prop, see DEVICE_PROPS comment; falls through to
+    # the generic brand+Android string below on any build where it's absent.
+    if props.get("origin_os_version"):
+        return f"OriginOS {props['origin_os_version']}"
     # OnePlus OxygenOS (older standalone key)
     if props.get("oxygenos_version"):
         return f"OxygenOS {props['oxygenos_version']}"

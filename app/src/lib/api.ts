@@ -96,6 +96,26 @@ export const api = {
     get<import("./types").LlmStatus>(`/api/llm/status${refresh ? "?refresh=1" : ""}`),
   health: () => get<Health>("/api/health"),
   devices: () => get<DeviceListing>("/api/devices"),
+  /** Connection state + Developer-Options/USB-debugging checklist for one device —
+   * the dashboard's only entry point for this; there is no CLI step an examiner needs
+   * to remember. `brand` is optional when a device is already answering (the engine
+   * reads its own brand); pass it to get a checklist before a device is even visible. */
+  checkDevice: (opts?: { serial?: string; brand?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.serial) params.set("serial", opts.serial);
+    if (opts?.brand) params.set("brand", opts.brand);
+    const qs = params.toString();
+    return get<import("./types").DeviceCheckResponse>(`/api/devices/check${qs ? `?${qs}` : ""}`);
+  },
+  /** STATE-CHANGING: re-enable Developer Options + USB debugging via `settings put
+   * global`. Only works once adb shell access already exists — see
+   * triage.preflight — so this button only ever appears once a device reads "ready". */
+  reassertDevOptions: (serial?: string) =>
+    request<import("./types").ReassertDevOptionsResponse>("/api/devices/reassert-dev-options", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ serial }),
+    }),
   cases: () => get<{ case_id: string; examiner: string; created_at: string; device: string }[]>("/api/cases"),
   caseOverview: (id: string) => get<CaseSummary>(`/api/case/${id}`),
   dataset: <T>(id: string, name: string) => get<T>(`/api/case/${id}/${name}`),

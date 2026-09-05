@@ -62,7 +62,18 @@ Messages, Recovered/Deleted, Media, Locations, Timeline, Chain-of-Custody, and R
 ## 4 — Using a real device (Tier 0 / Tier 1)
 
 1. Enable **USB debugging** on the (unlocked, consenting) device and authorise the
-   workstation's RSA key when prompted.
+   workstation's RSA key when prompted. This step needs a finger on the device's own
+   screen — Android will not let *any* tool, this one included, do it from the
+   workstation side, on any brand. If you're not sure what to tap, or the device is a
+   brand you haven't seen before:
+   ```bash
+   python -m triage.cli check-device --brand xiaomi   # or oppo, oneplus, vivo, samsung, honor, huawei…
+   ```
+   prints the exact ADB connection state (no device / unauthorized / offline / ready)
+   plus that brand's Developer-Options checklist — see [`triage/preflight.py`](../engine/triage/preflight.py)
+   and the "Developer Options / USB debugging, brand by brand" section of
+   [`apk/README.md`](../apk/README.md#developer-options--usb-debugging-brand-by-brand)
+   for the full per-OEM detail.
 2. `cd engine && source .venv/bin/activate`
 3. `python -m triage.cli devices` to confirm it's detected.
 4. `python -m triage.cli acquire --serial <SERIAL> --case CASE-002 --examiner "..."`
@@ -157,10 +168,9 @@ Vite 5 / Electron 31's own requirements, not enforced in-repo.
 | Variable | Default | Purpose |
 |---|---|---|
 | `SNAGR_AUTH_USER` / `SNAGR_AUTH_PASS` | `examiner` / `snagr` | Sign-in credentials — set real values in `engine/.env` before real evidence |
-| `SNAGR_LLM` | `heuristic` | Case-intelligence backend: `heuristic` (offline, default) / `ollama` / `anthropic` |
+| `SNAGR_LLM` | `heuristic` | Case-intelligence backend: `heuristic` (offline, default) / `ollama` |
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` | Local LLM endpoint, if `SNAGR_LLM=ollama` |
-| `ANTHROPIC_API_KEY` | — | Cloud LLM key, if `SNAGR_LLM=anthropic` |
-| `SNAGR_LLM_MODEL` | `llama3.1` / `claude-sonnet-5` | Model name per backend |
+| `SNAGR_LLM_MODEL` | `llama3.1` | Ollama model name |
 | `SNAGR_EMBED_MODEL` | `nomic-embed-text` | Local embedding model used for semantic precedent retrieval. Pull it with `ollama pull nomic-embed-text` |
 | `SNAGR_EMBEDDINGS` | *(on)* | Set to `off` to force pure BM25 retrieval — for an air-gapped box, or to reproduce a plan exactly as a lexical-only run produced it |
 | `ANDROID_HOME` | — | Android SDK location, for locating `adb` |

@@ -38,7 +38,7 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
   const [linkedCases, setLinkedCases] = useState<LinkedCasesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [rerunDesc, setRerunDesc] = useState("");
-  const [rerunProvider, setRerunProvider] = useState<"heuristic" | "ollama" | "anthropic">("heuristic");
+  const [rerunProvider, setRerunProvider] = useState<"heuristic" | "ollama">("heuristic");
   const [busy, setBusy] = useState(false);
   const [investigating, setInvestigating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -460,7 +460,6 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
             >
               <option value="heuristic">Heuristic (offline)</option>
               <option value="ollama">Ollama (local)</option>
-              <option value="anthropic">Claude API (cloud)</option>
             </select>
           </div>
           <button className="btn-accent" disabled={busy} onClick={reanalyze}>

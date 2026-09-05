@@ -29,6 +29,35 @@ export interface DeviceListing {
   mock: { id: string; kind: string; label: string }[];
 }
 
+// --- device pre-flight: Developer Options / USB debugging (engine: triage/preflight.py) --
+export type DeviceConnectionState = "no_adb_binary" | "no_device" | "unauthorized" | "offline" | "device";
+
+export interface DeviceCheckResponse {
+  state: DeviceConnectionState;
+  serial: string;
+  note: string;
+  ready: boolean;
+  brand: string;
+  /** Developer-Options/USB-debugging checklist for `brand` — generic AOSP steps first,
+   * then whatever extra friction that OEM is known to add. Never scriptable past this
+   * point: the first-time enable needs a human tap on the device screen, on every brand. */
+  checklist: string[];
+  device?: {
+    manufacturer: string;
+    model: string;
+    brand: string;
+    os_skin: string;
+    android_version: string;
+    oem_quirks: string[];
+  };
+}
+
+export interface ReassertDevOptionsResponse {
+  development_settings_enabled: { ok: boolean; stderr: string };
+  adb_enabled: { ok: boolean; stderr: string };
+  note: string;
+}
+
 export interface RiskReason {
   points: number;
   label: string;
@@ -1012,7 +1041,7 @@ export interface CaseCapabilities {
 
 // --- case-intelligence back-ends (engine: triage/intel/llm.py) -------------
 export interface LlmProviderInfo {
-  name: "heuristic" | "ollama" | "anthropic";
+  name: "heuristic" | "ollama";
   label: string;
   available: boolean;
   /** True when the back-end runs on this workstation and case text never leaves it. */
