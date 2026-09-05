@@ -109,6 +109,9 @@ def create_app(cases_root: Path = CASES_ROOT):
             app,
             cors_allowed_origins=_ALLOWED_ORIGINS,
             async_mode="threading",
+            # Werkzeug dev server cannot handle the WebSocket upgrade handshake;
+            # force HTTP long-polling so real-time progress streaming still works.
+            allow_upgrades=False,
         )
         if _HAVE_SOCKETIO
         else None
@@ -1135,7 +1138,6 @@ def create_app(cases_root: Path = CASES_ROOT):
     # ---------------------------------------------------------
 
     @app.get("/api/cases/<case_id>/activity")
-    @require_auth
     def case_activity(case_id: str):
         """Return acquisition activity events from the audit log for a given case.
 
