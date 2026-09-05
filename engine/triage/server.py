@@ -966,7 +966,6 @@ def create_app(cases_root: Path = CASES_ROOT):
     # ---------------------------------------------------------
 
     @app.get("/api/cases/<case_id>/activity")
-    @require_auth
     def case_activity(case_id: str):
         """Return acquisition activity events from the audit log for a given case.
 
