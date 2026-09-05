@@ -44,7 +44,7 @@ import {
   Plus,
   type LucideIcon,
 } from "lucide-react";
-import type { Health } from "../lib/types";
+import type { CapabilityState, Health } from "../lib/types";
 import { useCapabilities } from "../lib/capabilities";
 
 export type ViewKey =
@@ -200,6 +200,15 @@ export function isCaseIndependent(view: ViewKey): boolean {
  * A one-word tail on a nav item saying why that view has nothing in it. Populated and
  * unknown states render nothing — the badge is only there when the absence needs
  * explaining, so the sidebar stays readable.
+ *
+ * The words are chosen to answer "what do I do about this?", because the badge is the
+ * only thing an examiner sees without opening the view. "opt-in" is a stage that was
+ * left un-ticked and *will* run if re-enabled on this handset; "n/a" is one this
+ * handset could never have produced, so re-running changes nothing (the engine decides
+ * which of the two a Tier-2 stage on an unrooted phone is — see `triage/capabilities.py`);
+ * "soon" is not built yet, with no date attached to it anywhere. The badge sits in a
+ * 256px rail beside a truncated label, so none of these may grow past a few characters
+ * — the full sentence lives in the row's `title` tooltip instead.
  */
 function NavState({ state }: { state?: string }) {
   if (!state || state === "populated") return null;
@@ -207,7 +216,7 @@ function NavState({ state }: { state?: string }) {
     state === "planned"
       ? "soon"
       : state === "not_collected"
-        ? "off"
+        ? "opt-in"
         : state === "inaccessible"
           ? "n/a"
           : "0";
@@ -226,6 +235,22 @@ function NavState({ state }: { state?: string }) {
       {label}
     </span>
   );
+}
+
+/**
+ * Hover text for a nav row, so a bare "opt-in" / "n/a" / "soon" explains itself without
+ * the examiner having to open the view to find out.
+ *
+ * Every word of it comes from the engine's own capability record — `reason` is written
+ * by `resolve()` in `triage/capabilities.py` and `requires` is the catalogue's stated
+ * precondition. The sidebar deliberately writes none of its own prose here: a tooltip
+ * that claimed more than the acquisition established would be the same overstatement
+ * this whole layer exists to prevent. Returns undefined for a populated or unknown
+ * dataset so React drops the attribute and no tooltip appears at all.
+ */
+function navTitle(cap?: CapabilityState): string | undefined {
+  if (!cap || cap.state === "populated" || !cap.reason) return undefined;
+  return cap.requires ? `${cap.reason}\n\nRequires: ${cap.requires}` : cap.reason;
 }
 
 export function Sidebar({
@@ -263,6 +288,9 @@ export function Sidebar({
           const disabled = !caseId && !isCaseIndependent(item.key);
           const active = view === item.key;
           const Icon = item.icon;
+          // Resolved once per row and shared by the badge and its tooltip, so the two
+          // can never disagree about which state they are describing.
+          const cap = caps?.by_dataset[VIEW_DATASET[item.key] ?? ""];
           return (
             <div key={item.key}>
               {showGroup && (
@@ -272,6 +300,7 @@ export function Sidebar({
               )}
               <button
                 disabled={disabled}
+                title={navTitle(cap)}
                 onClick={() => setView(item.key)}
                 className={`w-full text-left mb-0.5 px-2.5 py-[7px] rounded-md text-[13px] font-medium flex items-center gap-2.5 transition-colors ${
                   active
@@ -285,7 +314,7 @@ export function Sidebar({
                   aria-hidden
                 />
                 <span className="truncate">{item.label}</span>
-                <NavState state={caps?.by_dataset[VIEW_DATASET[item.key] ?? ""]?.state} />
+                <NavState state={cap?.state} />
               </button>
             </div>
           );
