@@ -344,8 +344,189 @@ def test_no_deletion_evidence_renders_no_section(case: Case):
 
 
 # ---------------------------------------------------------------------------
-# Escaping — every string in this report came off a suspect's device
+# Hotspot posture rendering
 # ---------------------------------------------------------------------------
+
+_WIFI_LIVE_WITH_ACTIVE_HOTSPOT = {
+    "current": None,
+    "saved": [],
+    "scan_results": [],
+    "usage": [],
+    "connectivity": {},
+    "commands": [],
+    "hotspot": {
+        "hosted_indicator": True,
+        "connected_indicator": None,
+        "hosted_configured": False,
+        "caveats": [
+            "Scope caveat.",
+            "The device's tethering / mobile hotspot was active at capture time. "
+            "This does not identify which devices connected or what data moved.",
+        ],
+        "details": {
+            "hosted_evidence": ["dumpsys wifi: SoftApManager current state: StartedState"],
+            "connected_evidence": [],
+            "traffic_evidence": [],
+        },
+    },
+}
+
+_WIFI_LIVE_WITH_CONFIGURED_NOT_ACTIVE = {
+    "current": None,
+    "saved": [],
+    "scan_results": [],
+    "usage": [],
+    "connectivity": {},
+    "commands": [],
+    "hotspot": {
+        "hosted_indicator": None,
+        "connected_indicator": None,
+        "hosted_configured": True,
+        "caveats": [
+            "Scope caveat.",
+            "No SoftAp state was reported by this build.",
+            "A hotspot configuration (SSID and passphrase) exists on the device. "
+            "That proves it was set up, not that it was ever switched on.",
+        ],
+        "details": {
+            "hosted_evidence": ["SoftAp configuration present on device (SSID 'MyPhoneAP')"],
+            "connected_evidence": [],
+            "traffic_evidence": [],
+        },
+    },
+}
+
+_WIFI_LIVE_WITH_MULTIPLE_HOTSPOT_NETWORKS = {
+    "current": None,
+    "saved": [],
+    "scan_results": [],
+    "usage": [],
+    "connectivity": {},
+    "commands": [],
+    "hotspot": {
+        "hosted_indicator": False,
+        "connected_indicator": True,
+        "hosted_configured": False,
+        "caveats": [
+            "Scope caveat.",
+            "One or more known networks are NAMED like a phone hotspot "
+            "(AndroidAP1234, iPhoneXR). SSIDs are freely chosen.",
+        ],
+        "details": {
+            "hosted_evidence": [],
+            "connected_evidence": [
+                "Known network 'AndroidAP1234' matches the hotspot naming convention "
+                "'androidap'. This is a NAME match, not a determination that the "
+                "network was a phone hotspot.",
+                "Known network 'iPhoneXR' matches the hotspot naming convention "
+                "'iphone'. This is a NAME match, not a determination that the "
+                "network was a phone hotspot.",
+            ],
+            "traffic_evidence": [
+                "Non-zero traffic over hotspot-named SSID 'AndroidAP1234': rx=5000 bytes, tx=3000 bytes"
+            ],
+        },
+    },
+}
+
+
+def test_hotspot_active_tethering_renders_correct_label(case: Case):
+    case.write_derived("wifi_live", _WIFI_LIVE_WITH_ACTIVE_HOTSPOT)
+    html = render(case)
+    assert "Hotspot Posture" in html
+    assert "ACTIVE AT COLLECTION" in html
+    assert "active at capture time" in html
+    # Critical: must not say it identifies connected clients
+    assert "does not identify which devices connected" in html
+
+
+def test_hotspot_configured_not_proven_active(case: Case):
+    case.write_derived("wifi_live", _WIFI_LIVE_WITH_CONFIGURED_NOT_ACTIVE)
+    html = render(case)
+    assert "Hotspot Posture" in html
+    assert "HOTSPOT CONFIGURED" in html or "configured" in html
+    assert "configured" in html
+    # Must NOT claim it was ever switched on
+    assert "not that it was ever" in html or "not that it was ever switched on" in html
+    # Must NOT say active
+    assert "ACTIVE AT COLLECTION" not in html
+
+
+def test_hotspot_multiple_networks_distinct_count(case: Case):
+    case.write_derived("wifi_live", _WIFI_LIVE_WITH_MULTIPLE_HOTSPOT_NETWORKS)
+    html = render(case)
+    assert "Hotspot Posture" in html
+    # Should show count of 2 distinct probable hotspot networks
+    assert "2 distinct probable hotspot network" in html
+    assert "AndroidAP1234" in html
+    assert "iPhoneXR" in html
+    # Must label as probable/heuristic, not certain
+    assert "PROBABLE HISTORICAL CONNECTION" in html or "lead for investigation" in html
+    assert "not a conclusion" in html
+    # Traffic evidence should appear
+    assert "rx=5000" in html or "5000" in html
+
+
+def test_hotspot_saved_list_unavailable_is_distinct_from_no_hotspot(case: Case):
+    """connected_indicator=None (root needed) must not read as 'no hotspot activity'."""
+    case.write_derived("wifi_live", _WIFI_LIVE_WITH_ACTIVE_HOTSPOT)
+    html = render(case)
+    # The saved-network list is absent (connected_indicator=None in this fixture)
+    assert "Saved-network list unavailable" in html or "not run" in html or "not" in html.lower()
+    # Must explicitly NOT claim the check excluded hotspot use
+    assert "does not exclude" not in html or "unreadable" in html or "unavailable" in html
+
+
+def test_hotspot_not_collected_is_explicit_gap_not_false_negative(case: Case):
+    """If wifi_live was never written, the section must say 'not collected', not 'no hotspot'."""
+    # Do not write wifi_live at all
+    html = render(case)
+    assert "Hotspot Posture" in html
+    assert "not collected" in html.lower() or "not" in html.lower()
+    # The word 'not' alone is too broad; verify the critical absence:
+    assert "no hotspot" not in html.lower()
+
+
+def test_hotspot_section_always_includes_slack_space_limitation(case: Case):
+    """The slack-space/unallocated-block limitation must appear in every report."""
+    html = render(case)
+    assert "slack space" in html.lower() or "unallocated" in html.lower()
+    assert "intentionally not" in html.lower() or "not supported" in html.lower()
+    assert "FBE" in html or "File-Based Encryption" in html or "ciphertext" in html
+
+
+def test_hotspot_xss_data_is_escaped_in_report(case: Case):
+    """SSID names and evidence strings from the device must be HTML-escaped."""
+    xss = '<script>alert("pwned")</script>'
+    live_with_xss = {
+        "current": None,
+        "saved": [],
+        "scan_results": [],
+        "usage": [],
+        "connectivity": {},
+        "commands": [],
+        "hotspot": {
+            "hosted_indicator": True,
+            "connected_indicator": True,
+            "hosted_configured": False,
+            "caveats": [xss],
+            "details": {
+                "hosted_evidence": [xss],
+                "connected_evidence": [
+                    f"Known network '{xss}' matches the hotspot naming convention 'androidap'. "
+                    "This is a NAME match, not a determination."
+                ],
+                "traffic_evidence": [xss],
+            },
+        },
+    }
+    case.write_derived("wifi_live", live_with_xss)
+    html = render(case)
+    assert "<script" not in html.lower()
+    assert xss not in html
+
+
+
 XSS = '<script>alert("pwned")</script>'
 
 

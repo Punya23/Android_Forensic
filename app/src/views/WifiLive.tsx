@@ -83,6 +83,33 @@ export interface WifiLiveCommand {
   error: string;
 }
 
+// ---------------------------------------------------------------------------
+// Hotspot types — mirror the backend hotspot.py payload
+// ---------------------------------------------------------------------------
+
+/** Details sub-object from hotspot.analyze_hotspot_indicators() */
+export interface HotspotDetails {
+  hosted_evidence: string[];
+  connected_evidence: string[];
+  traffic_evidence: string[];
+}
+
+/**
+ * Hotspot / tethering posture payload embedded in wifi_live.
+ * Every field is tri-state where applicable: null means the dump did not say
+ * (a different finding from false = "the dump said no").
+ */
+export interface WifiLiveHotspot {
+  /** null = AP state not reported by this build; true/false = active/off */
+  hosted_indicator: boolean | null;
+  /** null = no saved-network list available (root needed); true/false from name heuristic */
+  connected_indicator: boolean | null;
+  /** True when WifiConfigStoreSoftAp.xml was present (configured, not necessarily active) */
+  hosted_configured: boolean;
+  details: HotspotDetails;
+  caveats: string[];
+}
+
 export interface WifiLiveReport {
   current?: WifiLiveCurrent | null;
   saved?: WifiLiveSavedNetwork[];
@@ -90,6 +117,8 @@ export interface WifiLiveReport {
   usage?: WifiLiveUsageBucket[];
   connectivity?: WifiLiveConnectivity;
   commands?: WifiLiveCommand[];
+  /** Hotspot / tethering posture — absent when the hotspot sub-step was not collected */
+  hotspot?: WifiLiveHotspot | null;
   caveats?: string[];
 }
 
@@ -185,6 +214,231 @@ function RandomisedMacExplainer() {
 }
 
 // ---------------------------------------------------------------------------
+// Hotspot Posture section
+// ---------------------------------------------------------------------------
+
+/** Three-state badge for the active-tethering indicator. */
+function HostedStateBadge({ state }: { state: boolean | null | undefined }) {
+  if (state === true) {
+    return (
+      <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-deletion/10 text-deletion border border-deletion/30 whitespace-nowrap">
+        Active at collection
+      </span>
+    );
+  }
+  if (state === false) {
+    return (
+      <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-muted/10 text-muted border border-line whitespace-nowrap">
+        Off at collection
+      </span>
+    );
+  }
+  // null / undefined — the build did not report an AP state at all
+  return (
+    <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-warn/10 text-warn border border-warn/30 whitespace-nowrap">
+      Unknown — not reported
+    </span>
+  );
+}
+
+function HotspotPostureSection({ hotspot }: { hotspot: WifiLiveHotspot | null | undefined }) {
+  // The backend always emits the hotspot key when the sub-step ran, even with empty
+  // evidence. If the key is entirely absent, the step was not collected.
+  if (hotspot === undefined) {
+    return (
+      <Section
+        title="Hotspot Posture"
+        note="This dataset was not collected for this acquisition. Re-run with the Wi-Fi live collection step enabled to capture hotspot state."
+      >
+        <div className="card p-4 text-sm text-muted leading-relaxed">
+          <strong className="text-warn">Not collected.</strong>{" "}
+          The hotspot sub-step did not run. Absence here is not evidence that the device
+          had no hotspot activity — it is a gap in the acquisition, not a finding.
+        </div>
+      </Section>
+    );
+  }
+
+  if (hotspot === null) {
+    return (
+      <Section title="Hotspot Posture">
+        <div className="card p-4 text-sm text-muted leading-relaxed">
+          <strong className="text-warn">Collection failed.</strong>{" "}
+          The hotspot analysis step ran but returned no data (an error may appear in the
+          collector caveats above). This is not evidence that the device had no hotspot
+          activity.
+        </div>
+      </Section>
+    );
+  }
+
+  const { hosted_indicator, connected_indicator, hosted_configured, details, caveats } =
+    hotspot;
+  const connectedNames = details.connected_evidence
+    .map((e) => {
+      const m = e.match(/Known network '([^']+)'/);
+      return m ? m[1] : null;
+    })
+    .filter(Boolean) as string[];
+  const distinctHotspotCount = new Set(connectedNames).size;
+  const trafficEvidence = details.traffic_evidence;
+
+  return (
+    <Section title="Hotspot Posture">
+      {/* Standing forensic caveat — always visible */}
+      <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+        <span className="font-semibold">Standing forensic caveats: </span>
+        <ul className="list-disc pl-4 mt-1 space-y-1">
+          <li>
+            <strong>Active state only.</strong> Android keeps no history of past hotspot
+            sessions. A reading of "off at collection" does not exclude prior use.
+          </li>
+          <li>
+            <strong>Name-based matching is a heuristic.</strong> Any home router can be
+            named "AndroidAP1234". A match is a lead for investigation, not a finding.
+          </li>
+          <li>
+            <strong>Configured ≠ enabled.</strong> A saved SoftAp configuration only proves
+            the hotspot was set up, not that it was ever switched on.
+          </li>
+        </ul>
+      </div>
+
+      {/* Sub-section grid */}
+      <div className="space-y-4">
+        {/* 1. Current tethering / SoftAP state */}
+        <div className="card p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-2">
+            Current tethering / SoftAP state
+            <span className="ml-2 text-muted/60 font-normal normal-case">
+              (volatile — captured at acquisition time only)
+            </span>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <HostedStateBadge state={hosted_indicator} />
+            {hosted_configured && (
+              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-recovered/10 text-recovered border border-recovered/30 whitespace-nowrap">
+                Hotspot configured (SoftAp.xml present)
+              </span>
+            )}
+          </div>
+          {details.hosted_evidence.length > 0 && (
+            <ul className="mt-2 list-disc pl-4 space-y-0.5">
+              {details.hosted_evidence.map((e, i) => (
+                <li key={i} className="text-xs text-ink font-mono">
+                  {e}
+                </li>
+              ))}
+            </ul>
+          )}
+          {hosted_indicator === false && (
+            <p className="text-xs text-muted leading-relaxed mt-2">
+              The device reported its hotspot as <em>off</em> at collection time. This
+              is a snapshot reading of the current state — Android keeps no hotspot
+              history, so earlier hotspot use is neither shown nor excluded.
+            </p>
+          )}
+          {hosted_indicator === null && (
+            <p className="text-xs text-warn leading-relaxed mt-2">
+              No SoftAp state was reported by this build's dumpsys output. This is
+              not a finding that the hotspot was off — it means the state was not
+              observable at Tier 0.
+            </p>
+          )}
+          {hosted_configured && (
+            <p className="text-xs text-muted leading-relaxed mt-2">
+              A saved SoftAp configuration (SSID and passphrase) exists on the device.
+              This proves the hotspot was <strong>configured</strong> — not that it was
+              ever switched on, and the record carries no date.
+            </p>
+          )}
+        </div>
+
+        {/* 2. Probable hotspot networks joined */}
+        <div className="card p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-2">
+            Probable hotspot networks joined (name-based heuristic)
+          </div>
+          {connected_indicator === null ? (
+            <div className="text-sm text-muted leading-relaxed">
+              <strong className="text-warn">Saved-network list unavailable.</strong>{" "}
+              Android 10+ hides this list from non-root shells. The naming check could
+              not run. This is not evidence that no hotspot network was joined.
+            </div>
+          ) : connected_indicator === false ? (
+            <div className="text-sm text-muted leading-relaxed">
+              No known network is named like a phone hotspot. Because the check is only a
+              naming convention, this <em>does not exclude</em> hotspot use — the hotspot
+              could have been renamed.
+            </div>
+          ) : (
+            <>
+              <div className="flex items-baseline gap-3 mb-2">
+                <span className="text-2xl font-bold text-accent">{distinctHotspotCount}</span>
+                <span className="text-xs text-muted">
+                  distinct probable hotspot network{distinctHotspotCount !== 1 ? "s" : ""} connected to
+                </span>
+              </div>
+              <div className="card overflow-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr>
+                      <th className="th">SSID (name match)</th>
+                      <th className="th">Evidence note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {details.connected_evidence.map((e, i) => {
+                      const ssid = connectedNames[i] ?? "—";
+                      return (
+                        <tr key={i}>
+                          <td className="td font-medium">{ssid}</td>
+                          <td className="td text-xs text-muted leading-relaxed">
+                            <span className="inline-block px-1 py-0.5 rounded text-[10px] font-semibold bg-carved/10 text-carved border border-carved/30 mr-1 uppercase">
+                              probable historical connection
+                            </span>
+                            {e.replace(`Known network '${ssid}' `, "")}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* 3. Traffic evidence */}
+        {trafficEvidence.length > 0 && (
+          <div className="card p-4">
+            <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-2">
+              Data-usage evidence over hotspot-named SSIDs (netstats)
+            </div>
+            <p className="text-xs text-muted leading-relaxed mb-2">
+              The following byte-counter records appear in{" "}
+              <code className="font-mono">dumpsys netstats</code> for SSIDs matching phone
+              hotspot naming. Netstats uses hour-long buckets — these counters prove data
+              moved, but cannot establish precise connection times or durations.
+            </p>
+            <ul className="list-disc pl-4 space-y-1">
+              {trafficEvidence.map((e, i) => (
+                <li key={i} className="text-xs text-ink font-mono">
+                  {e}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Caveats from the backend */}
+        <CaveatList items={caveats.slice(1)} title="Additional caveats from the collector" />
+      </div>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main view
 // ---------------------------------------------------------------------------
 
@@ -218,6 +472,9 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
   const connectivity = report?.connectivity ?? {};
   const commands = report?.commands ?? [];
   const caveats = report?.caveats ?? [];
+  // hotspot is `undefined` when the key is absent (not collected), `null` when it
+  // failed, and a WifiLiveHotspot object when it ran successfully.
+  const hotspot = report !== null ? report?.hotspot : null;
 
   const q = filter.trim().toLowerCase();
   const savedFiltered = q
@@ -693,6 +950,9 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
           </table>
         </div>
       </Section>
+
+      {/* ---------------- Hotspot Posture ---------------- */}
+      <HotspotPostureSection hotspot={hotspot} />
 
       {/* ---------------- Connectivity ---------------- */}
       {Object.keys(connectivity).length > 0 && (
