@@ -140,9 +140,6 @@ export interface IdentityNormalisation {
       joined_a_number_participant: boolean;
     }[];
   };
-=======
-  }[];
->>>>>>> a6167ef (fix(graph): resolve clicked participant by node id, not display label)
 }
 
 export interface CaseSummary {
