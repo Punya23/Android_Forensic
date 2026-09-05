@@ -33,6 +33,7 @@ import {
   Puzzle,
   ShieldAlert,
   AppWindow,
+  MapPin,
 } from "lucide-react";
 
 const STAGES = [
@@ -86,6 +87,7 @@ export function AcquisitionView({
   const [tier2Wifi, setTier2Wifi] = useState(false);
   const [tier2BrowserHistory, setTier2BrowserHistory] = useState(false);
   const [tier2WhatsappBackup, setTier2WhatsappBackup] = useState(false);
+  const [tier2MapsLocation, setTier2MapsLocation] = useState(false);
   // Deep root-tier artifact stages. All default off: each requires root, and the
   // examiner should choose them deliberately rather than inherit them.
   const [tier2BtConfig, setTier2BtConfig] = useState(false);
@@ -157,6 +159,35 @@ export function AcquisitionView({
     };
   }, [onCaseReady]);
 
+  // Backfill the activity feed from the audit log the moment the engine assigns this
+  // run a real case_id. acqEvents was otherwise fed *only* by live "acq_event" socket
+  // messages, so anything emitted in the gap before this socket connection finished
+  // establishing — or lost to a reconnect mid-run — was gone for good even though
+  // GET /api/cases/<id>/activity reconstructs the full feed from the audit trail.
+  // Same id-based dedup as the live handler above, so a replayed event never doubles up.
+  useEffect(() => {
+    const activityCaseId = progress?.case_id;
+    if (!activityCaseId) return;
+    let alive = true;
+    api
+      .caseActivity(activityCaseId)
+      .then(({ events }) => {
+        if (!alive || !events?.length) return;
+        setAcqEvents((prev) => {
+          const seen = new Set(prev.map((x) => x.id));
+          const fresh = events.filter((e) => !seen.has(e.id));
+          return fresh.length
+            ? [...prev, ...fresh].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+            : prev;
+        });
+      })
+      .catch(() => {
+        // Best-effort backfill — the live feed still works without it.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [progress?.case_id]);
 
   function stopTimer() {
     if (timerRef.current) window.clearInterval(timerRef.current);
@@ -230,6 +261,7 @@ export function AcquisitionView({
       setTier2Wifi(!!ov.tier2_wifi);
       setTier2BrowserHistory(!!ov.tier2_browser_history);
       setTier2WhatsappBackup(!!ov.tier2_whatsapp_backup);
+      setTier2MapsLocation(!!ov.tier2_maps_location);
     } catch (e) {
       setPlanError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -250,6 +282,7 @@ export function AcquisitionView({
       tier2_wifi: setTier2Wifi,
       tier2_browser_history: setTier2BrowserHistory,
       tier2_whatsapp_backup: setTier2WhatsappBackup,
+      tier2_maps_location: setTier2MapsLocation,
     };
     setters[flag]?.(true);
   }
@@ -286,6 +319,7 @@ export function AcquisitionView({
         tier2_wifi: target.kind === "real" ? tier2Wifi : false,
         tier2_browser_history: target.kind === "real" ? tier2BrowserHistory : false,
         tier2_whatsapp_backup: target.kind === "real" ? tier2WhatsappBackup : false,
+        tier2_maps_location: target.kind === "real" ? tier2MapsLocation : false,
         tier2_bt_config: target.kind === "real" ? tier2BtConfig : false,
         tier2_app_presence: target.kind === "real" ? tier2AppPresence : false,
         tier2_antiforensics: target.kind === "real" ? tier2AntiForensics : false,
@@ -958,6 +992,28 @@ export function AcquisitionView({
                 Requires{" "}
                 <code className="text-accent">whatsapp-crypt14-decrypter</code>{" "}
                 or <code className="text-accent">pycryptodome</code> as fallback.
+              </div>
+            </div>
+          </label>
+
+          {/* Maps / location-store recovery */}
+          <label className="flex items-start gap-3 cursor-pointer border-t border-line pt-3">
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={!target || target.kind !== "real"}
+              checked={target?.kind === "real" ? tier2MapsLocation : false}
+              onChange={(e) => setTier2MapsLocation(e.target.checked)}
+            />
+            <div>
+              <div className="text-sm font-medium flex items-center gap-1.5">
+                <MapPin className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Maps &amp; Location Stores
+              </div>
+              <div className="text-xs text-muted mt-1">
+                Root-pull Maps navigation history, saved places and map searches, plus
+                the Play-services geolocation cache — which holds positions from
+                periods when GPS was switched off entirely. Lives in app-private
+                storage, so this is unreachable without root.
               </div>
             </div>
           </label>

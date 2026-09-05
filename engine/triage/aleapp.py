@@ -46,23 +46,18 @@ from typing import Any, Optional
 # Maximum rows to ingest per TSV artifact (guards against huge files filling RAM).
 _MAX_ROWS_PER_ARTIFACT = 5000
 
-# TSV modules we actively promote into the main dashboard views.
+# TSV modules we actively promote into the main dashboard views. Kept in sync by hand
+# with the identically-named set in app/src/views/Aleapp.tsx — this list must name
+# exactly the modules promote_aleapp_results() below actually merges, no more: a name
+# added here without a matching merge branch tells the examiner a row was "also folded
+# into other views" when nothing folded it anywhere.
 # Any other TSV files are still stored in the aleapp_artifacts dict but not
 # promoted to top-level pipeline data structures.
 PROMOTED_MODULES = {
-    "accounts_ce",  # Google/device accounts
-    "accounts_de",
-    "sms",  # SMS (if ALEAPP reaches it via a helper backup)
-    "calls",  # Call log
-    "contacts",  # Contacts
-    "installed_apps",  # Installed application list
-    "recent_activity",  # Recent-tasks / recents
-    "chrome_downloads",  # Browser downloads
-    "chrome_history",  # Browser history
-    "gps",  # Location history
-    "wifi_profiles",  # Wi-Fi network history
-    "bluetooth_devices",  # Paired BT devices
-    "notifications",  # Notification log (Android 11+)
+    "sms",  # SMS (if ALEAPP reaches it via a helper backup) -> messages_list
+    "calls",  # Call log -> calls_list
+    "contacts",  # Contacts -> contacts_list
+    "chrome_history",  # Browser history -> browser_list
 }
 
 

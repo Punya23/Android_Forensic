@@ -185,7 +185,6 @@ from .parsers.screen_time import (
 from .parsers.google_search import (
     parse_google_accounts,
     parse_browser_search_history,
-    parse_google_search_cache,
     build_search_timeline,
     get_search_summary,
 )
@@ -1117,17 +1116,22 @@ def run_acquisition(
 
     if dumpsys_notif:
         notifications = parse_notification_history(dumpsys_notif)
+        # Written even when empty: dumpsys_notif being truthy means the read itself
+        # ran, so a genuinely-empty ring buffer is a finding ("empty"), not the absence
+        # of an attempt ("inaccessible"). Gating this on `if notifications:` made the
+        # two indistinguishable — capabilities.py had no way to tell "checked, nothing
+        # there" from "never checked" for this Tier-0, always-attempted stage.
+        case.write_derived("notifications", notifications)
         if notifications:
-            case.write_derived("notifications", notifications)
             case.log(
                 "shell.dumpsys",
                 f"dumpsys notification captured ({len(notifications)} items)",
                 command="dumpsys notification --history",
                 tier=Tier.TIER0.value,
             )
-            emit_acq_event(case, socketio, source="notifications", tier="tier0",
-                           action="Notification history parsed", status="completed",
-                           item_count=len(notifications))
+        emit_acq_event(case, socketio, source="notifications", tier="tier0",
+                       action="Notification history parsed", status="completed",
+                       item_count=len(notifications))
     else:
         emit_acq_event(case, socketio, source="notifications", tier="tier0",
                        action="Notification history checked", status="completed",
@@ -1295,8 +1299,16 @@ def run_acquisition(
             tier=Tier.TIER0.value,
         )
 
-    # Search history: from already-pulled browser history DBs (Tier 0) plus, when the
-    # Google app cache was pulled at Tier 2, its residual query strings.
+    # Search history: from already-pulled browser history DBs (Tier 0). A Google-app
+    # cache-enhanced path was drafted (parse_google_search_cache over a
+    # `staging / "gsb_cache"` directory) but nothing in run_acquisition ever pulls the
+    # Google app's cache into that path — get_google_search_history() in
+    # parsers/google_search.py implements the real root pull, but as a standalone
+    # helper never called from here — so the branch was permanently dead and the
+    # "GOOGLE CACHE" source could never appear from a real acquisition. Removed rather
+    # than left in place claiming a capability this pipeline doesn't actually run;
+    # wiring get_google_search_history() in as a proper opt-in Tier-2 stage (its own
+    # flag + checkbox, like every other root pull) is a real feature, not a wiring fix.
     progress("search", 0.588, "Extracting search history")
     try:
         _seen_q: set = set()
@@ -1310,13 +1322,6 @@ def run_acquisition(
                     continue
                 _seen_q.add(key)
                 search_history.append(row)
-        _gsb = staging / "gsb_cache"
-        if _gsb.exists():
-            for row in parse_google_search_cache(_gsb):
-                key = (row.get("query", "").lower(), row.get("timestamp", ""))
-                if key not in _seen_q:
-                    _seen_q.add(key)
-                    search_history.append(row)
         if search_history:
             search_history.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
             case.write_derived("search_history", search_history)
@@ -2024,6 +2029,7 @@ def run_acquisition(
         searches=search_history,
         bluetooth_bonds=bluetooth_bonds,
         bluetooth_transfers=bluetooth_bond_result.get("transfers", []),
+        wifi_events=wifi_live_result.get("timeline", []),
     )
 
     # -- analysis: social graph + risk verdict ------------------------------
@@ -2246,8 +2252,17 @@ def run_acquisition(
     # P1-4: the Bluetooth and cell-tower summaries were defined but never called, so the
     # datasets existed with nothing to interpret them. P1-7 adds the screen/search/Maps
     # equivalents. All are cheap derivations over data already collected.
-    case.write_derived("bluetooth_summary", get_bluetooth_summary(bluetooth_devices))
-    case.write_derived("celltower_summary", get_celltower_summary(cell_towers))
+    #
+    # Gated on the same truthiness as the raw "bluetooth"/"celltower" writes above (not
+    # written unconditionally): get_bluetooth_summary()/get_celltower_summary() always
+    # return a fully-keyed dict shape even for an empty list, so writing the summary on
+    # every run — including one where dumpsys produced no output at all — made the
+    # dashboard's "was this collected?" presence check (Object.keys(summary).length > 0)
+    # permanently true and the honest "not collected" state unreachable.
+    if bluetooth_devices:
+        case.write_derived("bluetooth_summary", get_bluetooth_summary(bluetooth_devices))
+    if cell_towers:
+        case.write_derived("celltower_summary", get_celltower_summary(cell_towers))
     case.write_derived("screen_events", screen_events)
     case.write_derived("screen_app_usage", screen_app_usage)
     case.write_derived(
@@ -5034,8 +5049,11 @@ def _run_tier2_bt_config(
             f"timestamps are pairing-record writes — NOT connection or co-location times.",
             tier=Tier.TIER2.value,
         )
-    else:
-        result.setdefault("bonds", [])
+    # else: leave `result` empty. Bluetooth.tsx's bondStoreRead check is
+    # Object.keys(report).length > 0 — forcing a "bonds": [] key here made a failed
+    # root pull indistinguishable from "the bond store was read and had zero bonds".
+    # `result` may still end up non-empty below if the OPP transfer log or the
+    # connection-order store were readable even though bt_config.conf/.bak were not.
 
     # -- OPP transfer log + connection-order store ---------------------------
     # Pulled through the same stage so one root Bluetooth toggle covers all of it.

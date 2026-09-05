@@ -42,6 +42,9 @@ const KIND_META: Record<string, { icon: LucideIcon; color: string }> = {
   // A bond event is a pairing record, not a connection — the engine words the summary
   // accordingly; the distinct icon keeps it from reading as live connectivity.
   bluetooth_bond: { icon: Link2, color: "border-recovered" },
+  // OPP file transfers — unlike a bond record, a transfer requires an active link at
+  // that moment, so it carries a real wall-clock time (see build_transfer_timeline()).
+  bluetooth_transfer: { icon: ArrowUpRight, color: "border-live" },
   celltower: { icon: Wifi, color: "border-muted" },
   wifi: { icon: RadioTower, color: "border-accent" },
   screen: { icon: Hourglass, color: "border-live" },
@@ -66,6 +69,7 @@ const KIND_TO_VIEW: Record<string, ViewKey> = {
   notification: "notifications",
   bluetooth: "bluetooth",
   bluetooth_bond: "bluetooth",
+  bluetooth_transfer: "bluetooth",
   celltower: "celltower",
   wifi: "wifi_live",
   screen: "screentime",
