@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
@@ -190,6 +191,79 @@ def list_ollama_models(host: Optional[str] = None, timeout: float = 3.0) -> list
     return out
 
 
+def _param_size_billions(parameter_size: str) -> float:
+    """Parse Ollama's ``parameter_size`` (``"8.0B"``, ``"70B"``, ``"350M"``) into a
+    comparable billions-of-parameters float. Unparseable/empty → 0.0, so a model with
+    no reported size sorts last rather than crashing the comparison."""
+    m = re.match(r"([\d.]+)\s*([BM])", (parameter_size or "").strip(), re.IGNORECASE)
+    if not m:
+        return 0.0
+    value = float(m.group(1))
+    return value / 1000.0 if m.group(2).upper() == "M" else value
+
+
+def pick_best_chat_model(models: list[dict]) -> Optional[str]:
+    """Pick the strongest chat-capable model already pulled, or ``None`` if there
+    isn't one. "Best" = largest parameter count — a reasonable local proxy for
+    capability, and the only thing we can measure without actually running each
+    model. Ties break alphabetically for determinism."""
+    chat_models = [m for m in models if not m.get("embedding_only")]
+    if not chat_models:
+        return None
+    chat_models.sort(key=lambda m: (-_param_size_billions(m["parameter_size"]), m["name"]))
+    return chat_models[0]["name"]
+
+
+#: Result of the most recent :func:`autodetect_and_configure` call, so
+#: ``provider_status`` can report *why* the current back-end is what it is (chosen by
+#: the operator vs. picked automatically at engine start).
+_last_autodetect: dict = {}
+
+
+def autodetect_and_configure(force: bool = False) -> dict:
+    """Probe Ollama once at engine start and, if the operator hasn't already made an
+    explicit choice, wire the engine to the strongest local chat model available.
+
+    Never overrides an explicit ``SNAGR_LLM`` (an examiner who picked "heuristic" on
+    purpose, or named a specific model, must stay picked) and never raises — a probe
+    failure just leaves the always-available heuristic default in place. This is the
+    only function that mutates the environment; callers just invoke it once after the
+    engine comes up and log the result.
+    """
+    global _last_autodetect
+    explicit = os.environ.get("SNAGR_LLM", "").strip()
+    if explicit and not force:
+        _last_autodetect = {
+            "autodetected": False,
+            "reason": f"SNAGR_LLM={explicit!r} was already set — leaving it alone",
+            "provider": explicit,
+        }
+        return _last_autodetect
+
+    models = list_ollama_models()
+    best = pick_best_chat_model(models)
+    if not best:
+        _last_autodetect = {
+            "autodetected": False,
+            "reason": "Ollama unreachable, or no chat model pulled",
+            "provider": "heuristic",
+        }
+        return _last_autodetect
+
+    os.environ["SNAGR_LLM"] = "ollama"
+    # Respect an explicitly-pinned model even if the operator didn't also set
+    # SNAGR_LLM; only fill in the model when nothing was pinned.
+    if not os.environ.get("SNAGR_LLM_MODEL", "").strip():
+        os.environ["SNAGR_LLM_MODEL"] = best
+    _last_autodetect = {
+        "autodetected": True,
+        "provider": "ollama",
+        "model": os.environ["SNAGR_LLM_MODEL"],
+        "reason": f"picked largest chat model pulled ({os.environ['SNAGR_LLM_MODEL']})",
+    }
+    return _last_autodetect
+
+
 def provider_status(kind: Optional[str] = None) -> dict:
     """Which back-ends this workstation can actually use, and why not when it cannot.
 
@@ -227,6 +301,7 @@ def provider_status(kind: Optional[str] = None) -> dict:
             },
         ],
         "embedding_models": [m["name"] for m in models if m["embedding_only"]],
+        "autodetect": _last_autodetect,
     }
 
 

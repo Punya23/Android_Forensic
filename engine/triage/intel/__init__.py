@@ -35,7 +35,13 @@ from .feedback import (
     record_provisional,
 )
 from .knowledge_graph import GRAPH_FILENAME, Edge, KnowledgeGraph
-from .llm import LLMProvider, get_provider, list_ollama_models, provider_status
+from .llm import (
+    LLMProvider,
+    autodetect_and_configure,
+    get_provider,
+    list_ollama_models,
+    provider_status,
+)
 from .embeddings import LocalEmbedder, get_embedder
 from .nomenclature import (
     ADVERSE_ROLES,
@@ -111,6 +117,7 @@ __all__ = [
     "SocialNetworkAnalyst",
     # infrastructure
     "get_provider",
+    "autodetect_and_configure",
     "list_ollama_models",
     "provider_status",
     "LocalEmbedder",

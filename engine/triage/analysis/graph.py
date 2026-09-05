@@ -44,6 +44,10 @@ def build_communication_graph(
     labels: dict[str, str] = {}  # key -> display label
     node_channels: dict[str, set] = defaultdict(set)
     node_weight: dict[str, int] = defaultdict(int)
+    # Per-node, per-channel interaction counts — lets the UI break a participant node
+    # down into explorable channel sub-nodes (e.g. "12 on WhatsApp, 4 by SMS") instead
+    # of only exposing the flattened total.
+    node_channel_weight: dict[tuple, int] = defaultdict(int)
     edge_weight: dict[tuple, int] = defaultdict(int)
     edge_channels: dict[tuple, set] = defaultdict(set)
 
@@ -71,6 +75,7 @@ def build_communication_graph(
         labels[k] = display
         node_channels[k].add(channel)
         node_weight[k] += 1
+        node_channel_weight[(k, channel)] += 1
         e = tuple(sorted((owner_key, k)))
         edge_weight[e] += 1
         edge_channels[e].add(channel)
@@ -102,6 +107,11 @@ def build_communication_graph(
         }
     ]
     for k, w in sorted(node_weight.items(), key=lambda kv: -kv[1]):
+        channel_weights = {
+            ch: cnt
+            for (nk, ch), cnt in node_channel_weight.items()
+            if nk == k
+        }
         nodes.append(
             {
                 "id": k,
@@ -113,6 +123,9 @@ def build_communication_graph(
                 ),
                 "weight": w,
                 "channels": sorted(node_channels.get(k, set())),
+                "channel_weights": dict(
+                    sorted(channel_weights.items(), key=lambda kv: -kv[1])
+                ),
             }
         )
     edges = [

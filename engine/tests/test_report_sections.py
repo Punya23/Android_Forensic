@@ -693,6 +693,88 @@ def test_malformed_dataset_does_not_break_report_generation(case: Case, name: st
     assert "</html>" in html
 
 
+# ---------------------------------------------------------------------------
+# Table of contents + visual overview dashboard
+# ---------------------------------------------------------------------------
+def test_toc_lists_every_top_level_section_with_a_matching_anchor(case: Case):
+    html = render(case)
+    assert '<nav class="toc"' in html
+    import re
+
+    ids = set(re.findall(r'<h2 id="([^"]+)">', html))
+    hrefs = set(re.findall(r'<a href="#([^"]+)">', html))
+    assert ids, "no <h2> got an anchor id"
+    # Every TOC link must resolve to a real heading id (no dead internal links).
+    assert hrefs <= ids
+
+
+def test_toc_absent_data_case_still_renders_toc(case: Case):
+    """Even a near-empty triage (one ingested file, nothing else) has enough
+    always-present sections (integrity, encryption posture, certificate...) to
+    produce a non-empty table of contents."""
+    html = render(case)
+    assert '<nav class="toc"' in html
+    assert "<ol>" in html
+
+
+def test_overview_charts_absent_when_nothing_chartable(case: Case):
+    """The bare fixture case has no messages/calls/recovered/flags — the chart
+    grid must be omitted outright, not rendered as a set of empty charts."""
+    html = render(case)
+    assert 'class="charts"' not in html
+
+
+def test_overview_charts_render_from_messages_calls_and_flags(case: Case):
+    case.write_derived(
+        "messages",
+        [
+            {"app": "sms", "sender": "A", "body": "hi", "timestamp": "2026-01-01T00:00:00Z", "confidence": "live"},
+            {"app": "sms", "sender": "B", "body": "yo", "timestamp": "2026-01-02T00:00:00Z", "confidence": "carved"},
+        ],
+    )
+    case.write_derived(
+        "calls",
+        [{"number": "123", "name": "A", "call_type": "incoming", "timestamp": "2026-01-01T01:00:00Z", "confidence": "live"}],
+    )
+    case.write_derived(
+        "flags",
+        [{"severity": "critical", "kind": "keyword", "term": "x", "context": "y", "location": "z"}],
+    )
+    html = render(case)
+    assert 'class="charts"' in html
+    assert "Artifact composition" in html
+    assert "Evidence confidence mix" in html
+    assert "Flags by severity" in html
+    assert "Message &amp; call activity over time" in html
+    # confidence + severity donut segments must reflect the actual data, not be fabricated
+    assert "LIVE" in html and "CARVED" in html
+    assert "CRITICAL" in html
+
+
+def test_overview_chart_labels_are_escaped(case: Case):
+    xss = '<script>alert(1)</script>'
+    case.write_derived(
+        "graph",
+        {
+            "stats": {
+                "participants": 1,
+                "interactions": 1,
+                "channels": ["sms"],
+                "top_contacts": [{"label": xss, "weight": 3, "channels": ["sms"]}],
+            }
+        },
+    )
+    html = render(case)
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_back_to_top_link_present(case: Case):
+    html = render(case)
+    assert 'class="back-to-top"' in html
+    assert 'id="top"' in html
+
+
 def _all_indices(haystack: str, needle: str) -> list[int]:
     out, start = [], 0
     while True:

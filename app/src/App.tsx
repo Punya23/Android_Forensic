@@ -6,6 +6,7 @@ import { TagProvider } from "./lib/tagStore";
 import { CapabilityProvider, CapabilityBanner } from "./lib/capabilities";
 import { Sidebar, isCaseIndependent, VIEW_DATASET, type ViewKey } from "./components/Sidebar";
 import { GlobalSearch } from "./components/GlobalSearch";
+import { ThemeToggle } from "./components/ThemeToggle";
 import { LoginView } from "./views/Login";
 import { OnboardingView } from "./views/Onboarding";
 import { AcquisitionView } from "./views/Acquisition";
@@ -245,6 +246,7 @@ function TopBar({
             {username}
           </span>
         )}
+        <ThemeToggle />
         <button className="btn-ghost !px-2.5 !py-1.5 text-xs flex items-center gap-1.5" onClick={onLogout}>
           <LogOut className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
           Sign out

@@ -8,6 +8,46 @@
 @tailwind utilities;
 
 @layer base {
+  /* Theme tokens as RGB triplets (so Tailwind's alpha modifiers, e.g. bg-panel/50,
+     keep working) — see tailwind.config.js for how these map to color names, and
+     lib/theme.ts for how the `dark` class gets on/off <html>. */
+  :root {
+    --color-ink: 26 29 33;
+    --color-panel: 243 244 241;
+    --color-panel-2: 255 255 255;
+    --color-line: 221 225 222;
+    --color-muted: 91 101 112;
+    --color-accent: 193 101 31;
+    --color-live: 28 125 63;
+    --color-recovered: 34 88 168;
+    --color-carved: 166 116 26;
+    --color-deletion: 165 50 47;
+    --color-critical: 165 50 47;
+    --color-warn: 166 116 26;
+    --color-info: 34 88 168;
+  }
+
+  /* Full-black surface, not just a dim gray — panel-2 sits one notch above pure
+     black so cards/tables stay visible as distinct surfaces. Status colors are
+     brightened for AA contrast on black; deletion/critical stays a saturated red
+     distinct from every other tone so red (destructive/anti-forensic) areas keep
+     reading as red rather than blending into the rest of the white-on-black text. */
+  .dark {
+    --color-ink: 245 246 247;
+    --color-panel: 0 0 0;
+    --color-panel-2: 13 13 14;
+    --color-line: 45 48 51;
+    --color-muted: 163 173 184;
+    --color-accent: 242 165 74;
+    --color-live: 52 196 113;
+    --color-recovered: 77 141 255;
+    --color-carved: 232 168 60;
+    --color-deletion: 255 77 77;
+    --color-critical: 255 77 77;
+    --color-warn: 232 168 60;
+    --color-info: 77 141 255;
+  }
+
   html,
   body,
   #root {
@@ -17,6 +57,7 @@
     @apply bg-panel text-ink font-sans antialiased;
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    transition: background-color 0.15s ease, color 0.15s ease;
   }
   ::-webkit-scrollbar {
     width: 10px;
@@ -59,7 +100,7 @@
   .leaflet-container {
     height: 100%;
     width: 100%;
-    background: #f3f4f1;
+    background: rgb(var(--color-panel));
     font-family: inherit;
     z-index: 0;
   }

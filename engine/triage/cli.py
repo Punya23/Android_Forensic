@@ -98,6 +98,18 @@ def cmd_check_device(args) -> int:
 
 
 def cmd_acquire(args) -> int:
+    # Auto-connect a local Ollama model if one is pulled and the operator hasn't
+    # explicitly pinned a back-end via SNAGR_LLM. Never blocks the run — a probe
+    # failure just leaves the always-available heuristic back-end in place.
+    try:
+        from .intel.llm import autodetect_and_configure
+
+        _llm_auto = autodetect_and_configure()
+        if _llm_auto.get("autodetected"):
+            print(f"[llm] auto-connected: ollama/{_llm_auto['model']}")
+    except Exception:
+        pass
+
     if args.mock:
         source = MockDeviceSource(Path(args.mock))
     else:

@@ -486,6 +486,10 @@ export interface GraphNode {
   type: string;
   weight: number;
   channels: string[];
+  /** Per-channel interaction count for this node (e.g. { whatsapp: 12, sms: 4 }).
+   * Drives the explorable channel sub-nodes in the Social Graph view. Optional —
+   * absent on synthetic sub-nodes and on graphs built before this field existed. */
+  channel_weights?: Record<string, number>;
 }
 
 export interface GraphEdge {

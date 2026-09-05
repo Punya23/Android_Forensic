@@ -51,7 +51,19 @@ export function useCapabilities(): CaseCapabilities | null {
   return useContext(CapabilityContext);
 }
 
-/** Palette + wording for each state. Kept in one place so badges never drift apart. */
+/**
+ * Palette + wording for each state. Kept in one place so badges never drift apart.
+ *
+ * The labels name what the examiner can *do*, not just what happened. `not_collected`
+ * is the one the engine guarantees is fixable — a stage that was left un-ticked and
+ * would run if re-enabled on this handset — so it reads as an opt-in rather than as a
+ * flat "not collected", which told the examiner nothing about whether the gap could be
+ * closed. Anything the handset could never have produced (Tier 2 with no root, an app
+ * that is not installed, BFU encryption) resolves to `inaccessible` in the engine and
+ * keeps the "could not check" wording; the two must never trade places, because a badge
+ * offering a toggle that cannot change the outcome buys a second acquisition — a second
+ * set of device-state changes on evidence — for nothing.
+ */
 export const STATE_STYLE: Record<
   string,
   { label: string; chip: string; tone: string }
@@ -67,7 +79,7 @@ export const STATE_STYLE: Record<
     tone: "text-muted",
   },
   not_collected: {
-    label: "Not collected",
+    label: "Opt-in — re-run to collect",
     chip: "bg-warn/15 text-warn border-warn/30",
     tone: "text-warn",
   },
@@ -147,12 +159,20 @@ export function DatasetEmpty({
           <TierBadge tier={cap.tier} />
           <span className="ml-auto text-xs text-muted font-mono">{cap.label}</span>
         </div>
+        {/*
+          One headline per state, and `inaccessible` gets its own. It used to fall into
+          the `not_collected` branch and read "was not collected in this run", which
+          both contradicted the "Could not check" badge two lines above it and implied a
+          re-run would fix something this handset cannot produce at all.
+        */}
         <div className={`text-sm font-medium mb-2 ${style.tone}`}>
           {cap.state === "empty"
             ? `${cap.label}: the source was read and held nothing`
             : cap.state === "planned"
               ? `${cap.label} is not built yet`
-              : `${cap.label} was not collected in this run`}
+              : cap.state === "inaccessible"
+                ? `${cap.label} could not be collected on this handset`
+                : `${cap.label} is opt-in and was left off for this acquisition`}
         </div>
         <p className="text-sm text-muted leading-relaxed">{cap.reason || detail}</p>
         {cap.requires && cap.state !== "empty" && (

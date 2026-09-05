@@ -122,6 +122,8 @@ export function GraphView({ caseId }: { caseId: string }) {
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [settled, setSettled] = useState(false);
+  // Ids of nodes currently expanded to show their per-channel sub-nodes.
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [, forceRender] = useState(0);
 
   const svgRef = useRef<SVGSVGElement>(null);
@@ -146,6 +148,7 @@ export function GraphView({ caseId }: { caseId: string }) {
     positionsRef.current = seedPositions(graph.nodes);
     viewRef.current = { x: 0, y: 0, k: 1 };
     setSettled(false);
+    setExpandedIds(new Set());
     let ticks = 0;
     const ids = graph.nodes.map((n) => n.id);
     const edges = graph.edges;
@@ -300,6 +303,26 @@ export function GraphView({ caseId }: { caseId: string }) {
     [query]
   );
 
+  // A node is explorable when its interactions break down across more than one channel —
+  // expanding it reveals one sub-node per channel (e.g. "whatsapp: 12", "sms: 4") instead of
+  // only the flattened total. Nodes from a graph built before channel_weights existed simply
+  // have nothing to expand.
+  const channelBreakdown = useCallback((n: GraphNode): [string, number][] => {
+    const cw = n.channel_weights;
+    if (!cw) return [];
+    return Object.entries(cw).sort((a, b) => b[1] - a[1]);
+  }, []);
+
+  const toggleExpand = useCallback((id: string, e: React.MouseEvent | React.PointerEvent) => {
+    e.stopPropagation();
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
   if (loading) return <div className="p-8 text-muted">Loading communication graph…</div>;
   if (!graph || graph.nodes.length <= 1) {
     return (
@@ -384,39 +407,118 @@ export function GraphView({ caseId }: { caseId: string }) {
                 const match = matchesQuery(n);
                 const isSelected = selected?.id === n.id;
                 const isHover = hoverId === n.id;
+                const breakdown = channelBreakdown(n);
+                const expandable = breakdown.length > 1;
+                const isExpanded = expandedIds.has(n.id);
                 return (
-                  <g
-                    key={n.id}
-                    onPointerDown={(e) => onPointerDownNode(e, n.id)}
-                    onPointerEnter={() => setHoverId(n.id)}
-                    onPointerLeave={() => setHoverId((h) => (h === n.id ? null : h))}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelected(n);
-                    }}
-                    className="cursor-pointer"
-                    opacity={query.trim() && !match ? 0.15 : 1}
-                  >
-                    <circle
-                      cx={p.x} cy={p.y} r={r}
-                      fill={color}
-                      fillOpacity={isOwner ? 0.95 : 0.85}
-                      stroke={isSelected ? "#e9ebe6" : "#0d0f12"}
-                      strokeWidth={(isSelected ? 3 : 2) / k}
-                    />
-                    {(isHover || isSelected || k > 0.6) && (
-                      <text
-                        x={p.x} y={p.y + r + 12 / k}
-                        textAnchor="middle"
-                        fontSize={(isOwner ? 13 : 11) / Math.max(k, 0.6)}
-                        fill="#e9ebe6"
-                        fontWeight={isOwner ? 700 : 400}
+                  <g key={n.id}>
+                    <g
+                      onPointerDown={(e) => onPointerDownNode(e, n.id)}
+                      onPointerEnter={() => setHoverId(n.id)}
+                      onPointerLeave={() => setHoverId((h) => (h === n.id ? null : h))}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelected(n);
+                      }}
+                      className="cursor-pointer"
+                      opacity={query.trim() && !match ? 0.15 : 1}
+                    >
+                      <circle
+                        cx={p.x} cy={p.y} r={r}
+                        fill={color}
+                        fillOpacity={isOwner ? 0.95 : 0.85}
+                        stroke={isSelected ? "#1a1d21" : "#0d0f12"}
+                        strokeWidth={(isSelected ? 3 : 2) / k}
+                      />
+                      {(isHover || isSelected || k > 0.6) && (
+                        <text
+                          x={p.x} y={p.y + r + 12 / k}
+                          textAnchor="middle"
+                          fontSize={(isOwner ? 13 : 11) / Math.max(k, 0.6)}
+                          className="fill-ink"
+                          fontWeight={isOwner ? 700 : 400}
+                        >
+                          {n.label.length > 22 ? n.label.slice(0, 21) + "…" : n.label}
+                        </text>
+                      )}
+                    </g>
+                    {expandable && (
+                      <g
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => toggleExpand(n.id, e)}
+                        className="cursor-pointer"
                       >
-                        {n.label.length > 22 ? n.label.slice(0, 21) + "…" : n.label}
-                      </text>
+                        <circle
+                          cx={p.x + r * 0.68} cy={p.y - r * 0.68} r={7 / k}
+                          fill="#1a1d21" fillOpacity={0.9}
+                          stroke="#fff" strokeWidth={1 / k}
+                        />
+                        <text
+                          x={p.x + r * 0.68} y={p.y - r * 0.68 + 3.5 / k}
+                          textAnchor="middle"
+                          fontSize={10 / k}
+                          fontWeight={700}
+                          fill="#fff"
+                        >
+                          {isExpanded ? "−" : "+"}
+                        </text>
+                      </g>
                     )}
                   </g>
                 );
+              })}
+              {graph.nodes.flatMap((n) => {
+                const p = positionsRef.current[n.id];
+                if (!p || !expandedIds.has(n.id)) return [];
+                const breakdown = channelBreakdown(n);
+                if (breakdown.length <= 1) return [];
+                const parentTotal = breakdown.reduce((sum, [, w]) => sum + w, 0) || 1;
+                const dist = (n.type === "owner" ? 26 : 8 + (n.weight / maxNode) * 16) + 36;
+                return breakdown.map(([channel, weight], i) => {
+                  const angle = (i / breakdown.length) * Math.PI * 2 - Math.PI / 2;
+                  const cx = p.x + Math.cos(angle) * dist;
+                  const cy = p.y + Math.sin(angle) * dist;
+                  const cr = Math.max(5, 4 + (weight / parentTotal) * 12);
+                  const color = channelColor(channel);
+                  const child: GraphNode = {
+                    id: `${n.id}::${channel}`,
+                    label: `${n.label} → ${channel}`,
+                    type: "channel",
+                    weight,
+                    channels: [channel],
+                  };
+                  const isSelected = selected?.id === child.id;
+                  return (
+                    <g key={child.id}>
+                      <line
+                        x1={p.x} y1={p.y} x2={cx} y2={cy}
+                        stroke={color} strokeOpacity={0.5} strokeWidth={1.5 / k} strokeDasharray={`${3 / k} ${2 / k}`}
+                      />
+                      <g
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelected(child);
+                        }}
+                        className="cursor-pointer"
+                      >
+                        <circle
+                          cx={cx} cy={cy} r={cr}
+                          fill={color} fillOpacity={0.85}
+                          stroke={isSelected ? "#1a1d21" : "#0d0f12"}
+                          strokeWidth={(isSelected ? 3 : 1.5) / k}
+                        />
+                        <text
+                          x={cx} y={cy + cr + 11 / k}
+                          textAnchor="middle"
+                          fontSize={9.5 / Math.max(k, 0.6)}
+                          className="fill-ink"
+                        >
+                          {channel} · {weight}
+                        </text>
+                      </g>
+                    </g>
+                  );
+                });
               })}
             </g>
           </svg>

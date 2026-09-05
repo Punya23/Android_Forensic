@@ -297,10 +297,14 @@ function HourChart({
                 title={`${baseTitle} — ${isSelected ? "click to clear filter" : "click to filter feed to this hour"}`}
                 style={{
                   height: `${pct}%`,
-                  background: isSelected ? "#2258a8" : hit ? "#c1651f" : "#dde1de",
+                  background: isSelected
+                    ? "rgb(var(--color-info))"
+                    : hit
+                      ? "rgb(var(--color-accent))"
+                      : "rgb(var(--color-line))",
                   borderRadius: 2,
                   cursor: "pointer",
-                  boxShadow: isSelected ? "0 0 0 2px #2258a8" : "none",
+                  boxShadow: isSelected ? "0 0 0 2px rgb(var(--color-info))" : "none",
                 }}
               />
             </div>

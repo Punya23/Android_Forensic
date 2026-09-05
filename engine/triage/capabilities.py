@@ -19,11 +19,16 @@ its ``case.json`` into exactly one state:
 ``empty``
     Collected and parsed, and the artifact genuinely held nothing. A finding.
 ``not_collected``
-    The stage was gated off for this run — an opt-in Tier-1/Tier-2 flag left unticked.
-    Re-runnable: the reason names the flag.
+    The stage was gated off for this run — an opt-in Tier-1/Tier-2 flag left unticked —
+    *and* it would have worked had it been ticked. Re-runnable on this handset: the
+    reason names the flag, and the UI badges it as an opt-in the examiner can turn on.
 ``inaccessible``
     Attempted, but the precondition failed — no root, BFU encryption, the app is not
     installed, the OEM build does not report it. Not re-runnable on this handset.
+    A Tier-2 stage on an unrooted handset lands here *even when its flag was also off*:
+    the flag is the smaller of the two facts, and offering a toggle that cannot change
+    the outcome would send the examiner back to the wizard for a second acquisition —
+    a second set of device-state changes on evidence — that returns the same nothing.
 ``planned``
     Not implemented yet. Named, dated to nothing, and never dressed up as an empty result.
 
@@ -62,7 +67,10 @@ class Capability:
     #: Plain-language precondition, shown to the examiner when the dataset is absent.
     requires: str
     #: ``AcquireConfig`` flag that gates the stage, if any. When the flag is false in
-    #: ``case.json`` the state is ``not_collected`` and this names what to turn on.
+    #: ``case.json`` and the stage could actually have run on this handset, the state is
+    #: ``not_collected`` and this names what to turn on. When the handset could never
+    #: have run it (Tier 2, no root) the state is ``inaccessible`` instead and the flag
+    #: is named inside that reason rather than offered as a fix.
     flag: str = ""
     #: Set for datasets that are not implemented. Never rendered as "empty".
     planned: bool = False
@@ -523,17 +531,33 @@ def resolve(
         }
 
     flag_off = bool(cap.flag) and cap.flag in config and not config.get(cap.flag)
-    if flag_off:
-        state = NOT_COLLECTED
-        reason = (
-            f"This stage was not run: '{cap.flag}' was off for this acquisition. "
-            f"Re-run with it enabled to collect it. {cap.requires}".strip()
-        )
-    elif cap.tier == 2 and root_available is False:
+
+    # No-root outranks flag-off, and the order matters. A Tier-2 stage on an unrooted
+    # handset could not have run whether or not its flag was ticked, so resolving it to
+    # ``not_collected`` would badge it as an opt-in the examiner can turn on and send
+    # them back to the wizard for a second acquisition — a second set of device-state
+    # changes on evidence — that returns exactly the same nothing. Neither fact is
+    # dropped, though: when the flag was off as well the reason says both, because
+    # suppressing half the explanation is its own kind of overstatement.
+    if cap.tier == 2 and root_available is False:
         state = INACCESSIBLE
+        also_off = (
+            f"'{cap.flag}' was also off for this acquisition, but enabling it would not "
+            "have helped: without root there is nothing for the stage to read. "
+            if flag_off
+            else ""
+        )
         reason = (
             "Root was not available on this handset, so the stage could not run. "
-            "This is not a finding about the device's contents. " + cap.requires
+            + also_off
+            + "This is not a finding about the device's contents. "
+            + cap.requires
+        )
+    elif flag_off:
+        state = NOT_COLLECTED
+        reason = (
+            f"This stage is opt-in and was not run: '{cap.flag}' was off for this "
+            f"acquisition. Re-run with it enabled to collect it. {cap.requires}".strip()
         )
     elif value is None or cap.unconditional_write:
         # Either the file was never written — the stage did not reach its write — or it
@@ -611,6 +635,9 @@ def case_capabilities(case_dir: Path, config: Optional[dict] = None) -> dict:
             "Every dataset resolves to exactly one state. 'empty' means the source was "
             "read and held nothing — a finding about the device. 'not_collected' and "
             "'inaccessible' are findings about this acquisition, and neither may be "
-            "read as evidence that the device was clean."
+            "read as evidence that the device was clean. The two differ by whether this "
+            "handset could close the gap: 'not_collected' is an opt-in stage that was "
+            "left off and would run if re-enabled, while 'inaccessible' could not have "
+            "run here at all — re-running will not change it."
         ),
     }
