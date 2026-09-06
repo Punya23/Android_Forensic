@@ -404,6 +404,40 @@ def test_aleapp_that_ran_and_found_nothing_is_a_finding(case_dir: Path):
     assert out["state"] == EMPTY
 
 
+def test_ai_evidence_summary_with_real_matches_but_no_model_is_not_populated(case_dir: Path):
+    """The bug this guards: matched_finding_ids is populated by deterministic
+    entity/keyword matching independent of whether a model ever ran (see
+    generate_ai_evidence_summary), so it must NOT be in content_paths — only
+    ``narrative`` (the actual model output) proves the stage delivered anything.
+    A version of this capability that also checked matched_finding_ids badged this
+    exact envelope ``populated``/Collected even though no summary was ever written.
+    """
+    write(
+        case_dir,
+        "ai_evidence_summary",
+        {
+            "generated": False,
+            "narrative": "",
+            "matched_finding_ids": ["F-MSG-0001"],
+            "matched_count": 1,
+            "reason": "no local model is reachable",
+        },
+    )
+    out = resolve(CATALOGUE["ai_evidence_summary"], case_dir / "derived", {"run_ai_summary": True})
+    assert out["state"] != POPULATED
+    assert out["count"] == 0
+
+
+def test_ai_evidence_summary_with_narrative_resolves_populated(case_dir: Path):
+    write(
+        case_dir,
+        "ai_evidence_summary",
+        {"generated": True, "narrative": "Rahul Sharma is named in one message.", "matched_finding_ids": ["F-MSG-0001"]},
+    )
+    out = resolve(CATALOGUE["ai_evidence_summary"], case_dir / "derived", {"run_ai_summary": True})
+    assert out["state"] == POPULATED
+
+
 def test_unrun_envelope_offers_its_flag_when_the_flag_is_what_was_off(case_dir: Path):
     """With ``run_aleapp`` off the gap really is a re-runnable opt-in — say so."""
     write(case_dir, "aleapp", ALEAPP_UNRUN)

@@ -3,6 +3,7 @@ import { ArrowRight } from "lucide-react";
 import { api } from "../lib/api";
 import type {
   AIFindings,
+  AiEvidenceSummary,
   ArtifactYield,
   CaseLearning,
   CaseProfile,
@@ -35,19 +36,22 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
   const [findings, setFindings] = useState<AIFindings | null>(null);
   const [learning, setLearning] = useState<CaseLearning | null>(null);
   const [investigation, setInvestigation] = useState<InvestigationTrace | null>(null);
+  const [aiSummary, setAiSummary] = useState<AiEvidenceSummary | null>(null);
   const [linkedCases, setLinkedCases] = useState<LinkedCasesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [rerunDesc, setRerunDesc] = useState("");
   const [rerunProvider, setRerunProvider] = useState<"heuristic" | "ollama">("heuristic");
   const [busy, setBusy] = useState(false);
   const [investigating, setInvestigating] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [planRevised, setPlanRevised] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [p, pl, plRev, f, l, inv, linked] = await Promise.all([
+    const [p, pl, plRev, f, l, inv, summary, linked] = await Promise.all([
       api.dataset<CaseProfile>(caseId, "case_profile").catch(() => null),
       api.dataset<CollectionPlan>(caseId, "collection_plan").catch(() => null),
       // Re-analysis writes its re-ranking to a separate dataset rather than over the plan
@@ -57,6 +61,7 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
       api.dataset<AIFindings>(caseId, "ai_findings").catch(() => null),
       api.dataset<CaseLearning>(caseId, "case_learning").catch(() => null),
       api.dataset<InvestigationTrace>(caseId, "investigation_trace").catch(() => null),
+      api.dataset<AiEvidenceSummary>(caseId, "ai_evidence_summary").catch(() => null),
       api.linkedCases(caseId).catch(() => null),
     ]);
     setProfile(p && (p as CaseProfile).crime_type ? (p as CaseProfile) : null);
@@ -67,6 +72,7 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
     setFindings(f && (f as AIFindings).findings ? (f as AIFindings) : null);
     setLearning(l && typeof (l as CaseLearning).recorded === "boolean" ? (l as CaseLearning) : null);
     setInvestigation(inv && (inv as InvestigationTrace).hypotheses ? (inv as InvestigationTrace) : null);
+    setAiSummary(summary && typeof (summary as AiEvidenceSummary).generated === "boolean" ? (summary as AiEvidenceSummary) : null);
     setLinkedCases(linked);
     setLoading(false);
   }, [caseId]);
@@ -102,6 +108,19 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setInvestigating(false);
+    }
+  }
+
+  async function generateSummary() {
+    setSummarizing(true);
+    setSummaryError(null);
+    try {
+      const s = await api.summarizeCase(caseId, { llm_provider: rerunProvider });
+      setAiSummary(s);
+    } catch (e) {
+      setSummaryError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSummarizing(false);
     }
   }
 
@@ -402,6 +421,110 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
             {hasProfile
               ? "No investigation has run for this case yet — it runs automatically after analysis with a case brief, or click Re-run investigation above."
               : "Needs a case brief and at least one AI finding — see Re-run analysis below."}
+          </p>
+        )}
+      </div>
+
+      {/* AI Evidence Summary — entirely model-authored narrative, scoped to findings
+          that already matched a named case entity/keyword AND sit in a high-yield
+          artifact class for this crime type (see triage/intel/ai_summary.py). Unlike
+          the deterministic ai_findings ranking above, there is no non-LLM fallback:
+          without a reachable local model this honestly stays ungenerated rather than
+          templating a fake narrative. */}
+      <div className="card p-4 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-muted">AI evidence summary</div>
+            <p className="text-[11px] text-muted mt-0.5 max-w-2xl">
+              A model-authored narrative digest of the findings above that matched a named
+              person/keyword from the case brief and sit in a high-yield artifact class for
+              this crime type. Needs a reachable local model (Ollama) — see AI back-end in
+              Acquisition / Re-run analysis below.
+            </p>
+          </div>
+          <button className="btn-ghost shrink-0" disabled={summarizing || !hasProfile} onClick={generateSummary}>
+            {summarizing ? "Generating…" : aiSummary ? "Regenerate" : "Generate"}
+          </button>
+        </div>
+
+        {summaryError && <p className="text-xs text-deletion mb-2">{summaryError}</p>}
+
+        {aiSummary ? (
+          aiSummary.generated ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full border text-accent border-accent/30 bg-accent/10">
+                  AI-generated
+                </span>
+                <span className="text-[11px] text-muted">
+                  {aiSummary.provider}
+                  {aiSummary.model && <> · {aiSummary.model}</>}
+                </span>
+              </div>
+
+              <p className="text-sm text-ink leading-relaxed whitespace-pre-wrap">{aiSummary.narrative}</p>
+
+              {/* Legal-evidence tool — this note is never collapsible or hideable. */}
+              <p className="text-[11px] text-warn leading-relaxed border-t border-line pt-2">
+                {aiSummary.disclaimer}
+              </p>
+
+              {/* Why these findings were selected */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <Facet label="Entities" items={aiSummary.relevant_entities} tone="text-warn" />
+                <div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted mb-1">
+                    High-yield artifacts
+                  </div>
+                  {aiSummary.high_yield_artifacts.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {aiSummary.high_yield_artifacts.map((a) => (
+                        <span
+                          key={a.artifact}
+                          className="text-xs rounded bg-panel px-1.5 py-0.5 border border-line text-ink"
+                        >
+                          {a.label} <span className="text-muted font-mono">{a.blended.toFixed(2)}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-muted">—</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Cross-reference by id — the only source material the model saw. */}
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-muted mb-1">
+                  Source findings ({aiSummary.matched_count} of {aiSummary.total_findings_considered}{" "}
+                  considered)
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {aiSummary.matched_finding_ids.map((id) => (
+                    <span
+                      key={id}
+                      className="text-[11px] font-mono rounded bg-panel px-1.5 py-0.5 border border-line text-muted"
+                    >
+                      {id}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            // Honest, non-error outcome — a normal absence, not a failure. Findings
+            // that were real but a model couldn't narrate (matched_count > 0) get the
+            // same "opt-in gap" tone the rest of the dashboard uses for that; no brief
+            // entities or no matches at all reads as a plain, muted empty state.
+            <p className={`text-xs leading-relaxed ${aiSummary.matched_count > 0 ? "text-warn" : "text-muted"}`}>
+              {aiSummary.reason}
+            </p>
+          )
+        ) : (
+          <p className="text-xs text-muted">
+            {hasProfile
+              ? "No AI evidence summary has been generated for this case yet — click Generate above."
+              : "Needs a case brief and Case Intelligence findings — see Re-run analysis below."}
           </p>
         )}
       </div>

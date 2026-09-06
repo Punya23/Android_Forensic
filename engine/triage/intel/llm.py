@@ -243,10 +243,59 @@ def autodetect_and_configure(force: bool = False) -> dict:
     models = list_ollama_models()
     best = pick_best_chat_model(models)
     if not best:
+        # Nothing usable yet. Before settling for heuristic, try to provision a local
+        # model ourselves — this is the multi-examiner-machine path: the engine may be
+        # starting for the first time on a workstation nobody has ever run `ollama
+        # pull` on. This never blocks: both the binary install and the (slow, multi-GB)
+        # model pull run in a background thread, and this returns immediately on
+        # heuristic. ``_on_pull_done`` fires from that background thread and flips the
+        # switch the moment the model is actually usable — no polling needed, because
+        # get_provider() reads SNAGR_LLM/SNAGR_LLM_MODEL fresh on every call.
+        from .hardware import ensure_local_model
+
+        def _on_pull_done(success: bool, model: str) -> None:
+            global _last_autodetect
+            if not success:
+                _last_autodetect = {
+                    "autodetected": False,
+                    "reason": f"background pull of {model} failed — staying on heuristic",
+                    "provider": "heuristic",
+                }
+                return
+            os.environ["SNAGR_LLM"] = "ollama"
+            os.environ.setdefault("SNAGR_LLM_MODEL", model)
+            _last_autodetect = {
+                "autodetected": True,
+                "provider": "ollama",
+                "model": os.environ["SNAGR_LLM_MODEL"],
+                "reason": f"local model pulled automatically ({model})",
+            }
+
+        # Chat-capable only — `best` is already None precisely because
+        # pick_best_chat_model() found no chat model among `models`, so passing the
+        # unfiltered list back in here would let a pulled *embedding* model (e.g.
+        # nomic-embed-text, which docs/SETUP.md tells examiners to pull separately)
+        # read as "a chat model is already pulled" and permanently skip provisioning.
+        chat_models = [m["name"] for m in models if not m.get("embedding_only")]
+        provisioning = ensure_local_model(chat_models, on_done=_on_pull_done)
+        if provisioning.get("action") in ("installing", "pulling"):
+            _last_autodetect = {
+                "autodetected": False,
+                "reason": (
+                    f"no local model was pulled yet — downloading "
+                    f"{provisioning['model']} in the background based on this "
+                    "machine's hardware; will switch over automatically once it "
+                    "finishes"
+                ),
+                "provider": "heuristic",
+                "provisioning": provisioning,
+            }
+            return _last_autodetect
         _last_autodetect = {
             "autodetected": False,
-            "reason": "Ollama unreachable, or no chat model pulled",
+            "reason": provisioning.get("reason", "Ollama unreachable, or no chat model pulled"),
             "provider": "heuristic",
+            "hardware": provisioning.get("hardware"),
         }
         return _last_autodetect
 
@@ -302,7 +351,37 @@ def provider_status(kind: Optional[str] = None) -> dict:
         ],
         "embedding_models": [m["name"] for m in models if m["embedding_only"]],
         "autodetect": _last_autodetect,
+        "hardware": _hardware_snapshot(),
     }
+
+
+#: Fallback shape for _hardware_snapshot()'s failure path — same keys the dashboard's
+#: HardwareInfo type declares as required, all null/unknown rather than the object
+#: missing outright. An empty dict would be truthy in the frontend's `hardware &&`
+#: guard while `hardware.recommended_model` was undefined, crashing the Acquisition
+#: view on exactly the "detection failed" case this is meant to degrade gracefully on.
+_HARDWARE_UNKNOWN: dict = {
+    "platform": "unknown",
+    "arch": "unknown",
+    "cpu_cores": 0,
+    "ram_gb": None,
+    "gpu": "unknown",
+    "recommended_model": {"model": None, "note": "hardware detection failed", "ram_gb": None},
+}
+
+
+def _hardware_snapshot() -> dict:
+    """This workstation's RAM/CPU/GPU plus what model that would earn it, for the
+    dashboard's LLM-status panel. Best-effort like everything else in this module —
+    never raises, degrades to :data:`_HARDWARE_UNKNOWN` (never an empty dict — see its
+    comment) on any detection failure."""
+    try:
+        from .hardware import detect_hardware, recommend_model
+
+        hw = detect_hardware()
+        return {**hw, "recommended_model": recommend_model(hw)}
+    except Exception:
+        return dict(_HARDWARE_UNKNOWN)
 
 
 def _degraded(requested: str) -> LLMProvider:

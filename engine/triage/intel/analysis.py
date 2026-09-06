@@ -597,6 +597,17 @@ _APP_TO_ARTIFACT = {
 }
 
 
+def resolve_artifact(app_or_name: str) -> str:
+    """The single, shared "message app label -> ontology/knowledge-graph artifact
+    key" mapping. Anything scoring or filtering findings by artifact class (this
+    module's own :func:`_priority_lookup`, and :mod:`.ai_summary`'s yield filter)
+    must go through this rather than hand-rolling the alias table again — a second,
+    independent copy would only agree with this one by coincidence and silently
+    drift the day :data:`_APP_TO_ARTIFACT` gains a new alias.
+    """
+    return _APP_TO_ARTIFACT.get(str(app_or_name or "").strip().lower(), str(app_or_name or ""))
+
+
 def _priority_lookup(crime, plan: Optional[CollectionPlan]):
     """Build ``artifact -> priority`` resolution for scoring.
 
@@ -610,7 +621,7 @@ def _priority_lookup(crime, plan: Optional[CollectionPlan]):
         planned = {a.artifact: a.priority for a in plan.artifacts}
 
     def resolve(name: str) -> str:
-        key = _APP_TO_ARTIFACT.get(str(name or "").strip().lower(), str(name or ""))
+        key = resolve_artifact(name)
         if key in planned:
             return planned[key]
         return priority_for(crime, key)

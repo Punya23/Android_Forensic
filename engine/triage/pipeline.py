@@ -348,6 +348,12 @@ class PipelineConfig:
     case_description: str = ""  # plain-language case brief; drives targeted collection
     case_number: str = ""  # FIR / crime number, recorded on the profile
     run_ai_analysis: bool = True  # after collection, score artifacts into ranked leads
+    # Opt-in: an entirely model-authored evidence summary, scoped to findings that
+    # match a named case entity/keyword AND sit in a high-yield artifact class for
+    # this crime type (see intel/ai_summary.py). Off by default like every other
+    # stage that depends on a local model actually being reachable — ai_findings'
+    # deterministic ranking runs regardless, this narrative cannot.
+    run_ai_summary: bool = False
     use_case_bank: bool = True  # retrieve similar prior cases to inform the plan
     case_bank_paths: list = field(default_factory=list)  # extra JSONL corpora to load
     # The department's own worked cases, promoted via the outcome API. Loaded from
@@ -2602,6 +2608,12 @@ def run_acquisition(
                 from .intel.planner import CaseProfile
 
                 profile = CaseProfile(**case_profile_dict)
+                # Resolved once and reused below for investigate_case/
+                # generate_ai_evidence_summary — each call otherwise constructs its
+                # own OllamaProvider and re-pings the local daemon over HTTP, three
+                # redundant loopback round-trips (each with its own timeout) for the
+                # same configured back-end in the same run.
+                provider = get_provider(cfg.llm_provider or None)
                 # Pass the plan so lead ranking uses the same fused priorities that
                 # drove acquisition — otherwise an artifact promoted by precedent
                 # would be collected first and then scored as if it never had been.
@@ -2609,7 +2621,7 @@ def run_acquisition(
                     case,
                     profile,
                     plan=plan_obj,
-                    provider=get_provider(cfg.llm_provider or None),
+                    provider=provider,
                 )
                 # The custody log is the durable record of what the tool did, so it
                 # states the number of leads that MATCHED, not the number that fitted
@@ -2648,7 +2660,7 @@ def run_acquisition(
                         case,
                         profile,
                         plan=plan_obj,
-                        provider=get_provider(cfg.llm_provider or None),
+                        provider=provider,
                     )
                     _answered = sum(
                         1 for h in investigation["hypotheses"] if h["status"] == "answered"
@@ -2673,6 +2685,45 @@ def run_acquisition(
                         result="error",
                         tier=Tier.TIER0.value,
                     )
+
+                # -- AI evidence summary: entirely model-authored, entity+yield-scoped -
+                # Separate try/except from the analysis above for the same reason as the
+                # investigation pass: a failure here must not read as "analysis error"
+                # when ai_findings itself is fine — only the narrative layer on top
+                # failed.
+                if cfg.run_ai_summary:
+                    try:
+                        from .intel.ai_summary import generate_ai_evidence_summary
+
+                        summary_bundle = generate_ai_evidence_summary(
+                            case,
+                            profile,
+                            ai_findings,
+                            knowledge_graph=knowledge_graph,
+                            provider=provider,
+                        )
+                        if summary_bundle.get("generated"):
+                            case.log(
+                                "intel.summary",
+                                f"AI evidence summary: {summary_bundle['matched_count']} "
+                                f"finding(s) summarised ({summary_bundle['model']}).",
+                                tier=Tier.TIER0.value,
+                            )
+                        else:
+                            case.log(
+                                "intel.summary",
+                                f"AI evidence summary not generated: "
+                                f"{summary_bundle.get('reason', 'unknown reason')}",
+                                tier=Tier.TIER0.value,
+                            )
+                    except Exception as exc:
+                        case.log(
+                            "intel.summary",
+                            f"AI evidence summary error: {exc}. ai_findings above are "
+                            "unaffected — only this narrative layer failed.",
+                            result="error",
+                            tier=Tier.TIER0.value,
+                        )
             except Exception as exc:
                 case.log(
                     "intel.findings",

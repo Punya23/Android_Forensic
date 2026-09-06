@@ -439,6 +439,11 @@ UNPLANNABLE_PIPELINE_FLAGS: dict[str, str] = {
         "on by default; it scores what was already collected, so letting the plan set it "
         "would be circular."
     ),
+    "run_ai_summary": (
+        "off by default; an entirely model-authored narrative over ai_findings, gated on "
+        "a reachable local model rather than on any artifact class the plan ranks — see "
+        "intel/ai_summary.py."
+    ),
     "tier2_wifi": (
         "recovers stored Wi-Fi passphrases; ARTIFACTS has no Wi-Fi class to rank, and "
         "pulling credentials is a scope decision the examiner makes explicitly."

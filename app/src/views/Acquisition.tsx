@@ -63,6 +63,10 @@ export function AcquisitionView({
   // Offering a back-end the machine has no model for turns a deliberate choice into a
   // silent fallback discovered only after the acquisition.
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
+  // Opt-in: generate the AI Evidence Summary after analysis (triage/intel/ai_summary.py).
+  // Off by default — it needs a reachable local model, and an examiner should choose it
+  // deliberately rather than inherit it.
+  const [runAiSummary, setRunAiSummary] = useState(false);
   // Whether the plan may switch on root-only pulls. Collection scope is the examiner's
   // decision: a case brief alone must not be able to widen it without them saying so.
   const [planAllowTier2, setPlanAllowTier2] = useState(true);
@@ -260,6 +264,7 @@ export function AcquisitionView({
         plan_allow_tier2: planAllowTier2,
         case_number: caseNumber.trim() || undefined,
         llm_provider: llmProvider,
+        run_ai_summary: runAiSummary,
         tier1_contacts: target.kind === "real" ? tier1Contacts : false,
         tier1_calllog: target.kind === "real" ? tier1Calllog : false,
         tier1_sms: target.kind === "real" ? tier1Sms : false,
@@ -507,6 +512,46 @@ export function AcquisitionView({
             </div>
           </div>
         </div>
+
+        {/* Hardware this workstation can actually run a local model on, plus any
+            background provisioning already under way — surfaced next to the AI
+            back-end picker so "Ollama (local model)" is never a blind choice. */}
+        {llmStatus?.hardware && (
+          <div className="text-[11px] text-muted leading-relaxed mb-2 border-t border-line pt-2">
+            This machine: {llmStatus.hardware.ram_gb != null ? `${llmStatus.hardware.ram_gb} GB RAM` : "RAM unknown"},{" "}
+            {llmStatus.hardware.gpu} → recommended model:{" "}
+            <span className="font-mono text-ink/80">
+              {llmStatus.hardware.recommended_model.model ?? "none — heuristic only"}
+            </span>
+            {llmStatus.hardware.recommended_model.note && ` (${llmStatus.hardware.recommended_model.note})`}
+            {llmStatus.autodetect?.provisioning &&
+              llmStatus.autodetect.provisioning.action !== "none" && (
+                <span className="text-warn">
+                  {" "}
+                  Downloading {llmStatus.autodetect.provisioning.model} in the background based on this
+                  machine's hardware — will switch over automatically once it finishes.
+                </span>
+              )}
+          </div>
+        )}
+
+        {/* Opt-in: AI Evidence Summary. Off by default and independent of the plan
+            preview above — it runs after analysis, over ai_findings this acquisition
+            produces, not over the plan. */}
+        <label className="flex items-start gap-2 cursor-pointer mb-2">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={runAiSummary}
+            onChange={(e) => setRunAiSummary(e.target.checked)}
+          />
+          <span className="text-[11px] text-muted leading-relaxed">
+            Generate an <b>AI Evidence Summary</b> after analysis — an entirely model-authored
+            narrative digest of the findings that matched this case's brief. Needs a reachable
+            local model (Ollama); otherwise this stays honestly empty rather than faking a
+            summary (see Case Intelligence).
+          </span>
+        </label>
 
         <p className="text-[11px] text-muted leading-relaxed mb-2">
           Use forensic nomenclature: <b>accused</b> / <b>suspect</b> for the person

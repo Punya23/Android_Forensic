@@ -24,6 +24,7 @@ on-device; retrieval and the graph are pure Python and need no network at all. S
 
 from __future__ import annotations
 
+from .ai_summary import AiEvidenceSummary, generate_ai_evidence_summary
 from .analysis import Finding, analyze_case, analyze_derived
 from .investigator import Hypothesis, LinkedFinding, investigate, investigate_case
 from .case_qa import Passage, answer_question, build_passages
@@ -98,6 +99,9 @@ __all__ = [
     "Finding",
     "analyze_case",
     "analyze_derived",
+    # AI evidence summary (entirely model-authored, entity+yield-scoped narrative)
+    "AiEvidenceSummary",
+    "generate_ai_evidence_summary",
     # deep investigation (bounded, deterministic multi-hypothesis pass)
     "investigate",
     "investigate_case",

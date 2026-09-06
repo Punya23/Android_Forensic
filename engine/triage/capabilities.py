@@ -565,6 +565,43 @@ CATALOGUE: dict[str, Capability] = {
         flag="run_ai_analysis",
         needs_case_brief=True,
     ),
+    "ai_evidence_summary": Capability(
+        "ai_evidence_summary",
+        "AI evidence summary",
+        -1,
+        "A case brief, at least one Case Intelligence finding, and a reachable local "
+        "model (Ollama). The narrative is entirely model-authored — unlike ai_findings' "
+        "deterministic ranking, there is no non-LLM way to produce it, so without a "
+        "model this stays not_collected rather than badging a faked summary as done.",
+        flag="run_ai_summary",
+        needs_case_brief=True,
+        # Also effectively gated on run_ai_analysis, since the summary is built from
+        # ai_findings — but deliberately NOT recorded via ran_if_present=("ai_findings",):
+        # that check is consulted BEFORE ran_when below, so on the common "model not
+        # reachable" outcome (ai_findings present, ai_evidence_summary written with
+        # generated=False) it would short-circuit to a false "the stage ran and the
+        # source held nothing" (EMPTY) instead of the correct, honest "unverified"
+        # ran_when path. The run_ai_analysis=False + run_ai_summary=True combination is
+        # a real gap (reachable only via a raw API call, not the dashboard checkbox,
+        # which never sends run_ai_analysis) that resolves to a slightly-less-specific
+        # but still true INACCESSIBLE "did not complete" rather than naming the sibling
+        # flag — accepted rather than risking the regression above.
+        #
+        # generate_ai_evidence_summary() always writes this envelope, whether or not a
+        # model was reachable or anything matched (see ai_summary.py) — an empty
+        # narrative on a real attempt is one of three distinct, honestly-labelled
+        # reasons (no brief entities, no matching findings, no model), not silence.
+        unconditional_write=True,
+        # narrative ONLY — matched_finding_ids is populated by deterministic
+        # entity/keyword matching whether or not a model ever ran (see
+        # generate_ai_evidence_summary), so it is not proof the summary itself was
+        # produced. Including it here would badge a real "no model reachable" outcome
+        # as populated/Collected before ran_when is ever consulted — the exact
+        # fixed-shape-envelope trap the ai_findings/aleapp entries above already guard
+        # against.
+        content_paths=("narrative",),
+        ran_when="generated",
+    ),
     "validation_report": Capability(
         "validation_report", "Tool self-validation", -1, "Known-answer tests, per acquisition",
         flag="run_self_validation",

@@ -763,6 +763,38 @@ def create_app(cases_root: Path = CASES_ROOT):
         bundle = investigate_case(case, profile, plan=plan, provider=provider)
         return jsonify(bundle)
 
+    @app.post("/api/case/<case_id>/summarize")
+    def summarize_case_endpoint(case_id: str):
+        """(Re-)generate the AI Evidence Summary — see triage/intel/ai_summary.py.
+        Requires a case profile and ``ai_findings`` (run /analyze first)."""
+        case = _open(cases_root, case_id)
+        body = request.get_json(silent=True) or {}
+
+        from .intel import generate_ai_evidence_summary, get_provider
+        from .intel.planner import CaseProfile
+
+        stored_profile = case.read_derived("case_profile")
+        if not stored_profile:
+            return jsonify({"error": "no case profile available — run /analyze first"}), 400
+        profile = CaseProfile(**stored_profile)
+
+        ai_findings = case.read_derived("ai_findings")
+        if not ai_findings:
+            return (
+                jsonify({"error": "no ai_findings available — run /analyze first"}),
+                400,
+            )
+
+        provider = get_provider(str(body.get("llm_provider", "")) or None)
+        bundle = generate_ai_evidence_summary(
+            case,
+            profile,
+            ai_findings,
+            knowledge_graph=_knowledge_graph(cases_root),
+            provider=provider,
+        )
+        return jsonify(bundle)
+
     @app.post("/api/case/<case_id>/ask")
     def ask_case_endpoint(case_id: str):
         """"Ask this case" — free-text Q&A over the case's own already-collected
@@ -900,6 +932,7 @@ def create_app(cases_root: Path = CASES_ROOT):
             tier2_maps_location=bool(body.get("tier2_maps_location", False)),
             case_description=str(body.get("case_description", "") or ""),
             run_ai_analysis=bool(body.get("run_ai_analysis", True)),
+            run_ai_summary=bool(body.get("run_ai_summary", False)),
             llm_provider=str(body.get("llm_provider", "") or ""),
             case_number=str(body.get("case_number", "") or ""),
             use_case_bank=bool(body.get("use_case_bank", True)),
@@ -1171,6 +1204,13 @@ def create_app(cases_root: Path = CASES_ROOT):
             ai.get("counts", {}) if isinstance(ai, dict) else {}
         )
 
+        ai_summary = case.read_derived("ai_evidence_summary") or {}
+        summary["ai_evidence_summary_status"] = {
+            "generated": bool(ai_summary.get("generated")),
+            "matched_count": ai_summary.get("matched_count", 0),
+            "reason": ai_summary.get("reason", ""),
+        }
+
         return jsonify(summary)
 
     @app.get("/api/case/<case_id>/capabilities")
@@ -1321,6 +1361,9 @@ def create_app(cases_root: Path = CASES_ROOT):
             # Deep investigation: bounded hypothesis pass cross-linking findings
             # analyze_derived's single flat scoring pass can't correlate on its own.
             "investigation_trace",
+            # Entirely model-authored narrative, scoped to entity+yield-matched
+            # findings only — see triage/intel/ai_summary.py.
+            "ai_evidence_summary",
             "case_profile",
             "collection_plan",
             # Re-analysis writes its re-ranking here rather than over the plan that

@@ -173,6 +173,7 @@ Vite 5 / Electron 31's own requirements, not enforced in-repo.
 | `SNAGR_LLM_MODEL` | `llama3.1` | Ollama model name |
 | `SNAGR_EMBED_MODEL` | `nomic-embed-text` | Local embedding model used for semantic precedent retrieval. Pull it with `ollama pull nomic-embed-text` |
 | `SNAGR_EMBEDDINGS` | *(on)* | Set to `off` to force pure BM25 retrieval — for an air-gapped box, or to reproduce a plan exactly as a lexical-only run produced it |
+| `SNAGR_LLM_AUTOINSTALL` | *(on)* | Set to `0`/`false` to stop the engine installing Ollama or pulling a model on its own — see below. Detection still runs and is still reported at `GET /api/llm/status`; only the install/pull actions are disabled |
 | `ANDROID_HOME` | — | Android SDK location, for locating `adb` |
 | `ALEAPP_PATH` | — | Path to an external ALEAPP install, if used |
 | `SIGNALBACKUP_TOOLS_PATH` | — | Path to `signalbackup-tools`, if used |
@@ -196,6 +197,44 @@ If either model is missing the run still completes: the plan degrades to the
 deterministic path, says so in the audit log and on screen, and records
 `retrieval_mode: lexical` so nobody later reads the plan as having had a basis it did
 not have.
+
+### Automatic provisioning (multi-examiner machines)
+
+Because this ships to examiners on machines nobody here has configured by hand, the
+engine can provision a local model itself rather than requiring `ollama pull` up front.
+On startup, if no chat model is reachable, it probes this workstation's RAM (see
+`triage/intel/hardware.py`) and:
+
+1. installs the Ollama binary if missing, using only the vendor's own official,
+   non-interactive install path for the OS (Homebrew on macOS, winget on Windows,
+   Ollama's documented Linux installer) — never a third-party script;
+2. picks the strongest chat model this machine's RAM can carry without starving the
+   OS, the dashboard and the engine (roughly: <10 GB → stays off, 10–16 GB →
+   `qwen2.5:3b-instruct`, 16–24 GB → `llama3.1:8b`, 24–40 GB → `qwen2.5:14b-instruct`,
+   40 GB+ → `qwen2.5:32b-instruct`), and pulls it **in the background** — engine
+   startup never blocks on a multi-GB download;
+3. switches the active back-end to `ollama` automatically the moment that pull
+   finishes — no restart, no manual step.
+
+This never overrides an explicit `SNAGR_LLM`/`SNAGR_LLM_MODEL` choice, never fails
+engine startup (a probe/install/pull failure just leaves the always-available
+heuristic default in place, logged), and never touches the network at all when
+`SNAGR_LLM_AUTOINSTALL=0` — set that on an air-gapped or IT-locked examiner
+workstation. `GET /api/llm/status` reports the detected hardware, the recommended
+model, and whether a background pull is currently in progress.
+
+### AI Evidence Summary
+
+An additional, opt-in stage (`run_ai_summary`, off by default) that is **entirely
+model-authored** — unlike the deterministic `ai_findings` ranking, there is no
+heuristic fallback for writing prose, so this stage produces nothing without a
+reachable local model. It narrows to findings that both (a) already matched a named
+person/keyword from the case brief and (b) sit in an artifact class the knowledge
+graph rates at or above the doctrinal midpoint for this crime type — see
+`triage/intel/ai_summary.py`. Every fact it writes cites the finding id it came from,
+already visible in Case Intelligence, and the output always carries a disclaimer that
+it is an investigative aid, not a certified conclusion. Re-run it standalone with
+`POST /api/case/<id>/summarize`.
 
 ### Packaging (`npm run electron:build`) — ⚠ untuned
 
