@@ -432,6 +432,106 @@ def test_mediastore_trash_summary_key_is_not_proof_the_fusion_had_inputs(
     assert "written on every run" in out["reason"]
 
 
+#: Both of investigate()'s try-blocks (triage/intel/investigator.py) append one
+#: Hypothesis unconditionally, 'blocked' or not — a channel-gap check with no named
+#: entities and a location-correlation check with no anomalies still land here as one
+#: entry each. Same fixed-shape-envelope shape as ALEAPP_UNRUN above, carried in a list
+#: length instead of a dict's keys.
+INVESTIGATION_TRACE_ALL_BLOCKED = {
+    "hypotheses": [
+        {
+            "id": "H-CHANNEL-GAP",
+            "kind": "channel_gap",
+            "question": "Which named parties in this case have a Contacts entry but "
+            "no message/call finding?",
+            "dataset_scope": ["contacts", "messages", "calls"],
+            "status": "blocked",
+            "finding_ids": [],
+            "detail": "No contacts dataset was collected this run (Tier 1).",
+        },
+        {
+            "id": "H-LOCATION-CORR",
+            "kind": "location_correlation",
+            "question": "Does any already-flagged location anomaly fall within 15 "
+            "minutes of a message/call finding?",
+            "dataset_scope": ["location_anomalies", "messages", "calls"],
+            "status": "blocked",
+            "finding_ids": [],
+            "detail": "No location anomalies were flagged this run.",
+        },
+    ],
+    "linked_findings": [],
+    "narrative": "",
+    "analysis_method": "deterministic",
+    "hypotheses_answered": 0,
+    "disclaimer": "A bounded, deterministic multi-hypothesis pass over already-cited findings.",
+}
+
+
+def test_investigation_trace_all_blocked_is_not_reported_as_collected(case_dir: Path):
+    """``len(hypotheses) >= 2`` on every call, blocked or not, so a bare length test can
+    never see this case as empty even though neither check had anything to investigate —
+    the same bug 'graph'/'advanced' are fixed for above, one field over.
+    """
+    write(case_dir, "investigation_trace", INVESTIGATION_TRACE_ALL_BLOCKED)
+    out = resolve(
+        CATALOGUE["investigation_trace"], case_dir / "derived", {"run_ai_analysis": True}
+    )
+    assert out["state"] != POPULATED
+    assert out["count"] == 0
+
+
+def test_investigation_trace_that_ran_and_found_nothing_is_a_finding(case_dir: Path):
+    """Same all-blocked bundle, but 'ai_findings' proves the analysis pass actually ran.
+
+    Two checks with nothing to check against — no contacts dataset, no location
+    anomalies — is a finding about this acquisition, not an unverified stage.
+    """
+    write(case_dir, "ai_findings", {"findings": [{"id": "F-1"}], "profile": {}})
+    write(case_dir, "investigation_trace", INVESTIGATION_TRACE_ALL_BLOCKED)
+    out = resolve(
+        CATALOGUE["investigation_trace"], case_dir / "derived", {"run_ai_analysis": True}
+    )
+    assert out["state"] == EMPTY
+
+
+def test_investigation_trace_with_a_real_correlation_resolves_populated(case_dir: Path):
+    """The content test must not swing the other way and hide a real correlation."""
+    write(
+        case_dir,
+        "investigation_trace",
+        {
+            **INVESTIGATION_TRACE_ALL_BLOCKED,
+            "linked_findings": [{"id": "LNK-001", "kind": "location_correlation"}],
+            "hypotheses_answered": 1,
+        },
+    )
+    out = resolve(
+        CATALOGUE["investigation_trace"], case_dir / "derived", {"run_ai_analysis": True}
+    )
+    assert out["state"] == POPULATED
+    assert out["count"] > 0
+
+
+def test_investigation_trace_answered_hypothesis_is_not_hidden_behind_empty(case_dir: Path):
+    """A hypothesis that actually ran and answered — even "no gap detected" — is real
+    investigative content, and must not be badged the same as a pass that never had any
+    data at all just because it produced no *linked_findings* of its own. Only the
+    location-correlation check ever populates that list; channel-gap answers through its
+    own ``detail`` text instead, the same way 'advanced' counts messages analysed rather
+    than patterns found.
+    """
+    write(
+        case_dir,
+        "investigation_trace",
+        {**INVESTIGATION_TRACE_ALL_BLOCKED, "hypotheses_answered": 1},
+    )
+    out = resolve(
+        CATALOGUE["investigation_trace"], case_dir / "derived", {"run_ai_analysis": True}
+    )
+    assert out["state"] == POPULATED
+
+
 def test_signal_second_unconditional_write_is_not_read_as_a_clean_scan(case_dir: Path):
     """``signal_result`` is written twice: conditionally after the scan, then again,
 

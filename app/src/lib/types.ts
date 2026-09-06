@@ -1127,6 +1127,12 @@ export interface InvestigationTrace {
   linked_findings: LinkedFinding[];
   narrative: string;
   analysis_method: string;
+  // Count of hypotheses that reached "answered" (ran over real data, whatever the
+  // answer) rather than "blocked". Read by the backend's capability badge to tell
+  // "investigated, nothing to link" from "nothing here was ever investigated" — the
+  // hypotheses list itself is never empty, since a blocked check still gets an entry.
+  // Optional: absent on a bundle written before this field existed.
+  hypotheses_answered?: number;
   disclaimer: string;
 }
 

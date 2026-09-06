@@ -378,6 +378,18 @@ def investigate(
         "linked_findings": [lf.to_dict() for lf in linked],
         "narrative": narrative or "",
         "analysis_method": analysis_method,
+        # Both try-blocks above append one Hypothesis per wired check whether or not it
+        # could run at all — a channel-gap check with no named entities, or a
+        # location-correlation check with no anomalies, still lands as one 'blocked'
+        # entry, not an absent one. So len(hypotheses) is >= 2 on every call, blocked or
+        # not, and can never tell "this pass had real data" from "there was nothing to
+        # investigate" — capabilities.py's investigation_trace entry reads this counter
+        # instead of the list length for exactly that reason. It counts hypotheses that
+        # got past 'blocked' to a real answer over real data, not ones that found
+        # something notable: "no channel gap detected" and "none fell within the
+        # correlation window" both count, the same way 'advanced' counts messages
+        # analysed rather than patterns found.
+        "hypotheses_answered": sum(1 for h in hypotheses if h.status == "answered"),
         "disclaimer": (
             "A bounded, deterministic multi-hypothesis pass over this case's own "
             "already-collected, already-cited findings. A hypothesis marked 'blocked' "

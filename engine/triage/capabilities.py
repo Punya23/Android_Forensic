@@ -707,6 +707,19 @@ CATALOGUE: dict[str, Capability] = {
         # ever read from the ``value is None or unconditional_write`` branch — without
         # this it is declared and dead, the same bug this sweep fixed for 'contacts'.
         unconditional_write=True,
+        # Both of investigate()'s try-blocks append one Hypothesis per wired check even
+        # when it could not run at all — a channel-gap check with no named entities, or
+        # a location-correlation check with no anomalies, still lands as one 'blocked'
+        # entry — so 'hypotheses' has length >= 2 on every call and a bare length test
+        # can never see this as empty: the same fixed-shape-envelope bug 'graph' and
+        # 'advanced' are fixed for above, just one field over. 'hypotheses_answered' is
+        # the honest stand-in — it only counts a hypothesis that got past 'blocked' to a
+        # real answer over real data, not one that found something notable ("no channel
+        # gap detected" counts, same as 'advanced' counting messages analysed rather
+        # than patterns found). 'linked_findings' is the concrete cross-dataset
+        # correlations location-correlation produces. Either one non-zero means the pass
+        # had something real to work with; both zero means every hypothesis was blocked.
+        content_paths=("linked_findings", "hypotheses_answered"),
     ),
     # --- named, not built --------------------------------------------------
     "ios_acquisition": Capability(
