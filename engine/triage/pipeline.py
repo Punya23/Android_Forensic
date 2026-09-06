@@ -145,6 +145,15 @@ from .flagging import (
 from .models import LocationPoint, MediaItem, now_iso
 from .cancellation import CancellationToken, AcquisitionCancelled
 from .cache import get_artifact_cached, set_artifact_cached, invalidate_for_source
+
+
+class DeviceDisconnectedError(RuntimeError):
+    """Raised when the device drops off ADB mid-acquisition.
+
+    Caught by :func:`_parallel_pull_files` which immediately calls
+    ``cancel_token.cancel()`` so all pending futures are abandoned and the
+    checkpoint is saved at the exact file where the disconnect occurred.
+    """
 from .parsers import (
     extract_gps,
     parse_app_db,
@@ -389,6 +398,12 @@ class PipelineConfig:
     )  # subset of "email" | "sms" | "slack" | "teams"
     notify_recipients: list = field(default_factory=list)  # emails or phone numbers
     notify_webhook_url: str = ""  # required for slack/teams
+    # -- Fetching robustness (fetching-bug fixes) ------------------------------
+    validate_files_before_pull: bool = True
+    # Pre-scan every path returned by list_files() with a fast `test -e` before
+    # any pull begins.  Filters phantom files reported by MediaStore that no
+    # longer exist on the device, saving hours of failed pull attempts.
+    # Disable only if the device is known-clean or if pre-scan latency matters.
 
 
 def run_acquisition(
@@ -950,8 +965,55 @@ def run_acquisition(
     seen = set()
     files = [f for f in all_files if not (f in seen or seen.add(f))][: cfg.max_files]
 
-    pull_start = time.monotonic()
-    pulled_bytes = 0
+    # ── Pre-scan validation: filter phantom files before any pull ───────────
+    # MediaStore can report files that no longer exist (e.g. deleted between
+    # the enumerate and pull phases, or never written after a failed transfer).
+    # Validating upfront prevents hours of failed pull attempts.
+    if cfg.validate_files_before_pull and files:
+        progress("validate", 0.065, f"Validating {len(files)} files on device…")
+        emit_acq_event(case, socketio, source="filesystem", tier="tier0",
+                       action=f"Pre-scan: validating {len(files)} files", status="accessing")
+        _validate_done = [0]
+
+        def _val_progress(done: int, total: int) -> None:
+            _validate_done[0] = done
+            pct = 0.065 + 0.005 * (done / max(total, 1))
+            progress("validate", pct, f"Validating files… {done}/{total}")
+
+        try:
+            files, phantom_count = source.validate_file_list(
+                files, progress_cb=_val_progress
+            )
+            if phantom_count:
+                case.log(
+                    "fs.validate",
+                    f"Pre-scan complete: {len(files)} valid, {phantom_count} phantom "
+                    f"(MediaStore entries with no backing file — skipped)",
+                    tier=Tier.TIER0.value,
+                    phantom_skipped=phantom_count,
+                )
+                emit_acq_event(
+                    case, socketio, source="filesystem", tier="tier0",
+                    action=(
+                        f"Validation done: {len(files)} valid, "
+                        f"{phantom_count} phantom skipped"
+                    ),
+                    status="completed",
+                )
+            else:
+                case.log(
+                    "fs.validate",
+                    f"Pre-scan complete: all {len(files)} files confirmed present",
+                    tier=Tier.TIER0.value,
+                )
+        except Exception as exc:
+            # Validation must never abort an acquisition — fall back to unvalidated list.
+            case.log(
+                "fs.validate",
+                f"Pre-scan failed ({exc}); proceeding with unvalidated file list",
+                result="warning",
+                tier=Tier.TIER0.value,
+            )
 
     # Manual screen capture (Oxygen/MDI-style), read-only framebuffer grab.
     if cfg.capture_screenshot:
@@ -3562,6 +3624,14 @@ def _pull_and_process_file(
     if use_priority_filter and not should_pull_file(device_path, elapsed):
         return None  # defer or skip based on time budget
 
+    # ── Connection guard: stop immediately if device has disconnected ─────
+    # Checked before every pull so a cable pull aborts at the first subsequent
+    # file rather than issuing thousands of doomed ADB commands.
+    if hasattr(source, 'is_device_connected') and not source.is_device_connected():
+        raise DeviceDisconnectedError(
+            f"Device disconnected before pull of {device_path}"
+        )
+
     # ── Pull (runs in parallel — the slow part) ──────────────────────────
     _t0 = start_timer()
     try:
@@ -3691,6 +3761,23 @@ def _parallel_pull_files(
                 res = future.result()
                 if res is not None:
                     results.append(res)
+            except DeviceDisconnectedError as exc:
+                # Device cable pulled mid-acquisition.  Cancel immediately so
+                # all pending futures are abandoned rather than issuing
+                # thousands of doomed ADB commands.
+                case.log(
+                    "adb.disconnect",
+                    str(exc),
+                    result="error",
+                    tier=Tier.TIER0.value,
+                )
+                if cancel_token:
+                    cancel_token.cancel()
+                # Break out of the as_completed loop; pending futures will be
+                # abandoned when the executor exits the context manager.
+                break
+            except AcquisitionCancelled:
+                break
             except Exception as exc:
                 case.log(
                     "adb.pull",

@@ -142,3 +142,43 @@ class MockDeviceSource(AcquisitionSource):
 
     def root_available(self) -> bool:
         return bool(self._meta.get("device", {}).get("rooted", False))
+
+    # ------------------------------------------------------------------
+    # Connection health + file validation stubs (fetching-bug fixes)
+    # ------------------------------------------------------------------
+
+    def is_device_connected(self) -> bool:
+        """Mock sources are always 'connected' — they never disconnect."""
+        return True
+
+    def file_exists(self, device_path: str) -> bool:
+        """Return True only if the corresponding fixture file actually exists.
+
+        This allows tests to inject phantom paths by omitting files from the
+        fixtures directory, exercising the validation logic end-to-end without
+        a real device.
+        """
+        return self._to_local(device_path).exists()
+
+    def validate_file_list(
+        self,
+        paths: list,
+        progress_cb=None,
+        max_workers: int = 1,
+    ) -> tuple:
+        """Filter *paths* to those that exist in the fixtures tree.
+
+        Uses :meth:`file_exists` sequentially (single-threaded) because the
+        mock source is local-disk I/O and does not benefit from concurrency.
+        """
+        valid = []
+        phantom = 0
+        total = len(paths)
+        for i, p in enumerate(paths, 1):
+            if self.file_exists(p):
+                valid.append(p)
+            else:
+                phantom += 1
+            if progress_cb:
+                progress_cb(i, total)
+        return valid, phantom

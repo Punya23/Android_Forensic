@@ -97,3 +97,43 @@ class AcquisitionSource(ABC):
 
     def root_available(self) -> bool:
         return False
+
+    def is_device_connected(self) -> bool:
+        """Return True if the device is still reachable over ADB.
+
+        Called before every file pull as a cheap connection guard.  The default
+        implementation always returns True so that mock sources and sources that
+        do not support live connection checking are never blocked.  Override in
+        :class:`~triage.acquire.real.RealDeviceSource`.
+        """
+        return True
+
+    def file_exists(self, device_path: str) -> bool:
+        """Return True if *device_path* actually exists on the device.
+
+        Used by the pre-scan validation step to filter phantom files reported
+        by MediaStore before any pull is attempted.  The default returns True
+        so that sources without device access (e.g. mock) are never filtered.
+        Override in :class:`~triage.acquire.real.RealDeviceSource`.
+        """
+        return True
+
+    def validate_file_list(
+        self,
+        paths: list,
+        progress_cb=None,
+    ) -> tuple:
+        """Pre-scan *paths* and return ``(valid_paths, phantom_count)``.
+
+        Iterates over *paths* calling :meth:`file_exists` for each.  Callers
+        may pass a *progress_cb(done, total)* callable for live reporting.
+        The default implementation returns all paths as valid (no filtering).
+        Override in sources that can efficiently check device-side existence.
+
+        Returns
+        -------
+        tuple[list[str], int]
+            A 2-tuple of ``(valid_paths, phantom_count)`` where
+            *phantom_count* is the number of paths that did not exist.
+        """
+        return list(paths), 0

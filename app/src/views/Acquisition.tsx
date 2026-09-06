@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, getSocket } from "../lib/api";
+import { api, getSocket, BASE } from "../lib/api";
 import type {
   AcqEvent,
   DeviceCheckResponse,
@@ -36,7 +36,7 @@ import {
 } from "lucide-react";
 
 const STAGES = [
-  "init", "device", "intel", "tier1", "enumerate", "screenshot", "pull", "location", "recover",
+  "init", "device", "intel", "tier1", "enumerate", "validate", "screenshot", "pull", "location", "recover",
   "flag", "timeline", "analysis", "persist", "report", "done",
 ];
 
@@ -103,6 +103,13 @@ export function AcquisitionView({
   const [manualBrand, setManualBrand] = useState("");
   const [reasserting, setReasserting] = useState(false);
   const [reassertMsg, setReassertMsg] = useState<string | null>(null);
+  // Resume / checkpoint state
+  const [checkpoint, setCheckpoint] = useState<{
+    exists: boolean;
+    completed_count?: number;
+    saved_at?: string;
+  } | null>(null);
+  const [stopping, setStopping] = useState(false);
 
 
   useEffect(() => {
@@ -117,6 +124,33 @@ export function AcquisitionView({
     });
     api.cases().then(setCases).catch(() => {});
   }, []);
+
+  // Check for an existing checkpoint whenever the case ID changes.
+  useEffect(() => {
+    if (!caseId.trim()) { setCheckpoint(null); return; }
+    fetch(`${BASE}/api/cases/${encodeURIComponent(caseId)}/checkpoint`, {
+      headers: { "Authorization": `Bearer ${localStorage.getItem("snagr_token") ?? ""}` },
+    })
+      .then((r) => r.json())
+      .then(setCheckpoint)
+      .catch(() => setCheckpoint(null));
+  }, [caseId]);
+
+  async function handleStopAcquisition() {
+    setStopping(true);
+    try {
+      await fetch(`${BASE}/api/acquire/cancel`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${localStorage.getItem("snagr_token") ?? ""}`,
+        },
+        body: JSON.stringify({}),
+      });
+    } finally {
+      setStopping(false);
+    }
+  }
 
   useEffect(() => {
     const s = getSocket();
@@ -306,6 +340,8 @@ export function AcquisitionView({
         acqEvents={acqEvents} 
         completed={completed}
         reportReady={reportReady}
+        stopping={stopping}
+        onStop={handleStopAcquisition}
         onViewCase={() => {
           setRunning(false);
           onCaseReady(acquiredCaseId || caseId);
@@ -322,6 +358,21 @@ export function AcquisitionView({
         Connect a seized device or select a mock corpus, record the legal authority, and
         begin a minimally-invasive Tier-0 triage.
       </p>
+
+      {/* Resume banner — shown when a checkpoint exists for this case */}
+      {checkpoint?.exists && (
+        <div className="card border-accent/40 bg-accent/10 p-4 mb-4 flex items-start gap-3">
+          <span className="text-accent text-xl mt-0.5">↩</span>
+          <div className="flex-1">
+            <p className="font-semibold text-accent text-sm">Resumable checkpoint found</p>
+            <p className="text-xs text-muted mt-0.5">
+              {checkpoint.completed_count} files already collected
+              {checkpoint.saved_at ? ` · saved ${new Date(checkpoint.saved_at).toLocaleString()}` : ""}.
+              Starting a new acquisition on this case ID will skip those files automatically.
+            </p>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="card border-deletion/50 bg-deletion/10 p-3 mb-4 text-sm text-deletion">
@@ -1188,6 +1239,8 @@ function ProgressScreen({
   acqEvents,
   completed,
   reportReady,
+  stopping,
+  onStop,
   onViewCase,
 }: {
   progress: Progress | null;
@@ -1195,6 +1248,8 @@ function ProgressScreen({
   acqEvents: AcqEvent[];
   completed?: boolean;
   reportReady?: boolean;
+  stopping?: boolean;
+  onStop?: () => void;
   onViewCase?: () => void;
 }) {
   const pct = Math.round((progress?.pct ?? 0) * 100);
@@ -1206,9 +1261,21 @@ function ProgressScreen({
       <div className="w-full card p-8 mb-4">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-semibold">{completed ? "Acquisition complete" : "Acquisition in progress"}</h2>
-          <span className="font-mono text-2xl tabular-nums text-accent">
-            {mm}:{ss}
-          </span>
+          <div className="flex items-center gap-3">
+            {!completed && onStop && (
+              <button
+                id="stop-acquisition-btn"
+                onClick={onStop}
+                disabled={stopping}
+                className="px-3 py-1.5 rounded text-sm font-medium border border-deletion/60 text-deletion hover:bg-deletion/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {stopping ? "Stopping…" : "⏹ Stop Acquisition"}
+              </button>
+            )}
+            <span className="font-mono text-2xl tabular-nums text-accent">
+              {mm}:{ss}
+            </span>
+          </div>
         </div>
         <div className="h-3 rounded-full bg-panel overflow-hidden mb-2">
           <div

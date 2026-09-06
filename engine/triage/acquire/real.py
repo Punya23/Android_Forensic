@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import re
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Callable, List, Optional, Tuple
 
 from ..adb import Adb
 from ..config import DEVICE_PROPS, OEM_QUIRKS, OEM_SPECIFIC_PATHS
@@ -199,6 +200,100 @@ class RealDeviceSource(AcquisitionSource):
 
     def root_available(self) -> bool:
         return self.adb.is_root_available()
+
+    # ------------------------------------------------------------------
+    # Connection health + file validation (fetching-bug fixes)
+    # ------------------------------------------------------------------
+
+    def is_device_connected(self) -> bool:
+        """Return True if the device is still listed as 'device' by adb devices.
+
+        This is a fast (<1 s) check issued before every file pull.  If the
+        phone cable is pulled mid-acquisition this will return False and the
+        pipeline will stop immediately rather than issuing thousands of
+        doomed pull commands.
+        """
+        serial = self.adb.serial
+        devices = self.adb.list_devices(self.adb.adb_path)
+        for d in devices:
+            if d.get("state") != "device":
+                continue
+            # Match either an explicit serial or the sole connected device.
+            if serial is None or d.get("serial") == serial:
+                return True
+        return False
+
+    def file_exists(self, device_path: str) -> bool:
+        """Return True if *device_path* exists on the device.
+
+        Uses ``adb shell test -e`` — a single shell built-in that returns
+        exit code 0 when the path exists, 1 when it does not.  Much faster
+        than a full ``find`` traversal and produces no output to parse.
+        """
+        res = self.adb.shell(f"test -e '{device_path}' && echo 1 || echo 0", timeout=10)
+        return res.stdout.strip() == "1"
+
+    def validate_file_list(
+        self,
+        paths: List[str],
+        progress_cb: Optional[Callable[[int, int], None]] = None,
+        max_workers: int = 16,
+    ) -> Tuple[List[str], int]:
+        """Pre-scan *paths* and return ``(valid_paths, phantom_count)``.
+
+        Runs :meth:`file_exists` for every path in a thread pool so that
+        validating 5 000 files takes ~30 s instead of discovering failures
+        during a 2-hour pull.  Paths that do not exist on the device are
+        silently dropped; the count is returned so the pipeline can log it.
+
+        Parameters
+        ----------
+        paths:
+            Device-side paths to validate (typically from MediaStore).
+        progress_cb:
+            Optional ``(done, total)`` callback for live progress reporting.
+        max_workers:
+            Thread pool size.  Defaults to 16 (I/O-bound, not CPU-bound).
+
+        Returns
+        -------
+        tuple[list[str], int]
+            ``(valid_paths, phantom_count)``
+        """
+        total = len(paths)
+        if total == 0:
+            return [], 0
+
+        valid: List[str] = []
+        phantom = 0
+        done = 0
+        _lock = concurrent.futures.ThreadPoolExecutor.__new__  # just for typing
+        import threading
+        _lock = threading.Lock()
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(max_workers, total),
+            thread_name_prefix="validate",
+        ) as executor:
+            future_to_path = {
+                executor.submit(self.file_exists, p): p for p in paths
+            }
+            for future in concurrent.futures.as_completed(future_to_path):
+                p = future_to_path[future]
+                try:
+                    exists = future.result()
+                except Exception:
+                    exists = True  # on error, assume valid — better to try than skip
+                with _lock:
+                    done += 1
+                    if exists:
+                        valid.append(p)
+                    else:
+                        phantom += 1
+                    if progress_cb:
+                        progress_cb(done, total)
+
+        return valid, phantom
 
 
 # ---------------------------------------------------------------------------

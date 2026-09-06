@@ -42,6 +42,7 @@ from . import TOOL_NAME, __version__
 from .acquire import MockDeviceSource, RealDeviceSource
 from .adb import Adb
 from .cancellation import AcquisitionCancelled, CancellationToken
+from .checkpoint import checkpoint_exists, load_checkpoint
 from .config import ACQUISITION_DISCLAIMER, Tier
 from .custody import Case
 from .pipeline import PipelineConfig, run_acquisition
@@ -1128,6 +1129,40 @@ def create_app(cases_root: Path = CASES_ROOT):
             return jsonify({"error": "no acquisition is currently running"}), 409
         token.cancel()
         return jsonify({"cancelling": True, "case_id": state.get("last_case")})
+
+    @app.get("/api/cases/<case_id>/checkpoint")
+    def case_checkpoint_status(case_id: str):
+        """Return checkpoint metadata for *case_id* so the UI can offer resume.
+
+        Returns
+        -------
+        200  ``{exists: true, stage, saved_at, completed_count}``
+             when a valid checkpoint exists.
+        200  ``{exists: false}``
+             when no checkpoint is present.
+        400  on an invalid case_id.
+        """
+        try:
+            validate_case_id(case_id)
+        except ValueError:
+            return jsonify({"error": "invalid case_id"}), 400
+
+        case_dir = cases_root / case_id
+        if not checkpoint_exists(case_dir):
+            return jsonify({"exists": False})
+
+        try:
+            envelope = load_checkpoint(case_dir)
+        except Exception as exc:
+            return jsonify({"exists": False, "error": str(exc)})
+
+        data = envelope.get("data", {})
+        return jsonify({
+            "exists": True,
+            "stage": envelope.get("stage"),
+            "saved_at": envelope.get("saved_at"),
+            "completed_count": len(data.get("completed_files", [])),
+        })
 
     @app.get("/api/case/<case_id>/report_status")
     def report_status(case_id: str):
