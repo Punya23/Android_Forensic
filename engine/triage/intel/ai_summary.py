@@ -183,14 +183,6 @@ def _relevant_findings(
     return matched, sorted(relevant_entities)
 
 
-def _can_narrate(provider: LLMProvider) -> bool:
-    """Whether *provider* can write prose at all — the heuristic stand-in never can,
-    by design (see llm.py). Checked once by the caller; :func:`_narrative` itself
-    trusts that check rather than repeating it, so there's exactly one place this
-    "usable for narration" rule lives in this module."""
-    return bool(getattr(provider, "available", False)) and provider.name != "heuristic"
-
-
 def _narrative(
     provider: LLMProvider, profile: CaseProfile, matched: list[Finding]
 ) -> Optional[str]:
@@ -247,7 +239,7 @@ def generate_ai_evidence_summary(
             "no collected finding matched a named case entity/keyword in a "
             "high-yield artifact class for this crime type"
         )
-    elif not _can_narrate(provider):
+    elif not provider.is_usable():
         bundle.provider = provider.name
         bundle.degraded_from = getattr(provider, "degraded_from", "")
         bundle.reason = (

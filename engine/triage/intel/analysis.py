@@ -774,7 +774,7 @@ _NARRATIVE_SYSTEM = (
 def _llm_narrative(
     provider: LLMProvider, profile: CaseProfile, findings: list[Finding]
 ) -> Optional[str]:
-    if not getattr(provider, "available", False) or provider.name == "heuristic":
+    if not provider.is_usable():
         return None
     top = findings[:15]
     if not top:

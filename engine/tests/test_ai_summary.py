@@ -17,7 +17,7 @@ from triage.intel.ai_summary import (
 )
 from triage.intel.analysis import Finding
 from triage.intel.knowledge_graph import KnowledgeGraph
-from triage.intel.llm import HeuristicProvider
+from triage.intel.llm import HeuristicProvider, LLMProvider
 from triage.intel.planner import CaseProfile
 
 
@@ -53,7 +53,7 @@ def _finding(**kw) -> Finding:
     return Finding(**base)
 
 
-class _FakeProvider:
+class _FakeProvider(LLMProvider):
     """Stands in for OllamaProvider without a network — deterministic text back."""
 
     name = "ollama"

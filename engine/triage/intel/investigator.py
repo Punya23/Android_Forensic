@@ -266,7 +266,7 @@ def _investigation_narrative(
     hypotheses: list[Hypothesis],
     linked: list[LinkedFinding],
 ) -> Optional[str]:
-    if not getattr(provider, "available", False) or provider.name == "heuristic":
+    if not provider.is_usable():
         return None
     if not hypotheses:
         return None

@@ -53,6 +53,19 @@ class LLMProvider(ABC):
     def generate(self, system: str, prompt: str) -> Optional[str]:
         """Return free-text, or None if the provider can't answer."""
 
+    def is_usable(self) -> bool:
+        """Whether this provider can actually be asked to write prose/JSON right now.
+
+        ``available`` alone isn't enough: :class:`HeuristicProvider` reports itself
+        ``available`` by design (the tool must run with no model configured) but
+        deliberately never answers a narration request — so every caller across the
+        intel layer that wants "is this a real, usable model" rather than "did the
+        provider construct successfully" needs this same extra ``name != "heuristic"``
+        check. Centralised here so analysis.py, investigator.py and ai_summary.py
+        can't each grow a slightly different copy of it.
+        """
+        return bool(self.available) and self.name != "heuristic"
+
 
 # --- heuristic (offline default) --------------------------------------------
 class HeuristicProvider(LLMProvider):
