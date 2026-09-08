@@ -2686,6 +2686,32 @@ def run_acquisition(
                         tier=Tier.TIER0.value,
                     )
 
+                # -- Entity cross-links: same-case name/number -> occurrence map -----
+                # Deterministic substring match over this case's own passages (see
+                # triage/intel/entity_links.py) — no LLM, so no opt-in flag beyond
+                # run_ai_analysis itself. Separate try/except for the same reason as
+                # investigation, above: a failure here must not read as "analysis
+                # error" when ai_findings itself is fine.
+                try:
+                    from .intel.entity_links import build_entity_links_for_case
+
+                    links = build_entity_links_for_case(case, profile)
+                    case.log(
+                        "intel.entity_links",
+                        f"Entity cross-links: {links['entity_count']} case-brief "
+                        f"entit(y/ies) checked against {links['passages_scanned']} "
+                        "collected passage(s).",
+                        tier=Tier.TIER0.value,
+                    )
+                except Exception as exc:
+                    case.log(
+                        "intel.entity_links",
+                        f"entity cross-link error: {exc}. The AI leads above are "
+                        "unaffected — only this cross-linking pass failed.",
+                        result="error",
+                        tier=Tier.TIER0.value,
+                    )
+
                 # -- AI evidence summary: entirely model-authored, entity+yield-scoped -
                 # Separate try/except from the analysis above for the same reason as the
                 # investigation pass: a failure here must not read as "analysis error"

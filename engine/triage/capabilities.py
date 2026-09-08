@@ -621,6 +621,21 @@ CATALOGUE: dict[str, Capability] = {
         # A text field closes it; a second acquisition does not.
         needs_case_brief=True,
     ),
+    "entity_links": Capability(
+        "entity_links",
+        "Entity cross-links",
+        -1,
+        "Runs on the same case brief as Case Intelligence — needs a brief naming at "
+        "least one person/number to cross-link against this case's own collected "
+        "data.",
+        flag="run_ai_analysis",
+        ran_if_present=("ai_findings",),
+        # Same shape as investigation_trace above: build_entity_links_for_case() reads
+        # the brief-derived case profile, and the pipeline builds no profile without a
+        # brief, so on a briefless case this file is never written and the ai_findings
+        # corroborator is absent too.
+        needs_case_brief=True,
+    ),
     # --- named, not built --------------------------------------------------
     "ios_acquisition": Capability(
         "ios_acquisition",

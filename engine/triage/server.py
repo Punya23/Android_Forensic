@@ -791,6 +791,25 @@ def create_app(cases_root: Path = CASES_ROOT):
         )
         return jsonify(bundle)
 
+    @app.post("/api/case/<case_id>/entity-links")
+    def entity_links_endpoint(case_id: str):
+        """(Re-)cross-link this case's brief-named entities against its own collected
+        data — see triage/intel/entity_links.py. Deterministic substring match, no
+        LLM; requires a case profile (run /analyze first, or supply one this run
+        already has)."""
+        body = request.get_json(silent=True) or {}
+
+        from .intel.entity_links import build_entity_links_for_case
+
+        case, profile, _provider, error = _load_case_and_profile(
+            cases_root, case_id, body
+        )
+        if error:
+            return error
+
+        bundle = build_entity_links_for_case(case, profile)
+        return jsonify(bundle)
+
     @app.post("/api/case/<case_id>/ask")
     def ask_case_endpoint(case_id: str):
         """"Ask this case" — free-text Q&A over the case's own already-collected
@@ -1360,6 +1379,9 @@ def create_app(cases_root: Path = CASES_ROOT):
             # Entirely model-authored narrative, scoped to entity+yield-matched
             # findings only — see triage/intel/ai_summary.py.
             "ai_evidence_summary",
+            # Same-case name/number -> occurrence-across-datasets map — see
+            # triage/intel/entity_links.py.
+            "entity_links",
             "case_profile",
             "collection_plan",
             # Re-analysis writes its re-ranking here rather than over the plan that

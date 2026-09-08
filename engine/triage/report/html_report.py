@@ -448,6 +448,158 @@ def _overview_charts_section(
     return f'<div class="charts">{"".join(cards)}</div>'
 
 
+def _ai_case_report_section(
+    case_profile: dict,
+    ai_evidence_summary: dict,
+    investigation_trace: dict,
+    entity_links: dict,
+) -> str:
+    """The enriched, prose-first read of the case — what an officer opening this
+    report is meant to read first. Everything here is either the model's own
+    already-cited narrative (:mod:`~triage.intel.ai_summary`, grounded to finding ids
+    that are themselves listed, unfiltered, in the raw Case Intelligence leads table
+    below) or a deterministic, disclosed pass on top of the same findings
+    (:mod:`~triage.intel.investigator`, :mod:`~triage.intel.entity_links`). Nothing in
+    this section is a new, unauditable claim — see each sub-block's own disclaimer.
+
+    Every one of the three inputs can honestly be empty (no case brief, no model
+    reachable, nothing matched) — this function renders the *reason* in each case
+    rather than a blank space that reads as "nothing was found".
+    """
+    if not isinstance(case_profile, dict) or not case_profile.get("crime_type"):
+        return ""
+
+    crime_label = case_profile.get("crime_label", "General / Unspecified")
+
+    # --- AI Evidence Summary: the model-authored narrative ---------------------
+    if ai_evidence_summary.get("generated"):
+        summary_html = (
+            f'<div style="white-space:pre-wrap;line-height:1.55;font-size:14px;'
+            f'color:#222">{_esc(ai_evidence_summary.get("narrative", ""))}</div>'
+            f'<p style="font-size:11px;color:#777;margin:10px 0 0">'
+            f'{_esc(ai_evidence_summary.get("disclaimer", ""))}</p>'
+        )
+    else:
+        reason = ai_evidence_summary.get("reason") or (
+            "AI evidence summary was not generated for this case (the summarise "
+            "step was not run)."
+        )
+        summary_html = (
+            f'<p style="color:#a6741a;font-size:13px;background:#f6ecd4;'
+            f'border:1px solid #d9c07a;border-radius:4px;padding:8px 12px">'
+            f"No AI-authored narrative available: {_esc(reason)}. The ranked leads "
+            "and full raw evidence below are unaffected — only this prose summary "
+            "could not be written.</p>"
+        )
+
+    # --- Deep investigation: hypotheses + cross-dataset correlations -----------
+    hyp_rows = ""
+    for h in investigation_trace.get("hypotheses", []) or []:
+        status = h.get("status", "pending")
+        status_col = {"answered": "#1c7d3f", "blocked": "#a6741a", "pending": "#666"}
+        hyp_rows += (
+            f'<tr><td style="font-size:12px">{_esc(h.get("question"))}</td>'
+            f'<td><span style="color:{status_col.get(status, "#666")};font-weight:700;'
+            f'text-transform:uppercase;font-size:11px">{_esc(status)}</span></td>'
+            f'<td style="font-size:12px;color:#444">{_esc(h.get("detail") or "—")}</td></tr>'
+        )
+    linked_rows = ""
+    for lf in investigation_trace.get("linked_findings", []) or []:
+        linked_rows += (
+            f'<tr><td style="font-size:11px;font-family:monospace">{_esc(lf.get("left_ref"))} '
+            f'&harr; {_esc(lf.get("right_ref"))}</td>'
+            f'<td style="font-size:12px">{_esc(lf.get("rationale"))}</td>'
+            f'<td style="font-size:11px;color:#666">{_esc(lf.get("gap_seconds"))}s gap</td></tr>'
+        )
+    investigation_narrative = investigation_trace.get("narrative", "")
+    investigation_html = ""
+    if hyp_rows or investigation_narrative:
+        investigation_html = (
+            '<div style="margin-top:16px;border-top:1px dashed #ccd;padding-top:12px">'
+            '<div style="font-size:14px;font-weight:700;color:#334;margin-bottom:6px">'
+            "Deep investigation</div>"
+            + (
+                f'<div style="white-space:pre-wrap;font-size:13px;color:#333;'
+                f'margin-bottom:8px">{_esc(investigation_narrative)}</div>'
+                if investigation_narrative
+                else ""
+            )
+            + (
+                '<table class="tbl" style="width:100%;border-collapse:collapse">'
+                "<thead><tr><th>Question</th><th>Status</th><th>Detail</th></tr></thead>"
+                f"<tbody>{hyp_rows}</tbody></table>"
+                if hyp_rows
+                else ""
+            )
+            + (
+                '<div style="font-size:12px;font-weight:700;color:#334;margin:10px 0 4px">'
+                "Cross-dataset correlations</div>"
+                '<table class="tbl" style="width:100%;border-collapse:collapse">'
+                "<thead><tr><th>Findings</th><th>Why linked</th><th>Time gap</th></tr></thead>"
+                f"<tbody>{linked_rows}</tbody></table>"
+                if linked_rows
+                else ""
+            )
+            + f'<p style="font-size:11px;color:#777;margin:10px 0 0">'
+            f'{_esc(investigation_trace.get("disclaimer", ""))}</p></div>'
+        )
+
+    # --- Entity cross-links: wherever a case-brief name is found ---------------
+    ent_rows = ""
+    for e in entity_links.get("entities", []) or []:
+        datasets = ", ".join(e.get("datasets") or []) or "—"
+        truncated = e.get("truncated") or 0
+        count_str = f"{e.get('occurrence_count')}"
+        if truncated:
+            count_str += f" (+{truncated} more not listed)"
+        ent_rows += (
+            f'<tr><td style="font-size:12px;font-weight:600">{_esc(e.get("entity"))}</td>'
+            f'<td style="font-size:11px;color:#666">{_esc(datasets)}</td>'
+            f'<td style="font-size:12px;text-align:right">{_esc(count_str)}</td></tr>'
+        )
+    entity_html = ""
+    if entity_links.get("entities") or entity_links.get("reason"):
+        if ent_rows:
+            body = (
+                '<table class="tbl" style="width:100%;border-collapse:collapse">'
+                "<thead><tr><th>Named in case brief</th><th>Found in datasets</th>"
+                "<th style=\"text-align:right\">Occurrences</th></tr></thead>"
+                f"<tbody>{ent_rows}</tbody></table>"
+            )
+        else:
+            body = (
+                f'<p style="color:#999;font-size:12px">'
+                f'{_esc(entity_links.get("reason", "No cross-links to show."))}</p>'
+            )
+        entity_html = (
+            '<div style="margin-top:16px;border-top:1px dashed #ccd;padding-top:12px">'
+            '<div style="font-size:14px;font-weight:700;color:#334;margin-bottom:6px">'
+            "Entity cross-links — wherever a named party turns up</div>"
+            f"{body}"
+            f'<p style="font-size:11px;color:#777;margin:10px 0 0">'
+            f'{_esc(entity_links.get("disclaimer", ""))}</p></div>'
+        )
+
+    return f"""
+    <h2>AI Case Report</h2>
+    <p class="note">
+      Enriched, case-brief-driven read of this device's evidence for {_esc(crime_label)}.
+      Every statement below cites a finding id (e.g. <code>F-MSG-0007</code>) that is
+      also listed, unfiltered, in <a href="#raw-evidence-data">Raw Evidence Data</a>
+      below — this section adds no evidence of its own, only prose and correlation on
+      top of what is already there. It is an investigative aid, not a certified
+      conclusion, and this tool has never been independently validated.
+    </p>
+    <div style="border:1px solid #556;border-radius:6px;padding:14px 18px;margin-bottom:22px;background:#fafaff">
+      <div style="font-size:16px;font-weight:700;color:#334;margin-bottom:8px">
+        &#10024; Evidence summary
+      </div>
+      {summary_html}
+      {investigation_html}
+      {entity_html}
+    </div>"""
+
+
 def generate_report(case_dir: str | Path) -> Path:
     """Render report.html inside a case folder from its persisted JSON artifacts."""
     from ..custody import Case  # local import to avoid a cycle
@@ -493,6 +645,9 @@ def generate_report(case_dir: str | Path) -> Path:
     notable_apps = [a for a in apps if isinstance(a, dict) and a.get("notable")]
     case_profile = case.read_derived("case_profile") or {}
     ai_findings = case.read_derived("ai_findings") or {}
+    investigation_trace = case.read_derived("investigation_trace") or {}
+    ai_evidence_summary = case.read_derived("ai_evidence_summary") or {}
+    entity_links = case.read_derived("entity_links") or {}
     collect_plan = case.read_derived("collection_plan") or {}
     case_learning = case.read_derived("case_learning") or {}
     wifi_networks = case.read_derived("wifi") or []
@@ -541,6 +696,22 @@ def generate_report(case_dir: str | Path) -> Path:
 
     # Triage disclaimer banner
     parts.append(f'<div class="banner">{_esc(ACQUISITION_DISCLAIMER)}</div>')
+
+    # Two ways to read this one document: the enriched narrative, or the complete
+    # unfiltered dataset it is drawn from. Plain anchor links, not a JS/CSS
+    # show-hide toggle — a printed or PDF-exported copy of this report must never
+    # have a section silently disappear because of which view was selected on
+    # screen; both stay fully present, this is just where to jump.
+    if isinstance(case_profile, dict) and case_profile.get("crime_type"):
+        parts.append(
+            '<div style="display:flex;gap:10px;margin-bottom:18px">'
+            '<a href="#ai-case-report" style="flex:1;text-align:center;padding:10px;'
+            'border-radius:6px;background:#334;color:#fff;text-decoration:none;'
+            'font-weight:700;font-size:13px">&#128203; AI Case Report</a>'
+            '<a href="#raw-evidence-data" style="flex:1;text-align:center;padding:10px;'
+            'border-radius:6px;border:1px solid #556;color:#334;text-decoration:none;'
+            'font-weight:700;font-size:13px">&#128196; Raw Evidence Data</a></div>'
+        )
 
     # Table of contents — filled in by _inject_toc() once every section below has
     # been appended, so it never has to be kept in sync by hand.
@@ -592,6 +763,22 @@ def generate_report(case_dir: str | Path) -> Path:
         parts.append(
             "<h2>Encryption posture (FBE / AFU-BFU)</h2>"
             f'<p class="note" style="color:#a5322f">Could not render: {_esc(exc)}</p>'
+        )
+
+    # AI Case Report: the enriched, prose-first read — see _ai_case_report_section's
+    # own docstring for why this sits ahead of the deterministic leads table below
+    # rather than after it. Renders "" (appends nothing) on a briefless case.
+    try:
+        parts.append(
+            _ai_case_report_section(
+                case_profile, ai_evidence_summary, investigation_trace, entity_links
+            )
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        parts.append(
+            "<h2>AI Case Report</h2>"
+            f'<p class="note" style="color:#a5322f">Could not render: {_esc(exc)}. '
+            "The ranked leads and raw evidence below are unaffected.</p>"
         )
 
     # Case-intelligence: profile + AI leads (only if a case brief was provided)
@@ -782,6 +969,23 @@ def generate_report(case_dir: str | Path) -> Path:
             {_esc(ai_findings.get("disclaimer", "AI-surfaced leads require human verification."))}
           </p>
         </div>"""
+        )
+
+    # Raw Evidence Data: from here down is the complete, unfiltered dataset this
+    # acquisition collected. Every citation in the AI Case Report above (and every
+    # row in its own leads table) references specific entries in these sections by
+    # id — use them to verify, this report never asks a reader to take the summary
+    # on faith.
+    # Only worth its own heading (and the nav strip above pointing at it) when there is
+    # an AI Case Report to distinguish it from — on a briefless case, everything below
+    # already *is* the whole report; a "Raw Evidence Data" label would be a heading
+    # answering a question nobody asked.
+    if isinstance(case_profile, dict) and case_profile.get("crime_type"):
+        parts.append(
+            "<h2>Raw Evidence Data</h2>"
+            '<p class="note">Full, unfiltered artifact detail collected from the '
+            "device — the same data the AI Case Report above is drawn from and "
+            "cites. Nothing here is filtered or reordered by the case brief.</p>"
         )
 
     # Case + device
