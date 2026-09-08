@@ -197,16 +197,47 @@ deterministic path, says so in the audit log and on screen, and records
 `retrieval_mode: lexical` so nobody later reads the plan as having had a basis it did
 not have.
 
-### Packaging (`npm run electron:build`) — ⚠ untuned
+### Packaging (`npm run electron:build`) — builds a real installer, unsigned
 
-`app/package.json` has **no `"build"` config block** for electron-builder, and no
-`electron-builder.yml` exists — so `electron:build` currently runs on electron-builder's
-bare defaults (autodetected target per OS: dmg/nsis/AppImage), with no `productName`,
-`appId`, or output directory pinned. More importantly: `electron/main.cjs` expects a
-packaged build to find a standalone `triage-engine` executable under
-`resources/engine/triage-engine` — **no build step in this repo produces that binary**
-(no PyInstaller spec wired to the packaging script, despite `build_package.py` existing at
-the repo root). Packaging the desktop app today needs this gap closed first.
+Two-step build: PyInstaller freezes the engine into a standalone binary, then
+electron-builder bundles it into the desktop app.
+
+```bash
+# 1. Freeze the engine (from engine/, with .venv active) — produces
+#    engine/dist/triage-engine/triage-engine
+cd engine && .venv/bin/pyinstaller snagr.spec --noconfirm
+
+# 2. Build the desktop app (from app/) — produces app/release/SNAGR-<version>*.dmg
+#    (and mac-arm64/mac x64 unpacked .app builds alongside it)
+cd ../app && npm run electron:build
+```
+
+`app/package.json`'s `"build"` block pins `productName`/`appId`, sends output to
+`app/release/` (not `dist/` — that's vite's build output, would collide), and
+`extraResources` copies `engine/dist/triage-engine/` to `resources/engine/` in the
+packaged app, matching what `electron/main.cjs` expects at that exact path. Icons
+(`app/build/icons/icon.{icns,ico}`, source in `generate.py`) are wired for mac/win/linux.
+
+Verified: the frozen engine binary answers `GET /api/health` standalone, and the
+packaged `.app` bundles the engine at the right resource path with the icon set
+correctly in `Info.plist`. **Not verified from this checkout:** actually launching the
+packaged GUI and clicking through it — do that once, by hand, before a demo.
+
+Known gaps still open:
+- **Unsigned** — no Apple Developer ID / EV cert here, so macOS Gatekeeper blocks a
+  plain double-click on first run ("unidentified developer"). Workaround:
+  right-click → Open, or `xattr -d com.apple.quarantine SNAGR.app`. Same story on
+  Windows (SmartScreen) without a code-signing cert.
+- **PDF export (Playwright)** — `electron/pdf/pdfRenderer.cjs` renders reports via a
+  headless Chromium that Playwright launches, but `package.json`'s `allowScripts`
+  doesn't permit Playwright's own postinstall, so its browser binary is never
+  downloaded — `npm install` alone does not make PDF export work in a packaged build.
+  Needs `PLAYWRIGHT_BROWSERS_PATH=0` (installs the browser under `node_modules` so
+  electron-builder's default file-set actually picks it up) plus an `asarUnpack` entry
+  for the native binary, then a real `npx playwright install chromium` and a test of
+  the export flow. Left undone here — bundling a ~150–300 MB Chromium wasn't in scope
+  for "make it launch as a downloadable app"; do it separately before relying on the
+  in-app PDF export from a packaged build.
 
 ### APK release build — ⚠ unsigned
 

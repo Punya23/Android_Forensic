@@ -33,6 +33,7 @@
     "autoprefixer": "^10.4.19",
     "concurrently": "^8.2.2",
     "electron": "^31.0.0",
+    "electron-builder": "^26.15.3",
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.6",
     "typescript": "^5.5.3",
@@ -42,5 +43,34 @@
   "allowScripts": {
     "electron@31.7.7": true,
     "esbuild@0.21.5": true
+  },
+  "build": {
+    "appId": "in.snagr.forensictriage",
+    "productName": "SNAGR",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "extraResources": [
+      {
+        "from": "../engine/dist/triage-engine",
+        "to": "engine",
+        "filter": ["**/*"]
+      }
+    ],
+    "mac": {
+      "icon": "build/icons/icon.icns",
+      "category": "public.app-category.utilities",
+      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }]
+    },
+    "win": {
+      "icon": "build/icons/icon.ico",
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "linux": {
+      "icon": "build/icons/icon_512.png",
+      "category": "Utility",
+      "target": ["AppImage"]
+    }
   }
 }

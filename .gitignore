@@ -18,6 +18,14 @@ dist-electron/
 *.log
 *.tsbuildinfo
 
+# electron-builder output (installers, unpacked .app — rebuild via `npm run electron:build`).
+# Note: app/build/icons/ (the source .icns/.ico/.png) is NOT covered by this — that's tracked.
+app/release/
+
+# PyInstaller build cache/output for the packaged engine binary (rebuild via
+# `pyinstaller snagr.spec --noconfirm` from engine/). Large, platform-specific.
+engine/build/
+
 # Tool output
 cases/
 _corpus/
