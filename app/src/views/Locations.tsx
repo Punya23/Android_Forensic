@@ -394,9 +394,12 @@ export function LocationsView({ caseId }: { caseId: string }) {
   }, [mediaLocations]);
 
   // Only EXIF / MediaStore points are useful for photo-tracing; skip pure
-  // "dumpsys" last-known-fix points from the movement slider (they have no image).
+  // "dumpsys:<provider>" (e.g. "dumpsys:gps", "dumpsys:network") last-known-fix points
+  // from the movement slider (they have no image). Prefix match, not equality — the
+  // engine (pipeline.py) always writes the provider suffix, so an exact "dumpsys"
+  // comparison never matched and every dumpsys fix leaked into the photo set.
   const photoPoints = useMemo(
-    () => data.filter((p) => p.source !== "dumpsys"),
+    () => data.filter((p) => !p.source?.startsWith("dumpsys")),
     [data]
   );
 

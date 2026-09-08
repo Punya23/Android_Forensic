@@ -79,6 +79,7 @@ def build_timeline(
     searches: Iterable[dict] = (),
     bluetooth_bonds: Iterable[dict] = (),
     bluetooth_transfers: Iterable[dict] = (),
+    wifi_events: Iterable[dict] = (),
 ) -> list[dict]:
     """Build a sorted, unified timeline from all evidence types.
 
@@ -262,6 +263,22 @@ def build_timeline(
         ev = TimelineEvent(
             timestamp=ev_dict.get("timestamp", ""),
             kind=ev_dict.get("kind", "bluetooth_transfer"),
+            summary=ev_dict.get("summary", ""),
+            confidence=_as_confidence(ev_dict.get("confidence")),
+            ref=ev_dict.get("ref", ""),
+        )
+        (events if ev.timestamp else undated).append(ev)
+
+    # Wi-Fi association/usage events. `wifi_events` is already the
+    # `[TimelineEvent.to_dict(), ...]` list build_wifi_timeline() produces (pipeline.py
+    # writes the same list under wifi_live["timeline"], which no view ever reads) — the
+    # frontend's Timeline.tsx has carried a "wifi" kind/icon/nav-target since it was
+    # first written, but no source of "wifi" events ever reached the merged timeline
+    # this component actually renders until this stage was wired in.
+    for ev_dict in wifi_events:
+        ev = TimelineEvent(
+            timestamp=ev_dict.get("timestamp", ""),
+            kind=ev_dict.get("kind", "wifi"),
             summary=ev_dict.get("summary", ""),
             confidence=_as_confidence(ev_dict.get("confidence")),
             ref=ev_dict.get("ref", ""),

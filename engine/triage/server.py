@@ -252,12 +252,17 @@ def create_app(cases_root: Path = CASES_ROOT):
     def _is_public_route(path: str) -> bool:
         if path in ("/api/health", "/api/auth/login"):
             return True
-        # Raw-URL resource routes — see the comment above the AUTH block.
+        # Raw-URL resource routes — see the comment above the AUTH block. Each of these
+        # is fetched via a plain <a href download> anchor by the dashboard (LocationTrace
+        # export included) rather than an authenticated fetch(), so a browser-navigated
+        # GET here never carries the Authorization header — gating it behind auth just
+        # makes every download silently save a 401 JSON body instead of the file.
         if path.startswith("/api/case/") and (
             path.endswith("/report")
             or "/reports/" in path
             or "/media/" in path
             or path.endswith("/export/download")
+            or path.endswith("/location_trace_geojson")
         ):
             return True
         return False
@@ -445,7 +450,13 @@ def create_app(cases_root: Path = CASES_ROOT):
 
                     mocks.append(
                         {
-                            "id": str(d),
+                            # Relative to corpus_root, not str(d) — d is already
+                            # corpus_root/d.name, so str(d) round-tripped through
+                            # validate_mock_path's corpus_root-relative join (in the
+                            # acquisition-start handler below) resolved to
+                            # "_corpus/_corpus/device_A" and every mock acquisition
+                            # failed with "mock corpus not found".
+                            "id": d.name,
                             "kind": "mock",
                             "label": meta.get("device", {}).get("model", d.name),
                         }
