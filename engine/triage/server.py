@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, send_file, abort
+from flask import Flask, jsonify, request, send_file, send_from_directory, abort
 from flask_cors import CORS
 
 # Load engine/.env (sibling of the triage/ package, not cwd — so this works whether
@@ -77,7 +77,17 @@ if _extra_cors:
 CASES_ROOT = Path("cases")
 
 
-def create_app(cases_root: Path = CASES_ROOT):
+def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
+    """
+    network_mode: "airgapped" (default) or "lan". Purely descriptive here — the
+    module-level docstring's "localhost only" claim is enforced by main()
+    refusing to bind a non-loopback host unless --network-mode lan is explicit
+    (see main()). This value only (a) gets recorded into each case's
+    acquisition_config so a report can state what posture it was acquired
+    under, and (b) gates demo/weak auth from ever being reachable off-box.
+    """
+
+    network_mode = (network_mode or os.environ.get("SNAGR_NETWORK_MODE", "airgapped")).strip().lower()
 
     app = Flask(__name__)
 
@@ -186,6 +196,16 @@ def create_app(cases_root: Path = CASES_ROOT):
             "[auth] FATAL: SNAGR_AUTH_PASS is not set and demo mode is off. "
             "Set SNAGR_AUTH_PASS before handling evidence, or start with SNAGR_DEMO=1.",
             flush=True,
+        )
+
+    if network_mode == "lan" and (_DEMO_MODE or not _credentials_ok):
+        # A LAN bind means anyone on that network segment can reach the login endpoint.
+        # Demo/default credentials or "no credentials configured" is fine on loopback
+        # (only the same machine can reach it) but must never be reachable off-box.
+        raise RuntimeError(
+            "network_mode='lan' refuses to start in demo mode or without real auth. "
+            "Set SNAGR_AUTH_PASS (or SNAGR_AUTH_HASH) and do not set SNAGR_DEMO, "
+            "or run with --network-mode airgapped."
         )
 
     SESSION_TTL_SECONDS = 12 * 3600
@@ -1019,6 +1039,7 @@ def create_app(cases_root: Path = CASES_ROOT):
             legal_authority=authority,
             scope_note=scope,
             cases_root=cases_root,
+            network_mode=network_mode,
             tier1_contacts=bool(body.get("tier1_contacts", False)),
             tier1_calllog=bool(body.get("tier1_calllog", False)),
             tier1_sms=bool(body.get("tier1_sms", False)),
@@ -1854,7 +1875,39 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         abort(404)
 
+    # ---------------------------------------------------------
+    # STATIC DASHBOARD (only present once `npm run build` has produced
+    # app/dist — the normal dev flow, Vite on :5173 or Electron loading
+    # dist/index.html directly off disk, never touches this route).
+    # ---------------------------------------------------------
+    # Exists so --network-mode lan can serve the whole dashboard itself: the
+    # investigator's laptop just opens http://<device-ip>:5057 in a browser —
+    # same origin as the API, so no CORS, no separate web server, and nothing
+    # in the middle between the hardware and the viewing browser.
+    _dist_dir = Path(__file__).resolve().parents[2] / "app" / "dist"
+
+    if _dist_dir.is_dir():
+
+        @app.get("/")
+        def dashboard_index():
+            return send_from_directory(_dist_dir, "index.html")
+
+        @app.get("/<path:filename>")
+        def dashboard_assets(filename: str):
+            # Never shadow the API or the SocketIO transport — anything under
+            # those prefixes that reaches here is a genuine miss, not a
+            # client-side route.
+            if filename.startswith("api/") or filename.startswith("socket.io"):
+                abort(404)
+            candidate = (_dist_dir / filename).resolve()
+            if candidate.is_file() and _dist_dir in candidate.parents:
+                return send_from_directory(_dist_dir, filename)
+            # Unknown path: fall back to index.html for the SPA's client-side router
+            # instead of 404ing every deep link (e.g. a refresh on /case/CASE-0001).
+            return send_from_directory(_dist_dir, "index.html")
+
     app.config["SOCKETIO"] = socketio
+    app.config["NETWORK_MODE"] = network_mode
 
     return app, socketio
 
@@ -1904,11 +1957,60 @@ def main():
 
     parser.add_argument("--cases", default="cases")
 
+    parser.add_argument(
+        "--network-mode",
+        choices=["airgapped", "lan"],
+        default=os.environ.get("SNAGR_NETWORK_MODE", "airgapped"),
+        help=(
+            "airgapped (default): force-bind 127.0.0.1, refusing any other --host — "
+            "nothing on this machine is reachable off-box. "
+            "lan: bind --host to an explicit LAN address so the dashboard can be "
+            "opened from another machine's browser on the same local network. "
+            "Still no cloud/relay of any kind either way — lan only changes which "
+            "interface the loopback-designed service listens on."
+        ),
+    )
+
     args = parser.parse_args()
 
-    app, socketio = create_app(Path(args.cases))
+    if args.network_mode == "airgapped":
+        if args.host not in ("127.0.0.1", "localhost"):
+            print(
+                f"[network] --network-mode airgapped overrides --host={args.host!r} -> "
+                f"127.0.0.1 (refusing to bind a non-loopback address while airgapped).",
+                flush=True,
+            )
+        args.host = "127.0.0.1"
+    else:  # lan
+        if args.host in ("127.0.0.1", "localhost", "0.0.0.0"):
+            hint = ""
+            try:
+                import socket
 
-    print(f"{TOOL_NAME} v{__version__} " f"— http://{args.host}:{args.port}")
+                candidates = sorted(
+                    {
+                        ip
+                        for ip in socket.gethostbyname_ex(socket.gethostname())[2]
+                        if not ip.startswith("127.")
+                    }
+                )
+                if candidates:
+                    hint = f" (detected on this machine: {', '.join(candidates)})"
+            except Exception:
+                pass
+            parser.error(
+                "--network-mode lan requires an explicit --host set to this machine's "
+                f"LAN address{hint} — e.g. --host 192.168.1.50. Binding 0.0.0.0 or "
+                "loopback is refused so the service can never silently listen on an "
+                "unintended interface (a stray Wi-Fi AP, a phone hotspot, ...)."
+            )
+
+    app, socketio = create_app(Path(args.cases), network_mode=args.network_mode)
+
+    print(
+        f"{TOOL_NAME} v{__version__} [{args.network_mode}] "
+        f"— http://{args.host}:{args.port}"
+    )
 
     if socketio:
 
