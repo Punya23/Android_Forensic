@@ -49,6 +49,10 @@ export interface DeviceCheckResponse {
     os_skin: string;
     android_version: string;
     oem_quirks: string[];
+    /** `su -c id` probe result. Gates Tier-2 (root) options in the Acquisition view —
+     * a non-rooted handset is an ordinary retail phone with no administrator shell, so
+     * Tier-2 is withheld rather than offered-and-silently-skipped. */
+    rooted: boolean;
   };
 }
 

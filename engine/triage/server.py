@@ -499,6 +499,11 @@ def create_app(cases_root: Path = CASES_ROOT):
                 "os_skin": info.os_skin,
                 "android_version": info.android_version,
                 "oem_quirks": info.oem_quirks,
+                # Read-only `su -c id` probe (Adb.is_root_available) — the same bit the
+                # engine gates every Tier-2 stage on. Surfaced here so the dashboard can
+                # offer or withhold Tier-2 options *before* acquisition, instead of only
+                # explaining an empty Tier-2 dataset after the fact (capabilities.py).
+                "rooted": info.rooted,
             }
             # A ready device tells us its own brand — no need to ask the caller for it.
             brand = brand or info.brand
