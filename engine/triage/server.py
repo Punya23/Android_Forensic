@@ -149,6 +149,10 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         "cancel_token": None,       # CancellationToken for the current run
         "report_generating": False, # True while background report is building
         "report_ready_cases": set(),# case_ids whose reports have been generated
+        # idle | running | done | cancelled | error — see /api/hardware/status.
+        "last_event": "idle",
+        "last_stage": "",
+        "last_pct": 0.0,
     }
 
     # ---------------------------------------------------------
@@ -270,7 +274,19 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         return hmac.compare_digest(password, AUTH_PASS)
 
     def _is_public_route(path: str) -> bool:
-        if path in ("/api/health", "/api/auth/login"):
+        if path in (
+            "/api/health",
+            "/api/auth/login",
+            # Physical control-panel endpoints (ESP32 kill switch + status LED —
+            # see deploy/hardware-panel/). Unauthenticated on purpose: a login/CSRF
+            # dance doesn't fit on a microcontroller with no UI, and the blast
+            # radius is bounded — status is a read-only progress summary, and the
+            # kill switch can only *cancel* an already-running acquisition (the
+            # same cooperative cancellation /api/acquire/cancel already offers a
+            # logged-in examiner), never start one or touch case data.
+            "/api/hardware/status",
+            "/api/hardware/killswitch",
+        ):
             return True
         # Raw-URL resource routes — see the comment above the AUTH block. Each of these
         # is fetched via a plain <a href download> anchor by the dashboard (LocationTrace
@@ -1085,6 +1101,8 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
 
         # ------ Socket progress emitter ------
         def emit(stage: str, pct: float, detail: str):
+            state["last_stage"] = stage
+            state["last_pct"] = pct
             if socketio:
                 socketio.emit(
                     "progress",
@@ -1094,12 +1112,14 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         # ------ Background worker ------
         def worker():
             state["running"] = True
+            state["last_event"] = "running"
             try:
                 summary = run_acquisition(
                     source, cfg, progress=emit, socketio=socketio,
                     cancel_token=cancel_token,
                 )
                 state["last_case"] = case_id
+                state["last_event"] = "done"
                 # Emit complete IMMEDIATELY so the examiner can review results
                 if socketio:
                     socketio.emit(
@@ -1108,9 +1128,11 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
                     )
             except AcquisitionCancelled:
                 state["last_case"] = case_id
+                state["last_event"] = "cancelled"
                 if socketio:
                     socketio.emit("cancelled", {"case_id": case_id, "partial": True})
             except Exception as exc:
+                state["last_event"] = "error"
                 if socketio:
                     socketio.emit("failed", {"case_id": case_id, "error": str(exc)})
             finally:
@@ -1158,6 +1180,38 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         token: CancellationToken | None = state.get("cancel_token")
         if token is None or not state.get("running"):
             return jsonify({"error": "no acquisition is currently running"}), 409
+        token.cancel()
+        return jsonify({"cancelling": True, "case_id": state.get("last_case")})
+
+    # ---------------------------------------------------------
+    # HARDWARE PANEL (ESP32 kill switch + status LED)
+    # ---------------------------------------------------------
+    # Unauthenticated by design — see the comment on _is_public_route. The
+    # microcontroller is a client only: it polls status to drive the LED and
+    # posts to killswitch on a physical button press. It never receives case
+    # data and cannot start an acquisition, only cancel a running one.
+
+    @app.get("/api/hardware/status")
+    def hardware_status():
+        return jsonify(
+            {
+                "event": state["last_event"],       # idle | running | done | cancelled | error
+                "running": state["running"],
+                "stage": state["last_stage"],
+                "pct": state["last_pct"],
+                "case_id": state.get("last_case"),
+            }
+        )
+
+    @app.post("/api/hardware/killswitch")
+    def hardware_killswitch():
+        token: CancellationToken | None = state.get("cancel_token")
+        if token is None or not state.get("running"):
+            # Not an error from the panel's point of view — pressing the button
+            # with nothing running just has no effect, same as the dashboard's
+            # cancel button being disabled. 200 keeps ESP32 firmware simple
+            # (one status code to treat as "acknowledged", nothing to retry).
+            return jsonify({"cancelling": False, "reason": "nothing running"})
         token.cancel()
         return jsonify({"cancelling": True, "case_id": state.get("last_case")})
 
