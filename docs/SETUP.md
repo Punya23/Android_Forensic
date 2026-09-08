@@ -208,12 +208,21 @@ On startup, if no chat model is reachable, it probes this workstation's RAM (see
 1. installs the Ollama binary if missing, using only the vendor's own official,
    non-interactive install path for the OS (Homebrew on macOS, winget on Windows,
    Ollama's documented Linux installer) — never a third-party script;
-2. picks the strongest chat model this machine's RAM can carry without starving the
+2. makes sure the Ollama **daemon** is actually reachable, not just that the binary
+   is on `PATH` — installing it is not the same thing: Homebrew's own `ollama`
+   formula installs the CLI only and does not start or enable a background service
+   (confirmed against `brew info ollama`'s own caveat), so a brew-only install, or
+   any machine where the binary is present but the service was never started or has
+   since stopped, has nothing listening on `127.0.0.1:11434` until something starts
+   it. If nothing answers, the engine spawns `ollama serve` itself (detached, so it
+   outlives the request that started it) and waits briefly for it to come up;
+3. picks the strongest chat model this machine's RAM can carry without starving the
    OS, the dashboard and the engine (roughly: <10 GB → stays off, 10–16 GB →
    `qwen2.5:3b-instruct`, 16–24 GB → `llama3.1:8b`, 24–40 GB → `qwen2.5:14b-instruct`,
    40 GB+ → `qwen2.5:32b-instruct`), and pulls it **in the background** — engine
-   startup never blocks on a multi-GB download;
-3. switches the active back-end to `ollama` automatically the moment that pull
+   startup never blocks on a multi-GB download, a package-manager install, or
+   waiting for the daemon to come up;
+4. switches the active back-end to `ollama` automatically the moment that pull
    finishes — no restart, no manual step.
 
 This never overrides an explicit `SNAGR_LLM`/`SNAGR_LLM_MODEL` choice, never fails

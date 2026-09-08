@@ -38,6 +38,9 @@ import platform
 import shutil
 import subprocess
 import threading
+import time
+import urllib.error
+import urllib.request
 from typing import Optional
 
 log = logging.getLogger("triage.intel.hardware")
@@ -233,6 +236,75 @@ def ensure_ollama_binary() -> dict:
         return {"installed": False, "already_present": False, "method": "", "error": str(exc)}
 
 
+def _ollama_reachable(host: str) -> bool:
+    """Same check as ``OllamaProvider._ping()`` in :mod:`.llm`, duplicated rather than
+    imported — ``.llm`` is the higher-level module (imports ``.hardware`` itself via
+    ``autodetect_and_configure``) and this file must stay usable standalone."""
+    try:
+        req = urllib.request.Request(f"{host}/api/tags")
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def ensure_ollama_running(host: Optional[str] = None, timeout_s: float = 15.0) -> dict:
+    """Make sure the Ollama *daemon* is actually listening, not just installed.
+
+    These are not the same thing, and the gap between them silently breaks the next
+    step (a pull) in a way that reads as "the model download failed" rather than what
+    actually happened: Homebrew's own ``ollama`` formula installs the CLI only and
+    explicitly does **not** start or enable a background service — its own
+    ``brew info ollama`` caveat says so in as many words, confirmed against a real
+    install while building this. A workstation where the binary was installed this
+    way (via :func:`ensure_ollama_binary`'s brew path, or by an examiner running
+    ``brew install ollama`` by hand at any point in the past) has nothing on
+    ``127.0.0.1:11434`` until something starts it — and every call site in this
+    module before this one assumed "binary on PATH" meant "ready to pull".
+
+    Best-effort and non-fatal like everything else here: if nothing answers, spawns
+    ``ollama serve`` — the one command that exists identically regardless of how the
+    binary got onto this machine (brew, winget, the official installer, a manual
+    download) — detached so it outlives this call, then polls briefly for it to come
+    up. Never raises; a platform where this also doesn't work just stays on the
+    heuristic provider, same as every other failure mode in this module.
+    """
+    host = (host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")).rstrip("/")
+    if _ollama_reachable(host):
+        return {"running": True, "started": False, "error": ""}
+    if not shutil.which("ollama"):
+        return {"running": False, "started": False, "error": "ollama binary not on PATH"}
+
+    try:
+        popen_kwargs: dict = {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "stdin": subprocess.DEVNULL,
+        }
+        if platform.system().lower() == "windows":
+            # POSIX's start_new_session isn't meaningful here; these two flags are
+            # Windows' own way of detaching a child so it survives this process.
+            popen_kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+            )
+        else:
+            popen_kwargs["start_new_session"] = True
+        subprocess.Popen(["ollama", "serve"], **popen_kwargs)
+    except Exception as exc:
+        return {"running": False, "started": False, "error": str(exc)}
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if _ollama_reachable(host):
+            return {"running": True, "started": True, "error": ""}
+        time.sleep(0.5)
+    return {
+        "running": False,
+        "started": True,
+        "error": f"started `ollama serve` but it did not answer within {timeout_s:.0f}s",
+    }
+
+
 #: Models with a pull already running in this process. Guards against a second
 #: ``autodetect_and_configure(force=True)`` (or any other caller) starting a duplicate
 #: multi-GB download for a pull that is already in flight — wasteful, not merely
@@ -320,13 +392,36 @@ def ensure_local_model(existing_models: list[str], on_done=None) -> dict:
 
     model = pick["model"]
 
+    def _start_then_pull() -> None:
+        """Runs off the calling thread in both branches below. A binary on PATH is
+        not the same as a reachable daemon (see :func:`ensure_ollama_running`'s
+        docstring) — checking/starting it here, not just after a fresh install,
+        also self-heals the "installed once, service never started/has since died"
+        case, which is at least as common as "never installed at all" on a real
+        examiner's machine.
+        """
+        running = ensure_ollama_running()
+        if not running["running"]:
+            log.info(
+                "Ollama binary is present but no daemon is reachable, and starting "
+                "one failed: %s", running["error"],
+            )
+            if on_done is not None:
+                try:
+                    on_done(False, model)
+                except Exception:
+                    pass
+            return
+        pull_model_async(model, on_done=on_done)
+
     if shutil.which("ollama"):
-        # Binary already present — only the pull (already backgrounded) is needed.
         log.info(
             "Hardware detected (%.1f GB RAM, %s) → pulling %s (%s) in the background.",
             hw.get("ram_gb") or 0.0, hw.get("gpu"), model, pick["note"],
         )
-        pull_model_async(model, on_done=on_done)
+        threading.Thread(
+            target=_start_then_pull, name=f"ollama-pull-{model}", daemon=True
+        ).start()
         return {
             "action": "pulling",
             "model": model,
@@ -336,9 +431,9 @@ def ensure_local_model(existing_models: list[str], on_done=None) -> dict:
 
     # Binary missing: installing it (brew/winget/the Linux script) is itself a
     # network call that can take minutes — exactly the "never block startup" problem
-    # the model pull above is already careful to avoid. So install-then-pull run
-    # together in ONE background thread; ensure_ollama_binary() must never be called
-    # synchronously from here, or engine startup stalls on precisely the fresh,
+    # the model pull above is already careful to avoid. So install-then-start-then-pull
+    # run together in ONE background thread; ensure_ollama_binary() must never be
+    # called synchronously from here, or engine startup stalls on precisely the fresh,
     # never-configured machine this feature exists to help.
     log.info(
         "Ollama not installed (%.1f GB RAM, %s) → installing and pulling %s (%s) in "
@@ -356,7 +451,11 @@ def ensure_local_model(existing_models: list[str], on_done=None) -> dict:
                 except Exception:
                     pass
             return
-        pull_model_async(model, on_done=on_done)
+        # A fresh install (brew in particular — see ensure_ollama_running's
+        # docstring) is exactly the case with the highest odds nothing is listening
+        # yet, so this reuses the same start-then-pull path rather than calling
+        # pull_model_async directly.
+        _start_then_pull()
 
     threading.Thread(
         target=_install_then_pull, name=f"ollama-install-{model}", daemon=True
