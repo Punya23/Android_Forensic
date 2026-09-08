@@ -20,8 +20,10 @@
 import { useMemo, useState } from "react";
 import type { AcqEvent, AcqStatus } from "../lib/types";
 import {
+  BarChart2,
   Bluetooth,
   Box,
+  Calendar,
   Cpu,
   FileSearch,
   Folder,
@@ -30,6 +32,7 @@ import {
   Layout,
   MapPin,
   MessageSquare,
+  Mic,
   Monitor,
   Puzzle,
   Search,
@@ -37,6 +40,7 @@ import {
   ShieldAlert,
   Sparkles,
   Terminal,
+  User,
   Wifi,
   Bell,
 } from "lucide-react";
@@ -114,6 +118,10 @@ function SourceIcon({ icon, size = 14 }: { icon: IconKey; size?: number }) {
     case "shield":      return <Shield {...props} />;
     case "shield_alert": return <ShieldAlert {...props} />;
     case "apps":        return <Puzzle {...props} />;
+    case "accounts":    return <User {...props} />;
+    case "calendar":    return <Calendar {...props} />;
+    case "usage":       return <BarChart2 {...props} />;
+    case "recordings":  return <Mic {...props} />;
     case "layout":      return <Layout {...props} />;
     case "sparkles":    return <Sparkles {...props} />;
     case "tool":        return <Terminal {...props} />;
@@ -189,6 +197,8 @@ const SOURCE_LABELS: Record<string, string> = {
   recent_tasks: "Recent Tasks", intel: "Intelligence", aleapp: "ALEAPP",
   recovery: "Deleted Records", screentime: "Screen Time",
   search: "Search History", maps: "Maps / Location", location: "Location",
+  apps: "Installed Apps", accounts: "Accounts", calendar: "Calendar",
+  usage: "App Usage", recordings: "Call Recordings",
 };
 
 // ---------------------------------------------------------------------------
