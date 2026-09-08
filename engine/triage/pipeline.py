@@ -1114,17 +1114,22 @@ def run_acquisition(
 
     if dumpsys_notif:
         notifications = parse_notification_history(dumpsys_notif)
+        # Written even when empty: dumpsys_notif being truthy means the read itself
+        # ran, so a genuinely-empty ring buffer is a finding ("empty"), not the absence
+        # of an attempt ("inaccessible"). Gating this on `if notifications:` made the
+        # two indistinguishable — capabilities.py had no way to tell "checked, nothing
+        # there" from "never checked" for this Tier-0, always-attempted stage.
+        case.write_derived("notifications", notifications)
         if notifications:
-            case.write_derived("notifications", notifications)
             case.log(
                 "shell.dumpsys",
                 f"dumpsys notification captured ({len(notifications)} items)",
                 command="dumpsys notification --history",
                 tier=Tier.TIER0.value,
             )
-            emit_acq_event(case, socketio, source="notifications", tier="tier0",
-                           action="Notification history parsed", status="completed",
-                           item_count=len(notifications))
+        emit_acq_event(case, socketio, source="notifications", tier="tier0",
+                       action="Notification history parsed", status="completed",
+                       item_count=len(notifications))
     else:
         emit_acq_event(case, socketio, source="notifications", tier="tier0",
                        action="Notification history checked", status="completed",

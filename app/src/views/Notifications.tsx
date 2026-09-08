@@ -116,14 +116,16 @@ export function NotificationsView({ caseId }: { caseId: string }) {
         <div className="card p-6 border-warn/40 bg-warn/5">
           <div className="text-warn font-semibold mb-2">No notification history in this case</div>
           <p className="text-sm text-muted leading-relaxed">
-            Reading notification history requires a <strong>Tier-2 (root)</strong> acquisition with
-            <code className="text-ink font-mono mx-1">dumpsys notification --history</code>
-            support on the device. A Tier-0/Tier-1 acquisition, a device that denied the dump, or a
-            build without history support will all leave this page empty.
+            Notification history is read every run over a plain, non-root{" "}
+            <code className="text-ink font-mono mx-1">adb shell dumpsys notification --history</code>{" "}
+            — no Tier-1/Tier-2 flag gates it. An empty page here means the OS ring buffer was empty
+            or had already rolled over at acquisition time, or the OEM build disables history
+            entirely. It does not mean the acquisition needed a different tier.
           </p>
           <p className="text-sm text-muted leading-relaxed mt-2">
             <strong className="text-ink">An empty page is not evidence that no notifications
-            occurred.</strong> It means this build could not read the ring buffer — nothing more.
+            occurred.</strong> The ring buffer is capped and short-lived — nothing more can be read
+            about what happened before it rolled over.
           </p>
         </div>
       </div>
