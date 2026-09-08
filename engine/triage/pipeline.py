@@ -616,6 +616,7 @@ def run_acquisition(
     encrypted_apps_result: dict = {}  # SQLCipher apps + FCM fragments (P3-3)
     recent_tasks_result: dict = {}  # recent_tasks + snapshots, AFU-gated (P3-4)
     wifi_networks: list = []  # Wi-Fi credentials (Tier-2 / root)
+    hotspot_leases_result: dict = {}  # dnsmasq client leases behind own hotspot (Tier-2, gated by tier2_wifi)
     wa_backup_messages: list = []  # WhatsApp backup recovered messages (Tier-2)
     wa_backup_media: list = []  # WhatsApp backup recovered media (Tier-2)
     app_messages = []  # WhatsApp export + Telegram/app-DB + SMS
@@ -1663,6 +1664,7 @@ def run_acquisition(
                        status="accessing", artifact_path="/data/misc/wifi/WifiConfigStore.xml")
         if isinstance(source, RealDeviceSource):
             wifi_networks = _run_tier2_wifi(source, case, staging)
+            hotspot_leases_result = _run_tier2_hotspot_leases(source, case, staging)
         else:
             case.log(
                 "tier2.wifi",
@@ -2354,6 +2356,9 @@ def run_acquisition(
             tier=Tier.TIER0.value,
         )
     case.write_derived("wifi", wifi_networks)  # Wi-Fi credentials (Tier 2)
+    case.write_derived(
+        "hotspot_leases", hotspot_leases_result
+    )  # dnsmasq client leases behind own hotspot (Tier 2, gated by tier2_wifi)
     # Helper-APK radio artifacts. Separate datasets from the Tier-2 `wifi` credentials and the
     # dumpsys-derived `bluetooth` list because they were obtained a different way and carry
     # different fields — a reader must be able to tell which is which.
@@ -5234,6 +5239,73 @@ def _run_tier2_wifi(
     )
 
     return wifi_networks
+
+
+def _run_tier2_hotspot_leases(
+    source: "RealDeviceSource",
+    case: "Case",
+    staging: "Path",
+) -> dict:
+    """Root-pull the dnsmasq lease file(s) behind this device's own hotspot.  Tier 2.
+
+    Gated by the same ``tier2_wifi`` opt-in as the saved-network credential
+    recovery — both are root-only reads of ``/data/misc/{dhcp,wifi}/*`` and a
+    device either offers root for that tier or it doesn't. See
+    :mod:`triage.parsers.dhcp_leases` for why this is a best-effort probe: the
+    lease file only exists at all on the legacy dnsmasq tethering stack, not
+    on the mainline Tethering module most current stock devices run.
+
+    Returns
+    -------
+    dict
+        ``{"leases": [...], "caveats": [...]}`` — ``leases`` empty and
+        ``caveats`` explaining why is a valid, honest result, not an error.
+    """
+    from .parsers.dhcp_leases import (
+        LEASE_PATHS,
+        CAVEAT_NOT_PERSISTED,
+        collect_hotspot_leases,
+    )
+
+    # Verify root FIRST, same reasoning as `_run_tier2_wifi`: without it every
+    # `su -c test -e` probe fails identically to "file absent".
+    root_check = source.adb.shell("su -c 'id'")
+    if not root_check.ok:
+        case.log(
+            "tier2.hotspot_leases",
+            "root not available; hotspot client-lease recovery skipped. This is "
+            "NOT a finding that no client ever joined this device's hotspot.",
+            result="skipped",
+            tier=Tier.TIER2.value,
+        )
+        return {"leases": [], "caveats": []}
+
+    pulled = _root_pull_paths(
+        source,
+        case,
+        staging,
+        LEASE_PATHS,
+        label="hotspot_leases",
+        category="wifi_config",
+    )
+    if not pulled:
+        case.log(
+            "tier2.hotspot_leases",
+            "no dnsmasq lease file found at any known location "
+            f"({len(LEASE_PATHS)} paths probed). " + CAVEAT_NOT_PERSISTED,
+            result="skipped",
+            tier=Tier.TIER2.value,
+        )
+        return {"leases": [], "caveats": [CAVEAT_NOT_PERSISTED]}
+
+    result = collect_hotspot_leases(pulled)
+    case.log(
+        "tier2.hotspot_leases.done",
+        f"hotspot client-lease recovery: {len(result['leases'])} lease record(s) "
+        f"from {len(pulled)} file(s)",
+        tier=Tier.TIER2.value,
+    )
+    return result
 
 
 # Chromium-family browsers that store history in the same ``urls``-table schema under
