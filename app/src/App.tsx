@@ -62,6 +62,10 @@ export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [caseId, setCaseId] = useState<string | null>(null);
   const [view, setView] = useState<ViewKey>("acquire");
+  // Set by MediaView's "View on map" button; consumed by LocationsView to fly
+  // the map to that exact photo's point on arrival, then cleared so revisiting
+  // Locations later doesn't re-trigger the same fly-to.
+  const [mediaMapFocus, setMediaMapFocus] = useState<string | null>(null);
 
   // --- auth / onboarding gate ---------------------------------------------
   // authed starts true if a token survived a page reload; api.me() below confirms
@@ -149,7 +153,15 @@ export default function App() {
           {caseId && view === "contacts" && <ContactsView caseId={caseId} />}
           {caseId && view === "calls" && <CallsView caseId={caseId} />}
           {caseId && view === "notifications" && <NotificationsView caseId={caseId} />}
-          {caseId && view === "media" && <MediaView caseId={caseId} />}
+          {caseId && view === "media" && (
+            <MediaView
+              caseId={caseId}
+              onViewOnMap={(storedPath) => {
+                setMediaMapFocus(storedPath);
+                setView("locations");
+              }}
+            />
+          )}
           {caseId && view === "mediainv" && <MediaInventoryView caseId={caseId} />}
           {caseId && view === "deletedmedia" && <DeletedMediaView caseId={caseId} />}
           {caseId && view === "apps" && <AppsView caseId={caseId} />}
@@ -159,7 +171,13 @@ export default function App() {
           {caseId && view === "instagram" && <InstagramView caseId={caseId} />}
           {caseId && view === "snapchat" && <SnapchatView caseId={caseId} />}
           {caseId && view === "discovered" && <DiscoveredChatsView caseId={caseId} />}
-          {caseId && view === "locations" && <LocationsView caseId={caseId} />}
+          {caseId && view === "locations" && (
+            <LocationsView
+              caseId={caseId}
+              focusStoredPath={mediaMapFocus}
+              onFocusHandled={() => setMediaMapFocus(null)}
+            />
+          )}
           {caseId && view === "loctrace" && <LocationTraceView caseId={caseId} />}
           {caseId && view === "browser" && <BrowserView caseId={caseId} />}
           {caseId && view === "timeline" && <TimelineView caseId={caseId} setView={setView} />}

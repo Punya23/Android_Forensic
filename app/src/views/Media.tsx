@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Clapperboard, Music, FileText, X, AlertTriangle } from "lucide-react";
+import { Clapperboard, Music, FileText, X, AlertTriangle, MapPin } from "lucide-react";
 import type { MediaItem, Screenshot, WhatsAppMediaItem } from "../lib/types";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { api } from "../lib/api";
@@ -15,7 +15,16 @@ function hasRealGps(m: { gps?: { lat: number; lon: number } | null }): boolean {
   return !!m.gps && !(m.gps.lat === 0 && m.gps.lon === 0);
 }
 
-export function MediaView({ caseId }: { caseId: string }) {
+export function MediaView({
+  caseId,
+  onViewOnMap,
+}: {
+  caseId: string;
+  /** Switches to the Locations tab and flies the map to this photo's exact GPS
+   *  point (matched there by stored_path). Omit to hide the "View on map" button
+   *  entirely (e.g. if a host page doesn't have a Locations tab to jump to). */
+  onViewOnMap?: (storedPath: string) => void;
+}) {
   const { data, loading } = useDataset<MediaItem>(caseId, "media");
   const { data: screenshots, loading: screenshotsLoading } = useDataset<Screenshot>(caseId, "screenshots");
   const { data: waMedia, loading: waLoading } = useDataset<WhatsAppMediaItem>(caseId, "whatsapp_media");
@@ -56,7 +65,9 @@ export function MediaView({ caseId }: { caseId: string }) {
         ))}
       </div>
 
-      {source === "pulled" && <PulledMediaSection caseId={caseId} data={data} />}
+      {source === "pulled" && (
+        <PulledMediaSection caseId={caseId} data={data} onViewOnMap={onViewOnMap} />
+      )}
       {source === "screenshots" && <ScreenshotsSection caseId={caseId} data={screenshots} />}
       {source === "whatsapp" && <WhatsAppMediaSection data={waMedia} />}
     </div>
@@ -70,7 +81,15 @@ export function MediaView({ caseId }: { caseId: string }) {
 // rather than a bare, unexplained slice.
 const GRID_CAP = 2000;
 
-function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[] }) {
+function PulledMediaSection({
+  caseId,
+  data,
+  onViewOnMap,
+}: {
+  caseId: string;
+  data: MediaItem[];
+  onViewOnMap?: (storedPath: string) => void;
+}) {
   const [filter, setFilter] = useState<"all" | "image" | "video" | "trashed" | "gps">("all");
   const [selected, setSelected] = useState<MediaItem | null>(null);
   const [showAll, setShowAll] = useState(false);
@@ -182,8 +201,17 @@ function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[
             <div className="mt-3 space-y-1 text-sm">
               <MetaRow k="Kind" v={selected.kind} />
               <MetaRow k="Size" v={bytes(selected.size_bytes)} />
+              <MetaRow k="Captured at" v={selected.timestamp ? fmtTs(selected.timestamp) : "—"} />
               <MetaRow k="App" v={selected.app || "—"} />
               <MetaRow k="Trashed" v={selected.trashed ? "yes (recovered from MediaStore trash)" : "no"} />
+              {(selected.device_make || selected.device_model) && (
+                <MetaRow
+                  k="Device"
+                  v={[selected.device_make, selected.device_model].filter(Boolean).join(" ")}
+                />
+              )}
+              {selected.software && <MetaRow k="Software" v={selected.software} />}
+              {selected.altitude != null && <MetaRow k="Altitude" v={`${selected.altitude} m`} />}
               <MetaRow
                 k="GPS"
                 v={
@@ -199,7 +227,28 @@ function PulledMediaSection({ caseId, data }: { caseId: string; data: MediaItem[
                     : "—"
                 }
               />
+              {!selected.gps && selected.kind === "image" && (
+                <p className="text-xs text-muted pt-1">
+                  No GPS in this photo's EXIF. Most Android camera apps embed a GPS tag when
+                  location was on at capture time — its absence usually means location was off,
+                  or the file passed through an app that strips EXIF on send/save (WhatsApp,
+                  Instagram, Telegram, Signal all do this), not that extraction failed.
+                </p>
+              )}
+              <MetaRow k="Stored path" v={selected.stored_path} mono />
+              {selected.device_path && (
+                <MetaRow k="Original device path" v={selected.device_path} mono />
+              )}
               <MetaRow k="SHA-256" v={selected.sha256} mono />
+              {hasRealGps(selected) && onViewOnMap && (
+                <button
+                  onClick={() => onViewOnMap(selected.stored_path)}
+                  className="btn border border-line mt-2 inline-flex items-center gap-1.5"
+                >
+                  <MapPin className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                  View on map
+                </button>
+              )}
             </div>
           </div>
         </div>

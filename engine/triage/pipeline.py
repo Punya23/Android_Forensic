@@ -146,7 +146,6 @@ from .models import LocationPoint, MediaItem, now_iso
 from .cancellation import CancellationToken, AcquisitionCancelled
 from .cache import get_artifact_cached, set_artifact_cached, invalidate_for_source
 from .parsers import (
-    extract_gps,
     parse_app_db,
     parse_browser_history,
     parse_firefox_places,
@@ -208,7 +207,7 @@ from .parsers.url_location import (
     summarise_url_locations,
 )
 from .parsers.signal import parse_signal_plaintext_db
-from .parsers.exif import extract_datetime
+from .parsers.exif import extract_gps_enhanced
 from .parsers.video_gps import extract_video_location
 from .parsers.collector import (
     parse_media_inventory,
@@ -3273,9 +3272,24 @@ def _process_pulled_file(
         dt = None
         loc_source = "exif"
         loc_label = f"photo {name}"
+        # Enhanced fields (altitude/device/software) are image-only — EXIF has no
+        # equivalent for video/audio, so these stay None there rather than pretend
+        # a value was looked up and came back empty.
+        altitude = None
+        device_make = None
+        device_model = None
+        software = None
         if category == "image":
-            gps = extract_gps(stored)
-            dt = _iso_or_none(extract_datetime(stored))
+            enhanced = extract_gps_enhanced(stored)
+            gps = enhanced["gps"]
+            # Already ISO-8601 (extract_gps_enhanced normalises it internally) —
+            # _iso_or_none() expects the raw "YYYY:MM:DD HH:MM:SS" EXIF form and
+            # would silently return None if re-applied to an already-ISO string.
+            dt = enhanced["timestamp"]
+            altitude = enhanced["altitude"]
+            device_make = enhanced["device_make"]
+            device_model = enhanced["device_model"]
+            software = enhanced["software"]
         elif category == "video":
             vid = extract_video_location(stored)
             if vid:
@@ -3296,6 +3310,11 @@ def _process_pulled_file(
             timestamp=dt,
             gps=gps,
             sha256=rec.sha256,
+            device_path=dev_path,
+            altitude=altitude,
+            device_make=device_make,
+            device_model=device_model,
+            software=software,
         )
         result["media_items"].append(mi)
         if gps:
