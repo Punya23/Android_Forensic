@@ -352,6 +352,17 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  /**
+   * Ask the engine to stop the running acquisition. Returns as soon as the
+   * request is accepted — it does NOT mean the acquisition has actually
+   * stopped yet. The engine kills any in-flight adb transfer immediately and
+   * unwinds the pipeline, then confirms over the "cancelled" socket event;
+   * only that event means the run has truly ended (see AcquisitionView).
+   */
+  cancelAcquisition: () =>
+    request<{ cancelling: boolean; case_id?: string }>("/api/acquire/cancel", {
+      method: "POST",
+    }),
   caseActivity: (caseId: string) =>
     get<{ events: AcqEvent[] }>(`/api/cases/${caseId}/activity`),
 };

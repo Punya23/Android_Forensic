@@ -420,6 +420,17 @@ def run_acquisition(
 
     if cancel_token: cancel_token.raise_if_cancelled()
 
+    # Bind the token to the real device's adb transport so cancel() can kill an
+    # in-flight `adb pull` immediately (adb.py registers the subprocess with
+    # the token for the duration of every call). One bind here covers every
+    # adb.pull()/adb.shell() call made anywhere in this run — single big
+    # transfers (WhatsApp backup, msgstore.db) and the parallel bulk-media
+    # pull alike — without threading cancel_token through each call site.
+    # MockDeviceSource has no .adb (it reads from a local corpus), so this is
+    # a no-op there.
+    if cancel_token is not None and hasattr(source, "adb"):
+        source.adb.bind_cancel_token(cancel_token)
+
     progress("init", 0.0, "Opening case folder")
     meta = CaseMeta(
         case_id=cfg.case_id,
@@ -3677,9 +3688,22 @@ def _parallel_pull_files(
     # Filter out tier-1 skips before submitting
     to_pull = [f for f in files if f not in tier1_skip_paths]
 
-    with concurrent.futures.ThreadPoolExecutor(
+    # NOT a `with` block: ThreadPoolExecutor.__exit__ always calls
+    # shutdown(wait=True) with cancel_futures defaulting to False — on a plain
+    # exception unwind (e.g. AcquisitionCancelled below) that BLOCKS until
+    # every already-submitted future finishes, including ones still queued
+    # and never even started. Since every file is submitted up front, that
+    # meant Stop had no effect until the whole backlog drained — exactly the
+    # "stop does nothing after 1-2GB" bug. cancel_futures=True in the
+    # explicit shutdown() below drops the queued-but-not-started futures
+    # immediately; the ones already mid-pull are handled by Adb.run() itself,
+    # which now kills its subprocess as soon as the token is cancelled
+    # (see triage/adb.py, triage/cancellation.py) instead of blocking to
+    # completion.
+    executor = concurrent.futures.ThreadPoolExecutor(
         max_workers=workers, thread_name_prefix="triage_pull"
-    ) as executor:
+    )
+    try:
         future_to_path = {
             executor.submit(
                 _pull_and_process_file,
@@ -3713,6 +3737,8 @@ def _parallel_pull_files(
                     result="error",
                     tier=Tier.TIER0.value,
                 )
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
 
     return results
 

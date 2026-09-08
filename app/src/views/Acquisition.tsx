@@ -73,6 +73,12 @@ export function AcquisitionView({
   const [planError, setPlanError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [running, setRunning] = useState(false);
+  // True from the moment Stop is clicked until the engine confirms the run has
+  // actually ended ("cancelled"/"failed"/"complete" socket event). Deliberately
+  // NOT the same as `running=false` — flipping `running` off the instant the
+  // button is clicked would show "stopped" while the engine (and any in-flight
+  // adb pull) is still winding down, which is exactly the bug this fixes.
+  const [cancelling, setCancelling] = useState(false);
   const [completed, setCompleted] = useState(false);
   const [reportReady, setReportReady] = useState(false);
   const [acquiredCaseId, setAcquiredCaseId] = useState("");
@@ -132,6 +138,7 @@ export function AcquisitionView({
     );
     s.on("complete", (c: { case_id: string }) => {
       stopTimer();
+      setCancelling(false);
       setAcquiredCaseId(c.case_id);
       setCompleted(true);
       // Wait for user to click "View Case" before calling onCaseReady
@@ -142,12 +149,18 @@ export function AcquisitionView({
     s.on("failed", (f: { error: string }) => {
       stopTimer();
       setRunning(false);
+      setCancelling(false);
       setError(f.error);
     });
     s.on("cancelled", (c: { case_id: string }) => {
+      // The only place `running` is cleared for a Stop — this event is the
+      // engine's own confirmation that the pipeline has actually unwound
+      // (in-flight adb transfer killed, audit log closed), not just that the
+      // Stop button was clicked. See stopAcquisition() below.
       stopTimer();
       setRunning(false);
-      setError("Acquisition was cancelled by the user.");
+      setCancelling(false);
+      setError("Acquisition was stopped. The case folder holds a consistent partial result.");
     });
     return () => {
       s.off("progress");
@@ -332,14 +345,35 @@ export function AcquisitionView({
     }
   }
 
+  // Requests cancellation and waits for the engine to confirm it, rather than
+  // marking the run "stopped" on the click alone. A successful response here
+  // only means the request was accepted; `cancelling` stays true (and the
+  // acquisition keeps showing as in progress) until the "cancelled" socket
+  // event lands, because the engine may still be a poll-tick away from
+  // actually killing an in-flight adb transfer.
+  async function stopAcquisition() {
+    if (cancelling || !running) return;
+    setCancelling(true);
+    try {
+      await api.cancelAcquisition();
+    } catch (e) {
+      // Request itself failed (e.g. network hiccup) — nothing was cancelled,
+      // so don't leave the UI stuck showing "Stopping…".
+      setCancelling(false);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   if (running) {
     return (
-      <ProgressScreen 
-        progress={progress} 
-        elapsed={elapsed} 
-        acqEvents={acqEvents} 
+      <ProgressScreen
+        progress={progress}
+        elapsed={elapsed}
+        acqEvents={acqEvents}
         completed={completed}
         reportReady={reportReady}
+        cancelling={cancelling}
+        onStop={stopAcquisition}
         onViewCase={() => {
           setRunning(false);
           onCaseReady(acquiredCaseId || caseId);
@@ -1244,6 +1278,8 @@ function ProgressScreen({
   acqEvents,
   completed,
   reportReady,
+  cancelling,
+  onStop,
   onViewCase,
 }: {
   progress: Progress | null;
@@ -1251,6 +1287,8 @@ function ProgressScreen({
   acqEvents: AcqEvent[];
   completed?: boolean;
   reportReady?: boolean;
+  cancelling?: boolean;
+  onStop?: () => void;
   onViewCase?: () => void;
 }) {
   const pct = Math.round((progress?.pct ?? 0) * 100);
@@ -1261,11 +1299,35 @@ function ProgressScreen({
     <div className="max-w-2xl mx-auto p-8 flex flex-col items-center justify-center min-h-[70vh]">
       <div className="w-full card p-8 mb-4">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-semibold">{completed ? "Acquisition complete" : "Acquisition in progress"}</h2>
-          <span className="font-mono text-2xl tabular-nums text-accent">
-            {mm}:{ss}
-          </span>
+          <h2 className="text-lg font-semibold">
+            {completed
+              ? "Acquisition complete"
+              : cancelling
+              ? "Stopping…"
+              : "Acquisition in progress"}
+          </h2>
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-2xl tabular-nums text-accent">
+              {mm}:{ss}
+            </span>
+            {!completed && onStop && (
+              <button
+                onClick={onStop}
+                disabled={cancelling}
+                className="btn border border-deletion/50 text-deletion hover:bg-deletion/10"
+                title="Kills any in-flight transfer immediately and closes the case in a consistent partial state"
+              >
+                {cancelling ? "Stopping…" : "Stop"}
+              </button>
+            )}
+          </div>
         </div>
+        {cancelling && (
+          <p className="text-xs text-muted -mt-4 mb-4">
+            Waiting for the engine to confirm the acquisition has actually stopped — any
+            file transfer in progress is being killed now, not left to finish.
+          </p>
+        )}
         <div className="h-3 rounded-full bg-panel overflow-hidden mb-2">
           <div
             className="h-full bg-accent transition-all duration-300"
