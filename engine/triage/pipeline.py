@@ -110,8 +110,9 @@ from .checkpoint import (
 )
 from .battery_monitor import BatteryMonitor
 from .forensics.battery_priority import should_pull_category
+from .forensics.batch_transfer import DEFAULT_CHUNK_SIZE, chunk_files, pull_chunk
 
-from .acquire import AcquisitionSource, RealDeviceSource
+from .acquire import AcquisitionSource, PulledFile, RealDeviceSource
 from .analysis import assess_risk, build_communication_graph
 from .config import (
     APP_MEDIA_ROOTS,
@@ -123,6 +124,7 @@ from .config import (
     VIDEO_EXTS,
 )
 from .custody import Case, CaseMeta, DeviceInfo
+from .hashing import file_hashes
 from .forensics.encryption_state import (
     detect_encryption_state,
     encryption_summary,
@@ -371,6 +373,15 @@ class PipelineConfig:
         False  # sort files by forensic value; skip low-value until budget allows
     )
     parallel_workers: int = 8  # ThreadPoolExecutor max_workers for parallel file pulls
+    # Tar the Tier-0 bulk-media pull into chunked archives on-device instead of one
+    # `adb pull` subprocess per file (real devices only; see _batch_pull_files). Any
+    # chunk that fails for any reason (older/OEM tar, permission errors, timeout)
+    # falls back automatically to the old one-file-at-a-time path for just that
+    # chunk's files, so turning this off should only ever cost speed, not coverage.
+    # Off automatically whenever use_priority_filter is on (the two are incompatible
+    # -- see _batch_pull_files docstring).
+    batch_pull: bool = True
+    batch_pull_chunk_size: int = DEFAULT_CHUNK_SIZE  # files per on-device tar archive
     # -- Battery-aware acquisition (Phase 2) ----------------------------------
     battery_aware: bool = (
         False  # gate Tier-0/Tier-2 pulls by live battery level (battery_priority.py bands)
@@ -1032,20 +1043,70 @@ def run_acquisition(
                     tier=Tier.TIER0.value,
                 )
 
-    pull_results: List[Dict] = _parallel_pull_files(
-        files=ordered_files,
-        source=source,
-        staging=staging,
-        case=case,
-        progress=progress,
-        pull_start=pull_start,
-        total=total,
-        tier1_skip_paths=tier1_skip_paths,
-        ingest_lock=_ingest_lock,
-        use_priority_filter=cfg.use_priority_filter,
-        max_workers=min(cfg.parallel_workers, max(len(ordered_files), 1)),
-        cancel_token=cancel_token,
+    # Batch (tar-per-chunk) pull: real devices only, and incompatible with the
+    # priority filter (which decides file-by-file, in real time, whether to defer
+    # a file -- a prebuilt archive has already committed past that decision). Any
+    # file a chunk fails to recover is retried through the ordinary per-file path
+    # below, so turning batch_pull off (or hitting an incompatible device) only
+    # ever costs speed, never coverage. See _batch_pull_files.
+    _use_batch_pull = (
+        cfg.batch_pull
+        and not cfg.use_priority_filter
+        and isinstance(source, RealDeviceSource)
     )
+    if _use_batch_pull:
+        _to_pull = [f for f in ordered_files if f not in tier1_skip_paths]
+        batch_results, _leftover = _batch_pull_files(
+            files=_to_pull,
+            source=source,
+            staging=staging,
+            case=case,
+            progress=progress,
+            pull_start=pull_start,
+            total=total,
+            ingest_lock=_ingest_lock,
+            chunk_size=cfg.batch_pull_chunk_size,
+            max_workers=cfg.parallel_workers,
+            cancel_token=cancel_token,
+        )
+        if _leftover:
+            case.log(
+                "adb.pull",
+                f"batch pull recovered {len(batch_results)}/{len(_to_pull)}; "
+                f"retrying {len(_leftover)} file(s) individually",
+                tier=Tier.TIER0.value,
+            )
+        fallback_results = _parallel_pull_files(
+            files=_leftover,
+            source=source,
+            staging=staging,
+            case=case,
+            progress=progress,
+            pull_start=pull_start,
+            total=total,
+            tier1_skip_paths=tier1_skip_paths,
+            ingest_lock=_ingest_lock,
+            use_priority_filter=cfg.use_priority_filter,
+            max_workers=min(cfg.parallel_workers, max(len(_leftover), 1)),
+            cancel_token=cancel_token,
+            done_offset=len(_to_pull) - len(_leftover),
+        )
+        pull_results: List[Dict] = batch_results + fallback_results
+    else:
+        pull_results = _parallel_pull_files(
+            files=ordered_files,
+            source=source,
+            staging=staging,
+            case=case,
+            progress=progress,
+            pull_start=pull_start,
+            total=total,
+            tier1_skip_paths=tier1_skip_paths,
+            ingest_lock=_ingest_lock,
+            use_priority_filter=cfg.use_priority_filter,
+            max_workers=min(cfg.parallel_workers, max(len(ordered_files), 1)),
+            cancel_token=cancel_token,
+        )
 
     # Fold parallel results into accumulators ──────────────────────────────
     for res in pull_results:
@@ -1079,6 +1140,10 @@ def run_acquisition(
             "completed_files": list(completed_files),
         },
     )
+    # manifest.json flushes are batched during the pull (see Case.ingest_file) to
+    # avoid an O(n^2) full-file rewrite per file; force it to disk now that the
+    # bulk pull phase is done so downstream readers of the on-disk file aren't stale.
+    case.flush_manifest()
 
     pull_elapsed = max(time.monotonic() - pull_start, 0.001)
     # ── Stage 2 progressive emit: communication data ready ─────────────────
@@ -2964,6 +3029,7 @@ def run_acquisition(
     # ── Cleanup: stop auto-save, clear checkpoint, record total time ────────
     stop_autosave(_autosave_thread)
     battery_monitor.stop()
+    case.flush_manifest()  # final guarantee: no batched manifest writes left buffered
     try:
         clear_checkpoint(case.root)
     except Exception:
@@ -3601,23 +3667,198 @@ def _pull_and_process_file(
         )
         return None
 
-    # ── Ingest (serialised — protects the manifest and artifact store) ───
+    return _hash_ingest_and_process(
+        device_path, pulled.local_path, pulled.flags, source, case, ingest_lock
+    )
+
+
+def _hash_ingest_and_process(
+    device_path: str,
+    local_path: Path,
+    flags: list[str],
+    source: AcquisitionSource,
+    case: Any,
+    ingest_lock: threading.Lock,
+    method_suffix: str = "",
+) -> Optional[Dict]:
+    """Shared tail for both pull paths: hash → ingest (serialised) → per-file parse.
+
+    *local_path* must already be fully staged locally — either freshly pulled by
+    :func:`_pull_and_process_file` or extracted from a batch tar archive by
+    :func:`_ingest_extracted_batch_file` — this function does no device I/O itself,
+    so it makes no difference to either caller how the file got there.
+    """
+    # ── Hash (CPU/IO-bound, runs in parallel) ─────────────────────────────
+    # Hashing a multi-GB file can take real time; computing it here, on the
+    # thread's own already-staged file, before touching ingest_lock, keeps the
+    # other workers moving instead of all queued behind one hash.
     category, app = _categorise(device_path)
+    try:
+        precomputed = file_hashes(local_path)
+    except OSError as exc:
+        case.log(
+            "adb.pull",
+            f"could not hash {device_path}: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+        return None
+
+    # ── Ingest (serialised — protects the manifest and artifact store) ───
+    # Only the fast part (move + manifest append) is under the lock now.
+    # flush=False: this loop pulls thousands of files, and a full manifest.json
+    # rewrite on every single one is O(n^2) I/O; the caller (_parallel_pull_files
+    # or _batch_pull_files) flushes periodically instead. `case.manifest`
+    # (in-memory) is unaffected and is what every other in-process reader uses.
     with ingest_lock:
         rec = case.ingest_file(
-            pulled.local_path,
+            local_path,
             source_path=device_path,
             tier=Tier.TIER0,
-            method=source.method,
+            method=source.method + method_suffix,
             category=category,
             app=app,
-            flags=pulled.flags,
+            flags=flags,
             move=True,
+            precomputed_hashes=precomputed,
+            flush=False,
         )
+    add_bytes(rec.size_bytes)
     stored = case.root / rec.stored_path
 
     # ── Per-file processing (parse / EXIF / DB — can run in parallel) ───
+    pulled = PulledFile(device_path=device_path, local_path=local_path, flags=flags)
     return _process_pulled_file(pulled, rec, stored, device_path, case)
+
+
+def _ingest_extracted_batch_file(
+    device_path: str,
+    local_path: Path,
+    source: AcquisitionSource,
+    case: Any,
+    ingest_lock: threading.Lock,
+    cancel_token: Optional[CancellationToken] = None,
+) -> Optional[Dict]:
+    """Ingest+process a file already staged locally by a batch tar pull.
+
+    Calls the same :func:`_hash_ingest_and_process` tail as the per-file path,
+    since :func:`_batch_pull_files` already produced *local_path* by extracting
+    it from a device-side archive — nothing here needs to talk to the device.
+    """
+    if cancel_token: cancel_token.raise_if_cancelled()
+
+    flags = (
+        ["trashed"]
+        if "/.trashed-" in device_path or Path(device_path).name.startswith(".trashed-")
+        else []
+    )
+    return _hash_ingest_and_process(
+        device_path, local_path, flags, source, case, ingest_lock,
+        method_suffix=" (batch tar)",
+    )
+
+
+def _batch_pull_files(
+    files: List[str],
+    source: RealDeviceSource,
+    staging: Path,
+    case: Any,
+    progress: ProgressFn,
+    pull_start: float,
+    total: int,
+    ingest_lock: threading.Lock,
+    chunk_size: int,
+    max_workers: int = 8,
+    cancel_token: Optional[CancellationToken] = None,
+) -> tuple[List[Dict], List[str]]:
+    """Pull *files* by tarring them into chunks on the device (see batch_transfer.py).
+
+    Real-device only: needs raw shell/push/pull access, so this must never be
+    called with a non-:class:`RealDeviceSource` (a :class:`MockDeviceSource` has no
+    ``.adb``). Also incompatible with ``use_priority_filter``, which decides
+    file-by-file, in real time, whether to defer/skip a file based on elapsed time
+    — a decision a pre-built archive has already committed past.
+
+    Chunks are pulled one at a time (they already share the one physical USB/adb
+    link, so overlapping ``adb pull`` calls for several chunks would not add real
+    bandwidth); within each chunk, the extracted files are hashed/ingested/parsed
+    in parallel via the same thread pool the per-file path uses.
+
+    Returns ``(results, leftover_files)``: *leftover_files* is every file that a
+    chunk did not recover (a whole chunk failing, or an individual file missing
+    from an otherwise-successful archive) — the caller is expected to retry these
+    through the ordinary per-file :func:`_parallel_pull_files` path so nothing is
+    silently skipped, only slower than the fast path for that subset.
+    """
+    results: List[Dict] = []
+    leftover: List[str] = []
+    chunks = chunk_files(files, chunk_size)
+    done_count = 0
+
+    for chunk in chunks:
+        if cancel_token: cancel_token.raise_if_cancelled()
+        pulled = pull_chunk(chunk, source.adb, staging)
+        recovered_paths = {p.device_path for p in pulled}
+        leftover.extend(f for f in chunk if f not in recovered_paths)
+
+        if not pulled:
+            # Whole chunk failed (or every file in it was unrecoverable) -- already
+            # queued above for the per-file fallback; nothing more to do here.
+            continue
+
+        workers = min(max_workers, max(len(pulled), 1))
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="triage_batch_ingest"
+        ) as executor:
+            future_to_item = {
+                executor.submit(
+                    _ingest_extracted_batch_file,
+                    item.device_path,
+                    item.local_path,
+                    source,
+                    case,
+                    ingest_lock,
+                    cancel_token,
+                ): item
+                for item in pulled
+            }
+            for future in concurrent.futures.as_completed(future_to_item):
+                # Checked here (not just before the next chunk's pull_chunk call)
+                # so a cancellation mid-chunk is honored promptly instead of every
+                # in-flight worker's own raise_if_cancelled() being caught below
+                # and misreported as an ordinary ingest failure.
+                if cancel_token: cancel_token.raise_if_cancelled()
+                item = future_to_item[future]
+                done_count += 1
+                pct = 0.10 + 0.42 * (done_count / max(total, 1))
+                name = item.device_path.rsplit("/", 1)[-1]
+                progress("pull", pct, f"Pulled {name} ({done_count}/{len(files)})")
+                try:
+                    res = future.result()
+                    if res is not None:
+                        results.append(res)
+                    else:
+                        leftover.append(item.device_path)
+                except Exception as exc:
+                    case.log(
+                        "adb.pull",
+                        f"batch ingest error for {item.device_path}: {exc}",
+                        result="error",
+                        tier=Tier.TIER0.value,
+                    )
+                    leftover.append(item.device_path)
+
+        case.flush_manifest()  # checkpoint after each chunk, not just at the very end
+
+        # Any file that failed to ingest (e.g. the hash step hit an OSError) was
+        # never moved out of the extraction folder (case.ingest_file(move=True)
+        # only runs on success) and is already queued in `leftover` for a per-file
+        # retry -- so the whole chunk's extraction folder is safe to discard now,
+        # rather than leaking staged copies for the rest of a large multi-chunk pull.
+        if pulled:
+            shutil.rmtree(pulled[0].local_path.parent, ignore_errors=True)
+
+    return results, leftover
 
 
 def _parallel_pull_files(
@@ -3633,6 +3874,7 @@ def _parallel_pull_files(
     use_priority_filter: bool,
     max_workers: int = 8,
     cancel_token: Optional[CancellationToken] = None,
+    done_offset: int = 0,
 ) -> List[Dict]:
     """Pull multiple files in parallel using ThreadPoolExecutor.
 
@@ -3664,6 +3906,11 @@ def _parallel_pull_files(
         Forward to :func:`_pull_and_process_file`.
     max_workers:
         Thread pool size (defaults to ``min(8, len(files))``).
+    done_offset:
+        Files already accounted for elsewhere against the same ``total`` (e.g. a
+        batch tar pull that ran first and is retrying only its leftovers here) —
+        added to this call's own ``done_count`` so the reported percentage keeps
+        climbing from where the earlier phase left off instead of restarting.
 
     Returns
     -------
@@ -3673,46 +3920,64 @@ def _parallel_pull_files(
     results: List[Dict] = []
     workers = min(max_workers, max(len(files), 1))
     done_count = 0
+    _last_flush = time.monotonic()
 
     # Filter out tier-1 skips before submitting
     to_pull = [f for f in files if f not in tier1_skip_paths]
 
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=workers, thread_name_prefix="triage_pull"
-    ) as executor:
-        future_to_path = {
-            executor.submit(
-                _pull_and_process_file,
-                dev_path,
-                source,
-                staging,
-                case,
-                ingest_lock,
-                pull_start,
-                use_priority_filter,
-                cancel_token,
-            ): dev_path
-            for dev_path in to_pull
-        }
+    try:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="triage_pull"
+        ) as executor:
+            future_to_path = {
+                executor.submit(
+                    _pull_and_process_file,
+                    dev_path,
+                    source,
+                    staging,
+                    case,
+                    ingest_lock,
+                    pull_start,
+                    use_priority_filter,
+                    cancel_token,
+                ): dev_path
+                for dev_path in to_pull
+            }
 
-        for future in concurrent.futures.as_completed(future_to_path):
-            if cancel_token: cancel_token.raise_if_cancelled()
-            dev_path = future_to_path[future]
-            done_count += 1
-            pct = 0.10 + 0.42 * (done_count / max(total, 1))
-            name = dev_path.rsplit("/", 1)[-1]
-            progress("pull", pct, f"Pulled {name} ({done_count}/{len(to_pull)})")
-            try:
-                res = future.result()
-                if res is not None:
-                    results.append(res)
-            except Exception as exc:
-                case.log(
-                    "adb.pull",
-                    f"worker error for {dev_path}: {exc}",
-                    result="error",
-                    tier=Tier.TIER0.value,
-                )
+            for future in concurrent.futures.as_completed(future_to_path):
+                if cancel_token: cancel_token.raise_if_cancelled()
+                dev_path = future_to_path[future]
+                done_count += 1
+                pct = 0.10 + 0.42 * ((done_offset + done_count) / max(total, 1))
+                name = dev_path.rsplit("/", 1)[-1]
+                progress("pull", pct, f"Pulled {name} ({done_count}/{len(to_pull)})")
+                try:
+                    res = future.result()
+                    if res is not None:
+                        results.append(res)
+                except Exception as exc:
+                    case.log(
+                        "adb.pull",
+                        f"worker error for {dev_path}: {exc}",
+                        result="error",
+                        tier=Tier.TIER0.value,
+                    )
+
+                # _pull_and_process_file ingests with flush=False (see its comment) to
+                # avoid an O(n^2) manifest.json rewrite; flush periodically here so the
+                # on-disk copy is never far behind (bounded by count or time, whichever
+                # comes first), not just at the very end of the phase.
+                now = time.monotonic()
+                if (
+                    done_count % Case.MANIFEST_FLUSH_EVERY == 0
+                    or (now - _last_flush) >= Case.MANIFEST_FLUSH_INTERVAL_SECS
+                ):
+                    case.flush_manifest()
+                    _last_flush = now
+    finally:
+        # Guarantee no batched manifest entries are left unflushed on disk, even if
+        # this phase was cancelled or a worker raised past the loop above.
+        case.flush_manifest()
 
     return results
 

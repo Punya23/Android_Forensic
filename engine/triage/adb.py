@@ -323,6 +323,12 @@ class Adb:
         local.parent.mkdir(parents=True, exist_ok=True)
         return self.run("pull", remote, str(local), timeout=timeout)
 
+    def push(self, local: Path, remote: str, timeout: int = 120) -> AdbResult:
+        """Push a local file to the device. Read-only from the evidence's point of
+        view -- used to stage small helper input (e.g. a file-list for a batch
+        `tar` pull) under /data/local/tmp, never to write into device app data."""
+        return self.run("push", str(local), remote, timeout=timeout)
+
     # -- telemetry -----------------------------------------------------------
     @property
     def connection_stats(self) -> dict:
