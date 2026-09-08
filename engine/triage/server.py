@@ -1622,6 +1622,10 @@ def create_app(cases_root: Path = CASES_ROOT):
             # exit path (success, root unavailable, BFU-gated, mock source) so a run
             # where nothing was recovered never reads as "Telegram was not there".
             "telegram_presence",
+            # Same pattern for Tier-2 browser history: root check, BFU gate, no browsers
+            # found, or a genuine recovery all leave their own record here rather than
+            # collapsing into one generic "unverified" empty state.
+            "browser_presence",
             "app_presence_summary",
             "antiforensics_summary",
             "encrypted_apps_summary",

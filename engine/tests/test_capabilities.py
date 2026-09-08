@@ -524,6 +524,61 @@ def test_browser_and_search_history_agree_about_one_source(case_dir: Path):
     )
 
 
+def test_browser_presence_outranks_inference_when_root_failed(case_dir: Path):
+    """``browser_presence`` (written by ``_run_tier2_browser_history`` on every exit
+    path) knows why the pull produced nothing; the catalogue must defer to it instead
+    of falling back to the generic "written on every run" wording.
+    """
+    write(case_dir, "browser", [])
+    write(
+        case_dir,
+        "browser_presence",
+        {
+            "attempted": True,
+            "available": False,
+            "reason": "root not available; app-private History databases are "
+            "unreachable without root on this device",
+        },
+    )
+    out = resolve(CATALOGUE["browser"], case_dir / "derived", {"tier2_browser_history": True})
+    assert out["state"] == INACCESSIBLE
+    assert "root not available" in out["reason"]
+    # `root_only` is True for browser (no workstation-side import route), so a stage
+    # that ran and failed is never offered as a re-run-the-flag fix.
+    assert out["flag_actionable"] is False
+
+
+def test_browser_presence_available_defers_to_ordinary_empty_state(case_dir: Path):
+    """A root session that ran, checked every known path, and found no browser
+    installed is a real finding about the device, not an access failure — the presence
+    record's ``available=True`` must fall through to the plain EMPTY state rather than
+    being surfaced as "could not check".
+    """
+    write(case_dir, "browser", [])
+    write(
+        case_dir,
+        "browser_presence",
+        {"attempted": True, "available": True, "browsers_found": 0, "rows": 0},
+    )
+    out = resolve(CATALOGUE["browser"], case_dir / "derived", {"tier2_browser_history": True})
+    assert out["state"] == EMPTY
+
+
+def test_browser_flag_off_is_reported_as_opt_in_not_generic_unverified(case_dir: Path):
+    """Before ``flag=\"tier2_browser_history\"`` was set, this branch could never fire for
+    ``browser`` — an unticked flag and a genuine root failure both fell through to the
+    same "written on every run, unverified" wording, so the examiner had no way to tell
+    "you didn't ask for this" from "we tried and couldn't reach it".
+    """
+    write(case_dir, "browser", [])
+    out = resolve(
+        CATALOGUE["browser"], case_dir / "derived", {"tier2_browser_history": False}
+    )
+    assert out["state"] == NOT_COLLECTED
+    assert out["flag_actionable"] is True
+    assert "tier2_browser_history" in out["reason"]
+
+
 def test_every_catalogued_flag_is_one_that_gates_that_dataset(case_dir: Path):
     """``fcm_records`` named 'tier2_app_presence'; its write is gated by another flag.
 

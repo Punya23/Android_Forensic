@@ -44,8 +44,8 @@ its ``case.json`` into exactly one state:
     Not implemented yet. Named, dated to nothing, and never dressed up as an empty result.
 
 The one thing the catalogue must never do is invent a reason. Where the engine records
-what happened (``telegram_presence``, ``encryption_state``, the audit log), that record
-wins over anything inferred here.
+what happened (``telegram_presence``, ``browser_presence``, ``encryption_state``, the
+audit log), that record wins over anything inferred here.
 """
 
 from __future__ import annotations
@@ -149,26 +149,30 @@ CATALOGUE: dict[str, Capability] = {
     "messages": Capability("messages", "Messages", 0, _T0),
     "media": Capability("media", "Media", 0, _T0),
     "locations": Capability("locations", "Photo locations", 0, _T0),
-    # Tier 0 in name only, and the catalogue has to say so. The Tier-0 parser reads a
-    # History file that happens to already sit in shared storage; on a real handset the
-    # per-browser History DBs are app-private, and the honest path is the Tier-2 root pull
-    # (``_run_tier2_browser_history``, triage/pipeline.py, whose own docstring says the
-    # Tier-0 path "only fires when a History file happens to already sit in shared
-    # storage"). The write at the end of the run is unconditional either way, so an empty
-    # browser.json is exactly as ambiguous as the empty search_history.json derived from
-    # it — and the two rows sit four apart in the sidebar. Rendering one "0 / checked,
-    # nothing found" and the other "n/a / could not check", from one source, is the
-    # dashboard contradicting itself. There is no corroborator to give this one: no stage
-    # writes a "browser history was reachable" record, so an empty file stays unverified.
+    # Tier 2 in practice, even though a Tier-0 read is attempted first: the Tier-0 parser
+    # only sees a History file that happens to already sit in shared storage, and on a
+    # real handset the per-browser History DBs are app-private — the honest path is the
+    # Tier-2 root pull (``_run_tier2_browser_history``, triage/pipeline.py). Tagging this
+    # ``0`` used to also suppress the no-root branch in ``resolve()`` below (it only fires
+    # for ``tier == 2``), so a confirmed-unrooted handset still fell through to the same
+    # generic unverified wording as everything else here.
+    #
+    # ``_run_tier2_browser_history`` now writes ``browser_presence`` on every exit path
+    # (mirrors ``telegram_presence`` — see OUTCOME_RECORDS below), so an empty result from
+    # a run where the flag was actually on is no longer ambiguous: the reason names root
+    # failure, BFU, or "root worked, nothing found" by name instead of falling back to the
+    # generic "written on every run" wording. What that record cannot cover is a run where
+    # the flag was simply never ticked — nothing runs, so nothing is written — which is why
+    # the flag is still named below: ``resolve()`` treats an unticked flag as its own,
+    # earlier-checked reason before it ever reaches the unconditional-write fallback.
     "browser": Capability(
         "browser",
         "Browser history",
-        0,
+        2,
         "A browser History database that was actually reachable. The Tier-0 read only "
         "sees one already sitting in shared storage; on a normal handset these live in "
-        "app-private storage and need the Tier-2 root pull "
-        "('tier2_browser_history'). Nothing records whether either found a database, so "
-        "an empty result here is not a finding about the device's browsing.",
+        "app-private storage and need the Tier-2 root pull ('tier2_browser_history').",
+        flag="tier2_browser_history",
         unconditional_write=True,
     ),
     "timeline": Capability("timeline", "Timeline", -1, "Derived from every parsed dataset"),
@@ -765,7 +769,25 @@ def _sibling_has_data(derived_dir: Path, name: str) -> bool:
 #: installed). Maps dataset -> the derived file holding the outcome.
 OUTCOME_RECORDS: dict[str, str] = {
     "telegram_conversations": "telegram_presence",
+    "browser": "browser_presence",
 }
+
+
+def _outcome_attempted(cap: Capability, derived_dir: Path) -> bool:
+    """Whether this dataset's OUTCOME_RECORDS entry says the stage ran at all.
+
+    Used as a ``ran_if_present``-style corroborator for an ``unconditional_write``
+    dataset: ``_outcome_reason`` below only returns text for an ``available=False``
+    failure, so a stage that ran and *succeeded* (``browser_presence`` with
+    ``available=True`` after finding zero browsers, say) would otherwise leave no trace
+    for the unconditional-write branch to find, and an empty result would report as
+    unverified rather than as the real "checked, nothing found" finding it is.
+    """
+    name = OUTCOME_RECORDS.get(cap.dataset)
+    if not name:
+        return False
+    blob = _read_derived(derived_dir, name)
+    return isinstance(blob, dict) and bool(blob.get("attempted"))
 
 
 def _outcome_reason(cap: Capability, derived_dir: Path) -> Optional[str]:
@@ -840,12 +862,14 @@ def resolve(
     # It is not, however, authoritative about whether the gap is closable, and treating it
     # as though it were short-circuited the non-root carve-out further down for the one
     # dataset that has both an outcome record and a route around the handset.
-    # ``telegram_conversations`` is the only entry in OUTCOME_RECORDS, and on an unrooted
-    # phone with 'tier2_telegram' ticked on — the exact handset the carve-out was written
-    # for — the stage runs, the ``su cp`` fails, ``telegram_presence`` records it, and
-    # this branch badged "n/a: nothing you can do here" over a view the examiner can fill
-    # this afternoon from a Telegram Desktop export. So the record decides the wording and
-    # ``root_only`` decides the state, exactly as in the no-root branch below.
+    # ``telegram_conversations`` is the OUTCOME_RECORDS entry this carve-out was written
+    # for: on an unrooted phone with 'tier2_telegram' ticked on the stage runs, the
+    # ``su cp`` fails, ``telegram_presence`` records it, and without this branch it badged
+    # "n/a: nothing you can do here" over a view the examiner can fill this afternoon from
+    # a Telegram Desktop export. So the record decides the wording and ``root_only``
+    # decides the state, exactly as in the no-root branch below — ``browser`` is the other
+    # entry, and ``root_only`` stays True there (no workstation-side import route exists
+    # for a browser History DB), so its recorded failures always land INACCESSIBLE.
     recorded = _outcome_reason(cap, derived_dir)
     if recorded and cap.root_only:
         return {
@@ -973,13 +997,17 @@ def resolve(
         # is one the pipeline writes unconditionally, where an empty file is equally
         # consistent with "ran and found nothing" and "never executed". Both need
         # corroboration before anything is claimed. Corroboration comes from a sibling
-        # dataset that could only be non-empty if the stage got that far, or from the
-        # envelope's own record of having run (``ran_when``).
+        # dataset that could only be non-empty if the stage got that far, from the
+        # envelope's own record of having run (``ran_when``), or from an OUTCOME_RECORDS
+        # entry that confirms the stage ran (``recorded`` above only fires for a
+        # *failure*; a stage that ran and succeeded needs this to be seen as having run).
         ran = any(
             _sibling_has_data(derived_dir, sibling) for sibling in cap.ran_if_present
         )
         if not ran and cap.ran_when:
             ran = bool(_path_value(value, cap.ran_when))
+        if not ran:
+            ran = _outcome_attempted(cap, derived_dir)
         if ran:
             state = EMPTY
             reason = (

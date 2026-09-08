@@ -5769,7 +5769,24 @@ def _run_tier2_browser_history(
     via ``su -c cp`` the same way every other Tier-2 app pull works, and runs the same
     deleted-row carver used everywhere else in the tool so cleared history shows up as
     :class:`~triage.config.Confidence.DELETION_DETECTED`, not silence.
+
+    Every exit path also writes ``browser_presence`` (same pattern as Telegram's
+    ``telegram_presence``) — the capability catalogue's ``browser`` entry used to have no
+    corroborating record at all (its own comment said so: "there is no corroborator to
+    give this one"), so a real device with root failure, a flag left off, or a genuinely
+    empty History file all rendered the same generic "unverified" empty state, with no way
+    for the examiner to tell which of the three actually happened. ``available=False``
+    only for a genuine access failure (no root); a root session that ran and found no
+    browsers is a real finding about the device, not a gap.
     """
+
+    def _presence(available: bool, reason: Optional[str] = None, **extra: Any) -> None:
+        _write_case_derived(
+            case,
+            "browser_presence",
+            {"attempted": True, "available": available, "reason": reason, **extra},
+        )
+
     # Verify root FIRST. _root_pull_paths' `su -c 'test -e ...'` probe fails identically
     # whether the target genuinely doesn't exist or `su` itself is missing — without this
     # check, a non-rooted phone would get every browser logged as "not present on device",
@@ -5785,14 +5802,17 @@ def _run_tier2_browser_history(
         tier=Tier.TIER2.value,
     )
     if not root_check.ok:
+        reason = (
+            "root not available; app-private History databases are unreachable without "
+            "root on this device"
+        )
         case.log(
             "tier2.browser_history",
-            "root not available; browser history recovery skipped. This is NOT a "
-            "finding that no browsers are installed — app-private History databases "
-            "are unreachable without root on this device.",
+            f"{reason}. This is NOT a finding that no browsers are installed.",
             result="skipped",
             tier=Tier.TIER2.value,
         )
+        _presence(False, reason)
         return {"browsers_found": 0, "rows": 0}
 
     specs: list[tuple[str, str]] = []
@@ -5825,6 +5845,10 @@ def _run_tier2_browser_history(
             result="skipped",
             tier=Tier.TIER2.value,
         )
+        # Root worked and the known paths were checked — a real finding, not an access
+        # failure, so `available=True` (an empty result here defers to the ordinary
+        # count-based EMPTY state rather than being surfaced as "could not check").
+        _presence(True, browsers_found=0, rows=0)
         return {"browsers_found": 0, "rows": 0}
 
     pulled = _root_pull_paths(
@@ -5925,6 +5949,7 @@ def _run_tier2_browser_history(
         f"found on device",
         tier=Tier.TIER2.value,
     )
+    _presence(True, browsers_found=len(pulled), rows=total_rows)
     return {"browsers_found": len(pulled), "rows": total_rows}
 
 
