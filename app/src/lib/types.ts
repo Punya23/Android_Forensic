@@ -1219,6 +1219,33 @@ export interface Passage {
   confidence: string;
 }
 
+// --- Entity cross-links (engine: triage/intel/entity_links.py) ---------------
+/**
+ * Every place one case-brief-named entity turns up across this case's own
+ * collected messages/calls/browser/locations/contacts — deterministic substring
+ * match, not identity resolution (see `disclaimer` on `EntityLinksResponse`, always
+ * present and never to be hidden). `occurrences` is capped for display; `truncated`
+ * says how many more exist beyond the cap, `occurrence_count` is always the true
+ * total either way.
+ */
+export interface EntityLink {
+  entity: string;
+  occurrence_count: number;
+  datasets: string[];
+  occurrences: Passage[];
+  truncated: number;
+}
+
+export interface EntityLinksResponse {
+  entities: EntityLink[];
+  entity_count: number;
+  passages_scanned: number;
+  /** Why `entities` is empty — a normal, honest outcome (no brief entities, or
+   * nothing was collected to search), never silently blank. */
+  reason: string;
+  disclaimer: string;
+}
+
 export interface AskCaseResponse {
   question: string;
   answer: string;

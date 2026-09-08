@@ -284,6 +284,17 @@ export const api = {
       body: JSON.stringify(body || {}),
     }),
 
+  // Entity cross-links: (re-)cross-link case-brief-named entities against this
+  // case's own collected data — deterministic, no LLM. See triage/intel/entity_links.py.
+  // Requires a case profile (run analyze() first); the persisted bundle is otherwise
+  // read like any sibling dataset via `api.dataset(id, "entity_links")`.
+  entityLinks: (id: string) =>
+    request<import("./types").EntityLinksResponse>(`/api/case/${id}/entity-links`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }),
+
   // "Ask this case" — free-text Q&A over the case's own already-collected evidence.
   askCase: (
     id: string,

@@ -8,6 +8,7 @@ import type {
   CaseLearning,
   CaseProfile,
   CollectionPlan,
+  EntityLinksResponse,
   Finding,
   InvestigationTrace,
   LinkedCasesResponse,
@@ -37,6 +38,7 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
   const [learning, setLearning] = useState<CaseLearning | null>(null);
   const [investigation, setInvestigation] = useState<InvestigationTrace | null>(null);
   const [aiSummary, setAiSummary] = useState<AiEvidenceSummary | null>(null);
+  const [entityLinks, setEntityLinks] = useState<EntityLinksResponse | null>(null);
   const [linkedCases, setLinkedCases] = useState<LinkedCasesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [rerunDesc, setRerunDesc] = useState("");
@@ -45,13 +47,15 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
   const [investigating, setInvestigating] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [planRevised, setPlanRevised] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [p, pl, plRev, f, l, inv, summary, linked] = await Promise.all([
+    const [p, pl, plRev, f, l, inv, summary, links, linked] = await Promise.all([
       api.dataset<CaseProfile>(caseId, "case_profile").catch(() => null),
       api.dataset<CollectionPlan>(caseId, "collection_plan").catch(() => null),
       // Re-analysis writes its re-ranking to a separate dataset rather than over the plan
@@ -62,6 +66,7 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
       api.dataset<CaseLearning>(caseId, "case_learning").catch(() => null),
       api.dataset<InvestigationTrace>(caseId, "investigation_trace").catch(() => null),
       api.dataset<AiEvidenceSummary>(caseId, "ai_evidence_summary").catch(() => null),
+      api.dataset<EntityLinksResponse>(caseId, "entity_links").catch(() => null),
       api.linkedCases(caseId).catch(() => null),
     ]);
     setProfile(p && (p as CaseProfile).crime_type ? (p as CaseProfile) : null);
@@ -73,6 +78,7 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
     setLearning(l && typeof (l as CaseLearning).recorded === "boolean" ? (l as CaseLearning) : null);
     setInvestigation(inv && (inv as InvestigationTrace).hypotheses ? (inv as InvestigationTrace) : null);
     setAiSummary(summary && typeof (summary as AiEvidenceSummary).generated === "boolean" ? (summary as AiEvidenceSummary) : null);
+    setEntityLinks(links && Array.isArray((links as EntityLinksResponse).entities) ? (links as EntityLinksResponse) : null);
     setLinkedCases(linked);
     setLoading(false);
   }, [caseId]);
@@ -121,6 +127,19 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
       setSummaryError(e instanceof Error ? e.message : String(e));
     } finally {
       setSummarizing(false);
+    }
+  }
+
+  async function relinkEntities() {
+    setLinking(true);
+    setLinkError(null);
+    try {
+      const links = await api.entityLinks(caseId);
+      setEntityLinks(links);
+    } catch (e) {
+      setLinkError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLinking(false);
     }
   }
 
@@ -525,6 +544,70 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
             {hasProfile
               ? "No AI evidence summary has been generated for this case yet — click Generate above."
               : "Needs a case brief and Case Intelligence findings — see Re-run analysis below."}
+          </p>
+        )}
+      </div>
+
+      {/* Entity cross-links — wherever a case-brief-named person/number turns up */}
+      <div className="card p-4 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-muted">Entity cross-links</div>
+            <p className="text-[11px] text-muted mt-0.5 max-w-2xl">
+              Wherever a name or number from the case brief turns up across this case's own
+              collected messages, calls, browser history, locations and contacts. Deterministic
+              substring match — see the disclaimer below, not identity resolution.
+            </p>
+          </div>
+          <button className="btn-ghost shrink-0" disabled={linking || !hasProfile} onClick={relinkEntities}>
+            {linking ? "Linking…" : entityLinks ? "Re-link" : "Link"}
+          </button>
+        </div>
+
+        {linkError && <p className="text-xs text-deletion mb-2">{linkError}</p>}
+
+        {entityLinks ? (
+          entityLinks.entities.length > 0 ? (
+            <div className="space-y-3">
+              {entityLinks.entities.map((link) => (
+                <div key={link.entity} className="border-b border-line pb-2 last:border-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium text-ink">{link.entity}</span>
+                    <span className="text-[11px] text-muted">
+                      {link.occurrence_count} occurrence{link.occurrence_count !== 1 ? "s" : ""}
+                      {link.truncated > 0 && ` (+${link.truncated} more not listed)`}
+                    </span>
+                  </div>
+                  {link.datasets.length > 0 ? (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {link.datasets.map((d) => (
+                        <span
+                          key={d}
+                          className="text-[10px] font-mono rounded bg-panel px-1.5 py-0.5 border border-line text-muted"
+                        >
+                          {d}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-muted mt-1">
+                      Not found in what was collected — not proof of no contact.
+                    </p>
+                  )}
+                </div>
+              ))}
+              <p className="text-[11px] text-warn leading-relaxed border-t border-line pt-2">
+                {entityLinks.disclaimer}
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-muted leading-relaxed">{entityLinks.reason}</p>
+          )
+        ) : (
+          <p className="text-xs text-muted">
+            {hasProfile
+              ? "No entity cross-links have been computed for this case yet — click Link above."
+              : "Needs a case brief naming at least one person/number — see Re-run analysis below."}
           </p>
         )}
       </div>
