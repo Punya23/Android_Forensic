@@ -24,13 +24,18 @@ def parse_contacts_json(path: str | Path) -> list[Contact]:
     for row in data if isinstance(data, list) else []:
         if not isinstance(row, dict):
             continue
-        name = (
+        # Every field is coerced through str() before .strip() — the helper APK's JSON
+        # is untrusted input, and a single row with e.g. a numeric phone number (valid
+        # JSON, invalid assumption) used to raise AttributeError here uncaught, which
+        # the pipeline's bare `except: pass` around this call turned into *all* contacts
+        # from the file silently vanishing rather than just that one row.
+        name = str(
             row.get("name") or row.get("display_name") or row.get("displayName") or ""
         ).strip()
-        number = (
+        number = str(
             row.get("number") or row.get("phone") or row.get("phoneNumber") or ""
         ).strip()
-        email = (row.get("email") or "").strip()
+        email = str(row.get("email") or "").strip()
         if not (name or number):
             continue
         contacts.append(

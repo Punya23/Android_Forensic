@@ -3407,7 +3407,12 @@ def _process_pulled_file(
                     tier=Tier.TIER0.value,
                 )
 
-    # Tier-1 helper output (contacts / call log / SMS JSON)
+    # Tier-1 helper output (contacts / call log / SMS JSON). A bare `except: pass` here
+    # used to mean a parse failure and a genuinely empty file were indistinguishable —
+    # the dashboard showed "No contacts acquired" either way, with no record that the
+    # helper actually wrote data the engine then failed to read. Logged as an error now,
+    # same as the app-db branch above, so a bad parse shows up in the audit trail instead
+    # of masquerading as an honest empty result.
     if name == "contacts.json":
         try:
             c = parse_contacts_json(stored)
@@ -3418,8 +3423,13 @@ def _process_pulled_file(
                 tier=Tier.TIER1.value,
                 alters_device=False,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            case.log(
+                "parse.contacts",
+                f"contacts.json parse error: {exc}",
+                result="error",
+                tier=Tier.TIER1.value,
+            )
     if name == "calllog.json":
         try:
             cl = parse_calllog_json(stored)
@@ -3429,8 +3439,13 @@ def _process_pulled_file(
                 f"{len(cl)} calls (Tier 1 helper)",
                 tier=Tier.TIER1.value,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            case.log(
+                "parse.calllog",
+                f"calllog.json parse error: {exc}",
+                result="error",
+                tier=Tier.TIER1.value,
+            )
     if name == "sms.json":
         try:
             sms = parse_sms_json(stored)
@@ -3438,8 +3453,13 @@ def _process_pulled_file(
             case.log(
                 "parse.sms", f"{len(sms)} SMS (Tier 1 helper)", tier=Tier.TIER1.value
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            case.log(
+                "parse.sms",
+                f"sms.json parse error: {exc}",
+                result="error",
+                tier=Tier.TIER1.value,
+            )
 
     # Expanded Collector-APK outputs
     if name == "media_inventory.json":
@@ -3451,8 +3471,13 @@ def _process_pulled_file(
                 f"{len(inv)} MediaStore entries (Tier 1 helper)",
                 tier=Tier.TIER1.value,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            case.log(
+                "parse.media_inventory",
+                f"media_inventory.json parse error: {exc}",
+                result="error",
+                tier=Tier.TIER1.value,
+            )
     if name == "apps.json":
         try:
             apps_list = parse_apps(stored)
