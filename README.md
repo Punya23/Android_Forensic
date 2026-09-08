@@ -104,7 +104,7 @@ pipeline with live progress if you'd rather click.
 | `engine/` | Python acquisition + recovery + reporting. `triage/pipeline.py` is the spine |
 | `engine/triage/parsers/` | One module per artifact type — the bulk of the forensic logic |
 | `engine/triage/recovery/` | SQLite carving: freelist, freeblocks, unallocated, WAL, journals |
-| `engine/triage/intel/` | Case-intelligence layer — planning, RAG retrieval, deep investigation, ask-this-case |
+| `engine/triage/intel/` | Case-intelligence layer — planning, RAG retrieval, deep investigation, ask-this-case (wired); evidence-scoring/summarization/social-graph classes (not yet, see `docs/NOTES.md`) |
 | `app/` | Electron + React dashboard (Vite, TypeScript) |
 | `apk/` | Kotlin Tier-1 collector, sideloaded and then removed |
 | `docs/` | The reference docs linked below |
@@ -112,76 +112,10 @@ pipeline with live progress if you'd rather click.
 Building and testing each half:
 
 ```bash
-cd engine && python -m pytest tests/ -q      # 1205 tests, no device needed
+cd engine && python -m pytest tests/ -q      # 1427 tests, no device needed
 cd apk && ./gradlew assembleDebug            # needs the Android SDK
 cd app && npx tsc --noEmit                   # dashboard typecheck
 ```
-
-## 🤖 AI Enhancement Modules (New)
-
-Five new AI-powered modules for intelligent forensic analysis:
-
-### Module Overview
-| Module | Purpose |
-|--------|---------|
-| **Evidence Prioritization** | ML-based scoring and ranking of findings |
-| **Conversation Summarization** | AI-powered chat summaries with entity extraction |
-| **Behavioral Analysis** | Pattern detection and anomaly identification |
-| **Multi-Language NLP** | Indian language support with slang/emoji processing |
-| **Social Network Analysis** | Graph metrics, community detection, influence scoring |
-
-### Quick Setup
-
-```bash
-cd engine
-
-# Run AI module tests (17 tests)
-python -m pytest tests/test_ai_modules.py -v
-```
-
-**Expected output**: `17 passed` ✅
-
-### Key Features
-- ✅ **LLM Integration**: With graceful fallbacks
-- ✅ **Multi-Language**: 7 Indian languages, 50+ slang terms, 30+ emojis
-- ✅ **Forensically Sound**: Explicit caveats, confidence levels
-- ✅ **Graph Analysis**: 4 centrality metrics, community detection
-- ✅ **Behavioral Detection**: 6 pattern types (timing, bursts, switches)
-
-### Example Usage
-
-```python
-# Evidence Prioritization
-from triage.intel import EvidencePrioritizer
-prioritizer = EvidencePrioritizer()
-scored = prioritizer.score_evidence(finding, case_context)
-
-# Conversation Summarization
-from triage.intel import ConversationSummarizer
-summarizer = ConversationSummarizer()
-summary = summarizer.summarize_conversation(messages, chat_id)
-
-# Behavioral Analysis
-from triage.forensics import BehavioralAnomalyDetector
-detector = BehavioralAnomalyDetector()
-patterns = detector.detect_patterns(messages, calls)
-
-# Multi-Language NLP
-from triage.forensics import MultiLanguageNLP
-nlp = MultiLanguageNLP()
-processed = nlp.process_message("kal milte hain bro 🤙")
-
-# Social Network Analysis
-from triage.intel import SocialNetworkAnalyst
-analyst = SocialNetworkAnalyst()
-graph = analyst.build_enhanced_graph(messages, contacts)
-```
-
-### Documentation
-- 📖 **[AI Modules Complete Guide](AI_MODULES_COMPLETE.md)** - Full documentation
-- 🧪 **Tests**: `tests/test_ai_modules.py` - 17 comprehensive tests
-
-**All modules production-ready and tested** ✅
 
 ## 📚 Full documentation
 
@@ -206,8 +140,6 @@ deliberately not wired up.
 
 <div align="center">
 
-**1205 tests passing** · **+19 forensic module tests** · **+17 AI module tests** · Runs fully offline · No account, no cloud, no telemetry
-
-**New**: [Forensic Modules](FORENSIC_MODULES_INDEX.md) · [AI Modules](AI_MODULES_COMPLETE.md)
+**1427 tests passing** · Runs fully offline · No account, no cloud, no telemetry
 
 </div>
