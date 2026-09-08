@@ -964,6 +964,14 @@ def run_acquisition(
     seen = set()
     files = [f for f in all_files if not (f in seen or seen.add(f))][: cfg.max_files]
 
+    # Single declaration for the run's throughput accounting — the screenshot capture
+    # below and the parallel pull further down both add to the same counter. A second
+    # `pulled_bytes = 0` used to sit right before the parallel-pull section too, which
+    # silently discarded whatever the screenshot had already added; that duplicate is
+    # deleted below rather than kept as a second reset.
+    pull_start = time.monotonic()
+    pulled_bytes = 0
+
     # ── Pre-scan validation: filter phantom files before any pull ───────────
     # MediaStore can report files that no longer exist (e.g. deleted between
     # the enumerate and pull phases, or never written after a failed transfer).
@@ -1062,9 +1070,8 @@ def run_acquisition(
     # ── Tier 0: parallel file pull ──────────────────────────────────────────
     # Pull results are folded into the shared accumulators under a lock so
     # that only the slow I/O (source.pull_file) runs concurrently.
+    # pull_start / pulled_bytes are declared once, above, before the screenshot capture.
     _ingest_lock = threading.Lock()
-    pull_start = time.monotonic()
-    pulled_bytes = 0
 
     # Optional priority ordering (opt-in via cfg.use_priority_filter)
     ordered_files = get_priority_files(files) if cfg.use_priority_filter else files
