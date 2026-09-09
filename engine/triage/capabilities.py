@@ -776,6 +776,10 @@ CATALOGUE: dict[str, Capability] = {
         # brief, so on a briefless case this file is never written and the ai_findings
         # corroborator is absent too.
         needs_case_brief=True,
+        # build_entity_links_for_case() calls case.write_derived("entity_links", bundle)
+        # unconditionally whenever it runs at all (triage/intel/entity_links.py) — same
+        # fixed-shape-envelope gap as investigation_trace just above, missed in that pass.
+        unconditional_write=True,
     ),
     # --- named, not built --------------------------------------------------
     "ios_acquisition": Capability(
