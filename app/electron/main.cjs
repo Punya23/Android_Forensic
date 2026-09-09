@@ -164,6 +164,13 @@ function killEngineTree(proc) {
 
 function createWindow() {
 
+  // SNAGR_KIOSK=1: dedicated-hardware deployment — the box's own attached
+  // display is the only screen anyone will see this on, so borrow the whole
+  // thing (fullscreen kiosk, no menu bar/frame) instead of a normal desktop
+  // window. Off by default — a developer's or examiner's laptop should still
+  // get a regular resizable window.
+  const kiosk = process.env.SNAGR_KIOSK === "1";
+
   win = new BrowserWindow({
 
     width: 1440,
@@ -175,6 +182,10 @@ function createWindow() {
 
     title: "SNAGR — Forensic Preview",
 
+    kiosk,
+    fullscreen: kiosk,
+    autoHideMenuBar: kiosk,
+    frame: !kiosk,
 
     webPreferences: {
 

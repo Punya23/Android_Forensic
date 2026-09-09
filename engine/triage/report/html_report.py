@@ -1156,6 +1156,13 @@ def generate_report(case_dir: str | Path) -> Path:
                 or "— (record before use)",
                 "Scope / minimisation": meta.get("scope_note") or "—",
                 "Opened": meta.get("created_at"),
+                "Network posture": {
+                    "airgapped": "Airgapped — engine bound to loopback only, no LAN/external reachability",
+                    "lan": "LAN-exposed — engine was reachable from the local network during acquisition",
+                }.get(
+                    (meta.get("acquisition_config") or {}).get("network_mode"),
+                    "Unrecorded (pre-dates network posture tracking)",
+                ),
             },
         )
     )

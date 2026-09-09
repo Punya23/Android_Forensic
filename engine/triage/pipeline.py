@@ -285,6 +285,10 @@ class PipelineConfig:
     legal_authority: str = ""
     scope_note: str = ""
     cases_root: Path = field(default_factory=lambda: Path("cases"))
+    # "airgapped" (loopback-only, the default) or "lan" — see triage/server.py
+    # --network-mode. Recorded so the report can state the network posture the
+    # acquisition ran under; this field never changes engine behaviour itself.
+    network_mode: str = "airgapped"
     keywords: list[KeywordRule] = field(default_factory=lambda: list(DEFAULT_KEYWORDS))
     known_hashes: dict[str, str] = field(default_factory=dict)
     max_files: int = 5000  # safety cap for a field triage run
