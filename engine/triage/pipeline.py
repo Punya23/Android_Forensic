@@ -157,7 +157,6 @@ class DeviceDisconnectedError(RuntimeError):
     checkpoint is saved at the exact file where the disconnect occurred.
     """
 from .parsers import (
-    extract_gps,
     parse_app_db,
     parse_browser_history,
     parse_firefox_places,
@@ -219,7 +218,7 @@ from .parsers.url_location import (
     summarise_url_locations,
 )
 from .parsers.signal import parse_signal_plaintext_db
-from .parsers.exif import extract_datetime
+from .parsers.exif import extract_gps_enhanced
 from .parsers.video_gps import extract_video_location
 from .parsers.collector import (
     parse_media_inventory,
@@ -451,6 +450,17 @@ def run_acquisition(
     _autosave_thread = None
 
     if cancel_token: cancel_token.raise_if_cancelled()
+
+    # Bind the token to the real device's adb transport so cancel() can kill an
+    # in-flight `adb pull` immediately (adb.py registers the subprocess with
+    # the token for the duration of every call). One bind here covers every
+    # adb.pull()/adb.shell() call made anywhere in this run — single big
+    # transfers (WhatsApp backup, msgstore.db) and the parallel bulk-media
+    # pull alike — without threading cancel_token through each call site.
+    # MockDeviceSource has no .adb (it reads from a local corpus), so this is
+    # a no-op there.
+    if cancel_token is not None and hasattr(source, "adb"):
+        source.adb.bind_cancel_token(cancel_token)
 
     progress("init", 0.0, "Opening case folder")
     meta = CaseMeta(
@@ -3485,9 +3495,24 @@ def _process_pulled_file(
         dt = None
         loc_source = "exif"
         loc_label = f"photo {name}"
+        # Enhanced fields (altitude/device/software) are image-only — EXIF has no
+        # equivalent for video/audio, so these stay None there rather than pretend
+        # a value was looked up and came back empty.
+        altitude = None
+        device_make = None
+        device_model = None
+        software = None
         if category == "image":
-            gps = extract_gps(stored)
-            dt = _iso_or_none(extract_datetime(stored))
+            enhanced = extract_gps_enhanced(stored)
+            gps = enhanced["gps"]
+            # Already ISO-8601 (extract_gps_enhanced normalises it internally) —
+            # _iso_or_none() expects the raw "YYYY:MM:DD HH:MM:SS" EXIF form and
+            # would silently return None if re-applied to an already-ISO string.
+            dt = enhanced["timestamp"]
+            altitude = enhanced["altitude"]
+            device_make = enhanced["device_make"]
+            device_model = enhanced["device_model"]
+            software = enhanced["software"]
         elif category == "video":
             vid = extract_video_location(stored)
             if vid:
@@ -3508,6 +3533,11 @@ def _process_pulled_file(
             timestamp=dt,
             gps=gps,
             sha256=rec.sha256,
+            device_path=dev_path,
+            altitude=altitude,
+            device_make=device_make,
+            device_model=device_model,
+            software=software,
         )
         result["media_items"].append(mi)
         if gps:
@@ -4090,76 +4120,93 @@ def _parallel_pull_files(
     # Filter out tier-1 skips before submitting
     to_pull = [f for f in files if f not in tier1_skip_paths]
 
+    # NOT a `with` block: ThreadPoolExecutor.__exit__ always calls
+    # shutdown(wait=True) with cancel_futures defaulting to False — on a plain
+    # exception unwind (e.g. AcquisitionCancelled below) that BLOCKS until
+    # every already-submitted future finishes, including ones still queued
+    # and never even started. Since every file is submitted up front, that
+    # meant Stop had no effect until the whole backlog drained — exactly the
+    # "stop does nothing after 1-2GB" bug. cancel_futures=True in the
+    # explicit shutdown() below drops the queued-but-not-started futures
+    # immediately; the ones already mid-pull are handled by Adb.run() itself,
+    # which now kills its subprocess as soon as the token is cancelled
+    # (see triage/adb.py, triage/cancellation.py) instead of blocking to
+    # completion.
+    executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=workers, thread_name_prefix="triage_pull"
+    )
     try:
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=workers, thread_name_prefix="triage_pull"
-        ) as executor:
-            future_to_path = {
-                executor.submit(
-                    _pull_and_process_file,
-                    dev_path,
-                    source,
-                    staging,
-                    case,
-                    ingest_lock,
-                    pull_start,
-                    use_priority_filter,
-                    cancel_token,
-                ): dev_path
-                for dev_path in to_pull
-            }
+        future_to_path = {
+            executor.submit(
+                _pull_and_process_file,
+                dev_path,
+                source,
+                staging,
+                case,
+                ingest_lock,
+                pull_start,
+                use_priority_filter,
+                cancel_token,
+            ): dev_path
+            for dev_path in to_pull
+        }
 
-            for future in concurrent.futures.as_completed(future_to_path):
-                if cancel_token: cancel_token.raise_if_cancelled()
-                dev_path = future_to_path[future]
-                done_count += 1
-                pct = 0.10 + 0.42 * ((done_offset + done_count) / max(total, 1))
-                name = dev_path.rsplit("/", 1)[-1]
-                progress("pull", pct, f"Pulled {name} ({done_count}/{len(to_pull)})")
-                try:
-                    res = future.result()
-                    if res is not None:
-                        results.append(res)
-                except DeviceDisconnectedError as exc:
-                    # Device cable pulled mid-acquisition.  Cancel immediately so
-                    # all pending futures are abandoned rather than issuing
-                    # thousands of doomed ADB commands.
-                    case.log(
-                        "adb.disconnect",
-                        str(exc),
-                        result="error",
-                        tier=Tier.TIER0.value,
-                    )
-                    if cancel_token:
-                        cancel_token.cancel()
-                    # Break out of the as_completed loop; pending futures will be
-                    # abandoned when the executor exits the context manager.
-                    break
-                except AcquisitionCancelled:
-                    break
-                except Exception as exc:
-                    case.log(
-                        "adb.pull",
-                        f"worker error for {dev_path}: {exc}",
-                        result="error",
-                        tier=Tier.TIER0.value,
-                    )
+        for future in concurrent.futures.as_completed(future_to_path):
+            if cancel_token: cancel_token.raise_if_cancelled()
+            dev_path = future_to_path[future]
+            done_count += 1
+            pct = 0.10 + 0.42 * ((done_offset + done_count) / max(total, 1))
+            name = dev_path.rsplit("/", 1)[-1]
+            progress("pull", pct, f"Pulled {name} ({done_count}/{len(to_pull)})")
+            try:
+                res = future.result()
+                if res is not None:
+                    results.append(res)
+            except DeviceDisconnectedError as exc:
+                # Device cable pulled mid-acquisition.  Cancel immediately so
+                # all pending futures are abandoned rather than issuing
+                # thousands of doomed ADB commands.
+                case.log(
+                    "adb.disconnect",
+                    str(exc),
+                    result="error",
+                    tier=Tier.TIER0.value,
+                )
+                if cancel_token:
+                    cancel_token.cancel()
+                # Break out of the as_completed loop; pending futures are
+                # abandoned below by executor.shutdown(cancel_futures=True).
+                break
+            except AcquisitionCancelled:
+                break
+            except Exception as exc:
+                case.log(
+                    "adb.pull",
+                    f"worker error for {dev_path}: {exc}",
+                    result="error",
+                    tier=Tier.TIER0.value,
+                )
 
-                # _pull_and_process_file ingests with flush=False (see its comment) to
-                # avoid an O(n^2) manifest.json rewrite; flush periodically here so the
-                # on-disk copy is never far behind (bounded by count or time, whichever
-                # comes first), not just at the very end of the phase.
-                now = time.monotonic()
-                if (
-                    done_count % Case.MANIFEST_FLUSH_EVERY == 0
-                    or (now - _last_flush) >= Case.MANIFEST_FLUSH_INTERVAL_SECS
-                ):
-                    case.flush_manifest()
-                    _last_flush = now
+            # _pull_and_process_file ingests with flush=False (see its comment) to
+            # avoid an O(n^2) manifest.json rewrite; flush periodically here so the
+            # on-disk copy is never far behind (bounded by count or time, whichever
+            # comes first), not just at the very end of the phase.
+            now = time.monotonic()
+            if case is not None and (
+                done_count % Case.MANIFEST_FLUSH_EVERY == 0
+                or (now - _last_flush) >= Case.MANIFEST_FLUSH_INTERVAL_SECS
+            ):
+                case.flush_manifest()
+                _last_flush = now
     finally:
+        executor.shutdown(wait=True, cancel_futures=True)
         # Guarantee no batched manifest entries are left unflushed on disk, even if
-        # this phase was cancelled or a worker raised past the loop above.
-        case.flush_manifest()
+        # this phase was cancelled or a worker raised past the loop above. `case` is
+        # only None in unit tests that exercise cancellation/executor-teardown timing
+        # in isolation (see test_parallel_pull_cancel.py) — every real call site passes
+        # a live Case.
+        if case is not None:
+            case.flush_manifest()
 
     return results
 

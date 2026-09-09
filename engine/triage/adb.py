@@ -26,6 +26,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from .cancellation import CancellationToken
+
+
+def _kill_process(proc: subprocess.Popen, grace: float = 2.0) -> None:
+    """Best-effort terminate-then-kill of a subprocess that must stop now.
+
+    Used both for cancellation and for our own timeout enforcement — a process
+    that ignores SIGTERM for *grace* seconds gets SIGKILL.
+    """
+    try:
+        proc.terminate()
+        proc.wait(timeout=grace)
+    except Exception:
+        try:
+            proc.kill()
+            proc.wait(timeout=2)
+        except Exception:
+            pass  # already gone, or nothing more we can do
+
 
 @dataclass
 class AdbResult:
@@ -86,6 +105,12 @@ class Adb:
         # It was previously exposed as "transport_reuses", which claimed an optimisation
         # the code does not perform.
         self._transport_alive_count: int = 0
+        # Bound once per acquisition run (see run_acquisition()) so every adb
+        # command dispatched through run() becomes killable on cancel() — not
+        # just checked between pipeline stages. None outside an acquisition
+        # (e.g. device-discovery calls), in which case run() behaves exactly
+        # as before.
+        self.cancel_token: Optional[CancellationToken] = None
 
     # -----------------------------------------------------------------------
     # Persistent transport — public interface
@@ -201,6 +226,14 @@ class Adb:
     # Core API (unchanged contract; transport kept warm as a side-effect)
     # -----------------------------------------------------------------------
 
+    def bind_cancel_token(self, token: Optional[CancellationToken]) -> None:
+        """Attach *token* so every future :meth:`run` call becomes killable.
+
+        Call once, right after a :class:`CancellationToken` is created for an
+        acquisition run — see ``run_acquisition()`` in ``triage/pipeline.py``.
+        """
+        self.cancel_token = token
+
     @property
     def available(self) -> bool:
         return self.adb_path is not None
@@ -217,9 +250,15 @@ class Adb:
         The keep-alive ``adb shell`` process (if started) only keeps the ADB
         *host-daemon* connection to the device from being torn down between
         commands. The command itself is always dispatched via a fresh
-        ``subprocess.run`` so the exact command string can be audited — nothing
-        is multiplexed over the persistent process, so no connection is reused
+        subprocess so the exact command string can be audited — nothing is
+        multiplexed over the persistent process, so no connection is reused
         at the per-command level.
+
+        Spawned via ``Popen`` + a short poll loop (not a single blocking
+        ``subprocess.run``) so that a command bound to a cancelled token —
+        see :meth:`bind_cancel_token` — can be killed mid-transfer instead of
+        running to completion. This is what makes Stop actually stop a large
+        ``adb pull`` instead of only taking effect once it finishes on its own.
         """
         # Keep the daemon connection warm; record whether it was alive at dispatch.
         self._cmd_count += 1
@@ -232,27 +271,66 @@ class Adb:
         printable = " ".join(cmd)
         if not self.available:
             return AdbResult(printable, 127, "", "adb binary not found")
+
+        token = self.cancel_token
+        if token is not None and token.is_cancelled:
+            # Already cancelled — don't even launch a new adb process.
+            return AdbResult(printable, 130, "", "cancelled before dispatch")
+
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True,
-                timeout=timeout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=not binary,
             )
-            return AdbResult(
-                printable,
-                proc.returncode,
-                proc.stdout if not binary else "",
-                (
-                    proc.stderr
-                    if isinstance(proc.stderr, str)
-                    else proc.stderr.decode("utf-8", "replace")
-                ),
-            )
-        except subprocess.TimeoutExpired:
-            return AdbResult(printable, 124, "", f"timeout after {timeout}s")
         except Exception as exc:  # pragma: no cover - defensive
             return AdbResult(printable, 1, "", str(exc))
+
+        if token is not None:
+            token.register_process(proc)
+        try:
+            deadline = time.monotonic() + timeout
+            poll_interval = 0.15
+            while True:
+                ret = proc.poll()
+                if ret is not None:
+                    break
+                if token is not None and token.is_cancelled:
+                    _kill_process(proc)
+                    ret = proc.poll()
+                    break
+                if time.monotonic() >= deadline:
+                    _kill_process(proc)
+                    return AdbResult(printable, 124, "", f"timeout after {timeout}s")
+                time.sleep(poll_interval)
+
+            if token is not None and token.is_cancelled:
+                # The process may have exited on its own right as cancel() fired
+                # (e.g. CancellationToken.cancel() killed it via the registry
+                # before this loop's own check ran) — report a consistent
+                # "cancelled" result either way rather than a raw, signal-
+                # dependent returncode, and never treat it as a clean success.
+                return AdbResult(
+                    printable, 130, "", "cancelled — process terminated mid-transfer"
+                )
+
+            try:
+                out, err = proc.communicate(timeout=5)
+            except Exception:
+                out, err = "" if not binary else b"", ""
+            return AdbResult(
+                printable,
+                ret,
+                (out or "") if not binary else "",
+                err if isinstance(err, str) else (err or b"").decode("utf-8", "replace"),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            _kill_process(proc)
+            return AdbResult(printable, 1, "", str(exc))
+        finally:
+            if token is not None:
+                token.unregister_process(proc)
 
     def shell(self, cmd: str, timeout: int = 120) -> AdbResult:
         return self.run("shell", cmd, timeout=timeout)

@@ -165,6 +165,16 @@ class RealDeviceSource(AcquisitionSource):
         local = staging_dir / uuid.uuid4().hex
         res = self.adb.pull(device_path, local)
         if not res.ok or not local.exists():
+            # A cancelled or timed-out pull (adb.py kills the process mid-transfer)
+            # can still leave a partial file on disk even though the transfer as a
+            # whole failed. Never ingest it — an examiner-facing artifact must be
+            # the file that was actually on the device, not a truncated fragment —
+            # and don't leave it orphaned in staging either.
+            if local.exists():
+                try:
+                    local.unlink()
+                except OSError:
+                    pass
             return None
         flags = (
             ["trashed"]

@@ -80,6 +80,14 @@ function startEngine() {
     engineProc = spawn(python, args, {
       cwd: engineDir,
       stdio: "inherit",
+      // On POSIX, this makes the engine its own process-group leader so
+      // killEngineTree() below can signal the WHOLE group on quit — including
+      // any `adb` subprocess the engine spawned. Without it, killing just the
+      // direct Python child left an in-flight `adb pull` grandchild free to
+      // keep running (and keep writing to disk) after a hard reset/quit,
+      // orphaned from both the engine and the UI. No effect on Windows, which
+      // has no POSIX process groups — taskkill handles the tree there instead.
+      detached: process.platform !== "win32",
     });
 
 
@@ -93,6 +101,62 @@ function startEngine() {
     console.error("could not start engine:", e);
 
   }
+}
+
+// ---------------- KILL ENGINE + ANY CHILD PROCESSES (e.g. in-flight adb) ----------------
+//
+// A bare `proc.kill()` only ever signals the direct child. If an acquisition is
+// mid-`adb pull` when the app quits/hard-resets, that adb process is a
+// grandchild the engine spawned itself (see engine/triage/adb.py) and survives
+// untouched — silently continuing to copy evidence to disk after the user
+// believes everything has stopped. This kills the whole tree instead.
+function killEngineTree(proc) {
+  return new Promise((resolve) => {
+    if (!proc || proc.pid == null || proc.exitCode !== null) {
+      resolve();
+      return;
+    }
+
+    if (process.platform === "win32") {
+      // taskkill walks the OS's own process tree — no process-group setup needed.
+      const tk = spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"]);
+      tk.on("exit", () => resolve());
+      tk.on("error", () => resolve());
+      return;
+    }
+
+    const done = () => {
+      clearTimeout(escalate);
+      resolve();
+    };
+    proc.once("exit", done);
+
+    try {
+      // Negative PID = signal the whole process group (requires the
+      // `detached: true` set at spawn time above).
+      process.kill(-proc.pid, "SIGTERM");
+    } catch {
+      try {
+        proc.kill("SIGTERM");
+      } catch {
+        // Already gone.
+      }
+    }
+
+    // Give it a moment to shut down cleanly; escalate if it won't.
+    const escalate = setTimeout(() => {
+      try {
+        process.kill(-proc.pid, "SIGKILL");
+      } catch {
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // Already gone.
+        }
+      }
+      done();
+    }, 3000);
+  });
 }
 
 
@@ -272,7 +336,7 @@ app.on(
 
       if (engineProc) {
 
-        engineProc.kill();
+        await killEngineTree(engineProc);
 
       }
 

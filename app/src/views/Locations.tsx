@@ -342,7 +342,20 @@ function FlyController({
 // ---------------------------------------------------------------------------
 // Main view
 // ---------------------------------------------------------------------------
-export function LocationsView({ caseId }: { caseId: string }) {
+export function LocationsView({
+  caseId,
+  focusStoredPath,
+  onFocusHandled,
+}: {
+  caseId: string;
+  /** stored_path of a photo to fly the map to on arrival (set by Media.tsx's
+   *  "View on map"), matched against LocationPoint.source_file. */
+  focusStoredPath?: string | null;
+  /** Called once the focus above has been applied (or found nothing to focus),
+   *  so the caller can clear it — otherwise leaving and re-entering this tab
+   *  would re-trigger the same fly-to. */
+  onFocusHandled?: () => void;
+}) {
   const { data, loading } = useDataset<LocationPoint>(caseId, "locations");
 
   // -- Extended location analysis (media_locations / places / anomalies / summary) --
@@ -421,6 +434,19 @@ export function LocationsView({ caseId }: { caseId: string }) {
   const [showAll, setShowAll] = useState(false);
   // Which point was selected from the panel list (triggers map fly-to)
   const [flyTarget, setFlyTarget] = useState<LocationPoint | null>(null);
+
+  // Fly to a specific photo's point on arrival from Media.tsx's "View on map".
+  // Matches by source_file (== MediaItem.stored_path — pipeline.py writes the
+  // same value into both). Runs once mappablePoints has data; a target whose
+  // point isn't mappable (e.g. null-island) is silently skipped rather than
+  // flying nowhere — onFocusHandled still fires so the request doesn't linger.
+  useEffect(() => {
+    if (!focusStoredPath || mappablePoints.length === 0) return;
+    const match = mappablePoints.find((p) => p.source_file === focusStoredPath);
+    if (match) setFlyTarget(match);
+    onFocusHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusStoredPath, mappablePoints]);
   // Whether map tiles are available (detected via tile error events)
   const [tilesOffline, setTilesOffline] = useState(false);
 

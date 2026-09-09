@@ -755,6 +755,15 @@ export interface MediaItem {
   timestamp: string | null;
   gps: { lat: number; lon: number } | null;
   sha256: string;
+  /** On-device path at acquisition time — provenance, not just where it's stored now. */
+  device_path?: string | null;
+  /** Enhanced EXIF (images only). null for video/audio and for any image with no
+   *  readable EXIF block — both render identically to "not available here", since
+   *  neither means extraction failed (e.g. WhatsApp/Instagram strip GPS on send). */
+  altitude?: number | null;
+  device_make?: string | null;
+  device_model?: string | null;
+  software?: string | null;
 }
 
 export interface RecoveredRow {

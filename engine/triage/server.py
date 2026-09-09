@@ -1192,9 +1192,15 @@ def create_app(cases_root: Path = CASES_ROOT):
     def acquire_cancel():
         """Request cancellation of the running acquisition.
 
-        The cancellation is cooperative: the pipeline will finish its current
-        I/O operation and check the token between stages.  The case folder is
-        left in a consistent, auditable partial state.
+        Returns as soon as the request is accepted — this does NOT mean the
+        acquisition has stopped yet, only that it has been told to. The token's
+        cancel() call (triage/cancellation.py) immediately kills any adb
+        subprocess currently in flight (a large `adb pull` no longer runs to
+        completion first) and the pipeline checks the token between
+        stages/files to unwind cleanly. The case folder is left in a
+        consistent, auditable partial state. The dashboard should treat the
+        run as truly stopped only once it receives the "cancelled" socket
+        event, not on this response alone.
         """
         token: CancellationToken | None = state.get("cancel_token")
         if token is None or not state.get("running"):

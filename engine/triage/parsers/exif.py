@@ -1,8 +1,16 @@
 """EXIF / GPS extraction from pulled images.
 
-Uses Pillow's EXIF reader with a piexif fallback, but degrades gracefully: if neither
-library is installed, image files are still catalogued (just without GPS). GPS location
-from photo EXIF is one of the most reliable non-root location artifacts available.
+Uses Pillow's EXIF reader, with pillow-heif registered as a Pillow *opener plugin*
+(not a separate code path) so HEIC/HEIF — the default or optional camera format on
+many Android phones — can be opened at all. Degrades gracefully: if Pillow (or the
+HEIF plugin) is unavailable, or a given file genuinely can't be opened, image files
+are still catalogued, just without GPS. GPS location from photo EXIF is one of the
+most reliable non-root location artifacts available.
+
+Known gap this module does NOT close: WhatsApp/Instagram/Telegram/Signal all strip
+GPS EXIF from images before sending or saving, by design on their end — a shared
+photo genuinely has no GPS tag to find, and that is reported honestly as "no
+location," not as a failure of this extractor. See ``forensics/media_location.py``.
 
 Enhanced functions (Task 1):
     extract_gps_enhanced    -- full GPS + device + image metadata dict
@@ -27,6 +35,20 @@ try:
     _HAVE_PIL = True
 except Exception:  # pragma: no cover
     _HAVE_PIL = False
+
+# Registers a Pillow *opener* for .heic/.heif files — without this, Image.open()
+# raises UnidentifiedImageError on them and every EXIF/GPS function below silently
+# reports "no GPS" for a format that, in practice, usually carries the same GPS
+# EXIF block as JPEG. Safe to skip if the package isn't installed: HEIC files then
+# fail to open exactly as before, just for the same reason PNG/JPEG would if PIL
+# itself were missing.
+if _HAVE_PIL:
+    try:
+        import pillow_heif
+
+        pillow_heif.register_heif_opener()
+    except Exception:  # pragma: no cover
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -90,18 +112,50 @@ def _is_null_island(lat: Optional[float], lon: Optional[float]) -> bool:
     return lat == 0.0 and lon == 0.0
 
 
-def _get_exif_block(path: str | Path):
-    """Open an image and return the raw EXIF mapping (numeric tags → values).
+def _get_exif_block(path: str | Path) -> Optional[dict]:
+    """Open an image and return a flattened EXIF mapping (numeric tags → values).
 
-    Returns ``None`` if the image has no EXIF or PIL is unavailable.
+    Returns ``None`` if the image can't be opened, has no EXIF, or PIL is
+    unavailable — callers can't tell those three apart from this alone, which is
+    fine for "does this photo have GPS" (no either way) but means a genuinely
+    unsupported/corrupt format looks identical to "no EXIF tag" rather than being
+    surfaced as its own failure.
+
+    Uses the public ``Image.getexif()`` API rather than the legacy, private
+    ``_getexif()`` this used to call — ``_getexif()`` is only implemented by a few
+    format plugins (JPEG/PNG/WEBP), so it silently returned ``None`` for every
+    HEIC file (no plugin registered at all, pre pillow-heif) and every TIFF file
+    (``TiffImageFile`` never implemented it, EXIF or not) even when real GPS data
+    was present and readable. ``getexif()`` works across every format Pillow can
+    actually decode, but — unlike ``_getexif()`` — does NOT auto-flatten the Exif
+    SubIFD (``DateTimeOriginal`` and friends) or the GPS IFD into the top-level
+    mapping; both are pulled in explicitly below via ``get_ifd()`` to preserve the
+    combined, single-dict shape every caller in this module expects.
     """
     if not _HAVE_PIL or not is_image(path):
         return None
     try:
         img = Image.open(path)
-        return img._getexif()  # type: ignore[attr-defined]
+        exif = img.getexif()
     except Exception:
         return None
+    if exif is None:
+        return None
+
+    merged: dict = dict(exif)
+    try:
+        merged.update(exif.get_ifd(ExifTags.IFD.Exif))
+    except Exception:
+        pass  # no Exif SubIFD — fine, IFD0 tags (Make/Model/Orientation/…) still apply
+    try:
+        gps_ifd = exif.get_ifd(ExifTags.IFD.GPSInfo)
+    except Exception:
+        gps_ifd = None
+    if gps_ifd:
+        gps_tag_id = next((k for k, v in ExifTags.TAGS.items() if v == "GPSInfo"), None)
+        if gps_tag_id is not None:
+            merged[gps_tag_id] = gps_ifd
+    return merged or None
 
 
 def _get_named_gps(exif) -> Optional[dict]:

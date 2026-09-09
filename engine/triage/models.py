@@ -128,6 +128,17 @@ class MediaItem(Serialisable):
     timestamp: Optional[str] = None
     gps: Optional[dict[str, float]] = None
     sha256: str = ""
+    # On-device path at the time of acquisition — provenance for the dashboard
+    # (which artifact this came from on the phone, not just where it's now stored).
+    device_path: Optional[str] = None
+    # Enhanced EXIF fields (images only; from extract_gps_enhanced()). None for
+    # every video/audio item, and for any image with no readable EXIF block —
+    # both cases the dashboard must render identically to "not extracted here",
+    # since neither means the tool failed.
+    altitude: Optional[float] = None
+    device_make: Optional[str] = None
+    device_model: Optional[str] = None
+    software: Optional[str] = None
 
 
 @dataclass
