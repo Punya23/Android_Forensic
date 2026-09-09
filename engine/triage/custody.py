@@ -105,6 +105,12 @@ class Case:
             report.html        # generated triage report
     """
 
+    # Recommended cadence for a caller that batches ingest_file(flush=False) calls
+    # (see its docstring): flush after this many records or this many seconds,
+    # whichever comes first, so manifest.json on disk is never far behind.
+    MANIFEST_FLUSH_EVERY = 25  # records
+    MANIFEST_FLUSH_INTERVAL_SECS = 2.0  # seconds
+
     def __init__(self, root: Path, meta: CaseMeta):
         self.root = root
         self.meta = meta
@@ -115,6 +121,14 @@ class Case:
         self._case_path = root / "case.json"
         self._manifest: list[ArtifactRecord] = []
         self._lock = threading.Lock()
+        # manifest.json is rewritten in full on every flush (see _flush_manifest) --
+        # for a bulk pull of thousands of files that is O(n^2) I/O if ingest_file()
+        # flushes on every single call. ingest_file() still flushes by default (every
+        # OTHER caller relies on manifest.json being current the instant it returns);
+        # only a caller that opts into ingest_file(flush=False) and then follows the
+        # MANIFEST_FLUSH_EVERY / MANIFEST_FLUSH_INTERVAL_SECS cadence (or calls
+        # flush_manifest() itself) skips the per-call rewrite. `case.manifest` (the
+        # in-memory list) is always current regardless of any of this.
         # Head of the audit hash chain. Read from disk so reopening a case continues the
         # existing chain instead of restarting it (a restart would look exactly like a
         # deletion to the verifier).
@@ -273,11 +287,29 @@ class Case:
         app: Optional[str] = None,
         flags: Optional[list[str]] = None,
         move: bool = False,
+        precomputed_hashes: Optional[dict[str, str]] = None,
+        flush: bool = True,
     ) -> ArtifactRecord:
         """Copy (or move) a pulled file into the case folder, hash it, and record it.
 
         `source_path` is the path the file had on the device (for the manifest);
         `src` is where it currently lives on the workstation.
+
+        `precomputed_hashes` lets a caller hash the file *before* calling this
+        method (e.g. while its own pull-lock is not yet held), so the CPU/IO-bound
+        hashing of a multi-GB file does not serialise other threads that are only
+        waiting to append their own already-computed record. When omitted, the
+        hash is computed here as before (from `dest`, after the move/copy).
+
+        `flush` defaults to True: manifest.json is rewritten to disk before this
+        call returns, same as always -- every caller other than a tight bulk-pull
+        loop should leave this alone, since other code (export, self-validation,
+        hash re-verification) reads manifest.json off disk and expects it current
+        immediately after ingest. Pass `flush=False` ONLY from a loop that also
+        guarantees a `flush_manifest()` call soon after (bounded by count/time or
+        at the end of the phase) -- rewriting the full manifest on every single
+        ingest is O(n^2) for n files, so a tight loop over thousands of files
+        needs to batch it.
         """
         rel = _safe_rel(source_path)
         dest = self.artifacts_dir / rel
@@ -287,7 +319,7 @@ class Case:
         else:
             shutil.copy2(src, dest)
 
-        hashes = file_hashes(dest)
+        hashes = precomputed_hashes if precomputed_hashes is not None else file_hashes(dest)
         rec = ArtifactRecord(
             artifact_id=f"a{len(self._manifest):05d}",
             source_path=source_path,
@@ -304,7 +336,8 @@ class Case:
         )
         with self._lock:
             self._manifest.append(rec)
-            self._flush_manifest()
+            if flush:
+                self._flush_manifest()
         self.log(
             "artifact.ingest",
             f"{source_path} -> {rec.stored_path} ({rec.size_bytes} B)",
@@ -318,6 +351,16 @@ class Case:
         self._manifest_path.write_text(
             json.dumps([r.to_dict() for r in self._manifest], indent=2)
         )
+
+    def flush_manifest(self) -> None:
+        """Force any batched manifest entries (see `ingest_file`) to disk now.
+
+        Call this at phase boundaries (end of a pull phase, before export/report
+        generation, on error/cancellation) so `manifest.json` on disk is never more
+        than a few files/seconds behind `case.manifest` (which is always current).
+        """
+        with self._lock:
+            self._flush_manifest()
 
     @property
     def manifest(self) -> list[ArtifactRecord]:
