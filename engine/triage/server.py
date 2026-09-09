@@ -978,12 +978,20 @@ def create_app(cases_root: Path = CASES_ROOT):
         except ValueError as exc:
             return jsonify({"error": f"invalid case_id: {exc}"}), 400
 
-        # ------ Validate examiner / authority / scope ------
+        # ------ Validate examiner / authority / scope / case brief ------
         try:
             examiner = validate_text_field(str(body.get("examiner", "Unknown Examiner")), "examiner")
             authority = validate_text_field(str(body.get("authority", "")), "authority")
             scope = validate_text_field(str(body.get("scope", "")), "scope")
             webhook = validate_webhook_url(str(body.get("notify_webhook_url", "") or ""))
+            # Free-text case brief (fed to the intel/ontology matcher, triage/intel/planner.py)
+            # — a paragraph, not a short metadata field, so it gets a much larger cap than
+            # the 500-char default rather than that default's short max_length.
+            case_description = validate_text_field(
+                str(body.get("case_description", "") or ""),
+                "case_description",
+                max_length=20000,
+            )
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -1043,7 +1051,7 @@ def create_app(cases_root: Path = CASES_ROOT):
             tier2_recent_tasks=bool(body.get("tier2_recent_tasks", False)),
             tier2_browser_history=bool(body.get("tier2_browser_history", False)),
             tier2_maps_location=bool(body.get("tier2_maps_location", False)),
-            case_description=str(body.get("case_description", "") or ""),
+            case_description=case_description,
             run_ai_analysis=bool(body.get("run_ai_analysis", True)),
             llm_provider=str(body.get("llm_provider", "") or ""),
             case_number=str(body.get("case_number", "") or ""),
@@ -1354,6 +1362,20 @@ def create_app(cases_root: Path = CASES_ROOT):
             ai.get("counts", {}) if isinstance(ai, dict) else {}
         )
 
+        # Hash-integrity check on case open. forensics/auto_verify.py's own cache
+        # (24h, or manifest.json mtime moved since the last check) makes this cheap on
+        # every call but the first-per-day — it does not re-hash the whole case on
+        # every dashboard refresh. This was previously only reachable via a pipeline.py
+        # wrapper called at acquisition-*complete*, which re-verified a manifest that
+        # had, at most, seconds ago finished being written by the very code being
+        # checked — never fatal to the request either way.
+        try:
+            from .forensics.auto_verify import auto_verify_on_open
+
+            summary["hash_verification"] = auto_verify_on_open(case.root)
+        except Exception as exc:
+            summary["hash_verification"] = {"status": "error", "error": str(exc)}
+
         return jsonify(summary)
 
     @app.get("/api/case/<case_id>/capabilities")
@@ -1609,17 +1631,123 @@ def create_app(cases_root: Path = CASES_ROOT):
         # ---------------------------------------------------------
 
     # DATA EXPORT IMPORT
-    # Instagram / Snapchat / Telegram (non-root acquisition path)
+    # Instagram / Snapchat / Telegram / WhatsApp (non-root acquisition path)
     # ---------------------------------------------------------
 
     @app.post("/api/case/<case_id>/import/<app_name>")
     def import_export(case_id: str, app_name: str):
 
-        if app_name not in ("instagram", "snapchat", "telegram"):
+        if app_name not in ("instagram", "snapchat", "telegram", "whatsapp"):
 
             abort(404)
 
         case = _open(cases_root, case_id)
+
+        # WhatsApp is a batch import (parsers.whatsapp_batch): any mix of `_chat.txt`/
+        # `.zip` exports, live `msgstore.db`, and `.crypt15/14/12` encrypted backups —
+        # possibly several at once (e.g. multiple contacts' exports from one device, or
+        # exports pooled across devices). It has its own upload shape (multiple files
+        # plus an optional key file) so it is handled separately from the single-file
+        # Instagram/Snapchat/Telegram flow below.
+        if app_name == "whatsapp":
+
+            uploads = [f for f in request.files.getlist("file") if f.filename]
+
+            if not uploads:
+
+                return jsonify({"error": "no file uploaded"}), 400
+
+            from .parsers.whatsapp_batch import parse_whatsapp_batch, get_batch_stats
+            from .report import generate_report
+
+            key_upload = request.files.get("key")
+
+            # A plain mkstemp() name loses the original filename — and
+            # whatsapp_batch._parse_single() dispatches export .txt/.zip files by
+            # checking for "_chat" in the *name* (WhatsApp's own "Export Chat" naming
+            # convention, e.g. "_chat.txt"), not just the suffix. werkzeug's
+            # secure_filename() strips that leading underscore, which is exactly the
+            # marker being matched on, so it's the wrong sanitiser here: each upload
+            # instead gets its own subdirectory and keeps just Path(...).name (strips
+            # any directory components — the actual traversal risk — without touching
+            # the filename itself).
+            tmp_dir = Path(tempfile.mkdtemp(prefix="whatsapp_batch_"))
+
+            tmp_paths = []
+            key_path = None
+
+            try:
+
+                for i, f in enumerate(uploads):
+
+                    safe_name = Path(f.filename).name or f"upload_{i}.txt"
+
+                    sub = tmp_dir / str(i)
+
+                    sub.mkdir()
+
+                    tp = sub / safe_name
+
+                    f.save(str(tp))
+
+                    tmp_paths.append(tp)
+
+                if key_upload is not None and key_upload.filename:
+
+                    key_path = tmp_dir / "key" / (
+                        Path(key_upload.filename).name or "key.bin"
+                    )
+
+                    key_path.parent.mkdir()
+
+                    key_upload.save(str(key_path))
+
+                messages = parse_whatsapp_batch(tmp_paths, key_path=key_path)
+
+                stats = get_batch_stats(messages)
+
+                if not messages:
+
+                    return (
+                        jsonify(
+                            {
+                                "error": (
+                                    "no messages recovered from the uploaded file(s) — "
+                                    "unsupported format, or an encrypted backup with no "
+                                    "matching key"
+                                ),
+                                "stats": stats,
+                            }
+                        ),
+                        400,
+                    )
+
+                # Merge into the same "messages" dataset live acquisition writes to
+                # (pipeline.py) — Message.to_dict() is the same shape either way, so
+                # Messages/Timeline/GlobalSearch pick these up with no separate view.
+                existing = case.read_derived("messages") or []
+
+                merged = list(existing) + [m.to_dict() for m in messages]
+
+                case.write_derived("messages", merged)
+
+                try:
+
+                    generate_report(case.root)
+
+                    _finalize_report(case, trigger="import:whatsapp_batch")
+
+                except Exception:
+
+                    pass
+
+                return jsonify(
+                    {"imported": len(messages), "total": len(merged), "stats": stats}
+                )
+
+            finally:
+
+                shutil.rmtree(tmp_dir, ignore_errors=True)
 
         upload = request.files.get("file")
 

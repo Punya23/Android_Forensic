@@ -2925,6 +2925,12 @@ def run_acquisition(
         tier=Tier.TIER0.value,
     )
 
+    # Detailed hash-integrity report — re-verifies every manifest entry against what
+    # was recorded at pull time and writes a dedicated report; see
+    # _generate_hash_integrity_report's docstring for why this is the one lifecycle
+    # point where that re-hash is actually meaningful. Never fatal to the acquisition.
+    _generate_hash_integrity_report(case.root)
+
     progress("done", 1.0, "Acquisition complete")
 
     # -- Completion notification (opt-in) ---------------------------------------
@@ -6621,6 +6627,30 @@ def _detect_location_anomalies(locations: List[Dict[str, Any]]) -> List[Dict[str
         return []
 
 
+def _generate_hash_integrity_report(case_dir: Path) -> None:
+    """Generate ``<case_dir>/reports/detailed_hash_integrity.html``.
+
+    Reuses ``forensics/integrity_report.py``'s ``generate_integrity_report()`` — real
+    logic already built on the fixed manifest schema (P0-1) and already unit-tested
+    (``tests/test_integrity_verification.py``), but with no call site of its own
+    anywhere in the codebase until now. Called once, at the end of ``run_acquisition``,
+    same lifecycle point as ``_generate_location_report`` below — the manifest is
+    complete by then, so this is the one time re-hashing every artifact and comparing
+    against what custody.py recorded at pull time is actually meaningful (see
+    ``auto_verify_on_open`` in ``server.py``'s ``case_overview`` for the *reopen* case,
+    which is a different lifecycle point with its own 24h/mtime cache).
+    """
+    try:
+        from .forensics.integrity_report import generate_integrity_report
+
+        reports_dir = case_dir / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        html = generate_integrity_report(case_dir)
+        (reports_dir / "detailed_hash_integrity.html").write_text(html, encoding="utf-8")
+    except Exception as exc:  # pragma: no cover - must never abort acquisition
+        logger.error("Failed to generate hash integrity report: %s", exc)
+
+
 def _generate_location_report(locations: List[Dict[str, Any]], case_dir: Path) -> None:
     """Generate an HTML location summary report in the case directory.
 
@@ -6662,66 +6692,19 @@ def _generate_location_report(locations: List[Dict[str, Any]], case_dir: Path) -
 # ---------------------------------------------------------------------------
 
 
-def _initialize_optimizations(
-    device_id: str, installed_apps: List[str], adb: Any
-) -> None:
-    """Initialize all optimizations: setup persistent connection, load profile."""
-    try:
-        # 1. Setup persistent ADB connection if supported
-        if hasattr(adb, "_connect_transport"):
-            adb._connect_transport()
-
-        # 2. Start pre-fetching predicted files
-        from .forensics.prefetch import predict_files, start_prefetch
-
-        predicted = predict_files({"manufacturer": "unknown"}, installed_apps)
-        if predicted:
-            start_prefetch(predicted, adb)
-    except Exception:
-        pass
-
-
-# REMOVED (P2-5): _run_optimized_acquisition() was a stub that returned {} while its
-# docstring claimed to "run acquisition with all optimizations". The optimisations it
-# named are real and already applied inline by run_acquisition (priority filtering via
-# cfg.use_priority_filter, parallel pulls via _parallel_pull_files, profile-driven
-# ordering via _get_optimal_file_order) — the stub only added a way to report a
-# successful acquisition that never happened.
-
-
-def _get_optimal_file_order(device_id: str, files: List[str]) -> List[str]:
-    """Get optimal order from profile."""
-    try:
-        from .forensics.profile_optimizer import get_optimal_file_order
-
-        return get_optimal_file_order(device_id, files)
-    except ImportError:
-        return files
-
-
-def _track_performance(device_id: str, stage: str, elapsed: float) -> None:
-    """Track performance metrics and update profile."""
-    try:
-        # Local metrics are already tracked via track_stage_time
-        # We just need to update the persistent profile
-        from .forensics.profile_optimizer import update_profile
-        import time
-
-        update_profile(
-            device_id, {"timestamp": time.time(), "stage_timings": {stage: elapsed}}
-        )
-    except ImportError:
-        pass
-
-
-def _generate_performance_summary(case_dir: Path) -> None:
-    """Generate performance summary."""
-    try:
-        from .forensics.performance_dashboard import generate_performance_dashboard
-
-        generate_performance_dashboard(case_dir)
-    except Exception:
-        pass
+# REMOVED (2026-09): _initialize_optimizations()/_get_optimal_file_order()/
+# _track_performance()/_generate_performance_summary() had zero call sites in
+# run_acquisition — verified via grep, not just doc claims. Each was a thin wrapper
+# around a per-device "profile" concept (forensics/prefetch.py, profile_optimizer.py,
+# performance_dashboard.py) that nothing ever built, updated, or read: predicted-file
+# pre-fetch, adaptive pull ordering, and a performance dashboard that would have
+# summarised metrics no acquisition ever recorded. Same shape as the P2-5 removal
+# above (_run_optimized_acquisition) — unreachable scaffolding for an optimisation
+# layer that was never actually wired in, not a working feature with a missing call.
+# The three backing modules were deleted alongside these wrappers since nothing else
+# in the codebase imports them (grep confirmed zero other references, no test
+# coverage). Real per-file parallelism is _parallel_pull_files(); real per-stage
+# timing is track_stage_time().
 
 
 # ---------------------------------------------------------------------------
@@ -6753,96 +6736,21 @@ def _emit_hash_progress(file_path: str, sha256: str, md5: str, size: int) -> Non
     pass
 
 
-def _update_hash_progress(current: int, total: int) -> None:
-    """Update hash progress tracking."""
-    pct = (current / total) * 100 if total > 0 else 0
-    logger.debug(f"Hash Progress: {current}/{total} ({pct:.1f}%)")
-
-
-# ---------------------------------------------------------------------------
-# Task 11: Pipeline Integration (Hash Integrity)
-# ---------------------------------------------------------------------------
-
-
-def _initialize_hashing() -> None:
-    """Initialize hashing system and alerting."""
-    # Reset any existing alerts or continuous state
-    logger.info("Initializing hash integrity and alerting system...")
-    try:
-        from .forensics.continuous_hash import ContinuousHashVerifier
-
-        # The verifier instance could be attached to a class or global state
-        # depending on pipeline architecture.
-    except ImportError:
-        pass
-
-
-def _process_hash(file_path: Path) -> Dict[str, str]:
-    """Process hash for a file, returning sha256 and md5."""
-    import hashlib
-
-    sha256 = hashlib.sha256()
-    md5 = hashlib.md5()
-
-    try:
-        with open(file_path, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                sha256.update(chunk)
-                md5.update(chunk)
-        return {"sha256": sha256.hexdigest(), "md5": md5.hexdigest()}
-    except Exception as exc:
-        logger.error("Failed to hash %s: %s", file_path, exc)
-        return {"sha256": "", "md5": ""}
-
-
-def _verify_hash(file_path: Path, expected_hash: str) -> bool:
-    """Verify hash during extraction, checking for alerts."""
-    try:
-        from .forensics.hash_alerts import check_hash_alert, log_hash_alert
-
-        hashes = _process_hash(file_path)
-        actual_hash = hashes.get("sha256", "")
-
-        # Check and log alert if mismatch
-        alert_data = check_hash_alert(expected_hash, actual_hash, str(file_path))
-        if alert_data:
-            # Assuming we can determine case_dir from file_path, or pass it in a real refactor
-            case_dir = file_path.parent
-            while case_dir.name != "artifacts" and case_dir.parent != case_dir:
-                case_dir = case_dir.parent
-            if case_dir.name == "artifacts":
-                case_dir = case_dir.parent
-
-            log_hash_alert(alert_data, case_dir)
-            return False
-
-        return expected_hash.lower() == actual_hash.lower()
-    except Exception:
-        return False
-
-
-def _generate_hash_report(case_dir: Path) -> None:
-    """Generate comprehensive hash integrity report."""
-    try:
-        from .forensics.integrity_report import generate_integrity_report
-
-        html = generate_integrity_report(case_dir)
-        reports_dir = case_dir / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        (reports_dir / "detailed_hash_integrity.html").write_text(
-            html, encoding="utf-8"
-        )
-        logger.info("Generated detailed hash integrity report")
-    except Exception as exc:
-        logger.error("Failed to generate hash report: %s", exc)
-
-
-def _auto_verify_on_complete(case_dir: Path) -> None:
-    """Auto-verify hashes on acquisition completion."""
-    try:
-        from .forensics.auto_verify import auto_verify_on_open
-
-        logger.info("Running post-acquisition auto-verification...")
-        auto_verify_on_open(case_dir)
-    except Exception as exc:
-        logger.error("Failed to auto-verify on complete: %s", exc)
+# REMOVED (2026-09): _update_hash_progress() (a bare logger.debug percentage line) and
+# _initialize_hashing() (imported ContinuousHashVerifier and did nothing else with it —
+# no instance ever created, no state ever reset) had zero call sites. _process_hash()
+# and _verify_hash() were a second, parallel hashing/alerting entry point — file
+# ingestion already computes and stores sha256/md5 on ArtifactRecord at pull time
+# (custody.py Case.ingest_file), so wiring these in would have double-hashed every
+# artifact against a codepath the rest of the tool doesn't use. forensics/
+# continuous_hash.py and hash_alerts.py were deleted alongside these wrappers — each
+# was reachable only from here (grep confirmed), with no test coverage.
+#
+# generate_integrity_report() and auto_verify_on_open() (forensics/integrity_report.py,
+# auto_verify.py) are real and correctly built on the fixed hash_verification.py
+# schema (see P0-1 above) — those two are NOT deleted, just moved to where they
+# actually belong: a per-case detailed report at the end of run_acquisition (below,
+# where _generate_location_report already runs), and a case-open freshness check in
+# server.py's case_overview route (auto_verify_on_open is explicitly "verify when a
+# case is opened", not "verify the manifest you just this second finished writing" —
+# the old _auto_verify_on_complete() called it from the wrong lifecycle point entirely).

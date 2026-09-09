@@ -202,11 +202,15 @@ slack-space carving, no lock-screen bypass, no Signal decryption — see
 [`docs/NOTES.md`](docs/NOTES.md) for the full honesty ledger, including what's built but
 deliberately not wired up.
 
+## License
+
+[MIT](LICENSE)
+
 ---
 
 <div align="center">
 
-**1205 tests passing** · **+19 forensic module tests** · **+17 AI module tests** · Runs fully offline · No account, no cloud, no telemetry
+**1440 tests passing** · Runs fully offline · No account, no cloud, no telemetry
 
 **New**: [Forensic Modules](FORENSIC_MODULES_INDEX.md) · [AI Modules](AI_MODULES_COMPLETE.md)
 

@@ -2,6 +2,7 @@
   "name": "snagr-triage-app",
   "version": "0.1.0",
   "description": "SNAGR — Android Rapid Evidence Triage & Forensic Preview dashboard",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -11,7 +12,37 @@
     "typecheck": "tsc -b",
     "preview": "vite preview",
     "electron:dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
-    "electron:build": "tsc -b && vite build && electron-builder"
+    "build:engine": "node scripts/build-engine.mjs",
+    "electron:build": "npm run build:engine && tsc -b && vite build && electron-builder"
+  },
+  "build": {
+    "appId": "io.erakshak.snagr",
+    "productName": "SNAGR",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../engine/dist/triage-engine",
+        "to": "engine",
+        "filter": ["**/*"]
+      }
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.utilities"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Utility"
+    }
   },
   "dependencies": {
     "@changey/react-leaflet-markercluster": "^4.0.0-rc1",
@@ -33,6 +64,7 @@
     "autoprefixer": "^10.4.19",
     "concurrently": "^8.2.2",
     "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.6",
     "typescript": "^5.5.3",

@@ -36,6 +36,11 @@ apk/.idea/
 .idea/
 local.properties
 
+# Real APK release signing key — see apk/keystore.properties.example.
+apk/keystore.properties
+*.jks
+*.keystore
+
 # Loose pulled device data (sensitive — never commit real evidence)
 engine/contacts.json
 engine/calllog.json

@@ -197,33 +197,42 @@ deterministic path, says so in the audit log and on screen, and records
 `retrieval_mode: lexical` so nobody later reads the plan as having had a basis it did
 not have.
 
-### Packaging (`npm run electron:build`) — ⚠ untuned
+### Packaging (`npm run electron:build`) — wired (2026-09)
 
-`app/package.json` has **no `"build"` config block** for electron-builder, and no
-`electron-builder.yml` exists — so `electron:build` currently runs on electron-builder's
-bare defaults (autodetected target per OS: dmg/nsis/AppImage), with no `productName`,
-`appId`, or output directory pinned. More importantly: `electron/main.cjs` expects a
-packaged build to find a standalone `triage-engine` executable under
-`resources/engine/triage-engine` — **no build step in this repo produces that binary**
-(no PyInstaller spec wired to the packaging script, despite `build_package.py` existing at
-the repo root). Packaging the desktop app today needs this gap closed first.
+`app/package.json` now has a `"build"` config block for electron-builder (`appId`,
+`productName`, `dist-electron` output, per-OS targets) and declares `electron-builder`
+as a devDependency. `electron/main.cjs` expects a packaged build to find a standalone
+`triage-engine` executable under `resources/engine/triage-engine` — `npm run
+build:engine` (new; runs automatically as the first step of `electron:build`) invokes
+`app/scripts/build-engine.mjs`, which runs PyInstaller against `engine/snagr.spec` and
+produces exactly that binary at `engine/dist/triage-engine`. `build.extraResources`
+copies it into the packaged app's `resources/engine/`. (`build_package.py` at the repo
+root remains a separate, manual "portable folder" bundler — it doesn't use
+electron-builder at all — kept for anyone who wants a zip-and-run folder instead of a
+platform installer.)
 
-### APK release build — ⚠ unsigned
+### APK release build — wired (2026-09)
 
-`./gradlew :app:assembleDebug` works today (see above). A release build
-(`./gradlew :app:assembleRelease`) would run, but `apk/app/build.gradle`'s `release` block
-only sets `minifyEnabled false` — **no `signingConfigs`** — so the output APK would be
-unsigned and need manual signing (`apksigner` + a keystore) before it could be installed
-outside a debug context.
+`./gradlew :app:assembleDebug` works today (see above). `apk/app/build.gradle` now
+reads a release signing key from `apk/keystore.properties` (git-ignored — copy
+`apk/keystore.properties.example` and point it at a real keystore) when that file is
+present, and falls back to the debug key when it isn't. Either way
+`./gradlew :app:assembleRelease` now produces a *signed* APK — never the previous
+silent unsigned output — though the debug-key fallback is for local testing only, not
+distribution.
+
+### CI
+
+`.github/workflows/ci.yml` runs on every push/PR: engine `pytest`, dashboard
+typecheck+build, and a debug APK build (uploaded as a workflow artifact).
 
 ### What's *not* a real deployment path
 
-`deploy/docker-compose.yml` exists but references `deploy/Dockerfile.gateway`, which does
-not exist anywhere in the repo, and describes an `api_gateway` / `graphql_server` /
-`webhook_worker` + Redis architecture that doesn't correspond to anything else in this
-project (engine on 5057, dashboard, APK). Treat it as orphaned scaffolding, not a working
-deployment — `docker compose up` would fail immediately on the missing Dockerfile. No
-`.github/workflows/` exists either — there is currently no CI/CD.
+`deploy/docker-compose.yml` — removed (2026-09). It referenced `deploy/Dockerfile.gateway`,
+which didn't exist anywhere in the repo, and described an `api_gateway` / `graphql_server`
+/ `webhook_worker` + Redis architecture that never corresponded to anything else in this
+project (engine on 5057, dashboard, APK). Orphaned scaffolding, not a working deployment
+that was ever one edit away from working — deleted rather than fixed.
 
 ---
 
