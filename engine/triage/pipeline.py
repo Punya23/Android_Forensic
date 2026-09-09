@@ -5420,6 +5420,11 @@ def _run_tier2_wifi(
     device's *own* hotspot credential, a different fact from any network it joined,
     and is flagged ``is_softap`` by the parser.
 
+    A ``wifi_report`` dataset is also written, carrying the *why* behind an
+    empty result: root missing, no config store found, or a store that was
+    genuinely empty are three different facts and the dashboard must not
+    collapse them into one "no networks" message.
+
     Returns
     -------
     list[WifiNetwork]
@@ -5447,6 +5452,22 @@ def _run_tier2_wifi(
             result="skipped",
             tier=Tier.TIER2.value,
         )
+        case.write_derived(
+            "wifi_report",
+            {
+                "root_ok": False,
+                "files_found": False,
+                "network_count": 0,
+                "with_password_count": 0,
+                "password_unreadable_count": 0,
+                "caveats": [
+                    "Root was not available on this acquisition, so the Wi-Fi "
+                    "config store was never opened. This is an un-acquired "
+                    "artefact, not a finding that the device had no saved "
+                    "networks — re-acquire with Tier 2 (root) to establish that.",
+                ],
+            },
+        )
         return []
 
     pulled = _root_pull_paths(
@@ -5464,6 +5485,24 @@ def _run_tier2_wifi(
             f"({len(WIFI_CONFIG_PATHS)} paths probed)",
             result="skipped",
             tier=Tier.TIER2.value,
+        )
+        case.write_derived(
+            "wifi_report",
+            {
+                "root_ok": True,
+                "files_found": False,
+                "network_count": 0,
+                "with_password_count": 0,
+                "password_unreadable_count": 0,
+                "caveats": [
+                    f"Root was available but no Wi-Fi config store was found at any "
+                    f"of the {len(WIFI_CONFIG_PATHS)} known Android-version paths. "
+                    "This can mean a wiped/reset device, a manufacturer path this "
+                    "build doesn't yet probe, or file-based encryption still "
+                    "locking the partition (AFU) — not necessarily an absence of "
+                    "saved networks.",
+                ],
+            },
         )
         return []
 
@@ -5494,14 +5533,43 @@ def _run_tier2_wifi(
 
     joined = [n for n in wifi_networks if not n.is_softap]
     softap = [n for n in wifi_networks if n.is_softap]
+    with_password = sum(1 for n in joined if n.password)
+    unreadable = sum(1 for n in wifi_networks if n.password_unreadable)
     case.log(
         "tier2.wifi.done",
         f"Wi-Fi recovery: {len(joined)} saved network(s) "
-        f"({sum(1 for n in joined if n.password)} with password), "
+        f"({with_password} with password, {unreadable} password-unreadable), "
         f"{len(softap)} own-hotspot config(s). Saved != connected: check the "
         f"has_ever_connected flag per network, and note the store carries no "
         f"connection timestamp.",
         tier=Tier.TIER2.value,
+    )
+
+    report_caveats: list[str] = []
+    if not wifi_networks:
+        report_caveats.append(
+            "The Wi-Fi config store was found and read successfully, and it "
+            "contained no saved networks. Networks removed before seizure "
+            "leave no entry here."
+        )
+    if unreadable:
+        report_caveats.append(
+            f"{unreadable} network(s) have a PreSharedKey/Passphrase present in "
+            "the store but stored in a form this parser cannot decode "
+            "(Keystore-encrypted) — see each network's own caveats. Their "
+            "password is unrecoverable off-device, not absent."
+        )
+    case.write_derived(
+        "wifi_report",
+        {
+            "root_ok": True,
+            "files_found": True,
+            "network_count": len(joined),
+            "with_password_count": with_password,
+            "password_unreadable_count": unreadable,
+            "softap_count": len(softap),
+            "caveats": report_caveats,
+        },
     )
 
     return wifi_networks
