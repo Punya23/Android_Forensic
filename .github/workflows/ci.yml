@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  engine:
+    name: Engine tests (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: engine/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: python -m pytest tests/ -q
+
+  dashboard:
+    name: Dashboard typecheck + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  collector-apk:
+    name: Collector APK (debug build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # Gradle 8.9 (this project's wrapper) rejects newer class-file versions —
+          # matches the JDK 21 the project already builds with locally (Android
+          # Studio's bundled JBR), not whatever JDK ships on the runner by default.
+          java-version: "21"
+      - uses: android-actions/setup-android@v3
+      - run: chmod +x ./gradlew
+      - run: ./gradlew :app:assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: collector-debug-apk
+          path: apk/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

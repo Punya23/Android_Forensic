@@ -201,6 +201,27 @@ export const api = {
     );
   },
 
+  // WhatsApp batch import (triage/parsers/whatsapp_batch.py): any mix of `_chat.txt`/
+  // `.zip` "Export Chat" files, live `msgstore.db`, or `.crypt15/14/12` encrypted
+  // backups, uploaded together — unlike importExport above, more than one file at a
+  // time, plus an optional AES key for the encrypted-backup case. Merges into the same
+  // "messages" dataset a live acquisition writes, so no separate view is needed.
+  importWhatsAppBatch: (id: string, files: File[], keyFile?: File | null) => {
+    const form = new FormData();
+    for (const f of files) form.append("file", f);
+    if (keyFile) form.append("key", keyFile);
+    return request<{
+      imported: number;
+      total: number;
+      stats: {
+        total: number;
+        by_confidence: Record<string, number>;
+        by_direction: Record<string, number>;
+        date_range: { start: string | null; end: string | null };
+      };
+    }>(`/api/case/${id}/import/whatsapp`, { method: "POST", body: form });
+  },
+
   // Case-intelligence: preview a targeted collection plan from a plain-language brief.
   plan: (
     description: string,

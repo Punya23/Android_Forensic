@@ -163,6 +163,17 @@ export interface CaseSummary {
   tag_count: number;
   case_profile?: CaseProfile;
   ai_findings_summary?: Record<string, number>;
+  // forensics/auto_verify.py's auto_verify_on_open(), run on every case-open — cached
+  // up to 24h (or until manifest.json's mtime moves) so this doesn't re-hash the whole
+  // case on every dashboard refresh. See docs/NOTES.md "Known gaps".
+  hash_verification?: {
+    status: "completed" | "cached" | "skipped" | "error";
+    verified?: number;
+    failed?: number;
+    reason?: string;
+    error?: string;
+    alert?: { level: string; message: string; action: string };
+  };
 }
 
 // -- Case registry (cross-case history, SQLite-backed) ----------------------

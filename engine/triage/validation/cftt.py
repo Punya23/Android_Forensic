@@ -539,10 +539,14 @@ COVERAGE: dict[str, dict[str, str]] = {
             "manifest entry and returns integrity_status 'INTACT' / 'TAMPERED' / "
             "'UNKNOWN' together with the specific failing paths, and "
             "generate_verification_dashboard() surfaces that to the user; "
-            "triage/forensics/integrity_report.py and hash_alerts.py carry the same "
-            "signal into the report. Exercised by the offline known-answer cases "
-            "KAT-MANIFEST-INTACT-002 and KAT-MANIFEST-TAMPER-003 in "
-            "triage/validation/harness.py."
+            "triage/forensics/integrity_report.py carries the same signal into a "
+            "dedicated per-case report (reports/detailed_hash_integrity.html, written "
+            "at the end of every acquisition — pipeline.py) and auto_verify.py reruns "
+            "it on case-open (server.py case_overview -> hash_verification). "
+            "hash_alerts.py was a redundant, never-wired alerting layer over a second "
+            "hashing pass and was removed rather than kept unused. Exercised by the "
+            "offline known-answer cases KAT-MANIFEST-INTACT-002 and "
+            "KAT-MANIFEST-TAMPER-003 in triage/validation/harness.py."
         ),
         "caveat": (
             "Same scoping problem as MDT-CA-12: this detects modification of the stored "
