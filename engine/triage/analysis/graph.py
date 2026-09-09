@@ -162,10 +162,26 @@ def _key(
     country_code: str = DEFAULT_COUNTRY_CODE,
     nsn_len: int = DEFAULT_NATIONAL_NUMBER_LENGTH,
 ) -> str:
+    """Node key: the number under the assumed plan, else the name exactly as recorded.
+
+    The name is keyed verbatim — case included. Two spellings of one *number* fold
+    because the numbering plan says the dialing prefix is the only difference between
+    them (:func:`_plan_key`), and what that folds is disclosed. No comparable rule
+    exists for a name: nothing in the acquisition says that a device that recorded the
+    SMS sender IDs "JX-IRSMSa-S" and "JX-IRSMSA-S" received them from one sender, so
+    case-folding them would merge two participants on an unevidenced claim — and, being
+    a merge of names, it would not appear in ``stats.identity_normalisation`` either, so
+    the interaction counts would move with the report saying nothing.
+
+    Case-folding is wrong in the other direction too: it is not confined to the sender
+    IDs it might be defended for. The same rule would fuse two Telegram/Instagram
+    handles, two app-supplied display names, or two group JIDs that differ only in case,
+    none of which the device asserts are one participant.
+    """
     num = _plan_key(number, country_code, nsn_len)
     if num:
         return "num:" + num
-    return "name:" + (name or "unknown").strip().lower()
+    return "name:" + ((name or "").strip() or "unknown")
 
 
 def _best_variant(variants: set[str]) -> str:

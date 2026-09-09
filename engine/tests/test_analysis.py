@@ -481,10 +481,50 @@ def test_graph_keeps_alphanumeric_service_sender_ids_as_names():
     ]
     g = build_communication_graph(messages=messages, calls=[], contacts=[])
     assert sorted(n["id"] for n in g["nodes"] if n["type"] != "owner") == [
-        "name:ad-icicib2",
-        "name:jz-jiopay-s",
-        "name:vm-hdfcbk",
+        "name:AD-ICICIB2",
+        "name:JZ-JioPay-S",
+        "name:VM-HDFCBK",
     ]
+
+
+def test_graph_does_not_case_fold_two_distinct_sender_strings_into_one_participant():
+    """CASE-REAL-005 holds "JX-IRSMSa-S" and "JX-IRSMSA-S" as separate sender strings.
+
+    Nothing in the acquisition says one sender produced both, so they stay two nodes with
+    their own counts. Folding two spellings of a *number* is licensed by the numbering
+    plan and disclosed in ``identity_normalisation``; a name has neither, so a case-fold
+    here would move interaction counts with the report saying nothing.
+    """
+    messages = [
+        {"app": "sms", "sender": "JX-IRSMSa-S"},
+        {"app": "sms", "sender": "JX-IRSMSa-S"},
+        {"app": "sms", "sender": "JX-IRSMSA-S"},
+    ]
+    g = build_communication_graph(messages=messages, calls=[], contacts=[])
+    ids = {n["id"]: n["weight"] for n in g["nodes"] if n["type"] != "owner"}
+    assert ids == {"name:JX-IRSMSa-S": 2, "name:JX-IRSMSA-S": 1}
+    # each node shows the string the device actually recorded, not one of the two
+    labels = {n["label"] for n in g["nodes"] if n["type"] != "owner"}
+    assert labels == {"JX-IRSMSa-S", "JX-IRSMSA-S"}
+    # the split is not a number merge and must not be reported as one
+    assert g["stats"]["identity_normalisation"]["merged_participants"] == 0
+
+
+def test_graph_still_folds_number_spellings_while_keeping_names_verbatim():
+    """The two rules are independent: numbers fold under the plan, names never fold."""
+    messages = [
+        {"app": "sms", "sender": "+918879041080"},
+        {"app": "sms", "sender": "918879041080"},
+        {"app": "sms", "sender": "AD-ICICIB2"},
+        {"app": "sms", "sender": "AD-icicib2"},
+    ]
+    g = build_communication_graph(messages=messages, calls=[], contacts=[])
+    ids = {n["id"]: n["weight"] for n in g["nodes"] if n["type"] != "owner"}
+    assert ids == {
+        "num:+918879041080": 2,  # one subscriber, two spellings
+        "name:AD-ICICIB2": 1,  # two sender strings, two participants
+        "name:AD-icicib2": 1,
+    }
 
 
 def test_graph_does_not_fold_a_short_code_sender_into_a_phone_number():
