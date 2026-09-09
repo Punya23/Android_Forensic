@@ -45,19 +45,26 @@ export interface EncryptedAppRecord {
 }
 
 export interface EncryptedAppsSummary {
-  apps_checked?: number;
-  present?: number;
-  /** Checked, and the path was confirmed absent on the device. */
-  not_present?: number;
-  /** Never checked / not attempted at this tier — NOT the same as absent. */
-  not_acquired?: number;
-  encrypted?: number;
-  recoverable?: number;
+  total_files?: number;
+  encrypted_files?: number;
+  recoverable_files?: number;
   total_bytes?: number;
   attachment_count?: number;
   attachment_bytes?: number;
+  /** App names with at least one located database — count this for "present". */
+  apps_present?: string[];
+  /**
+   * Checked, and the path was confirmed absent on the device — one row per
+   * missing path, not a count. Length this for the "not present" stat.
+   */
+  not_present_on_device?: { package: string; app: string; path: string; basis: string }[];
+  /**
+   * Never checked / not attempted at this tier — NOT the same as absent — one
+   * row per unattempted path, not a count. Length this for the "not acquired" stat.
+   */
+  not_acquired?: { package: string; app: string; path: string; basis: string }[];
+  manifest_supplied?: boolean;
   caveats?: string[];
-  notes?: string[];
 }
 
 export interface SignalEncryptedDatabase {
@@ -80,16 +87,13 @@ export interface SignalReport {
 
 export interface FcmRecord {
   app?: string;
-  package?: string;
-  from?: string;
+  sender?: string;
   message_id?: string;
   collapse_key?: string;
-  priority?: string | number | null;
-  sent_at?: string | null;
-  received_at?: string | null;
-  size_bytes?: number | null;
+  /** Transport-level metadata only — never rendered here, see the section note below. */
+  raw_preview?: string;
+  timestamp?: string | null;
   content_readable?: boolean | null;
-  source?: string;
   caveats?: string[];
 }
 
@@ -372,9 +376,17 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
   const derivedNotPresent = apps.filter((r) => presenceOf(r) === "not-present").length;
   const derivedNotAcquired = apps.filter((r) => presenceOf(r) === "not-acquired").length;
 
-  const present = summary.present ?? derivedPresent;
-  const notPresent = summary.not_present ?? derivedNotPresent;
-  const notAcquired = summary.not_acquired ?? derivedNotAcquired;
+  // The backend reports these as per-path rows (see encrypted_apps_summary() in
+  // engine/triage/parsers/encrypted_apps.py), not counts — length them here. They used
+  // to be read straight off the summary object as if they were already numbers, which
+  // for not_acquired (present as a real array, never undefined) skipped the ?? fallback
+  // entirely and fed an array of plain objects into StatBlock's `n` prop, crashing the
+  // render the moment a case actually had an unattempted path.
+  const present = summary.apps_present ? summary.apps_present.length : derivedPresent;
+  const notPresent = summary.not_present_on_device
+    ? summary.not_present_on_device.length
+    : derivedNotPresent;
+  const notAcquired = summary.not_acquired ? summary.not_acquired.length : derivedNotAcquired;
 
   const totalBytes =
     summary.total_bytes ??
@@ -461,7 +473,7 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
           label="Present & encrypted"
           detail="Database located on device. Existence, size and mtime are evidence even though contents are not readable."
           tone="text-live"
-          derived={summary.present === undefined}
+          derived={summary.apps_present === undefined}
           onClick={() => setPresenceFilter((f) => (f === "present" ? null : "present"))}
           active={presenceFilter === "present"}
         />
@@ -470,7 +482,7 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
           label="Not present on device"
           detail="Path was checked and positively reported absent at acquisition time."
           tone="text-muted"
-          derived={summary.not_present === undefined}
+          derived={summary.not_present_on_device === undefined}
           onClick={() => setPresenceFilter((f) => (f === "not-present" ? null : "not-present"))}
           active={presenceFilter === "not-present"}
         />
@@ -500,15 +512,6 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
         into a single &ldquo;not found&rdquo; figure in a report.
       </p>
       <CaveatList items={summary.caveats ?? []} title="Summary caveats" />
-      {(summary.notes ?? []).length > 0 && (
-        <ul className="list-disc pl-4 space-y-0.5 mb-4">
-          {(summary.notes ?? []).map((n, i) => (
-            <li key={i} className="text-xs text-muted leading-relaxed">
-              {n}
-            </li>
-          ))}
-        </ul>
-      )}
 
       {/* ------- Per-database records ------- */}
       <section className="mb-6">
@@ -635,12 +638,10 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
             <table className="w-full text-sm">
               <thead>
                 <tr>
-                  <th className="th">App / package</th>
+                  <th className="th">App</th>
                   <th className="th">From (sender ID)</th>
                   <th className="th">Message ID</th>
-                  <th className="th w-24">Priority</th>
-                  <th className="th">Sent</th>
-                  <th className="th">Received</th>
+                  <th className="th">Timestamp</th>
                   <th className="th w-32">Content readable</th>
                 </tr>
               </thead>
@@ -649,16 +650,11 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
                   <tr key={i}>
                     <td className="td">
                       <div className="text-sm">{f.app || "—"}</div>
-                      <div className="font-mono text-[11px] text-muted break-all">
-                        {f.package || ""}
-                      </div>
                       <CaveatList items={f.caveats ?? []} />
                     </td>
-                    <td className="td font-mono text-[11px] break-all">{f.from || "—"}</td>
+                    <td className="td font-mono text-[11px] break-all">{f.sender || "—"}</td>
                     <td className="td font-mono text-[11px] break-all">{f.message_id || "—"}</td>
-                    <td className="td text-xs">{f.priority != null ? String(f.priority) : "—"}</td>
-                    <td className="td font-mono text-xs text-muted">{fmtTs(f.sent_at)}</td>
-                    <td className="td font-mono text-xs text-muted">{fmtTs(f.received_at)}</td>
+                    <td className="td font-mono text-xs text-muted">{fmtTs(f.timestamp)}</td>
                     <td className="td">
                       {f.content_readable === true ? (
                         <Chip tone="bg-carved/10 text-carved border-carved/30">readable</Chip>

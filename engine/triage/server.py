@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, send_file, abort
+from flask import Flask, jsonify, request, send_file, send_from_directory, abort
 from flask_cors import CORS
 
 # Load engine/.env (sibling of the triage/ package, not cwd — so this works whether
@@ -42,6 +42,7 @@ from . import TOOL_NAME, __version__
 from .acquire import MockDeviceSource, RealDeviceSource
 from .adb import Adb
 from .cancellation import AcquisitionCancelled, CancellationToken
+from .checkpoint import checkpoint_exists, load_checkpoint
 from .config import ACQUISITION_DISCLAIMER, Tier
 from .custody import Case
 from .pipeline import PipelineConfig, run_acquisition
@@ -77,7 +78,17 @@ if _extra_cors:
 CASES_ROOT = Path("cases")
 
 
-def create_app(cases_root: Path = CASES_ROOT):
+def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
+    """
+    network_mode: "airgapped" (default) or "lan". Purely descriptive here — the
+    module-level docstring's "localhost only" claim is enforced by main()
+    refusing to bind a non-loopback host unless --network-mode lan is explicit
+    (see main()). This value only (a) gets recorded into each case's
+    acquisition_config so a report can state what posture it was acquired
+    under, and (b) gates demo/weak auth from ever being reachable off-box.
+    """
+
+    network_mode = (network_mode or os.environ.get("SNAGR_NETWORK_MODE", "airgapped")).strip().lower()
 
     app = Flask(__name__)
 
@@ -139,6 +150,10 @@ def create_app(cases_root: Path = CASES_ROOT):
         "cancel_token": None,       # CancellationToken for the current run
         "report_generating": False, # True while background report is building
         "report_ready_cases": set(),# case_ids whose reports have been generated
+        # idle | running | done | cancelled | error — see /api/hardware/status.
+        "last_event": "idle",
+        "last_stage": "",
+        "last_pct": 0.0,
     }
 
     # ---------------------------------------------------------
@@ -186,6 +201,16 @@ def create_app(cases_root: Path = CASES_ROOT):
             "[auth] FATAL: SNAGR_AUTH_PASS is not set and demo mode is off. "
             "Set SNAGR_AUTH_PASS before handling evidence, or start with SNAGR_DEMO=1.",
             flush=True,
+        )
+
+    if network_mode == "lan" and (_DEMO_MODE or not _credentials_ok):
+        # A LAN bind means anyone on that network segment can reach the login endpoint.
+        # Demo/default credentials or "no credentials configured" is fine on loopback
+        # (only the same machine can reach it) but must never be reachable off-box.
+        raise RuntimeError(
+            "network_mode='lan' refuses to start in demo mode or without real auth. "
+            "Set SNAGR_AUTH_PASS (or SNAGR_AUTH_HASH) and do not set SNAGR_DEMO, "
+            "or run with --network-mode airgapped."
         )
 
     SESSION_TTL_SECONDS = 12 * 3600
@@ -250,14 +275,31 @@ def create_app(cases_root: Path = CASES_ROOT):
         return hmac.compare_digest(password, AUTH_PASS)
 
     def _is_public_route(path: str) -> bool:
-        if path in ("/api/health", "/api/auth/login"):
+        if path in (
+            "/api/health",
+            "/api/auth/login",
+            # Physical control-panel endpoints (ESP32 kill switch + status LED —
+            # see deploy/hardware-panel/). Unauthenticated on purpose: a login/CSRF
+            # dance doesn't fit on a microcontroller with no UI, and the blast
+            # radius is bounded — status is a read-only progress summary, and the
+            # kill switch can only *cancel* an already-running acquisition (the
+            # same cooperative cancellation /api/acquire/cancel already offers a
+            # logged-in examiner), never start one or touch case data.
+            "/api/hardware/status",
+            "/api/hardware/killswitch",
+        ):
             return True
-        # Raw-URL resource routes — see the comment above the AUTH block.
+        # Raw-URL resource routes — see the comment above the AUTH block. Each of these
+        # is fetched via a plain <a href download> anchor by the dashboard (LocationTrace
+        # export included) rather than an authenticated fetch(), so a browser-navigated
+        # GET here never carries the Authorization header — gating it behind auth just
+        # makes every download silently save a 401 JSON body instead of the file.
         if path.startswith("/api/case/") and (
             path.endswith("/report")
             or "/reports/" in path
             or "/media/" in path
             or path.endswith("/export/download")
+            or path.endswith("/location_trace_geojson")
         ):
             return True
         return False
@@ -445,6 +487,12 @@ def create_app(cases_root: Path = CASES_ROOT):
 
                     mocks.append(
                         {
+                            # Relative to corpus_root, not str(d) — d is already
+                            # corpus_root/d.name, so str(d) round-tripped through
+                            # validate_mock_path's corpus_root-relative join (in the
+                            # acquisition-start handler below) resolved to
+                            # "_corpus/_corpus/device_A" and every mock acquisition
+                            # failed with "mock corpus not found".
                             "id": d.name,
                             "kind": "mock",
                             "label": meta.get("device", {}).get("model", d.name),
@@ -488,6 +536,11 @@ def create_app(cases_root: Path = CASES_ROOT):
                 "os_skin": info.os_skin,
                 "android_version": info.android_version,
                 "oem_quirks": info.oem_quirks,
+                # Read-only `su -c id` probe (Adb.is_root_available) — the same bit the
+                # engine gates every Tier-2 stage on. Surfaced here so the dashboard can
+                # offer or withhold Tier-2 options *before* acquisition, instead of only
+                # explaining an empty Tier-2 dataset after the fact (capabilities.py).
+                "rooted": info.rooted,
             }
             # A ready device tells us its own brand — no need to ask the caller for it.
             brand = brand or info.brand
@@ -816,18 +869,18 @@ def create_app(cases_root: Path = CASES_ROOT):
     @app.post("/api/case/<case_id>/analyze")
     def analyze_case_endpoint(case_id: str):
 
-        case = _open(cases_root, case_id)
-
         body = request.get_json(silent=True) or {}
 
         from .intel import analyze_case, get_provider
-        from .intel.planner import CaseProfile, build_plan, extract_profile
-
-        provider = get_provider(str(body.get("llm_provider", "")) or None)
+        from .intel.planner import build_plan, extract_profile
 
         description = str(body.get("description", "")).strip()
 
         if description:
+
+            case = _open(cases_root, case_id)
+
+            provider = get_provider(str(body.get("llm_provider", "")) or None)
 
             profile = extract_profile(description, provider=provider)
 
@@ -845,13 +898,13 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         else:
 
-            stored = case.read_derived("case_profile")
+            case, profile, provider, error = _load_case_and_profile(
+                cases_root, case_id, body
+            )
 
-            if not stored:
+            if error:
 
-                return jsonify({"error": "no case profile available"}), 400
-
-            profile = CaseProfile(**stored)
+                return error
 
         bundle = analyze_case(case, profile, provider=provider)
 
@@ -863,23 +916,70 @@ def create_app(cases_root: Path = CASES_ROOT):
         """(Re-)run the deep investigation pass against this case's current
         ``ai_findings`` — see triage/intel/investigator.py. Requires a case profile
         (run /analyze first, or supply one this run already has)."""
-        case = _open(cases_root, case_id)
         body = request.get_json(silent=True) or {}
 
-        from .intel import get_provider
         from .intel.investigator import investigate_case
-        from .intel.planner import CaseProfile, CollectionPlan
+        from .intel.planner import CollectionPlan
 
-        stored_profile = case.read_derived("case_profile")
-        if not stored_profile:
-            return jsonify({"error": "no case profile available — run /analyze first"}), 400
-        profile = CaseProfile(**stored_profile)
+        case, profile, provider, error = _load_case_and_profile(
+            cases_root, case_id, body
+        )
+        if error:
+            return error
 
         stored_plan = case.read_derived("collection_plan")
         plan = CollectionPlan.from_dict(stored_plan) if stored_plan else None
 
-        provider = get_provider(str(body.get("llm_provider", "")) or None)
         bundle = investigate_case(case, profile, plan=plan, provider=provider)
+        return jsonify(bundle)
+
+    @app.post("/api/case/<case_id>/summarize")
+    def summarize_case_endpoint(case_id: str):
+        """(Re-)generate the AI Evidence Summary — see triage/intel/ai_summary.py.
+        Requires a case profile and ``ai_findings`` (run /analyze first)."""
+        body = request.get_json(silent=True) or {}
+
+        from .intel import generate_ai_evidence_summary
+
+        case, profile, provider, error = _load_case_and_profile(
+            cases_root, case_id, body
+        )
+        if error:
+            return error
+
+        ai_findings = case.read_derived("ai_findings")
+        if not ai_findings:
+            return (
+                jsonify({"error": "no ai_findings available — run /analyze first"}),
+                400,
+            )
+
+        bundle = generate_ai_evidence_summary(
+            case,
+            profile,
+            ai_findings,
+            knowledge_graph=_knowledge_graph(cases_root),
+            provider=provider,
+        )
+        return jsonify(bundle)
+
+    @app.post("/api/case/<case_id>/entity-links")
+    def entity_links_endpoint(case_id: str):
+        """(Re-)cross-link this case's brief-named entities against its own collected
+        data — see triage/intel/entity_links.py. Deterministic substring match, no
+        LLM; requires a case profile (run /analyze first, or supply one this run
+        already has)."""
+        body = request.get_json(silent=True) or {}
+
+        from .intel.entity_links import build_entity_links_for_case
+
+        case, profile, _provider, error = _load_case_and_profile(
+            cases_root, case_id, body
+        )
+        if error:
+            return error
+
+        bundle = build_entity_links_for_case(case, profile)
         return jsonify(bundle)
 
     @app.post("/api/case/<case_id>/ask")
@@ -967,12 +1067,20 @@ def create_app(cases_root: Path = CASES_ROOT):
         except ValueError as exc:
             return jsonify({"error": f"invalid case_id: {exc}"}), 400
 
-        # ------ Validate examiner / authority / scope ------
+        # ------ Validate examiner / authority / scope / case brief ------
         try:
             examiner = validate_text_field(str(body.get("examiner", "Unknown Examiner")), "examiner")
             authority = validate_text_field(str(body.get("authority", "")), "authority")
             scope = validate_text_field(str(body.get("scope", "")), "scope")
             webhook = validate_webhook_url(str(body.get("notify_webhook_url", "") or ""))
+            # Free-text case brief (fed to the intel/ontology matcher, triage/intel/planner.py)
+            # — a paragraph, not a short metadata field, so it gets a much larger cap than
+            # the 500-char default rather than that default's short max_length.
+            case_description = validate_text_field(
+                str(body.get("case_description", "") or ""),
+                "case_description",
+                max_length=20000,
+            )
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -1008,6 +1116,7 @@ def create_app(cases_root: Path = CASES_ROOT):
             legal_authority=authority,
             scope_note=scope,
             cases_root=cases_root,
+            network_mode=network_mode,
             tier1_contacts=bool(body.get("tier1_contacts", False)),
             tier1_calllog=bool(body.get("tier1_calllog", False)),
             tier1_sms=bool(body.get("tier1_sms", False)),
@@ -1032,8 +1141,9 @@ def create_app(cases_root: Path = CASES_ROOT):
             tier2_recent_tasks=bool(body.get("tier2_recent_tasks", False)),
             tier2_browser_history=bool(body.get("tier2_browser_history", False)),
             tier2_maps_location=bool(body.get("tier2_maps_location", False)),
-            case_description=str(body.get("case_description", "") or ""),
+            case_description=case_description,
             run_ai_analysis=bool(body.get("run_ai_analysis", True)),
+            run_ai_summary=bool(body.get("run_ai_summary", False)),
             llm_provider=str(body.get("llm_provider", "") or ""),
             case_number=str(body.get("case_number", "") or ""),
             use_case_bank=bool(body.get("use_case_bank", True)),
@@ -1053,6 +1163,8 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         # ------ Socket progress emitter ------
         def emit(stage: str, pct: float, detail: str):
+            state["last_stage"] = stage
+            state["last_pct"] = pct
             if socketio:
                 socketio.emit(
                     "progress",
@@ -1062,12 +1174,14 @@ def create_app(cases_root: Path = CASES_ROOT):
         # ------ Background worker ------
         def worker():
             state["running"] = True
+            state["last_event"] = "running"
             try:
                 summary = run_acquisition(
                     source, cfg, progress=emit, socketio=socketio,
                     cancel_token=cancel_token,
                 )
                 state["last_case"] = case_id
+                state["last_event"] = "done"
                 # Emit complete IMMEDIATELY so the examiner can review results
                 if socketio:
                     socketio.emit(
@@ -1076,9 +1190,11 @@ def create_app(cases_root: Path = CASES_ROOT):
                     )
             except AcquisitionCancelled:
                 state["last_case"] = case_id
+                state["last_event"] = "cancelled"
                 if socketio:
                     socketio.emit("cancelled", {"case_id": case_id, "partial": True})
             except Exception as exc:
+                state["last_event"] = "error"
                 if socketio:
                     socketio.emit("failed", {"case_id": case_id, "error": str(exc)})
             finally:
@@ -1119,13 +1235,85 @@ def create_app(cases_root: Path = CASES_ROOT):
     def acquire_cancel():
         """Request cancellation of the running acquisition.
 
-        The cancellation is cooperative: the pipeline will finish its current
-        I/O operation and check the token between stages.  The case folder is
-        left in a consistent, auditable partial state.
+        Returns as soon as the request is accepted — this does NOT mean the
+        acquisition has stopped yet, only that it has been told to. The token's
+        cancel() call (triage/cancellation.py) immediately kills any adb
+        subprocess currently in flight (a large `adb pull` no longer runs to
+        completion first) and the pipeline checks the token between
+        stages/files to unwind cleanly. The case folder is left in a
+        consistent, auditable partial state. The dashboard should treat the
+        run as truly stopped only once it receives the "cancelled" socket
+        event, not on this response alone.
         """
         token: CancellationToken | None = state.get("cancel_token")
         if token is None or not state.get("running"):
             return jsonify({"error": "no acquisition is currently running"}), 409
+        token.cancel()
+        return jsonify({"cancelling": True, "case_id": state.get("last_case")})
+
+    @app.get("/api/cases/<case_id>/checkpoint")
+    def case_checkpoint_status(case_id: str):
+        """Return checkpoint metadata for *case_id* so the UI can offer resume.
+
+        Returns
+        -------
+        200  ``{exists: true, stage, saved_at, completed_count}``
+             when a valid checkpoint exists.
+        200  ``{exists: false}``
+             when no checkpoint is present.
+        400  on an invalid case_id.
+        """
+        try:
+            validate_case_id(case_id)
+        except ValueError:
+            return jsonify({"error": "invalid case_id"}), 400
+
+        case_dir = cases_root / case_id
+        if not checkpoint_exists(case_dir):
+            return jsonify({"exists": False})
+
+        try:
+            envelope = load_checkpoint(case_dir)
+        except Exception as exc:
+            return jsonify({"exists": False, "error": str(exc)})
+
+        data = envelope.get("data", {})
+        return jsonify({
+            "exists": True,
+            "stage": envelope.get("stage"),
+            "saved_at": envelope.get("saved_at"),
+            "completed_count": len(data.get("completed_files", [])),
+        })
+
+    # ---------------------------------------------------------
+    # HARDWARE PANEL (ESP32 kill switch + status LED)
+    # ---------------------------------------------------------
+    # Unauthenticated by design — see the comment on _is_public_route. The
+    # microcontroller is a client only: it polls status to drive the LED and
+    # posts to killswitch on a physical button press. It never receives case
+    # data and cannot start an acquisition, only cancel a running one.
+
+    @app.get("/api/hardware/status")
+    def hardware_status():
+        return jsonify(
+            {
+                "event": state["last_event"],       # idle | running | done | cancelled | error
+                "running": state["running"],
+                "stage": state["last_stage"],
+                "pct": state["last_pct"],
+                "case_id": state.get("last_case"),
+            }
+        )
+
+    @app.post("/api/hardware/killswitch")
+    def hardware_killswitch():
+        token: CancellationToken | None = state.get("cancel_token")
+        if token is None or not state.get("running"):
+            # Not an error from the panel's point of view — pressing the button
+            # with nothing running just has no effect, same as the dashboard's
+            # cancel button being disabled. 200 keeps ESP32 firmware simple
+            # (one status code to treat as "acknowledged", nothing to retry).
+            return jsonify({"cancelling": False, "reason": "nothing running"})
         token.cancel()
         return jsonify({"cancelling": True, "case_id": state.get("last_case")})
 
@@ -1343,6 +1531,27 @@ def create_app(cases_root: Path = CASES_ROOT):
             ai.get("counts", {}) if isinstance(ai, dict) else {}
         )
 
+        # Hash-integrity check on case open. forensics/auto_verify.py's own cache
+        # (24h, or manifest.json mtime moved since the last check) makes this cheap on
+        # every call but the first-per-day — it does not re-hash the whole case on
+        # every dashboard refresh. This was previously only reachable via a pipeline.py
+        # wrapper called at acquisition-*complete*, which re-verified a manifest that
+        # had, at most, seconds ago finished being written by the very code being
+        # checked — never fatal to the request either way.
+        try:
+            from .forensics.auto_verify import auto_verify_on_open
+
+            summary["hash_verification"] = auto_verify_on_open(case.root)
+        except Exception as exc:
+            summary["hash_verification"] = {"status": "error", "error": str(exc)}
+
+        ai_summary = case.read_derived("ai_evidence_summary") or {}
+        summary["ai_evidence_summary_status"] = {
+            "generated": bool(ai_summary.get("generated")),
+            "matched_count": ai_summary.get("matched_count", 0),
+            "reason": ai_summary.get("reason", ""),
+        }
+
         return jsonify(summary)
 
     @app.get("/api/case/<case_id>/capabilities")
@@ -1493,6 +1702,12 @@ def create_app(cases_root: Path = CASES_ROOT):
             # Deep investigation: bounded hypothesis pass cross-linking findings
             # analyze_derived's single flat scoring pass can't correlate on its own.
             "investigation_trace",
+            # Entirely model-authored narrative, scoped to entity+yield-matched
+            # findings only — see triage/intel/ai_summary.py.
+            "ai_evidence_summary",
+            # Same-case name/number -> occurrence-across-datasets map — see
+            # triage/intel/entity_links.py.
+            "entity_links",
             "case_profile",
             "collection_plan",
             # Re-analysis writes its re-ranking here rather than over the plan that
@@ -1515,6 +1730,7 @@ def create_app(cases_root: Path = CASES_ROOT):
             "encryption_state",
             "device_state",
             "wifi_live",
+            "wifi_report",
             "bluetooth_bond_report",
             "bluetooth_transfer_summary",
             "signal",
@@ -1522,6 +1738,10 @@ def create_app(cases_root: Path = CASES_ROOT):
             # exit path (success, root unavailable, BFU-gated, mock source) so a run
             # where nothing was recovered never reads as "Telegram was not there".
             "telegram_presence",
+            # Same pattern for Tier-2 browser history: root check, BFU gate, no browsers
+            # found, or a genuine recovery all leave their own record here rather than
+            # collapsing into one generic "unverified" empty state.
+            "browser_presence",
             "app_presence_summary",
             "antiforensics_summary",
             "encrypted_apps_summary",
@@ -1598,17 +1818,123 @@ def create_app(cases_root: Path = CASES_ROOT):
         # ---------------------------------------------------------
 
     # DATA EXPORT IMPORT
-    # Instagram / Snapchat / Telegram (non-root acquisition path)
+    # Instagram / Snapchat / Telegram / WhatsApp (non-root acquisition path)
     # ---------------------------------------------------------
 
     @app.post("/api/case/<case_id>/import/<app_name>")
     def import_export(case_id: str, app_name: str):
 
-        if app_name not in ("instagram", "snapchat", "telegram"):
+        if app_name not in ("instagram", "snapchat", "telegram", "whatsapp"):
 
             abort(404)
 
         case = _open(cases_root, case_id)
+
+        # WhatsApp is a batch import (parsers.whatsapp_batch): any mix of `_chat.txt`/
+        # `.zip` exports, live `msgstore.db`, and `.crypt15/14/12` encrypted backups —
+        # possibly several at once (e.g. multiple contacts' exports from one device, or
+        # exports pooled across devices). It has its own upload shape (multiple files
+        # plus an optional key file) so it is handled separately from the single-file
+        # Instagram/Snapchat/Telegram flow below.
+        if app_name == "whatsapp":
+
+            uploads = [f for f in request.files.getlist("file") if f.filename]
+
+            if not uploads:
+
+                return jsonify({"error": "no file uploaded"}), 400
+
+            from .parsers.whatsapp_batch import parse_whatsapp_batch, get_batch_stats
+            from .report import generate_report
+
+            key_upload = request.files.get("key")
+
+            # A plain mkstemp() name loses the original filename — and
+            # whatsapp_batch._parse_single() dispatches export .txt/.zip files by
+            # checking for "_chat" in the *name* (WhatsApp's own "Export Chat" naming
+            # convention, e.g. "_chat.txt"), not just the suffix. werkzeug's
+            # secure_filename() strips that leading underscore, which is exactly the
+            # marker being matched on, so it's the wrong sanitiser here: each upload
+            # instead gets its own subdirectory and keeps just Path(...).name (strips
+            # any directory components — the actual traversal risk — without touching
+            # the filename itself).
+            tmp_dir = Path(tempfile.mkdtemp(prefix="whatsapp_batch_"))
+
+            tmp_paths = []
+            key_path = None
+
+            try:
+
+                for i, f in enumerate(uploads):
+
+                    safe_name = Path(f.filename).name or f"upload_{i}.txt"
+
+                    sub = tmp_dir / str(i)
+
+                    sub.mkdir()
+
+                    tp = sub / safe_name
+
+                    f.save(str(tp))
+
+                    tmp_paths.append(tp)
+
+                if key_upload is not None and key_upload.filename:
+
+                    key_path = tmp_dir / "key" / (
+                        Path(key_upload.filename).name or "key.bin"
+                    )
+
+                    key_path.parent.mkdir()
+
+                    key_upload.save(str(key_path))
+
+                messages = parse_whatsapp_batch(tmp_paths, key_path=key_path)
+
+                stats = get_batch_stats(messages)
+
+                if not messages:
+
+                    return (
+                        jsonify(
+                            {
+                                "error": (
+                                    "no messages recovered from the uploaded file(s) — "
+                                    "unsupported format, or an encrypted backup with no "
+                                    "matching key"
+                                ),
+                                "stats": stats,
+                            }
+                        ),
+                        400,
+                    )
+
+                # Merge into the same "messages" dataset live acquisition writes to
+                # (pipeline.py) — Message.to_dict() is the same shape either way, so
+                # Messages/Timeline/GlobalSearch pick these up with no separate view.
+                existing = case.read_derived("messages") or []
+
+                merged = list(existing) + [m.to_dict() for m in messages]
+
+                case.write_derived("messages", merged)
+
+                try:
+
+                    generate_report(case.root)
+
+                    _finalize_report(case, trigger="import:whatsapp_batch")
+
+                except Exception:
+
+                    pass
+
+                return jsonify(
+                    {"imported": len(messages), "total": len(merged), "stats": stats}
+                )
+
+            finally:
+
+                shutil.rmtree(tmp_dir, ignore_errors=True)
 
         upload = request.files.get("file")
 
@@ -1843,7 +2169,39 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         abort(404)
 
+    # ---------------------------------------------------------
+    # STATIC DASHBOARD (only present once `npm run build` has produced
+    # app/dist — the normal dev flow, Vite on :5173 or Electron loading
+    # dist/index.html directly off disk, never touches this route).
+    # ---------------------------------------------------------
+    # Exists so --network-mode lan can serve the whole dashboard itself: the
+    # investigator's laptop just opens http://<device-ip>:5057 in a browser —
+    # same origin as the API, so no CORS, no separate web server, and nothing
+    # in the middle between the hardware and the viewing browser.
+    _dist_dir = Path(__file__).resolve().parents[2] / "app" / "dist"
+
+    if _dist_dir.is_dir():
+
+        @app.get("/")
+        def dashboard_index():
+            return send_from_directory(_dist_dir, "index.html")
+
+        @app.get("/<path:filename>")
+        def dashboard_assets(filename: str):
+            # Never shadow the API or the SocketIO transport — anything under
+            # those prefixes that reaches here is a genuine miss, not a
+            # client-side route.
+            if filename.startswith("api/") or filename.startswith("socket.io"):
+                abort(404)
+            candidate = (_dist_dir / filename).resolve()
+            if candidate.is_file() and _dist_dir in candidate.parents:
+                return send_from_directory(_dist_dir, filename)
+            # Unknown path: fall back to index.html for the SPA's client-side router
+            # instead of 404ing every deep link (e.g. a refresh on /case/CASE-0001).
+            return send_from_directory(_dist_dir, "index.html")
+
     app.config["SOCKETIO"] = socketio
+    app.config["NETWORK_MODE"] = network_mode
 
     return app, socketio
 
@@ -1862,6 +2220,41 @@ def _open(cases_root: Path, case_id: str):
         abort(404)
 
     return Case.open(path)
+
+
+def _load_case_and_profile(cases_root: Path, case_id: str, body: dict):
+    """Open *case_id*, resolve the request's LLM provider, and load its persisted
+    case profile — the exact sequence /analyze's stored-profile path, /investigate
+    and /summarize each repeated independently, with the error message drifting
+    between them ("no case profile available" vs "... — run /analyze first").
+
+    Returns ``(case, profile, provider, None)`` on success, or
+    ``(None, None, None, error_response)`` when no case profile has been
+    persisted yet — the caller returns *error_response* as-is.
+    """
+
+    from .intel import get_provider
+
+    from .intel.planner import CaseProfile
+
+    case = _open(cases_root, case_id)
+
+    provider = get_provider(str(body.get("llm_provider", "")) or None)
+
+    stored_profile = case.read_derived("case_profile")
+
+    if not stored_profile:
+
+        error = (
+            jsonify({"error": "no case profile available — run /analyze first"}),
+            400,
+        )
+
+        return None, None, None, error
+
+    profile = CaseProfile(**stored_profile)
+
+    return case, profile, provider, None
 
 
 def _safe(case_id: str):
@@ -1893,11 +2286,60 @@ def main():
 
     parser.add_argument("--cases", default="cases")
 
+    parser.add_argument(
+        "--network-mode",
+        choices=["airgapped", "lan"],
+        default=os.environ.get("SNAGR_NETWORK_MODE", "airgapped"),
+        help=(
+            "airgapped (default): force-bind 127.0.0.1, refusing any other --host — "
+            "nothing on this machine is reachable off-box. "
+            "lan: bind --host to an explicit LAN address so the dashboard can be "
+            "opened from another machine's browser on the same local network. "
+            "Still no cloud/relay of any kind either way — lan only changes which "
+            "interface the loopback-designed service listens on."
+        ),
+    )
+
     args = parser.parse_args()
 
-    app, socketio = create_app(Path(args.cases))
+    if args.network_mode == "airgapped":
+        if args.host not in ("127.0.0.1", "localhost"):
+            print(
+                f"[network] --network-mode airgapped overrides --host={args.host!r} -> "
+                f"127.0.0.1 (refusing to bind a non-loopback address while airgapped).",
+                flush=True,
+            )
+        args.host = "127.0.0.1"
+    else:  # lan
+        if args.host in ("127.0.0.1", "localhost", "0.0.0.0"):
+            hint = ""
+            try:
+                import socket
 
-    print(f"{TOOL_NAME} v{__version__} " f"— http://{args.host}:{args.port}")
+                candidates = sorted(
+                    {
+                        ip
+                        for ip in socket.gethostbyname_ex(socket.gethostname())[2]
+                        if not ip.startswith("127.")
+                    }
+                )
+                if candidates:
+                    hint = f" (detected on this machine: {', '.join(candidates)})"
+            except Exception:
+                pass
+            parser.error(
+                "--network-mode lan requires an explicit --host set to this machine's "
+                f"LAN address{hint} — e.g. --host 192.168.1.50. Binding 0.0.0.0 or "
+                "loopback is refused so the service can never silently listen on an "
+                "unintended interface (a stray Wi-Fi AP, a phone hotspot, ...)."
+            )
+
+    app, socketio = create_app(Path(args.cases), network_mode=args.network_mode)
+
+    print(
+        f"{TOOL_NAME} v{__version__} [{args.network_mode}] "
+        f"— http://{args.host}:{args.port}"
+    )
 
     if socketio:
 

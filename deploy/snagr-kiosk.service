@@ -1,0 +1,33 @@
+[Unit]
+Description=SNAGR kiosk — dashboard on this box's own attached display
+Documentation=file:///opt/snagr/deploy/pi5-setup.md
+After=graphical.target network.target
+Wants=graphical.target
+# Mutually exclusive with the headless/LAN unit — both would try to bind
+# engine port 5057. Use deploy/set-network-mode.sh to switch between them.
+Conflicts=snagr-engine.service
+
+[Service]
+Type=simple
+User=snagr
+Group=snagr
+WorkingDirectory=/opt/snagr
+
+# SNAGR_KIOSK=1 makes Electron take the whole screen (see app/electron/main.cjs).
+# network-mode.env is optional here — kiosk mode defaults to airgapped/loopback
+# even if the file is absent; it's only read so the same file can also carry
+# SNAGR_HOST if you ever want this box reachable while still using its own
+# screen (not the intended posture, but nothing stops it).
+Environment=DISPLAY=:0
+Environment=SNAGR_KIOSK=1
+EnvironmentFile=-/etc/snagr/network-mode.env
+EnvironmentFile=/etc/snagr/auth.env
+
+# run.sh starts the Python engine as a child of this process, then Electron.
+# See build_package.py's _write_launchers() for what it does.
+ExecStart=/opt/snagr/run.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical.target

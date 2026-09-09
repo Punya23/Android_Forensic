@@ -49,6 +49,10 @@ export interface DeviceCheckResponse {
     os_skin: string;
     android_version: string;
     oem_quirks: string[];
+    /** `su -c id` probe result. Gates Tier-2 (root) options in the Acquisition view —
+     * a non-rooted handset is an ordinary retail phone with no administrator shell, so
+     * Tier-2 is withheld rather than offered-and-silently-skipped. */
+    rooted: boolean;
   };
 }
 
@@ -85,6 +89,11 @@ export interface GraphStats {
   interactions: number;
   channels: string[];
   top_contacts: {
+    /** Graph node id (e.g. "num:+917875091022"). The only thing separating two
+     * participants the device holds under the same display name — one saved contact
+     * against two numbers produces two rows with an identical label. Optional:
+     * graph.json files generated before the id was carried through omit it, and a
+     * consumer must fall back to the label there. */
     id?: string;
     label: string;
     weight: number;
@@ -163,6 +172,17 @@ export interface CaseSummary {
   tag_count: number;
   case_profile?: CaseProfile;
   ai_findings_summary?: Record<string, number>;
+  // forensics/auto_verify.py's auto_verify_on_open(), run on every case-open — cached
+  // up to 24h (or until manifest.json's mtime moves) so this doesn't re-hash the whole
+  // case on every dashboard refresh. See docs/NOTES.md "Known gaps".
+  hash_verification?: {
+    status: "completed" | "cached" | "skipped" | "error";
+    verified?: number;
+    failed?: number;
+    reason?: string;
+    error?: string;
+    alert?: { level: string; message: string; action: string };
+  };
 }
 
 // -- Case registry (cross-case history, SQLite-backed) ----------------------
@@ -735,6 +755,15 @@ export interface MediaItem {
   timestamp: string | null;
   gps: { lat: number; lon: number } | null;
   sha256: string;
+  /** On-device path at acquisition time — provenance, not just where it's stored now. */
+  device_path?: string | null;
+  /** Enhanced EXIF (images only). null for video/audio and for any image with no
+   *  readable EXIF block — both render identically to "not available here", since
+   *  neither means extraction failed (e.g. WhatsApp/Instagram strip GPS on send). */
+  altitude?: number | null;
+  device_make?: string | null;
+  device_model?: string | null;
+  software?: string | null;
 }
 
 export interface RecoveredRow {
@@ -999,6 +1028,30 @@ export interface WifiNetwork {
   timestamp: string | null;
   confidence: Confidence;
   source_file: string;
+  /** This device's OWN hotspot config (WifiConfigStoreSoftAp.xml), not a network it joined. */
+  is_softap?: boolean;
+  /**
+   * True when `password` is blank because the store held it in a form this
+   * parser can't decode (Keystore-encrypted PSK, common from Android 10+) —
+   * NOT because the network is open. Never render this as "open / enterprise".
+   */
+  password_unreadable?: boolean;
+  caveats?: string[];
+}
+
+/**
+ * The "why" behind an empty/partial Tier-2 Wi-Fi credential result — written
+ * alongside the `wifi` dataset so the dashboard never has to guess between
+ * root-missing, no-config-store-found, and read-but-genuinely-empty.
+ */
+export interface WifiReport {
+  root_ok?: boolean;
+  files_found?: boolean;
+  network_count?: number;
+  with_password_count?: number;
+  password_unreadable_count?: number;
+  softap_count?: number;
+  caveats?: string[];
 }
 
 // --- MediaStore trash (deleted / pending media, non-root recovery) ---------
@@ -1103,6 +1156,15 @@ export interface CapabilityState {
   requires: string;
   /** Acquisition flag that gates this stage, when one does. */
   flag: string;
+  /**
+   * True only when turning `flag` on and running the acquisition again would actually
+   * change this outcome. The engine decides it (`triage/capabilities.py`) because only
+   * the engine knows the whole picture: a Tier-2 flag left off on a handset that never
+   * gave up root is `not_collected` in neither spirit nor fact, and a missing case brief
+   * is a gap no re-acquisition closes. The UI reads this instead of re-deriving the
+   * distinction from `state`, so badge and engine cannot end up saying different things.
+   */
+  flag_actionable: boolean;
   count: number;
 }
 
@@ -1138,12 +1200,53 @@ export interface EmbeddingStatus {
   mode: string;
 }
 
+/** This workstation's RAM/CPU/GPU, plus the model that hardware earns it (engine:
+ * triage/intel/hardware.py `detect_hardware` + `recommend_model`). Best-effort —
+ * `recommended_model.model` is null below the minimum tier, meaning stay heuristic. */
+export interface HardwareInfo {
+  platform: string;
+  arch: string;
+  cpu_cores: number;
+  ram_gb: number | null;
+  gpu: string;
+  recommended_model: {
+    model: string | null;
+    note: string;
+    ram_gb: number | null;
+  };
+}
+
+/** A background Ollama install/model-pull kicked off because no local model was
+ * present — see `hardware.ensure_local_model`. `action: "none"` means nothing is
+ * in flight (already have a model, autoinstall disabled, or hardware too small). */
+export interface LlmProvisioning {
+  action: "installing" | "pulling" | "none";
+  model?: string;
+  hardware?: HardwareInfo;
+  install?: { installed: boolean; already_present: boolean; method: string; error: string };
+  reason?: string;
+}
+
+/** What the engine decided at start-up without an operator choice — see
+ * `llm.autodetect_and_configure`. Never overrides an explicit `SNAGR_LLM`. */
+export interface LlmAutodetect {
+  autodetected: boolean;
+  reason?: string;
+  provider?: string;
+  model?: string;
+  /** Present while a background model pull is in progress. */
+  provisioning?: LlmProvisioning;
+  hardware?: HardwareInfo;
+}
+
 export interface LlmStatus {
   configured: string;
   chat_model: string;
   providers: LlmProviderInfo[];
   embedding_models: string[];
   embedding: EmbeddingStatus;
+  hardware?: HardwareInfo;
+  autodetect?: LlmAutodetect;
 }
 
 // --- Deep investigation (engine: triage/intel/investigator.py) -------------
@@ -1172,7 +1275,50 @@ export interface InvestigationTrace {
   linked_findings: LinkedFinding[];
   narrative: string;
   analysis_method: string;
+  // Count of hypotheses that reached "answered" (ran over real data, whatever the
+  // answer) rather than "blocked". Read by the backend's capability badge to tell
+  // "investigated, nothing to link" from "nothing here was ever investigated" — the
+  // hypotheses list itself is never empty, since a blocked check still gets an entry.
+  // Optional: absent on a bundle written before this field existed.
+  hypotheses_answered?: number;
   disclaimer: string;
+}
+
+// --- AI Evidence Summary (engine: triage/intel/ai_summary.py) --------------
+/** One artifact class the knowledge graph rates at/above the yield floor for this
+ * case's crime type — why a matched finding's category was allowed through. */
+export interface HighYieldArtifact {
+  artifact: string;
+  label: string;
+  blended: number;
+}
+
+/**
+ * Entirely model-authored narrative digest of this case's own `ai_findings`, scoped
+ * to findings that already matched a named person/keyword from the case brief AND sit
+ * in a high-yield artifact class for the crime type. Honestly empty (`generated:
+ * false` + `reason`) when there's no brief, no matches, or no reachable local model —
+ * never a fabricated summary. See `AiEvidenceSummary` in triage/intel/ai_summary.py.
+ */
+export interface AiEvidenceSummary {
+  generated: boolean;
+  provider: string;
+  model: string;
+  /** Back-end that was requested for this summary but was unreachable, if any. */
+  degraded_from: string;
+  crime_type: string;
+  crime_label: string;
+  /** Case-brief entities/keywords actually hit by at least one matched finding. */
+  relevant_entities: string[];
+  high_yield_artifacts: HighYieldArtifact[];
+  /** Ids into this case's own `ai_findings` — the only source material the model saw. */
+  matched_finding_ids: string[];
+  matched_count: number;
+  total_findings_considered: number;
+  narrative: string;
+  disclaimer: string;
+  /** Why `generated` is false — a normal, honest outcome, not an error. */
+  reason: string;
 }
 
 // --- Ask this case (engine: triage/intel/case_qa.py) -------------------------
@@ -1184,6 +1330,33 @@ export interface Passage {
   timestamp: string | null;
   app: string;
   confidence: string;
+}
+
+// --- Entity cross-links (engine: triage/intel/entity_links.py) ---------------
+/**
+ * Every place one case-brief-named entity turns up across this case's own
+ * collected messages/calls/browser/locations/contacts — deterministic substring
+ * match, not identity resolution (see `disclaimer` on `EntityLinksResponse`, always
+ * present and never to be hidden). `occurrences` is capped for display; `truncated`
+ * says how many more exist beyond the cap, `occurrence_count` is always the true
+ * total either way.
+ */
+export interface EntityLink {
+  entity: string;
+  occurrence_count: number;
+  datasets: string[];
+  occurrences: Passage[];
+  truncated: number;
+}
+
+export interface EntityLinksResponse {
+  entities: EntityLink[];
+  entity_count: number;
+  passages_scanned: number;
+  /** Why `entities` is empty — a normal, honest outcome (no brief entities, or
+   * nothing was collected to search), never silently blank. */
+  reason: string;
+  disclaimer: string;
 }
 
 export interface AskCaseResponse {

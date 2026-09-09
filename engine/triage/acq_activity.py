@@ -63,6 +63,12 @@ SOURCE_ICON_MAP: dict[str, str] = {
     "app_presence": "apps",
     "antiforensics": "shield_alert",
     "recent_tasks": "layout",
+    # Tier-1 Collector-helper outputs not covered by an existing tier0/tier2 key
+    "apps": "apps",
+    "accounts": "accounts",
+    "calendar": "calendar",
+    "usage": "usage",
+    "recordings": "recordings",
     # Intelligence / pipeline
     "intel": "sparkles",
     "aleapp": "tool",

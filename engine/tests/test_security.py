@@ -7,7 +7,10 @@ valid X-CSRF-Token header.  GET endpoints must not require CSRF tokens.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -21,29 +24,49 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
 
-def _make_server_app():
-    """Import server and return (app, socketio) with acquisition disabled."""
-    # Patch heavy optional deps before import
+def _make_server_app(cases_root: Path):
+    """Import server and return (app, socketio) with acquisition disabled.
+
+    ``server.py`` has no module-level ``app``/``socketio`` — both come out of
+    the ``create_app()`` factory (see ``main()``). Every test class here used
+    to reach for ``srv.app``/``srv.socketio`` directly, which don't exist:
+    that raised ``AttributeError`` inside the ``try`` below and every single
+    test in this file silently self-skipped via ``skipTest`` — a whole
+    CSRF/CORS/input-validation suite reporting green (well, gray) while
+    testing nothing. Fixed by actually calling the factory against a scratch
+    case folder, same as the real server's own ``main()`` does.
+
+    Also pins ``SNAGR_AUTH_USER``/``SNAGR_AUTH_PASS`` to match the
+    "admin"/"snagr-demo" credentials the tests below log in with — server.py
+    reads those env vars once, at module-import time, and without them set
+    login always 401s (no demo-mode default matches "snagr-demo" either),
+    which starved every auth-then-validate test of a real session/CSRF token.
+    """
+    # Patch heavy optional deps and auth env vars before import
     with patch.dict("sys.modules", {
         "flask_socketio": MagicMock(),
         "flask_limiter": MagicMock(),
         "flask_limiter.util": MagicMock(),
+    }), patch.dict(os.environ, {
+        "SNAGR_AUTH_USER": "admin",
+        "SNAGR_AUTH_PASS": "snagr-demo",
     }):
-        import importlib
         if "triage.server" in sys.modules:
             del sys.modules["triage.server"]
         from triage import server as srv
-        return srv.app, srv.socketio
+        return srv.create_app(cases_root=cases_root)
 
 
 class TestCSRFEnforcement(unittest.TestCase):
     def setUp(self):
+        self._tmp_cases = tempfile.mkdtemp(prefix="snagr_test_cases_")
+        self.addCleanup(shutil.rmtree, self._tmp_cases, ignore_errors=True)
         try:
-            self.app, _ = _make_server_app()
+            self.app, _ = _make_server_app(Path(self._tmp_cases))
             self.client = self.app.test_client()
             self.app.config["TESTING"] = True
-        except Exception:
-            self.skipTest("server.py could not be imported in this environment")
+        except Exception as exc:
+            self.skipTest(f"server.py could not be imported in this environment: {exc}")
 
     def _get_csrf_token(self):
         resp = self.client.post(
@@ -76,12 +99,14 @@ class TestCSRFEnforcement(unittest.TestCase):
 
 class TestInputValidation(unittest.TestCase):
     def setUp(self):
+        self._tmp_cases = tempfile.mkdtemp(prefix="snagr_test_cases_")
+        self.addCleanup(shutil.rmtree, self._tmp_cases, ignore_errors=True)
         try:
-            self.app, _ = _make_server_app()
+            self.app, _ = _make_server_app(Path(self._tmp_cases))
             self.client = self.app.test_client()
             self.app.config["TESTING"] = True
-        except Exception:
-            self.skipTest("server.py could not be imported in this environment")
+        except Exception as exc:
+            self.skipTest(f"server.py could not be imported in this environment: {exc}")
 
     def _auth_headers(self):
         resp = self.client.post(
@@ -106,24 +131,30 @@ class TestInputValidation(unittest.TestCase):
     def test_oversized_brief_rejected(self):
         headers = self._auth_headers()
         giant_brief = "A" * 20001
+        # The field is "case_description" (triage/intel/planner.py's case brief), not
+        # "brief" — the old key here was silently ignored by /api/acquire (never read),
+        # so this test always exercised the *default* case_description and could never
+        # have failed no matter how server.py validated the real field.
         resp = self.client.post(
             "/api/acquire",
-            json={"mode": "mock", "brief": giant_brief},
+            json={"mode": "mock", "case_description": giant_brief},
             content_type="application/json",
             headers=headers,
         )
         self.assertIn(resp.status_code, (400, 413),
-                      "Oversized brief text must be rejected")
+                      "Oversized case_description text must be rejected")
 
 
 class TestCORSHeaders(unittest.TestCase):
     def setUp(self):
+        self._tmp_cases = tempfile.mkdtemp(prefix="snagr_test_cases_")
+        self.addCleanup(shutil.rmtree, self._tmp_cases, ignore_errors=True)
         try:
-            self.app, _ = _make_server_app()
+            self.app, _ = _make_server_app(Path(self._tmp_cases))
             self.client = self.app.test_client()
             self.app.config["TESTING"] = True
-        except Exception:
-            self.skipTest("server.py could not be imported in this environment")
+        except Exception as exc:
+            self.skipTest(f"server.py could not be imported in this environment: {exc}")
 
     def test_non_localhost_origin_not_allowed(self):
         resp = self.client.get(

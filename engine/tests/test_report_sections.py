@@ -482,8 +482,10 @@ def test_hotspot_not_collected_is_explicit_gap_not_false_negative(case: Case):
     # Do not write wifi_live at all
     html = render(case)
     assert "Hotspot Posture" in html
-    assert "not collected" in html.lower() or "not" in html.lower()
-    # The word 'not' alone is too broad; verify the critical absence:
+    # The 'or "not" in html' disjunct this used to carry made the assertion
+    # unfalsifiable — every report contains the word "not" somewhere — so the test
+    # passed whatever the section said, including nothing about the gap at all.
+    assert "hotspot data: not collected" in html.lower()
     assert "no hotspot" not in html.lower()
 
 

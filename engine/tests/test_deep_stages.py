@@ -580,6 +580,14 @@ def test_browser_history_stage_pulls_and_labels_chrome_history(case: Case, tmp_p
         r.source_path == "/data/data/com.android.chrome/app_chrome/Default/History"
         for r in case.manifest
     )
+    presence = case.read_derived("browser_presence")
+    assert presence == {
+        "attempted": True,
+        "available": True,
+        "reason": None,
+        "browsers_found": 1,
+        "rows": 1,
+    }
 
 
 def test_browser_history_stage_discovers_firefox_profile_and_parses_places(
@@ -664,6 +672,13 @@ def test_browser_history_stage_returns_zero_when_no_browser_installed(
     src = RealDeviceSource(adb)  # type: ignore[arg-type]
     result = pipeline._run_tier2_browser_history(src, case, tmp_path / "stage", [], [], [])
     assert result == {"browsers_found": 0, "rows": 0}
+    # Root worked and every known path was checked — a real finding about the device,
+    # not an access failure, so `available` stays True (see erakshak's capability
+    # catalogue: this is what lets an empty `browser` dataset resolve as "checked,
+    # nothing found" instead of "could not check").
+    presence = case.read_derived("browser_presence")
+    assert presence["attempted"] is True
+    assert presence["available"] is True
 
 
 def test_browser_history_stage_no_root_is_not_reported_as_absent(case: Case, tmp_path: Path):
@@ -690,3 +705,9 @@ def test_browser_history_stage_no_root_is_not_reported_as_absent(case: Case, tmp
     entries = [e for e in case.read_audit() if e["action"] == "tier2.browser_history"]
     assert entries and "root not available" in entries[0]["detail"]
     assert "NOT a finding that no browsers are installed" in entries[0]["detail"]
+    # The dashboard-visible record must carry the same distinction as the audit log —
+    # `available=False` only for this genuine access failure, never for "found nothing".
+    presence = case.read_derived("browser_presence")
+    assert presence["attempted"] is True
+    assert presence["available"] is False
+    assert "root not available" in presence["reason"]

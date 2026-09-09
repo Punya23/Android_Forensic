@@ -201,6 +201,27 @@ export const api = {
     );
   },
 
+  // WhatsApp batch import (triage/parsers/whatsapp_batch.py): any mix of `_chat.txt`/
+  // `.zip` "Export Chat" files, live `msgstore.db`, or `.crypt15/14/12` encrypted
+  // backups, uploaded together — unlike importExport above, more than one file at a
+  // time, plus an optional AES key for the encrypted-backup case. Merges into the same
+  // "messages" dataset a live acquisition writes, so no separate view is needed.
+  importWhatsAppBatch: (id: string, files: File[], keyFile?: File | null) => {
+    const form = new FormData();
+    for (const f of files) form.append("file", f);
+    if (keyFile) form.append("key", keyFile);
+    return request<{
+      imported: number;
+      total: number;
+      stats: {
+        total: number;
+        by_confidence: Record<string, number>;
+        by_direction: Record<string, number>;
+        date_range: { start: string | null; end: string | null };
+      };
+    }>(`/api/case/${id}/import/whatsapp`, { method: "POST", body: form });
+  },
+
   // Case-intelligence: preview a targeted collection plan from a plain-language brief.
   plan: (
     description: string,
@@ -290,6 +311,28 @@ export const api = {
       body: JSON.stringify(body || {}),
     }),
 
+  // AI Evidence Summary: (re-)generate the entirely model-authored narrative digest
+  // scoped to entity+yield-matched findings only — see triage/intel/ai_summary.py.
+  // Requires a case profile and ai_findings (run analyze() first); the persisted
+  // bundle is otherwise read like any sibling dataset via `api.dataset(id, "ai_evidence_summary")`.
+  summarizeCase: (id: string, body?: { llm_provider?: string }) =>
+    request<import("./types").AiEvidenceSummary>(`/api/case/${id}/summarize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    }),
+
+  // Entity cross-links: (re-)cross-link case-brief-named entities against this
+  // case's own collected data — deterministic, no LLM. See triage/intel/entity_links.py.
+  // Requires a case profile (run analyze() first); the persisted bundle is otherwise
+  // read like any sibling dataset via `api.dataset(id, "entity_links")`.
+  entityLinks: (id: string) =>
+    request<import("./types").EntityLinksResponse>(`/api/case/${id}/entity-links`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }),
+
   // "Ask this case" — free-text Q&A over the case's own already-collected evidence.
   askCase: (
     id: string,
@@ -325,6 +368,9 @@ export const api = {
     /** Load this installation's own promoted cases as retrieval precedent. */
     use_local_corpus?: boolean;
     run_ai_analysis?: boolean;
+    /** Opt-in: generate the AI Evidence Summary after analysis. Needs a reachable
+     * local model — see /api/llm/status — or this stays honestly empty. */
+    run_ai_summary?: boolean;
     learn_from_case?: boolean;
     tier1_contacts?: boolean;
     tier1_calllog?: boolean;
@@ -336,6 +382,7 @@ export const api = {
     tier2_wifi?: boolean;
     tier2_browser_history?: boolean;
     tier2_whatsapp_backup?: boolean;
+    tier2_maps_location?: boolean;
     // Deep system-artifact stages (root). Omitted => the engine's default (all off).
     tier2_bt_config?: boolean;
     tier2_app_presence?: boolean;
@@ -351,6 +398,17 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  /**
+   * Ask the engine to stop the running acquisition. Returns as soon as the
+   * request is accepted — it does NOT mean the acquisition has actually
+   * stopped yet. The engine kills any in-flight adb transfer immediately and
+   * unwinds the pipeline, then confirms over the "cancelled" socket event;
+   * only that event means the run has truly ended (see AcquisitionView).
+   */
+  cancelAcquisition: () =>
+    request<{ cancelling: boolean; case_id?: string }>("/api/acquire/cancel", {
+      method: "POST",
+    }),
   caseActivity: (caseId: string) =>
     get<{ events: AcqEvent[] }>(`/api/cases/${caseId}/activity`),
 };
@@ -358,7 +416,15 @@ export const api = {
 let socket: Socket | null = null;
 export function getSocket(): Socket {
   if (!socket) {
-    socket = io(BASE || "/", { transports: ["websocket", "polling"] });
+    // Polling first, not websocket-first: the engine pins allow_upgrades=False
+    // (see server.py's SocketIO(...) — the Werkzeug dev server, and the Vite
+    // dev proxy in front of it, don't reliably carry a raw WebSocket upgrade;
+    // every real-time event still arrives fine over HTTP long-polling). With
+    // "websocket" listed first the client opened straight into that transport,
+    // which the proxy resets before the handshake completes — connection never
+    // fell back to polling, so it looped failed WS attempts forever and the
+    // Acquisition Activity Panel never received a single live event.
+    socket = io(BASE || "/", { transports: ["polling", "websocket"] });
   }
   return socket;
 }

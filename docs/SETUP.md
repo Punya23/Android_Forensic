@@ -173,6 +173,7 @@ Vite 5 / Electron 31's own requirements, not enforced in-repo.
 | `SNAGR_LLM_MODEL` | `llama3.1` | Ollama model name |
 | `SNAGR_EMBED_MODEL` | `nomic-embed-text` | Local embedding model used for semantic precedent retrieval. Pull it with `ollama pull nomic-embed-text` |
 | `SNAGR_EMBEDDINGS` | *(on)* | Set to `off` to force pure BM25 retrieval — for an air-gapped box, or to reproduce a plan exactly as a lexical-only run produced it |
+| `SNAGR_LLM_AUTOINSTALL` | *(on)* | Set to `0`/`false` to stop the engine installing Ollama or pulling a model on its own — see below. Detection still runs and is still reported at `GET /api/llm/status`; only the install/pull actions are disabled |
 | `ANDROID_HOME` | — | Android SDK location, for locating `adb` |
 | `ALEAPP_PATH` | — | Path to an external ALEAPP install, if used |
 | `SIGNALBACKUP_TOOLS_PATH` | — | Path to `signalbackup-tools`, if used |
@@ -197,33 +198,120 @@ deterministic path, says so in the audit log and on screen, and records
 `retrieval_mode: lexical` so nobody later reads the plan as having had a basis it did
 not have.
 
-### Packaging (`npm run electron:build`) — ⚠ untuned
+### Automatic provisioning (multi-examiner machines)
 
-`app/package.json` has **no `"build"` config block** for electron-builder, and no
-`electron-builder.yml` exists — so `electron:build` currently runs on electron-builder's
-bare defaults (autodetected target per OS: dmg/nsis/AppImage), with no `productName`,
-`appId`, or output directory pinned. More importantly: `electron/main.cjs` expects a
-packaged build to find a standalone `triage-engine` executable under
-`resources/engine/triage-engine` — **no build step in this repo produces that binary**
-(no PyInstaller spec wired to the packaging script, despite `build_package.py` existing at
-the repo root). Packaging the desktop app today needs this gap closed first.
+Because this ships to examiners on machines nobody here has configured by hand, the
+engine can provision a local model itself rather than requiring `ollama pull` up front.
+On startup, if no chat model is reachable, it probes this workstation's RAM (see
+`triage/intel/hardware.py`) and:
 
-### APK release build — ⚠ unsigned
+1. installs the Ollama binary if missing, using only the vendor's own official,
+   non-interactive install path for the OS (Homebrew on macOS, winget on Windows,
+   Ollama's documented Linux installer) — never a third-party script;
+2. makes sure the Ollama **daemon** is actually reachable, not just that the binary
+   is on `PATH` — installing it is not the same thing: Homebrew's own `ollama`
+   formula installs the CLI only and does not start or enable a background service
+   (confirmed against `brew info ollama`'s own caveat), so a brew-only install, or
+   any machine where the binary is present but the service was never started or has
+   since stopped, has nothing listening on `127.0.0.1:11434` until something starts
+   it. If nothing answers, the engine spawns `ollama serve` itself (detached, so it
+   outlives the request that started it) and waits briefly for it to come up;
+3. picks the strongest chat model this machine's RAM can carry without starving the
+   OS, the dashboard and the engine (roughly: <10 GB → stays off, 10–16 GB →
+   `qwen2.5:3b-instruct`, 16–24 GB → `llama3.1:8b`, 24–40 GB → `qwen2.5:14b-instruct`,
+   40 GB+ → `qwen2.5:32b-instruct`), and pulls it **in the background** — engine
+   startup never blocks on a multi-GB download, a package-manager install, or
+   waiting for the daemon to come up;
+4. switches the active back-end to `ollama` automatically the moment that pull
+   finishes — no restart, no manual step.
 
-`./gradlew :app:assembleDebug` works today (see above). A release build
-(`./gradlew :app:assembleRelease`) would run, but `apk/app/build.gradle`'s `release` block
-only sets `minifyEnabled false` — **no `signingConfigs`** — so the output APK would be
-unsigned and need manual signing (`apksigner` + a keystore) before it could be installed
-outside a debug context.
+This never overrides an explicit `SNAGR_LLM`/`SNAGR_LLM_MODEL` choice, never fails
+engine startup (a probe/install/pull failure just leaves the always-available
+heuristic default in place, logged), and never touches the network at all when
+`SNAGR_LLM_AUTOINSTALL=0` — set that on an air-gapped or IT-locked examiner
+workstation. `GET /api/llm/status` reports the detected hardware, the recommended
+model, and whether a background pull is currently in progress.
+
+### AI Evidence Summary
+
+An additional, opt-in stage (`run_ai_summary`, off by default) that is **entirely
+model-authored** — unlike the deterministic `ai_findings` ranking, there is no
+heuristic fallback for writing prose, so this stage produces nothing without a
+reachable local model. It narrows to findings that both (a) already matched a named
+person/keyword from the case brief and (b) sit in an artifact class the knowledge
+graph rates at or above the doctrinal midpoint for this crime type — see
+`triage/intel/ai_summary.py`. Every fact it writes cites the finding id it came from,
+already visible in Case Intelligence, and the output always carries a disclaimer that
+it is an investigative aid, not a certified conclusion. Re-run it standalone with
+`POST /api/case/<id>/summarize`.
+
+### Packaging (`npm run electron:build`) — builds a real installer, unsigned
+
+Two-step build: PyInstaller freezes the engine into a standalone binary, then
+electron-builder bundles it into the desktop app.
+
+```bash
+# 1. Freeze the engine (from engine/, with .venv active) — produces
+#    engine/dist/triage-engine/triage-engine
+cd engine && .venv/bin/pyinstaller snagr.spec --noconfirm
+
+# 2. Build the desktop app (from app/) — produces app/release/SNAGR-<version>*.dmg
+#    (and mac-arm64/mac x64 unpacked .app builds alongside it)
+cd ../app && npm run electron:build
+```
+
+`app/package.json`'s `"build"` block pins `productName`/`appId`, sends output to
+`app/release/` (not `dist/` — that's vite's build output, would collide), and
+`extraResources` copies `engine/dist/triage-engine/` to `resources/engine/` in the
+packaged app, matching what `electron/main.cjs` expects at that exact path. Icons
+(`app/build/icons/icon.{icns,ico}`, source in `generate.py`) are wired for mac/win/linux.
+(`build_package.py` at the repo root remains a separate, manual "portable folder"
+bundler — it doesn't use electron-builder at all — kept for anyone who wants a
+zip-and-run folder instead of a platform installer.)
+
+Verified: the frozen engine binary answers `GET /api/health` standalone, and the
+packaged `.app` bundles the engine at the right resource path with the icon set
+correctly in `Info.plist`. **Not verified from this checkout:** actually launching the
+packaged GUI and clicking through it — do that once, by hand, before a demo.
+
+Known gaps still open:
+- **Unsigned** — no Apple Developer ID / EV cert here, so macOS Gatekeeper blocks a
+  plain double-click on first run ("unidentified developer"). Workaround:
+  right-click → Open, or `xattr -d com.apple.quarantine SNAGR.app`. Same story on
+  Windows (SmartScreen) without a code-signing cert.
+- **PDF export (Playwright)** — `electron/pdf/pdfRenderer.cjs` renders reports via a
+  headless Chromium that Playwright launches, but `package.json`'s `allowScripts`
+  doesn't permit Playwright's own postinstall, so its browser binary is never
+  downloaded — `npm install` alone does not make PDF export work in a packaged build.
+  Needs `PLAYWRIGHT_BROWSERS_PATH=0` (installs the browser under `node_modules` so
+  electron-builder's default file-set actually picks it up) plus an `asarUnpack` entry
+  for the native binary, then a real `npx playwright install chromium` and a test of
+  the export flow. Left undone here — bundling a ~150–300 MB Chromium wasn't in scope
+  for "make it launch as a downloadable app"; do it separately before relying on the
+  in-app PDF export from a packaged build.
+
+### APK release build — wired (2026-09)
+
+`./gradlew :app:assembleDebug` works today (see above). `apk/app/build.gradle` now
+reads a release signing key from `apk/keystore.properties` (git-ignored — copy
+`apk/keystore.properties.example` and point it at a real keystore) when that file is
+present, and falls back to the debug key when it isn't. Either way
+`./gradlew :app:assembleRelease` now produces a *signed* APK — never the previous
+silent unsigned output — though the debug-key fallback is for local testing only, not
+distribution.
+
+### CI
+
+`.github/workflows/ci.yml` runs on every push/PR: engine `pytest`, dashboard
+typecheck+build, and a debug APK build (uploaded as a workflow artifact).
 
 ### What's *not* a real deployment path
 
-`deploy/docker-compose.yml` exists but references `deploy/Dockerfile.gateway`, which does
-not exist anywhere in the repo, and describes an `api_gateway` / `graphql_server` /
-`webhook_worker` + Redis architecture that doesn't correspond to anything else in this
-project (engine on 5057, dashboard, APK). Treat it as orphaned scaffolding, not a working
-deployment — `docker compose up` would fail immediately on the missing Dockerfile. No
-`.github/workflows/` exists either — there is currently no CI/CD.
+`deploy/docker-compose.yml` — removed (2026-09). It referenced `deploy/Dockerfile.gateway`,
+which didn't exist anywhere in the repo, and described an `api_gateway` / `graphql_server`
+/ `webhook_worker` + Redis architecture that never corresponded to anything else in this
+project (engine on 5057, dashboard, APK). Orphaned scaffolding, not a working deployment
+that was ever one edit away from working — deleted rather than fixed.
 
 ---
 

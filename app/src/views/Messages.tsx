@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import type { Message } from "../lib/types";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { ConfidenceBadge } from "../components/Badges";
 import { TagButton } from "../lib/tagStore";
 import { Filters, SectionHeader, EmptyState } from "../components/common";
+import { api } from "../lib/api";
 
 const APP_COLORS: Record<string, string> = {
   whatsapp: "text-live",
@@ -19,7 +20,8 @@ const APP_COLORS: Record<string, string> = {
 const TABLE_CAP = 1000;
 
 export function MessagesView({ caseId }: { caseId: string }) {
-  const { data, loading } = useDataset<Message>(caseId, "messages");
+  const [reloadKey, setReloadKey] = useState(0);
+  const { data, loading } = useDataset<Message>(caseId, "messages", reloadKey);
   const [query, setQuery] = useState("");
   const [showDeletedOnly, setShowDeletedOnly] = useState(false);
   const [app, setApp] = useState<string>("all");
@@ -48,7 +50,12 @@ export function MessagesView({ caseId }: { caseId: string }) {
 
   if (loading) return <div className="p-8 text-muted">Loading messages…</div>;
   if (data.length === 0)
-    return <EmptyState dataset="messages" title="No messages" detail="No chat exports were ingested and no chat databases yielded rows." />;
+    return (
+      <div className="p-6 h-full flex flex-col items-center justify-center gap-4">
+        <EmptyState dataset="messages" title="No messages" detail="No chat exports were ingested and no chat databases yielded rows." />
+        <ImportWhatsAppControl caseId={caseId} onImported={() => setReloadKey((k) => k + 1)} />
+      </div>
+    );
 
   return (
     <div className="p-6 h-full flex flex-col">
@@ -56,10 +63,13 @@ export function MessagesView({ caseId }: { caseId: string }) {
         title="Messages"
         sub={`${data.length} total · ${deletedCount} recovered/deleted`}
         right={
-          <label className="flex items-center gap-2 text-sm text-muted cursor-pointer">
-            <input type="checkbox" checked={showDeletedOnly} onChange={(e) => setShowDeletedOnly(e.target.checked)} />
-            deleted only
-          </label>
+          <div className="flex items-center gap-4">
+            <ImportWhatsAppControl caseId={caseId} onImported={() => setReloadKey((k) => k + 1)} compact />
+            <label className="flex items-center gap-2 text-sm text-muted cursor-pointer">
+              <input type="checkbox" checked={showDeletedOnly} onChange={(e) => setShowDeletedOnly(e.target.checked)} />
+              deleted only
+            </label>
+          </div>
         }
       />
       <div className="flex flex-wrap items-center gap-2 mb-2">
@@ -120,6 +130,77 @@ export function MessagesView({ caseId }: { caseId: string }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// Non-root WhatsApp ingestion: batch-upload `_chat.txt`/`.zip` "Export Chat" files,
+// live `msgstore.db`, or `.crypt15/14/12` encrypted backups (with an optional key file
+// to decrypt them) — parsers/whatsapp_batch.py handles any mix of these, in one request.
+function ImportWhatsAppControl({
+  caseId,
+  onImported,
+  compact,
+}: {
+  caseId: string;
+  onImported: () => void;
+  compact?: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [keyName, setKeyName] = useState<string | null>(null);
+  const filesRef = useRef<HTMLInputElement>(null);
+  const keyRef = useRef<HTMLInputElement>(null);
+
+  async function onFiles(e: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = ""; // allow re-selecting the same file(s)
+    if (files.length === 0) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await api.importWhatsAppBatch(caseId, files, keyRef.current?.files?.[0] ?? null);
+      setMsg(`Imported ${res.imported} message(s) from ${files.length} file(s).`);
+      onImported();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className={compact ? "flex items-center gap-2" : "flex flex-col items-center gap-2"}>
+      <input
+        ref={filesRef}
+        type="file"
+        multiple
+        accept=".txt,.zip,.db,.crypt15,.crypt14,.crypt12"
+        className="hidden"
+        onChange={onFiles}
+      />
+      {/* Optional AES key for an encrypted crypt15/14/12 backup — see whatsapp_batch.py's
+          module docstring for the three places this key can come from on a real device. */}
+      <input
+        ref={keyRef}
+        type="file"
+        className="hidden"
+        onChange={(e) => setKeyName(e.target.files?.[0]?.name ?? null)}
+      />
+      <button
+        className={compact ? "btn-ghost text-xs py-1" : "btn-accent text-sm"}
+        disabled={busy}
+        onClick={() => filesRef.current?.click()}
+        title="Batch-import WhatsApp _chat.txt/.zip exports, msgstore.db, or encrypted backups"
+      >
+        {busy ? "Importing…" : "Import WhatsApp export(s)"}
+      </button>
+      {!compact && (
+        <button className="text-xs text-muted underline" onClick={() => keyRef.current?.click()}>
+          {keyName ?? "attach backup key (optional)"}
+        </button>
+      )}
+      {msg && <span className="text-xs text-muted">{msg}</span>}
     </div>
   );
 }

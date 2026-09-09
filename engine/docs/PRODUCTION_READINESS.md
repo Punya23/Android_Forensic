@@ -9,6 +9,23 @@ _Synthesised from a 12-axis deep web-research + adversarial-verification + 5-dim
 
 **Progress:** ALL 23 roadmap items (P0, P1, P2, P3) are implemented and tested. See the per-item ✅ markers below.
 
+> **2026-09 correction (this doc is a frozen 2026-07-27 snapshot; the two lines below have
+> since moved and are stale as written):** the "DEAD CODE" finding further down naming
+> `parsers/google_maps.py`, `google_search.py`, `screen_time.py`, `signal.py` is now
+> **wrong** — all four were wired into `pipeline.py` by P1-7 (above this snapshot's
+> generation only for signal/google_search's cache path, fully for the rest — verified
+> live via `run_acquisition` call sites, 2026-09). Only `whatsapp_batch.py` from that
+> same line remained genuinely unwired, and it has since been wired too (non-root batch
+> import route). Separately, the "DEAD CODE forensics" finding's pipeline wrappers
+> (`_initialize_hashing`/`_process_hash`/`_verify_hash`/`_generate_hash_report`/
+> `_auto_verify_on_complete`, etc.) have been removed as redundant/wrongly-placed
+> duplicates of hashing that already happens correctly elsewhere — except
+> `generate_integrity_report()`/`auto_verify_on_open()`, which were real and are now
+> wired at the correct lifecycle points (acquisition-end report; case-open check). See
+> `docs/NOTES.md` "Known gaps & unwired scaffolding" for the current, maintained
+> picture — this file is left as the historical snapshot it says it is, not backfilled
+> line by line.
+
 The do-not-build list at the bottom remains authoritative and unbuilt: there is still no slack-space /
 unallocated / raw-block carver, no bootloader-unlock path, no LSKF/FBE key attack, no claim of deleted-record
 recovery on a non-rooted device, and no attempt to decrypt SQLCipher app content. Those are dead ends, not

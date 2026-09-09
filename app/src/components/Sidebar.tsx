@@ -203,23 +203,36 @@ export function isCaseIndependent(view: ViewKey): boolean {
  *
  * The words are chosen to answer "what do I do about this?", because the badge is the
  * only thing an examiner sees without opening the view. "opt-in" is a stage that was
- * left un-ticked and *will* run if re-enabled on this handset; "n/a" is one this
+ * left un-ticked and *will* run if re-enabled on this handset — the engine says so in
+ * `flag_actionable`, and where it says no ("not run") the fix is something else the
+ * reason names, such as importing an account-data export. "n/a" is a dataset this
  * handset could never have produced, so re-running changes nothing (the engine decides
- * which of the two a Tier-2 stage on an unrooted phone is — see `triage/capabilities.py`);
- * "soon" is not built yet, with no date attached to it anywhere. The badge sits in a
- * 256px rail beside a truncated label, so none of these may grow past a few characters
- * — the full sentence lives in the row's `title` tooltip instead.
+ * which of the three a Tier-2 stage on an unrooted phone is — see `triage/capabilities.py`);
+ * "soon" is not built yet, with no date attached to it anywhere; "0" is the device
+ * finding: the stage looked and the source was empty. The badge sits in a 256px rail
+ * beside a truncated label, so none of these may grow past a few characters — the full
+ * sentence lives in the row's `title` tooltip instead.
+ *
+ * Every state is matched by name and an unrecognised one renders nothing. It must not
+ * fall through to "0": that badge asserts a finding about the device, and a build that
+ * does not recognise the state the engine sent has established no such thing.
  */
-function NavState({ state }: { state?: string }) {
+function NavState({ cap }: { cap?: CapabilityState }) {
+  const state = cap?.state;
   if (!state || state === "populated") return null;
   const label =
     state === "planned"
       ? "soon"
       : state === "not_collected"
-        ? "opt-in"
+        ? cap?.flag_actionable
+          ? "opt-in"
+          : "not run"
         : state === "inaccessible"
           ? "n/a"
-          : "0";
+          : state === "empty"
+            ? "0"
+            : null;
+  if (label === null) return null;
   const tone =
     state === "planned"
       ? "bg-accent/15 text-accent border-accent/30"
@@ -245,11 +258,23 @@ function NavState({ state }: { state?: string }) {
  * by `resolve()` in `triage/capabilities.py` and `requires` is the catalogue's stated
  * precondition. The sidebar deliberately writes none of its own prose here: a tooltip
  * that claimed more than the acquisition established would be the same overstatement
- * this whole layer exists to prevent. Returns undefined for a populated or unknown
- * dataset so React drops the attribute and no tooltip appears at all.
+ * this whole layer exists to prevent.
+ *
+ * Only the gap states get one. `empty` is excluded on purpose: its reason is the
+ * engine's affirmative device finding ("the stage ran and the source held nothing"),
+ * and hanging that sentence off a hover in a nav rail puts an evidential claim where
+ * nobody asked a question. The place to read a finding is the view, with its tier badge,
+ * its requires line and its caveats — not a tooltip. Returns undefined for those and for
+ * a populated or unknown dataset, so React drops the attribute entirely.
  */
+const TOOLTIP_STATES: ReadonlySet<string> = new Set([
+  "not_collected",
+  "inaccessible",
+  "planned",
+]);
+
 function navTitle(cap?: CapabilityState): string | undefined {
-  if (!cap || cap.state === "populated" || !cap.reason) return undefined;
+  if (!cap || !cap.reason || !TOOLTIP_STATES.has(cap.state)) return undefined;
   return cap.requires ? `${cap.reason}\n\nRequires: ${cap.requires}` : cap.reason;
 }
 
@@ -314,7 +339,7 @@ export function Sidebar({
                   aria-hidden
                 />
                 <span className="truncate">{item.label}</span>
-                <NavState state={cap?.state} />
+                <NavState cap={cap} />
               </button>
             </div>
           );

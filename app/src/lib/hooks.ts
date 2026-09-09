@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 
-export function useDataset<T>(caseId: string, name: string): { data: T[]; loading: boolean } {
+export function useDataset<T>(
+  caseId: string,
+  name: string,
+  // Bump this (e.g. a local useState counter) to force a refetch after an action that
+  // changes the dataset server-side without changing caseId/name — an import upload,
+  // for instance. Optional and defaults to a stable value, so existing callers refetch
+  // exactly as before.
+  reloadKey: number | string = 0
+): { data: T[]; loading: boolean } {
   const [data, setData] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -15,7 +23,7 @@ export function useDataset<T>(caseId: string, name: string): { data: T[]; loadin
     return () => {
       alive = false;
     };
-  }, [caseId, name]);
+  }, [caseId, name, reloadKey]);
   return { data, loading };
 }
 

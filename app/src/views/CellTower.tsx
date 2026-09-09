@@ -296,6 +296,7 @@ export function CellTowerView({ caseId }: { caseId: string }) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
             <Breakdown title="By technology" map={techMap} />
             <Breakdown title="By operator" map={summary.by_operator} />
+            <Breakdown title="By signal" map={summary.by_signal} />
           </div>
 
           <SectionHeader

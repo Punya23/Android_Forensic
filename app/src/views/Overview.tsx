@@ -87,9 +87,20 @@ export function OverviewView({ caseId, setView }: { caseId: string; setView: (v:
           <KV k="Throughput" v={tp ? `${tp.mb_per_min} MB/min` : "—"} tone="text-recovered" />
           <KV k="Audit events" v={String(summary.audit_event_count)} />
           <KV k="Device-altering actions" v={String(summary.device_altering_actions)} tone={summary.device_altering_actions ? "text-warn" : "text-live"} />
+          <HashVerificationRow hv={summary.hash_verification} />
           <div className="pt-2 mt-1 border-t border-line flex flex-wrap gap-2">
             <button className="btn-ghost text-xs py-1" onClick={() => setView("custody")}>Audit trail</button>
             <button className="btn-ghost text-xs py-1" onClick={() => setView("report")}>Report</button>
+            {summary.hash_verification && summary.hash_verification.status !== "error" && (
+              <a
+                className="btn-ghost text-xs py-1"
+                href={api.reportSnapshotUrl(caseId, "detailed_hash_integrity.html")}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Hash integrity report
+              </a>
+            )}
             <a
               className="btn-accent text-xs py-1"
               href={api.exportUrl(caseId)}
@@ -194,6 +205,22 @@ function InfoCard({ title, children }: { title: string; children: React.ReactNod
       <div className="space-y-1.5">{children}</div>
     </div>
   );
+}
+
+// Re-hashes every manifest entry against what custody.py recorded at pull time
+// (forensics/auto_verify.py, cached up to 24h — see lib/types.ts CaseSummary). Distinct
+// from the audit-chain check: this is "did the bytes on disk change", not "was the log
+// tampered with".
+function HashVerificationRow({ hv }: { hv: CaseSummary["hash_verification"] }) {
+  if (!hv || hv.status === "error") {
+    return <KV k="Hash verification" v={hv ? `error: ${hv.error}` : "unavailable"} tone="text-muted" />;
+  }
+  if (hv.status === "skipped") {
+    return <KV k="Hash verification" v={`skipped (${hv.reason ?? "disabled"})`} tone="text-muted" />;
+  }
+  const failed = hv.failed ?? 0;
+  const label = `${hv.verified ?? 0} verified${failed ? `, ${failed} FAILED` : ""}${hv.status === "cached" ? " (cached)" : ""}`;
+  return <KV k="Hash verification" v={label} tone={failed ? "text-deletion font-semibold" : "text-live"} />;
 }
 
 function KV({ k, v, mono, tone }: { k: string; v: string; mono?: boolean; tone?: string }) {

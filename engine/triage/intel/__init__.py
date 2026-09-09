@@ -15,7 +15,10 @@ An investigating officer describes a case in plain language; this package:
     4. after acquisition, scores the collected artifacts against the profile and returns
        a ranked list of investigative **leads**, each citing its source + confidence;
     5. feeds what actually produced evidence back into the knowledge graph
-       (:mod:`~triage.intel.feedback`), so the next similar case is planned better.
+       (:mod:`~triage.intel.feedback`), so the next similar case is planned better;
+    6. cross-links every case-brief-named entity against this case's own collected
+       data (:mod:`~triage.intel.entity_links`) — wherever a name is found, every
+       other place it turns up, deterministic substring match, disclosed as such.
 
 The LLM is pluggable (heuristic / local Ollama) so sensitive evidence always stays
 on-device; retrieval and the graph are pure Python and need no network at all. See
@@ -24,6 +27,7 @@ on-device; retrieval and the graph are pure Python and need no network at all. S
 
 from __future__ import annotations
 
+from .ai_summary import AiEvidenceSummary, generate_ai_evidence_summary
 from .analysis import Finding, analyze_case, analyze_derived
 from .investigator import Hypothesis, LinkedFinding, investigate, investigate_case
 from .case_qa import Passage, answer_question, build_passages
@@ -43,6 +47,7 @@ from .llm import (
     provider_status,
 )
 from .embeddings import LocalEmbedder, get_embedder
+from .entity_links import EntityLink, build_entity_links, build_entity_links_for_case
 from .nomenclature import (
     ADVERSE_ROLES,
     PROTECTED_ROLES,
@@ -98,6 +103,9 @@ __all__ = [
     "Finding",
     "analyze_case",
     "analyze_derived",
+    # AI evidence summary (entirely model-authored, entity+yield-scoped narrative)
+    "AiEvidenceSummary",
+    "generate_ai_evidence_summary",
     # deep investigation (bounded, deterministic multi-hypothesis pass)
     "investigate",
     "investigate_case",
@@ -107,6 +115,10 @@ __all__ = [
     "Passage",
     "answer_question",
     "build_passages",
+    # entity cross-links (same-case name/number -> occurrence-across-datasets map)
+    "EntityLink",
+    "build_entity_links",
+    "build_entity_links_for_case",
     "derive_artifact_yields",
     "record_provisional",
     "record_confirmed",

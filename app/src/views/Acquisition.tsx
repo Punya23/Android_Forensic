@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, getSocket } from "../lib/api";
+import { api, getSocket, BASE } from "../lib/api";
 import type {
   AcqEvent,
   DeviceCheckResponse,
@@ -33,10 +33,11 @@ import {
   Puzzle,
   ShieldAlert,
   AppWindow,
+  MapPin,
 } from "lucide-react";
 
 const STAGES = [
-  "init", "device", "intel", "tier1", "enumerate", "screenshot", "pull", "location", "recover",
+  "init", "device", "intel", "tier1", "enumerate", "validate", "screenshot", "pull", "location", "recover",
   "flag", "timeline", "analysis", "persist", "report", "done",
 ];
 
@@ -63,6 +64,10 @@ export function AcquisitionView({
   // Offering a back-end the machine has no model for turns a deliberate choice into a
   // silent fallback discovered only after the acquisition.
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
+  // Opt-in: generate the AI Evidence Summary after analysis (triage/intel/ai_summary.py).
+  // Off by default — it needs a reachable local model, and an examiner should choose it
+  // deliberately rather than inherit it.
+  const [runAiSummary, setRunAiSummary] = useState(false);
   // Whether the plan may switch on root-only pulls. Collection scope is the examiner's
   // decision: a case brief alone must not be able to widen it without them saying so.
   const [planAllowTier2, setPlanAllowTier2] = useState(true);
@@ -72,6 +77,12 @@ export function AcquisitionView({
   const [planError, setPlanError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [running, setRunning] = useState(false);
+  // True from the moment Stop is clicked until the engine confirms the run has
+  // actually ended ("cancelled"/"failed"/"complete" socket event). Deliberately
+  // NOT the same as `running=false` — flipping `running` off the instant the
+  // button is clicked would show "stopped" while the engine (and any in-flight
+  // adb pull) is still winding down, which is exactly the bug this fixes.
+  const [cancelling, setCancelling] = useState(false);
   const [completed, setCompleted] = useState(false);
   const [reportReady, setReportReady] = useState(false);
   const [acquiredCaseId, setAcquiredCaseId] = useState("");
@@ -86,6 +97,7 @@ export function AcquisitionView({
   const [tier2Wifi, setTier2Wifi] = useState(false);
   const [tier2BrowserHistory, setTier2BrowserHistory] = useState(false);
   const [tier2WhatsappBackup, setTier2WhatsappBackup] = useState(false);
+  const [tier2MapsLocation, setTier2MapsLocation] = useState(false);
   // Deep root-tier artifact stages. All default off: each requires root, and the
   // examiner should choose them deliberately rather than inherit them.
   const [tier2BtConfig, setTier2BtConfig] = useState(false);
@@ -103,7 +115,44 @@ export function AcquisitionView({
   const [manualBrand, setManualBrand] = useState("");
   const [reasserting, setReasserting] = useState(false);
   const [reassertMsg, setReassertMsg] = useState<string | null>(null);
+  // Resume / checkpoint state
+  const [checkpoint, setCheckpoint] = useState<{
+    exists: boolean;
+    completed_count?: number;
+    saved_at?: string;
+  } | null>(null);
+  const [watchingDevice, setWatchingDevice] = useState(false);
+  const devicePollRef = useRef<number | null>(null);
+  const autoReassertedRef = useRef<string | null>(null);
 
+  // Root vs non-root are two different acquisitions, not one acquisition with some
+  // boxes greyed out. A retail phone with no administrator shell is the expected case,
+  // not a degraded one — Tier-1 (sideload, no root) is its whole, best-effort path.
+  // Tier-2 (root shell) is only ever offered once the connected device has actually
+  // proven a root shell via `su -c id` (Adb.is_root_available, surfaced through
+  // /api/devices/check as device.rooted) — never assumed, and never left enabled on
+  // the strength of a *previous* device's check.
+  const rootConfirmed =
+    target?.kind === "real" && deviceCheck?.ready === true && deviceCheck.device?.rooted === true;
+
+  // If the device check flips to "no root" (new device swapped in, or a re-check
+  // reveals root was lost mid-session), drop any Tier-2 flags already ticked so a
+  // stale `true` can never ride along into the acquire() call once the checkbox
+  // re-enables — see the `start()` submission below, which also re-guards on this.
+  useEffect(() => {
+    if (rootConfirmed) return;
+    setTier2Telegram(false);
+    setTier2Instagram(false);
+    setTier2Snapchat(false);
+    setTier2Wifi(false);
+    setTier2BrowserHistory(false);
+    setTier2WhatsappBackup(false);
+    setTier2MapsLocation(false);
+    setTier2BtConfig(false);
+    setTier2AppPresence(false);
+    setTier2AntiForensics(false);
+    setTier2RecentTasks(false);
+  }, [rootConfirmed]);
 
   useEffect(() => {
     api
@@ -118,6 +167,17 @@ export function AcquisitionView({
     api.cases().then(setCases).catch(() => {});
   }, []);
 
+  // Check for an existing checkpoint whenever the case ID changes.
+  useEffect(() => {
+    if (!caseId.trim()) { setCheckpoint(null); return; }
+    fetch(`${BASE}/api/cases/${encodeURIComponent(caseId)}/checkpoint`, {
+      headers: { "Authorization": `Bearer ${localStorage.getItem("snagr_token") ?? ""}` },
+    })
+      .then((r) => r.json())
+      .then(setCheckpoint)
+      .catch(() => setCheckpoint(null));
+  }, [caseId]);
+
   useEffect(() => {
     const s = getSocket();
     s.on("progress", (p: Progress) => setProgress(p));
@@ -130,6 +190,7 @@ export function AcquisitionView({
     );
     s.on("complete", (c: { case_id: string }) => {
       stopTimer();
+      setCancelling(false);
       setAcquiredCaseId(c.case_id);
       setCompleted(true);
       // Wait for user to click "View Case" before calling onCaseReady
@@ -140,12 +201,18 @@ export function AcquisitionView({
     s.on("failed", (f: { error: string }) => {
       stopTimer();
       setRunning(false);
+      setCancelling(false);
       setError(f.error);
     });
     s.on("cancelled", (c: { case_id: string }) => {
+      // The only place `running` is cleared for a Stop — this event is the
+      // engine's own confirmation that the pipeline has actually unwound
+      // (in-flight adb transfer killed, audit log closed), not just that the
+      // Stop button was clicked. See stopAcquisition() below.
       stopTimer();
       setRunning(false);
-      setError("Acquisition was cancelled by the user.");
+      setCancelling(false);
+      setError("Acquisition was stopped. The case folder holds a consistent partial result.");
     });
     return () => {
       s.off("progress");
@@ -157,6 +224,35 @@ export function AcquisitionView({
     };
   }, [onCaseReady]);
 
+  // Backfill the activity feed from the audit log the moment the engine assigns this
+  // run a real case_id. acqEvents was otherwise fed *only* by live "acq_event" socket
+  // messages, so anything emitted in the gap before this socket connection finished
+  // establishing — or lost to a reconnect mid-run — was gone for good even though
+  // GET /api/cases/<id>/activity reconstructs the full feed from the audit trail.
+  // Same id-based dedup as the live handler above, so a replayed event never doubles up.
+  useEffect(() => {
+    const activityCaseId = progress?.case_id;
+    if (!activityCaseId) return;
+    let alive = true;
+    api
+      .caseActivity(activityCaseId)
+      .then(({ events }) => {
+        if (!alive || !events?.length) return;
+        setAcqEvents((prev) => {
+          const seen = new Set(prev.map((x) => x.id));
+          const fresh = events.filter((e) => !seen.has(e.id));
+          return fresh.length
+            ? [...prev, ...fresh].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+            : prev;
+        });
+      })
+      .catch(() => {
+        // Best-effort backfill — the live feed still works without it.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [progress?.case_id]);
 
   function stopTimer() {
     if (timerRef.current) window.clearInterval(timerRef.current);
@@ -175,29 +271,76 @@ export function AcquisitionView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.kind, target?.id]);
 
-  async function runDeviceCheck(serial?: string, brand?: string) {
-    setCheckingDevice(true);
-    setReassertMsg(null);
+  // Keep watching the selected real device while it isn't ready yet — the examiner
+  // completes the on-phone Developer-Options/USB-debugging steps at their own pace, and
+  // this notices the instant ADB sees it instead of requiring a manual "Re-check" click.
+  // Never fires during an acquisition (device state won't change mid-run) or once ready.
+  useEffect(() => {
+    const shouldWatch = target?.kind === "real" && !!deviceCheck && !deviceCheck.ready && !running;
+    setWatchingDevice(shouldWatch);
+    if (!shouldWatch) {
+      if (devicePollRef.current) {
+        window.clearInterval(devicePollRef.current);
+        devicePollRef.current = null;
+      }
+      return;
+    }
+    devicePollRef.current = window.setInterval(
+      () => runDeviceCheck(target!.id, undefined, { silent: true }),
+      3000
+    );
+    return () => {
+      if (devicePollRef.current) {
+        window.clearInterval(devicePollRef.current);
+        devicePollRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.kind, target?.id, deviceCheck?.ready, running]);
+
+  // The one step that IS safely automatable once ADB sees the device (see
+  // triage/preflight.py — a first-time enable still needs the examiner's own tap on the
+  // phone, on every brand): re-assert Developer Options the moment readiness is detected,
+  // so a MIUI-style silent flip-back is fixed without the examiner ever clicking the
+  // button themselves. Runs once per serial per session so it never fights a manual click.
+  useEffect(() => {
+    if (
+      target?.kind === "real" &&
+      deviceCheck?.ready &&
+      autoReassertedRef.current !== target.id
+    ) {
+      autoReassertedRef.current = target.id;
+      fixDeveloperOptions({ auto: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.kind, target?.id, deviceCheck?.ready]);
+
+  async function runDeviceCheck(serial?: string, brand?: string, opts?: { silent?: boolean }) {
+    if (!opts?.silent) {
+      setCheckingDevice(true);
+      setReassertMsg(null);
+    }
     try {
       const res = await api.checkDevice({ serial, brand: brand ?? manualBrand ?? undefined });
       setDeviceCheck(res);
     } catch {
-      setDeviceCheck(null);
+      if (!opts?.silent) setDeviceCheck(null);
     } finally {
-      setCheckingDevice(false);
+      if (!opts?.silent) setCheckingDevice(false);
     }
   }
 
-  async function fixDeveloperOptions() {
+  async function fixDeveloperOptions(opts?: { auto?: boolean }) {
     if (!target || target.kind !== "real") return;
     setReasserting(true);
     setReassertMsg(null);
     try {
       const res = await api.reassertDevOptions(target.id);
       const ok = res.development_settings_enabled.ok && res.adb_enabled.ok;
+      const prefix = opts?.auto ? "Auto-detected ready — " : "";
       setReassertMsg(
         ok
-          ? "Re-asserted — development_settings_enabled + adb_enabled set to 1."
+          ? `${prefix}Re-asserted — development_settings_enabled + adb_enabled set to 1.`
           : `Failed: ${res.development_settings_enabled.stderr || res.adb_enabled.stderr || "see engine log"}`
       );
     } catch (e) {
@@ -230,6 +373,7 @@ export function AcquisitionView({
       setTier2Wifi(!!ov.tier2_wifi);
       setTier2BrowserHistory(!!ov.tier2_browser_history);
       setTier2WhatsappBackup(!!ov.tier2_whatsapp_backup);
+      setTier2MapsLocation(!!ov.tier2_maps_location);
     } catch (e) {
       setPlanError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -250,6 +394,7 @@ export function AcquisitionView({
       tier2_wifi: setTier2Wifi,
       tier2_browser_history: setTier2BrowserHistory,
       tier2_whatsapp_backup: setTier2WhatsappBackup,
+      tier2_maps_location: setTier2MapsLocation,
     };
     setters[flag]?.(true);
   }
@@ -276,20 +421,26 @@ export function AcquisitionView({
         plan_allow_tier2: planAllowTier2,
         case_number: caseNumber.trim() || undefined,
         llm_provider: llmProvider,
+        run_ai_summary: runAiSummary,
         tier1_contacts: target.kind === "real" ? tier1Contacts : false,
         tier1_calllog: target.kind === "real" ? tier1Calllog : false,
         tier1_sms: target.kind === "real" ? tier1Sms : false,
         tier1_collect_all: target.kind === "real" ? tier1CollectAll : false,
-        tier2_telegram: target.kind === "real" ? tier2Telegram : false,
-        tier2_instagram: target.kind === "real" ? tier2Instagram : false,
-        tier2_snapchat: target.kind === "real" ? tier2Snapchat : false,
-        tier2_wifi: target.kind === "real" ? tier2Wifi : false,
-        tier2_browser_history: target.kind === "real" ? tier2BrowserHistory : false,
-        tier2_whatsapp_backup: target.kind === "real" ? tier2WhatsappBackup : false,
-        tier2_bt_config: target.kind === "real" ? tier2BtConfig : false,
-        tier2_app_presence: target.kind === "real" ? tier2AppPresence : false,
-        tier2_antiforensics: target.kind === "real" ? tier2AntiForensics : false,
-        tier2_recent_tasks: target.kind === "real" ? tier2RecentTasks : false,
+        // Tier-2 re-guards on rootConfirmed, not just target.kind: the reset effect
+        // above clears these the moment root drops, but that effect fires a render
+        // after the device-check response lands, so a submit racing that window would
+        // otherwise still see the old `true`.
+        tier2_telegram: rootConfirmed ? tier2Telegram : false,
+        tier2_instagram: rootConfirmed ? tier2Instagram : false,
+        tier2_snapchat: rootConfirmed ? tier2Snapchat : false,
+        tier2_wifi: rootConfirmed ? tier2Wifi : false,
+        tier2_browser_history: rootConfirmed ? tier2BrowserHistory : false,
+        tier2_whatsapp_backup: rootConfirmed ? tier2WhatsappBackup : false,
+        tier2_maps_location: rootConfirmed ? tier2MapsLocation : false,
+        tier2_bt_config: rootConfirmed ? tier2BtConfig : false,
+        tier2_app_presence: rootConfirmed ? tier2AppPresence : false,
+        tier2_antiforensics: rootConfirmed ? tier2AntiForensics : false,
+        tier2_recent_tasks: rootConfirmed ? tier2RecentTasks : false,
       });
     } catch (e) {
       stopTimer();
@@ -298,14 +449,35 @@ export function AcquisitionView({
     }
   }
 
+  // Requests cancellation and waits for the engine to confirm it, rather than
+  // marking the run "stopped" on the click alone. A successful response here
+  // only means the request was accepted; `cancelling` stays true (and the
+  // acquisition keeps showing as in progress) until the "cancelled" socket
+  // event lands, because the engine may still be a poll-tick away from
+  // actually killing an in-flight adb transfer.
+  async function stopAcquisition() {
+    if (cancelling || !running) return;
+    setCancelling(true);
+    try {
+      await api.cancelAcquisition();
+    } catch (e) {
+      // Request itself failed (e.g. network hiccup) — nothing was cancelled,
+      // so don't leave the UI stuck showing "Stopping…".
+      setCancelling(false);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   if (running) {
     return (
-      <ProgressScreen 
-        progress={progress} 
-        elapsed={elapsed} 
-        acqEvents={acqEvents} 
+      <ProgressScreen
+        progress={progress}
+        elapsed={elapsed}
+        acqEvents={acqEvents}
         completed={completed}
         reportReady={reportReady}
+        cancelling={cancelling}
+        onStop={stopAcquisition}
         onViewCase={() => {
           setRunning(false);
           onCaseReady(acquiredCaseId || caseId);
@@ -322,6 +494,21 @@ export function AcquisitionView({
         Connect a seized device or select a mock corpus, record the legal authority, and
         begin a minimally-invasive Tier-0 triage.
       </p>
+
+      {/* Resume banner — shown when a checkpoint exists for this case */}
+      {checkpoint?.exists && (
+        <div className="card border-accent/40 bg-accent/10 p-4 mb-4 flex items-start gap-3">
+          <span className="text-accent text-xl mt-0.5">↩</span>
+          <div className="flex-1">
+            <p className="font-semibold text-accent text-sm">Resumable checkpoint found</p>
+            <p className="text-xs text-muted mt-0.5">
+              {checkpoint.completed_count} files already collected
+              {checkpoint.saved_at ? ` · saved ${new Date(checkpoint.saved_at).toLocaleString()}` : ""}.
+              Starting a new acquisition on this case ID will skip those files automatically.
+            </p>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="card border-deletion/50 bg-deletion/10 p-3 mb-4 text-sm text-deletion">
@@ -398,11 +585,25 @@ export function AcquisitionView({
       {target?.kind === "real" && (
         <div className="card p-4 mb-4">
           <div className="flex items-center justify-between mb-2">
-            <div className="label mb-0">Device readiness</div>
+            <div className="flex items-center gap-2">
+              <div className="label mb-0">Device readiness</div>
+              {watchingDevice && (
+                <span className="flex items-center gap-1 text-[10px] text-blue-400 font-semibold">
+                  <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
+                  WATCHING
+                </span>
+              )}
+            </div>
             <button className="btn-ghost text-xs" disabled={checkingDevice} onClick={() => runDeviceCheck(target.id)}>
               {checkingDevice ? "Checking…" : "Re-check"}
             </button>
           </div>
+          {watchingDevice && (
+            <p className="text-[11px] text-muted mb-2">
+              Watching for USB debugging to be authorised — this updates automatically, no
+              need to click Re-check.
+            </p>
+          )}
 
           {checkingDevice && !deviceCheck && <p className="text-xs text-muted">Checking ADB connection…</p>}
 
@@ -411,11 +612,29 @@ export function AcquisitionView({
               <div className="flex items-center gap-2 mb-2 flex-wrap">
                 <StateBadge state={deviceCheck.state} />
                 {deviceCheck.device && (
-                  <span className="text-xs text-muted">
-                    {deviceCheck.device.manufacturer} {deviceCheck.device.model} —{" "}
-                    {deviceCheck.device.os_skin || deviceCheck.device.brand} / Android{" "}
-                    {deviceCheck.device.android_version}
-                  </span>
+                  <>
+                    <span
+                      className={`rounded border px-1.5 py-0.5 text-[10px] font-mono font-semibold ${
+                        deviceCheck.device.rooted
+                          ? "text-live border-live/40 bg-live/10"
+                          : "text-warn border-warn/40 bg-warn/10"
+                      }`}
+                      title={
+                        deviceCheck.device.rooted
+                          ? "su -c id succeeded — Tier-2 (root) options are offered below."
+                          : "No administrator shell on this handset — the expected state for a " +
+                            "retail phone straight from any manufacturer. Tier-2 options stay " +
+                            "disabled; Tier-1 is the full acquisition for this device."
+                      }
+                    >
+                      {deviceCheck.device.rooted ? "ROOTED" : "NOT ROOTED"}
+                    </span>
+                    <span className="text-xs text-muted">
+                      {deviceCheck.device.manufacturer} {deviceCheck.device.model} —{" "}
+                      {deviceCheck.device.os_skin || deviceCheck.device.brand} / Android{" "}
+                      {deviceCheck.device.android_version}
+                    </span>
+                  </>
                 )}
               </div>
 
@@ -430,7 +649,7 @@ export function AcquisitionView({
                     </p>
                   )}
                   <div className="flex items-center gap-2 flex-wrap">
-                    <button className="btn-ghost text-xs" disabled={reasserting} onClick={fixDeveloperOptions}>
+                    <button className="btn-ghost text-xs" disabled={reasserting} onClick={() => fixDeveloperOptions()}>
                       {reasserting ? "Re-asserting…" : "Re-assert Developer Options"}
                     </button>
                     <span className="text-[11px] text-muted">
@@ -535,6 +754,46 @@ export function AcquisitionView({
             </div>
           </div>
         </div>
+
+        {/* Hardware this workstation can actually run a local model on, plus any
+            background provisioning already under way — surfaced next to the AI
+            back-end picker so "Ollama (local model)" is never a blind choice. */}
+        {llmStatus?.hardware && (
+          <div className="text-[11px] text-muted leading-relaxed mb-2 border-t border-line pt-2">
+            This machine: {llmStatus.hardware.ram_gb != null ? `${llmStatus.hardware.ram_gb} GB RAM` : "RAM unknown"},{" "}
+            {llmStatus.hardware.gpu} → recommended model:{" "}
+            <span className="font-mono text-ink/80">
+              {llmStatus.hardware.recommended_model.model ?? "none — heuristic only"}
+            </span>
+            {llmStatus.hardware.recommended_model.note && ` (${llmStatus.hardware.recommended_model.note})`}
+            {llmStatus.autodetect?.provisioning &&
+              llmStatus.autodetect.provisioning.action !== "none" && (
+                <span className="text-warn">
+                  {" "}
+                  Downloading {llmStatus.autodetect.provisioning.model} in the background based on this
+                  machine's hardware — will switch over automatically once it finishes.
+                </span>
+              )}
+          </div>
+        )}
+
+        {/* Opt-in: AI Evidence Summary. Off by default and independent of the plan
+            preview above — it runs after analysis, over ai_findings this acquisition
+            produces, not over the plan. */}
+        <label className="flex items-start gap-2 cursor-pointer mb-2">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={runAiSummary}
+            onChange={(e) => setRunAiSummary(e.target.checked)}
+          />
+          <span className="text-[11px] text-muted leading-relaxed">
+            Generate an <b>AI Evidence Summary</b> after analysis — an entirely model-authored
+            narrative digest of the findings that matched this case's brief. Needs a reachable
+            local model (Ollama); otherwise this stays honestly empty rather than faking a
+            summary (see Case Intelligence).
+          </span>
+        </label>
 
         <p className="text-[11px] text-muted leading-relaxed mb-2">
           Use forensic nomenclature: <b>accused</b> / <b>suspect</b> for the person
@@ -854,15 +1113,25 @@ export function AcquisitionView({
         </div>
       </div>
 
-      {/* Tier-2 options (root) */}
+      {/* Tier-2 options (root). Gated on rootConfirmed, not target.kind === "real" — a
+          real device with no root shell is the ordinary case (any retail phone from any
+          manufacturer ships without one), not a lesser one, so these stay disabled until
+          /api/devices/check actually proves a root shell rather than being offered and
+          quietly no-op'd per-stage inside the pipeline. */}
       <div className="card p-4 mb-4">
-        <div className="label mb-1">Tier-2 App Recovery (root required, real device only)</div>
+        <div className="label mb-1">Tier-2 App Recovery (root required)</div>
         <p className="text-xs text-muted mb-3">
           These apps keep their chats in app-private storage, unreachable without root. On a
           rooted device the engine copies the databases via <code className="text-accent">su</code>,
-          recovers live + deleted messages with confidence badges, and logs every step. On a
-          non-rooted device the step is logged as skipped.
+          recovers live + deleted messages with confidence badges, and logs every step.
         </p>
+        {target?.kind === "real" && deviceCheck?.ready && !rootConfirmed && (
+          <p className="text-xs text-warn mb-3">
+            This device has not proven a root shell — treated as an ordinary, unrooted retail
+            phone. These options are disabled; the Tier-1 helper above is the full acquisition
+            for this handset.
+          </p>
+        )}
         <div className="space-y-3">
           {[
             { label: "Tier-2 Telegram", db: "cache4.db", checked: tier2Telegram, set: setTier2Telegram },
@@ -873,8 +1142,8 @@ export function AcquisitionView({
               <input
                 type="checkbox"
                 className="mt-1"
-                disabled={!target || target.kind !== "real"}
-                checked={target?.kind === "real" ? t.checked : false}
+                disabled={!rootConfirmed}
+                checked={rootConfirmed ? t.checked : false}
                 onChange={(e) => t.set(e.target.checked)}
               />
               <div>
@@ -891,8 +1160,8 @@ export function AcquisitionView({
             <input
               type="checkbox"
               className="mt-1"
-              disabled={!target || target.kind !== "real"}
-              checked={target?.kind === "real" ? tier2Wifi : false}
+              disabled={!rootConfirmed}
+              checked={rootConfirmed ? tier2Wifi : false}
               onChange={(e) => setTier2Wifi(e.target.checked)}
             />
             <div>
@@ -916,8 +1185,8 @@ export function AcquisitionView({
             <input
               type="checkbox"
               className="mt-1"
-              disabled={!target || target.kind !== "real"}
-              checked={target?.kind === "real" ? tier2BrowserHistory : false}
+              disabled={!rootConfirmed}
+              checked={rootConfirmed ? tier2BrowserHistory : false}
               onChange={(e) => setTier2BrowserHistory(e.target.checked)}
             />
             <div>
@@ -942,8 +1211,8 @@ export function AcquisitionView({
             <input
               type="checkbox"
               className="mt-1"
-              disabled={!target || target.kind !== "real"}
-              checked={target?.kind === "real" ? tier2WhatsappBackup : false}
+              disabled={!rootConfirmed}
+              checked={rootConfirmed ? tier2WhatsappBackup : false}
               onChange={(e) => setTier2WhatsappBackup(e.target.checked)}
             />
             <div>
@@ -961,6 +1230,28 @@ export function AcquisitionView({
               </div>
             </div>
           </label>
+
+          {/* Maps / location-store recovery */}
+          <label className="flex items-start gap-3 cursor-pointer border-t border-line pt-3">
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={!rootConfirmed}
+              checked={rootConfirmed ? tier2MapsLocation : false}
+              onChange={(e) => setTier2MapsLocation(e.target.checked)}
+            />
+            <div>
+              <div className="text-sm font-medium flex items-center gap-1.5">
+                <MapPin className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Maps &amp; Location Stores
+              </div>
+              <div className="text-xs text-muted mt-1">
+                Root-pull Maps navigation history, saved places and map searches, plus
+                the Play-services geolocation cache — which holds positions from
+                periods when GPS was switched off entirely. Lives in app-private
+                storage, so this is unreachable without root.
+              </div>
+            </div>
+          </label>
         </div>
       </div>
 
@@ -969,13 +1260,18 @@ export function AcquisitionView({
           specific interpretation limit the examiner must know before enabling it. */}
       <div className="card p-4 mb-4">
         <div className="label mb-1">
-          Deep System Artifacts (root required, real device only)
+          Deep System Artifacts (root required)
         </div>
         <p className="text-xs text-muted mb-3">
           OS-level stores that outlive app uninstalls and answer questions app databases
           cannot. Each is copied read-only via <code className="text-accent">su</code> and
           logged. Read the caveat on each one — they are easy to over-read.
         </p>
+        {target?.kind === "real" && deviceCheck?.ready && !rootConfirmed && (
+          <p className="text-xs text-warn mb-3">
+            This device has not proven a root shell, so these options are disabled.
+          </p>
+        )}
         <div className="space-y-3">
           {[
             {
@@ -1052,8 +1348,8 @@ export function AcquisitionView({
                 <input
                   type="checkbox"
                   className="mt-1"
-                  disabled={!target || target.kind !== "real"}
-                  checked={target?.kind === "real" ? t.checked : false}
+                  disabled={!rootConfirmed}
+                  checked={rootConfirmed ? t.checked : false}
                   onChange={(e) => t.set(e.target.checked)}
                 />
                 <div>
@@ -1188,6 +1484,8 @@ function ProgressScreen({
   acqEvents,
   completed,
   reportReady,
+  cancelling,
+  onStop,
   onViewCase,
 }: {
   progress: Progress | null;
@@ -1195,6 +1493,8 @@ function ProgressScreen({
   acqEvents: AcqEvent[];
   completed?: boolean;
   reportReady?: boolean;
+  cancelling?: boolean;
+  onStop?: () => void;
   onViewCase?: () => void;
 }) {
   const pct = Math.round((progress?.pct ?? 0) * 100);
@@ -1205,11 +1505,36 @@ function ProgressScreen({
     <div className="max-w-2xl mx-auto p-8 flex flex-col items-center justify-center min-h-[70vh]">
       <div className="w-full card p-8 mb-4">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-semibold">{completed ? "Acquisition complete" : "Acquisition in progress"}</h2>
-          <span className="font-mono text-2xl tabular-nums text-accent">
-            {mm}:{ss}
-          </span>
+          <h2 className="text-lg font-semibold">
+            {completed
+              ? "Acquisition complete"
+              : cancelling
+              ? "Stopping…"
+              : "Acquisition in progress"}
+          </h2>
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-2xl tabular-nums text-accent">
+              {mm}:{ss}
+            </span>
+            {!completed && onStop && (
+              <button
+                id="stop-acquisition-btn"
+                onClick={onStop}
+                disabled={cancelling}
+                className="btn border border-deletion/50 text-deletion hover:bg-deletion/10"
+                title="Kills any in-flight transfer immediately and closes the case in a consistent partial state"
+              >
+                {cancelling ? "Stopping…" : "Stop"}
+              </button>
+            )}
+          </div>
         </div>
+        {cancelling && (
+          <p className="text-xs text-muted -mt-4 mb-4">
+            Waiting for the engine to confirm the acquisition has actually stopped — any
+            file transfer in progress is being killed now, not left to finish.
+          </p>
+        )}
         <div className="h-3 rounded-full bg-panel overflow-hidden mb-2">
           <div
             className="h-full bg-accent transition-all duration-300"

@@ -128,6 +128,17 @@ class MediaItem(Serialisable):
     timestamp: Optional[str] = None
     gps: Optional[dict[str, float]] = None
     sha256: str = ""
+    # On-device path at the time of acquisition — provenance for the dashboard
+    # (which artifact this came from on the phone, not just where it's now stored).
+    device_path: Optional[str] = None
+    # Enhanced EXIF fields (images only; from extract_gps_enhanced()). None for
+    # every video/audio item, and for any image with no readable EXIF block —
+    # both cases the dashboard must render identically to "not extracted here",
+    # since neither means the tool failed.
+    altitude: Optional[float] = None
+    device_make: Optional[str] = None
+    device_model: Optional[str] = None
+    software: Optional[str] = None
 
 
 @dataclass
@@ -254,7 +265,14 @@ class WifiNetwork(Serialisable):
     require root access and are pulled as Tier-2 evidence.
 
     No active cracking is performed — the password is recovered verbatim from
-    the plaintext stored by the OS.
+    the plaintext stored by the OS. **This is not universal**: from roughly
+    Android 10 onward, ``WifiConfigManager`` may wrap ``PreSharedKey`` in a
+    hardware-Keystore-backed encrypted blob instead of a plain ``<string>``
+    element. When that happens ``password`` is empty and
+    ``password_unreadable`` is ``True`` — a blank password in that case means
+    "present but unrecoverable off-device", never "no password" or "open
+    network". See ``security`` for the actual security type, which is stored
+    unencrypted.
 
     **On the "when".**  Android does not persist a per-network "last connected
     at <datetime>" field in the config store.  What it does persist is weaker
@@ -294,6 +312,10 @@ class WifiNetwork(Serialisable):
     is_softap: bool = False  # this is the device's OWN hotspot, not a joined network
     timestamps: dict[str, str] = field(default_factory=dict)  # original field name → ISO-8601
     caveats: list[str] = field(default_factory=list)
+    # True when the store carried a PreSharedKey/Passphrase field in a form this
+    # parser cannot decode (Keystore-encrypted, most likely) rather than the
+    # network simply having no password. Never conflate with OPEN security.
+    password_unreadable: bool = False
 
 
 # --- WhatsApp backup recovery -----------------------------------------------

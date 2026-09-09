@@ -23,6 +23,13 @@ locally-staged copies; pulling from the device is the pipeline's responsibility.
 
 Connection *times* are deliberately not invented here; see
 :class:`triage.models.WifiNetwork` for what Android does and does not persist.
+
+From roughly Android 10 onward the store may wrap ``PreSharedKey`` (and a
+SoftAp's ``Passphrase``) in a Keystore-backed encrypted element instead of a
+plain ``<string>``. This module cannot decode that — no exported copy of the
+key ever leaves the device's TEE — so it distinguishes "no password" from
+"password present but unreadable" via :func:`_unrecognized_field_tag` rather
+than reporting both as an empty string. See ``WifiNetwork.password_unreadable``.
 """
 
 from __future__ import annotations
@@ -113,6 +120,36 @@ def _collect_typed(el: ET.Element) -> dict[str, Any]:
                 _unquote((item.text or "").strip()) for item in child.findall("item")
             ]
     return out
+
+
+#: Tags :func:`_collect_typed` knows how to decode. Anything else that still
+#: carries a ``name`` attribute is a field the store *has* an opinion about,
+#: just not in a form this parser reads — see :func:`_unrecognized_field_tag`.
+_KNOWN_VALUE_TAGS = frozenset(
+    {"string", "mac-address", "boolean", "int", "long", "byte-array", "null", "string-array"}
+)
+
+
+def _unrecognized_field_tag(el: ET.Element, field_name: str) -> Optional[str]:
+    """Return the tag name of *field_name* if present but not a decodable type.
+
+    Android's ``WifiConfigStore.xml`` writes every field as a typed element
+    named by its ``name`` attribute. From roughly Android 10 onward,
+    ``PreSharedKey`` (and the SoftAp ``Passphrase``) may instead be wrapped in
+    a Keystore-backed encrypted element — a different tag this module does not
+    (and, without the device's own TEE, cannot) decode. ``_collect_typed``
+    silently drops any tag it doesn't recognise, which makes an encrypted
+    field indistinguishable from a genuinely absent one unless a caller checks
+    here first. Returns ``None`` when no element named *field_name* exists at
+    all (the field truly is absent — e.g. an open network).
+    """
+    for child in el.iter():
+        if (child.get("name") or "").strip() != field_name:
+            continue
+        tag = child.tag.lower()
+        if tag not in _KNOWN_VALUE_TAGS:
+            return child.tag
+    return None
 
 
 def _epoch_fields(values: dict[str, Any]) -> dict[str, str]:
@@ -287,6 +324,7 @@ def parse_wifi_config_store_xml(path: Path) -> list[WifiNetwork]:
             continue
 
         password = str(values.get("PreSharedKey") or "").strip('"')
+        password_unreadable = False
         if not password:
             # WEP keys live in a separate array; index is WEPTxKeyIndex.
             wep_keys = values.get("WEPKeys")
@@ -295,6 +333,12 @@ def parse_wifi_config_store_xml(path: Path) -> list[WifiNetwork]:
                 idx = idx if isinstance(idx, int) and 0 <= idx < len(wep_keys) else 0
                 if wep_keys:
                     password = str(wep_keys[idx] or "").strip('"')
+        if not password:
+            # Still empty: check whether PreSharedKey exists in a form we can't
+            # decode (Keystore-encrypted) before treating this as "no password".
+            unrecognized_tag = _unrecognized_field_tag(wifi_cfg, "PreSharedKey")
+            if unrecognized_tag is not None:
+                password_unreadable = True
 
         key_mgmt_raw = str(values.get("AllowedKeyMgmt") or "")
 
@@ -316,6 +360,14 @@ def parse_wifi_config_store_xml(path: Path) -> list[WifiNetwork]:
         merged = {**values, **status_values}
         has_ever = status_values.get("HasEverConnected")
         caveats: list[str] = []
+        if password_unreadable:
+            caveats.append(
+                "PreSharedKey is present in the store but wrapped in a form this "
+                "parser does not decode — almost certainly Android's "
+                "hardware-Keystore-backed PSK encryption (common from Android 10+). "
+                "The password is unrecoverable off-device, not absent: do NOT read "
+                "this as an open network."
+            )
         if has_ever is False:
             caveats.append(
                 "HasEverConnected=false — the network was saved but never successfully "
@@ -353,6 +405,7 @@ def parse_wifi_config_store_xml(path: Path) -> list[WifiNetwork]:
                 hidden=_opt_bool(values.get("HiddenSSID")),
                 timestamps=_epoch_fields(merged),
                 caveats=caveats,
+                password_unreadable=password_unreadable,
             )
         )
 
@@ -406,14 +459,39 @@ def parse_wifi_softap_xml(path: Path) -> list[WifiNetwork]:
     password = str(
         values.get("Passphrase") or values.get("PreSharedKey") or ""
     ).strip('"')
+    password_unreadable = False
+    if not password:
+        block_el = block if block is not None else root
+        unrecognized_tag = _unrecognized_field_tag(
+            block_el, "Passphrase"
+        ) or _unrecognized_field_tag(block_el, "PreSharedKey")
+        if unrecognized_tag is not None:
+            password_unreadable = True
 
-    # Android 11+ SoftApConfiguration.SECURITY_TYPE_* enum.
+    # Android 11+ SoftApConfiguration.SECURITY_TYPE_* enum. A missing enum with an
+    # unrecoverable (rather than genuinely absent) password must not default to
+    # OPEN — that would misreport an encrypted hotspot as unsecured.
     security = {
         0: "OPEN",
         1: "WPA2",
         2: "WPA3-SAE-transition",
         3: "WPA3-SAE",
-    }.get(values.get("SecurityType"), "WPA2" if password else "OPEN")
+    }.get(
+        values.get("SecurityType"),
+        "WPA2" if (password or password_unreadable) else "OPEN",
+    )
+
+    caveats = [
+        "This is the hotspot this device OFFERS, not a network it joined. "
+        "The record proves the hotspot was configured — not that it was ever "
+        "switched on, and not when.",
+    ]
+    if password_unreadable:
+        caveats.append(
+            "The hotspot passphrase is present in the store but wrapped in a form "
+            "this parser does not decode. The password is unrecoverable off-device, "
+            "not absent — do NOT read this as an open hotspot."
+        )
 
     return [
         WifiNetwork(
@@ -425,11 +503,8 @@ def parse_wifi_softap_xml(path: Path) -> list[WifiNetwork]:
             is_softap=True,
             hidden=_opt_bool(values.get("HiddenSSID")),
             timestamps=_epoch_fields(values),
-            caveats=[
-                "This is the hotspot this device OFFERS, not a network it joined. "
-                "The record proves the hotspot was configured — not that it was ever "
-                "switched on, and not when.",
-            ],
+            caveats=caveats,
+            password_unreadable=password_unreadable,
         )
     ]
 

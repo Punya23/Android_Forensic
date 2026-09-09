@@ -4,6 +4,18 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// Release signing key, if one has been provisioned. `apk/keystore.properties` is
+// git-ignored and never committed — see `apk/keystore.properties.example`. Its absence
+// is expected on a fresh checkout and is not an error: `assembleRelease` falls back to
+// the debug key below so it still produces a *signed*, installable APK rather than
+// silently shipping unsigned output.
+def keystorePropsFile = rootProject.file('keystore.properties')
+def hasReleaseKeystore = keystorePropsFile.exists()
+def keystoreProps = new Properties()
+if (hasReleaseKeystore) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+
 android {
     namespace 'io.erakshak.collector'
     compileSdk 34
@@ -16,6 +28,17 @@ android {
         versionName '0.2.0'
     }
 
+    signingConfigs {
+        release {
+            if (hasReleaseKeystore) {
+                storeFile rootProject.file(keystoreProps.getProperty('storeFile'))
+                storePassword keystoreProps.getProperty('storePassword')
+                keyAlias keystoreProps.getProperty('keyAlias')
+                keyPassword keystoreProps.getProperty('keyPassword')
+            }
+        }
+    }
+
     buildTypes {
         debug {
             // Debug build is fine for sideloading in a lab/field context.
@@ -23,6 +46,10 @@ android {
         }
         release {
             minifyEnabled false
+            // Real release key when `keystore.properties` is provisioned; otherwise the
+            // debug key, so the output is always signed — never the previous silent
+            // unsigned APK.
+            signingConfig hasReleaseKeystore ? signingConfigs.release : signingConfigs.debug
         }
     }
 

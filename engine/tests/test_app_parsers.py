@@ -75,6 +75,27 @@ def test_parse_media_inventory_normalises_and_flags(tmp_path):
     assert summ["total"] == 2 and summ["trashed"] == 1 and summ["with_gps"] == 1
 
 
+def test_parse_media_inventory_bad_row_degrades_not_fatal(tmp_path):
+    """The old `int(r.get("id") or 0)` raised on a non-numeric id (an OEM-quirk value,
+    not malformed JSON) — with no per-row isolation, that exception propagated out of
+    the whole function, and the pipeline's bare `except: pass` around the call turned
+    it into every MediaStore entry in the file vanishing: JSON-has-data, dashboard
+    shows none. The bad field now degrades to a default instead of raising, and the
+    row is kept."""
+    p = _write(
+        tmp_path,
+        "media_inventory.json",
+        [
+            {"kind": "image", "id": "not-a-number", "display_name": "corrupt.jpg"},
+            {"kind": "image", "id": 2, "display_name": "b.jpg", "size": 200},
+        ],
+    )
+    items = parse_media_inventory(p)
+    assert len(items) == 2
+    assert items[0].media_id == 0  # unparseable id degrades to 0, row still kept
+    assert items[1].display_name == "b.jpg"
+
+
 def test_parse_apps_classifies_and_scores_permissions(tmp_path):
     p = _write(
         tmp_path,

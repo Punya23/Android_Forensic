@@ -110,8 +110,9 @@ from .checkpoint import (
 )
 from .battery_monitor import BatteryMonitor
 from .forensics.battery_priority import should_pull_category
+from .forensics.batch_transfer import DEFAULT_CHUNK_SIZE, chunk_files, pull_chunk
 
-from .acquire import AcquisitionSource, RealDeviceSource
+from .acquire import AcquisitionSource, PulledFile, RealDeviceSource
 from .analysis import assess_risk, build_communication_graph
 from .config import (
     APP_MEDIA_ROOTS,
@@ -123,6 +124,7 @@ from .config import (
     VIDEO_EXTS,
 )
 from .custody import Case, CaseMeta, DeviceInfo
+from .hashing import file_hashes
 from .forensics.encryption_state import (
     detect_encryption_state,
     encryption_summary,
@@ -145,8 +147,16 @@ from .flagging import (
 from .models import LocationPoint, MediaItem, now_iso
 from .cancellation import CancellationToken, AcquisitionCancelled
 from .cache import get_artifact_cached, set_artifact_cached, invalidate_for_source
+
+
+class DeviceDisconnectedError(RuntimeError):
+    """Raised when the device drops off ADB mid-acquisition.
+
+    Caught by :func:`_parallel_pull_files` which immediately calls
+    ``cancel_token.cancel()`` so all pending futures are abandoned and the
+    checkpoint is saved at the exact file where the disconnect occurred.
+    """
 from .parsers import (
-    extract_gps,
     parse_app_db,
     parse_browser_history,
     parse_firefox_places,
@@ -185,7 +195,6 @@ from .parsers.screen_time import (
 from .parsers.google_search import (
     parse_google_accounts,
     parse_browser_search_history,
-    parse_google_search_cache,
     build_search_timeline,
     get_search_summary,
 )
@@ -209,7 +218,7 @@ from .parsers.url_location import (
     summarise_url_locations,
 )
 from .parsers.signal import parse_signal_plaintext_db
-from .parsers.exif import extract_datetime
+from .parsers.exif import extract_gps_enhanced
 from .parsers.video_gps import extract_video_location
 from .parsers.collector import (
     parse_media_inventory,
@@ -276,6 +285,10 @@ class PipelineConfig:
     legal_authority: str = ""
     scope_note: str = ""
     cases_root: Path = field(default_factory=lambda: Path("cases"))
+    # "airgapped" (loopback-only, the default) or "lan" — see triage/server.py
+    # --network-mode. Recorded so the report can state the network posture the
+    # acquisition ran under; this field never changes engine behaviour itself.
+    network_mode: str = "airgapped"
     keywords: list[KeywordRule] = field(default_factory=lambda: list(DEFAULT_KEYWORDS))
     known_hashes: dict[str, str] = field(default_factory=dict)
     max_files: int = 5000  # safety cap for a field triage run
@@ -353,6 +366,12 @@ class PipelineConfig:
     case_description: str = ""  # plain-language case brief; drives targeted collection
     case_number: str = ""  # FIR / crime number, recorded on the profile
     run_ai_analysis: bool = True  # after collection, score artifacts into ranked leads
+    # Opt-in: an entirely model-authored evidence summary, scoped to findings that
+    # match a named case entity/keyword AND sit in a high-yield artifact class for
+    # this crime type (see intel/ai_summary.py). Off by default like every other
+    # stage that depends on a local model actually being reachable — ai_findings'
+    # deterministic ranking runs regardless, this narrative cannot.
+    run_ai_summary: bool = False
     use_case_bank: bool = True  # retrieve similar prior cases to inform the plan
     case_bank_paths: list = field(default_factory=list)  # extra JSONL corpora to load
     # The department's own worked cases, promoted via the outcome API. Loaded from
@@ -372,6 +391,15 @@ class PipelineConfig:
         False  # sort files by forensic value; skip low-value until budget allows
     )
     parallel_workers: int = 8  # ThreadPoolExecutor max_workers for parallel file pulls
+    # Tar the Tier-0 bulk-media pull into chunked archives on-device instead of one
+    # `adb pull` subprocess per file (real devices only; see _batch_pull_files). Any
+    # chunk that fails for any reason (older/OEM tar, permission errors, timeout)
+    # falls back automatically to the old one-file-at-a-time path for just that
+    # chunk's files, so turning this off should only ever cost speed, not coverage.
+    # Off automatically whenever use_priority_filter is on (the two are incompatible
+    # -- see _batch_pull_files docstring).
+    batch_pull: bool = True
+    batch_pull_chunk_size: int = DEFAULT_CHUNK_SIZE  # files per on-device tar archive
     # -- Battery-aware acquisition (Phase 2) ----------------------------------
     battery_aware: bool = (
         False  # gate Tier-0/Tier-2 pulls by live battery level (battery_priority.py bands)
@@ -389,6 +417,12 @@ class PipelineConfig:
     )  # subset of "email" | "sms" | "slack" | "teams"
     notify_recipients: list = field(default_factory=list)  # emails or phone numbers
     notify_webhook_url: str = ""  # required for slack/teams
+    # -- Fetching robustness (fetching-bug fixes) ------------------------------
+    validate_files_before_pull: bool = True
+    # Pre-scan every path returned by list_files() with a fast `test -e` before
+    # any pull begins.  Filters phantom files reported by MediaStore that no
+    # longer exist on the device, saving hours of failed pull attempts.
+    # Disable only if the device is known-clean or if pre-scan latency matters.
 
 
 def run_acquisition(
@@ -420,6 +454,17 @@ def run_acquisition(
     _autosave_thread = None
 
     if cancel_token: cancel_token.raise_if_cancelled()
+
+    # Bind the token to the real device's adb transport so cancel() can kill an
+    # in-flight `adb pull` immediately (adb.py registers the subprocess with
+    # the token for the duration of every call). One bind here covers every
+    # adb.pull()/adb.shell() call made anywhere in this run — single big
+    # transfers (WhatsApp backup, msgstore.db) and the parallel bulk-media
+    # pull alike — without threading cancel_token through each call site.
+    # MockDeviceSource has no .adb (it reads from a local corpus), so this is
+    # a no-op there.
+    if cancel_token is not None and hasattr(source, "adb"):
+        source.adb.bind_cancel_token(cancel_token)
 
     progress("init", 0.0, "Opening case folder")
     meta = CaseMeta(
@@ -617,6 +662,7 @@ def run_acquisition(
     encrypted_apps_result: dict = {}  # SQLCipher apps + FCM fragments (P3-3)
     recent_tasks_result: dict = {}  # recent_tasks + snapshots, AFU-gated (P3-4)
     wifi_networks: list = []  # Wi-Fi credentials (Tier-2 / root)
+    hotspot_leases_result: dict = {}  # dnsmasq client leases behind own hotspot (Tier-2, gated by tier2_wifi)
     wa_backup_messages: list = []  # WhatsApp backup recovered messages (Tier-2)
     wa_backup_media: list = []  # WhatsApp backup recovered media (Tier-2)
     app_messages = []  # WhatsApp export + Telegram/app-DB + SMS
@@ -873,6 +919,7 @@ def run_acquisition(
                 bluetooth_devices=collector_bluetooth,
                 skip_paths=tier1_skip_paths,
                 oem_quirks=device.oem_quirks,
+                socketio=socketio,
             )
         else:
             case.log(
@@ -881,13 +928,17 @@ def run_acquisition(
                 result="skipped",
                 tier=Tier.TIER1.value,
             )
+            emit_acq_event(case, socketio, source="device", tier="tier1",
+                           action="Skipped — mock source has no real device to run the "
+                                  "Collector helper on", status="skipped",
+                           skip_reason="mock/synthetic source — no physical device attached")
 
     # -- Tier 1 (optional): helper APK contacts dump --------------------------
     if cfg.tier1_contacts:
         progress("tier1", 0.05, "Running Tier-1 helper (contacts)")
         if isinstance(source, RealDeviceSource):
             tier1_contacts, tier1_skip_paths = _run_tier1_contacts_helper(
-                source, case, staging, oem_quirks=device.oem_quirks
+                source, case, staging, oem_quirks=device.oem_quirks, socketio=socketio
             )
             contacts.extend(tier1_contacts)
         else:
@@ -897,12 +948,16 @@ def run_acquisition(
                 result="skipped",
                 tier=Tier.TIER1.value,
             )
+            emit_acq_event(case, socketio, source="contacts", tier="tier1",
+                           action="Skipped — mock source has no real device to run the "
+                                  "Collector helper on", status="skipped",
+                           skip_reason="mock/synthetic source — no physical device attached")
             # -- Tier 1 (optional): helper APK call-log dump ---------------------------
     if cfg.tier1_calllog:
         progress("tier1", 0.051, "Running Tier-1 helper (call-log)")
         if isinstance(source, RealDeviceSource):
             tier1_calls, tier1_calllog_skip_paths = _run_tier1_calllog_helper(
-                source, case, staging, oem_quirks=device.oem_quirks
+                source, case, staging, oem_quirks=device.oem_quirks, socketio=socketio
             )
             calls.extend(tier1_calls)
             tier1_skip_paths.update(tier1_calllog_skip_paths)
@@ -913,13 +968,17 @@ def run_acquisition(
                 result="skipped",
                 tier=Tier.TIER1.value,
             )
+            emit_acq_event(case, socketio, source="calls", tier="tier1",
+                           action="Skipped — mock source has no real device to run the "
+                                  "Collector helper on", status="skipped",
+                           skip_reason="mock/synthetic source — no physical device attached")
 
     # -- Tier 1 (optional): helper APK SMS dump --------------------------------
     if cfg.tier1_sms:
         progress("tier1", 0.052, "Running Tier-1 helper (SMS)")
         if isinstance(source, RealDeviceSource):
             tier1_sms_msgs, tier1_sms_skip_paths = _run_tier1_sms_helper(
-                source, case, staging, oem_quirks=device.oem_quirks
+                source, case, staging, oem_quirks=device.oem_quirks, socketio=socketio
             )
             app_messages.extend(tier1_sms_msgs)
             tier1_skip_paths.update(tier1_sms_skip_paths)
@@ -930,6 +989,10 @@ def run_acquisition(
                 result="skipped",
                 tier=Tier.TIER1.value,
             )
+            emit_acq_event(case, socketio, source="sms", tier="tier1",
+                           action="Skipped — mock source has no real device to run the "
+                                  "Collector helper on", status="skipped",
+                           skip_reason="mock/synthetic source — no physical device attached")
 
     # -- Tier 0: shared-storage pull ----------------------------------------
     progress("enumerate", 0.06, "Enumerating shared storage")
@@ -950,8 +1013,63 @@ def run_acquisition(
     seen = set()
     files = [f for f in all_files if not (f in seen or seen.add(f))][: cfg.max_files]
 
+    # Single declaration for the run's throughput accounting — the screenshot capture
+    # below and the parallel pull further down both add to the same counter. A second
+    # `pulled_bytes = 0` used to sit right before the parallel-pull section too, which
+    # silently discarded whatever the screenshot had already added; that duplicate is
+    # deleted below rather than kept as a second reset.
     pull_start = time.monotonic()
     pulled_bytes = 0
+
+    # ── Pre-scan validation: filter phantom files before any pull ───────────
+    # MediaStore can report files that no longer exist (e.g. deleted between
+    # the enumerate and pull phases, or never written after a failed transfer).
+    # Validating upfront prevents hours of failed pull attempts.
+    if cfg.validate_files_before_pull and files:
+        progress("validate", 0.065, f"Validating {len(files)} files on device…")
+        emit_acq_event(case, socketio, source="filesystem", tier="tier0",
+                       action=f"Pre-scan: validating {len(files)} files", status="accessing")
+        _validate_done = [0]
+
+        def _val_progress(done: int, total: int) -> None:
+            _validate_done[0] = done
+            pct = 0.065 + 0.005 * (done / max(total, 1))
+            progress("validate", pct, f"Validating files… {done}/{total}")
+
+        try:
+            files, phantom_count = source.validate_file_list(
+                files, progress_cb=_val_progress
+            )
+            if phantom_count:
+                case.log(
+                    "fs.validate",
+                    f"Pre-scan complete: {len(files)} valid, {phantom_count} phantom "
+                    f"(MediaStore entries with no backing file — skipped)",
+                    tier=Tier.TIER0.value,
+                    phantom_skipped=phantom_count,
+                )
+                emit_acq_event(
+                    case, socketio, source="filesystem", tier="tier0",
+                    action=(
+                        f"Validation done: {len(files)} valid, "
+                        f"{phantom_count} phantom skipped"
+                    ),
+                    status="completed",
+                )
+            else:
+                case.log(
+                    "fs.validate",
+                    f"Pre-scan complete: all {len(files)} files confirmed present",
+                    tier=Tier.TIER0.value,
+                )
+        except Exception as exc:
+            # Validation must never abort an acquisition — fall back to unvalidated list.
+            case.log(
+                "fs.validate",
+                f"Pre-scan failed ({exc}); proceeding with unvalidated file list",
+                result="warning",
+                tier=Tier.TIER0.value,
+            )
 
     # Manual screen capture (Oxygen/MDI-style), read-only framebuffer grab.
     if cfg.capture_screenshot:
@@ -1001,9 +1119,8 @@ def run_acquisition(
     # ── Tier 0: parallel file pull ──────────────────────────────────────────
     # Pull results are folded into the shared accumulators under a lock so
     # that only the slow I/O (source.pull_file) runs concurrently.
+    # pull_start / pulled_bytes are declared once, above, before the screenshot capture.
     _ingest_lock = threading.Lock()
-    pull_start = time.monotonic()
-    pulled_bytes = 0
 
     # Optional priority ordering (opt-in via cfg.use_priority_filter)
     ordered_files = get_priority_files(files) if cfg.use_priority_filter else files
@@ -1033,20 +1150,70 @@ def run_acquisition(
                     tier=Tier.TIER0.value,
                 )
 
-    pull_results: List[Dict] = _parallel_pull_files(
-        files=ordered_files,
-        source=source,
-        staging=staging,
-        case=case,
-        progress=progress,
-        pull_start=pull_start,
-        total=total,
-        tier1_skip_paths=tier1_skip_paths,
-        ingest_lock=_ingest_lock,
-        use_priority_filter=cfg.use_priority_filter,
-        max_workers=min(cfg.parallel_workers, max(len(ordered_files), 1)),
-        cancel_token=cancel_token,
+    # Batch (tar-per-chunk) pull: real devices only, and incompatible with the
+    # priority filter (which decides file-by-file, in real time, whether to defer
+    # a file -- a prebuilt archive has already committed past that decision). Any
+    # file a chunk fails to recover is retried through the ordinary per-file path
+    # below, so turning batch_pull off (or hitting an incompatible device) only
+    # ever costs speed, never coverage. See _batch_pull_files.
+    _use_batch_pull = (
+        cfg.batch_pull
+        and not cfg.use_priority_filter
+        and isinstance(source, RealDeviceSource)
     )
+    if _use_batch_pull:
+        _to_pull = [f for f in ordered_files if f not in tier1_skip_paths]
+        batch_results, _leftover = _batch_pull_files(
+            files=_to_pull,
+            source=source,
+            staging=staging,
+            case=case,
+            progress=progress,
+            pull_start=pull_start,
+            total=total,
+            ingest_lock=_ingest_lock,
+            chunk_size=cfg.batch_pull_chunk_size,
+            max_workers=cfg.parallel_workers,
+            cancel_token=cancel_token,
+        )
+        if _leftover:
+            case.log(
+                "adb.pull",
+                f"batch pull recovered {len(batch_results)}/{len(_to_pull)}; "
+                f"retrying {len(_leftover)} file(s) individually",
+                tier=Tier.TIER0.value,
+            )
+        fallback_results = _parallel_pull_files(
+            files=_leftover,
+            source=source,
+            staging=staging,
+            case=case,
+            progress=progress,
+            pull_start=pull_start,
+            total=total,
+            tier1_skip_paths=tier1_skip_paths,
+            ingest_lock=_ingest_lock,
+            use_priority_filter=cfg.use_priority_filter,
+            max_workers=min(cfg.parallel_workers, max(len(_leftover), 1)),
+            cancel_token=cancel_token,
+            done_offset=len(_to_pull) - len(_leftover),
+        )
+        pull_results: List[Dict] = batch_results + fallback_results
+    else:
+        pull_results = _parallel_pull_files(
+            files=ordered_files,
+            source=source,
+            staging=staging,
+            case=case,
+            progress=progress,
+            pull_start=pull_start,
+            total=total,
+            tier1_skip_paths=tier1_skip_paths,
+            ingest_lock=_ingest_lock,
+            use_priority_filter=cfg.use_priority_filter,
+            max_workers=min(cfg.parallel_workers, max(len(ordered_files), 1)),
+            cancel_token=cancel_token,
+        )
 
     # Fold parallel results into accumulators ──────────────────────────────
     for res in pull_results:
@@ -1080,6 +1247,10 @@ def run_acquisition(
             "completed_files": list(completed_files),
         },
     )
+    # manifest.json flushes are batched during the pull (see Case.ingest_file) to
+    # avoid an O(n^2) full-file rewrite per file; force it to disk now that the
+    # bulk pull phase is done so downstream readers of the on-disk file aren't stale.
+    case.flush_manifest()
 
     pull_elapsed = max(time.monotonic() - pull_start, 0.001)
     # ── Stage 2 progressive emit: communication data ready ─────────────────
@@ -1117,17 +1288,22 @@ def run_acquisition(
 
     if dumpsys_notif:
         notifications = parse_notification_history(dumpsys_notif)
+        # Written even when empty: dumpsys_notif being truthy means the read itself
+        # ran, so a genuinely-empty ring buffer is a finding ("empty"), not the absence
+        # of an attempt ("inaccessible"). Gating this on `if notifications:` made the
+        # two indistinguishable — capabilities.py had no way to tell "checked, nothing
+        # there" from "never checked" for this Tier-0, always-attempted stage.
+        case.write_derived("notifications", notifications)
         if notifications:
-            case.write_derived("notifications", notifications)
             case.log(
                 "shell.dumpsys",
                 f"dumpsys notification captured ({len(notifications)} items)",
                 command="dumpsys notification --history",
                 tier=Tier.TIER0.value,
             )
-            emit_acq_event(case, socketio, source="notifications", tier="tier0",
-                           action="Notification history parsed", status="completed",
-                           item_count=len(notifications))
+        emit_acq_event(case, socketio, source="notifications", tier="tier0",
+                       action="Notification history parsed", status="completed",
+                       item_count=len(notifications))
     else:
         emit_acq_event(case, socketio, source="notifications", tier="tier0",
                        action="Notification history checked", status="completed",
@@ -1295,8 +1471,16 @@ def run_acquisition(
             tier=Tier.TIER0.value,
         )
 
-    # Search history: from already-pulled browser history DBs (Tier 0) plus, when the
-    # Google app cache was pulled at Tier 2, its residual query strings.
+    # Search history: from already-pulled browser history DBs (Tier 0). A Google-app
+    # cache-enhanced path was drafted (parse_google_search_cache over a
+    # `staging / "gsb_cache"` directory) but nothing in run_acquisition ever pulls the
+    # Google app's cache into that path — get_google_search_history() in
+    # parsers/google_search.py implements the real root pull, but as a standalone
+    # helper never called from here — so the branch was permanently dead and the
+    # "GOOGLE CACHE" source could never appear from a real acquisition. Removed rather
+    # than left in place claiming a capability this pipeline doesn't actually run;
+    # wiring get_google_search_history() in as a proper opt-in Tier-2 stage (its own
+    # flag + checkbox, like every other root pull) is a real feature, not a wiring fix.
     progress("search", 0.588, "Extracting search history")
     try:
         _seen_q: set = set()
@@ -1310,13 +1494,6 @@ def run_acquisition(
                     continue
                 _seen_q.add(key)
                 search_history.append(row)
-        _gsb = staging / "gsb_cache"
-        if _gsb.exists():
-            for row in parse_google_search_cache(_gsb):
-                key = (row.get("query", "").lower(), row.get("timestamp", ""))
-                if key not in _seen_q:
-                    _seen_q.add(key)
-                    search_history.append(row)
         if search_history:
             search_history.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
             case.write_derived("search_history", search_history)
@@ -1658,6 +1835,7 @@ def run_acquisition(
                        status="accessing", artifact_path="/data/misc/wifi/WifiConfigStore.xml")
         if isinstance(source, RealDeviceSource):
             wifi_networks = _run_tier2_wifi(source, case, staging)
+            hotspot_leases_result = _run_tier2_hotspot_leases(source, case, staging)
         else:
             case.log(
                 "tier2.wifi",
@@ -2024,6 +2202,7 @@ def run_acquisition(
         searches=search_history,
         bluetooth_bonds=bluetooth_bonds,
         bluetooth_transfers=bluetooth_bond_result.get("transfers", []),
+        wifi_events=wifi_live_result.get("timeline", []),
     )
 
     # -- analysis: social graph + risk verdict ------------------------------
@@ -2246,8 +2425,17 @@ def run_acquisition(
     # P1-4: the Bluetooth and cell-tower summaries were defined but never called, so the
     # datasets existed with nothing to interpret them. P1-7 adds the screen/search/Maps
     # equivalents. All are cheap derivations over data already collected.
-    case.write_derived("bluetooth_summary", get_bluetooth_summary(bluetooth_devices))
-    case.write_derived("celltower_summary", get_celltower_summary(cell_towers))
+    #
+    # Gated on the same truthiness as the raw "bluetooth"/"celltower" writes above (not
+    # written unconditionally): get_bluetooth_summary()/get_celltower_summary() always
+    # return a fully-keyed dict shape even for an empty list, so writing the summary on
+    # every run — including one where dumpsys produced no output at all — made the
+    # dashboard's "was this collected?" presence check (Object.keys(summary).length > 0)
+    # permanently true and the honest "not collected" state unreachable.
+    if bluetooth_devices:
+        case.write_derived("bluetooth_summary", get_bluetooth_summary(bluetooth_devices))
+    if cell_towers:
+        case.write_derived("celltower_summary", get_celltower_summary(cell_towers))
     case.write_derived("screen_events", screen_events)
     case.write_derived("screen_app_usage", screen_app_usage)
     case.write_derived(
@@ -2339,6 +2527,9 @@ def run_acquisition(
             tier=Tier.TIER0.value,
         )
     case.write_derived("wifi", wifi_networks)  # Wi-Fi credentials (Tier 2)
+    case.write_derived(
+        "hotspot_leases", hotspot_leases_result
+    )  # dnsmasq client leases behind own hotspot (Tier 2, gated by tier2_wifi)
     # Helper-APK radio artifacts. Separate datasets from the Tier-2 `wifi` credentials and the
     # dumpsys-derived `bluetooth` list because they were obtained a different way and carry
     # different fields — a reader must be able to tell which is which.
@@ -2611,6 +2802,12 @@ def run_acquisition(
                 from .intel.planner import CaseProfile
 
                 profile = CaseProfile(**case_profile_dict)
+                # Resolved once and reused below for investigate_case/
+                # generate_ai_evidence_summary — each call otherwise constructs its
+                # own OllamaProvider and re-pings the local daemon over HTTP, three
+                # redundant loopback round-trips (each with its own timeout) for the
+                # same configured back-end in the same run.
+                provider = get_provider(cfg.llm_provider or None)
                 # Pass the plan so lead ranking uses the same fused priorities that
                 # drove acquisition — otherwise an artifact promoted by precedent
                 # would be collected first and then scored as if it never had been.
@@ -2618,7 +2815,7 @@ def run_acquisition(
                     case,
                     profile,
                     plan=plan_obj,
-                    provider=get_provider(cfg.llm_provider or None),
+                    provider=provider,
                 )
                 # The custody log is the durable record of what the tool did, so it
                 # states the number of leads that MATCHED, not the number that fitted
@@ -2657,7 +2854,7 @@ def run_acquisition(
                         case,
                         profile,
                         plan=plan_obj,
-                        provider=get_provider(cfg.llm_provider or None),
+                        provider=provider,
                     )
                     _answered = sum(
                         1 for h in investigation["hypotheses"] if h["status"] == "answered"
@@ -2682,6 +2879,71 @@ def run_acquisition(
                         result="error",
                         tier=Tier.TIER0.value,
                     )
+
+                # -- Entity cross-links: same-case name/number -> occurrence map -----
+                # Deterministic substring match over this case's own passages (see
+                # triage/intel/entity_links.py) — no LLM, so no opt-in flag beyond
+                # run_ai_analysis itself. Separate try/except for the same reason as
+                # investigation, above: a failure here must not read as "analysis
+                # error" when ai_findings itself is fine.
+                try:
+                    from .intel.entity_links import build_entity_links_for_case
+
+                    links = build_entity_links_for_case(case, profile)
+                    case.log(
+                        "intel.entity_links",
+                        f"Entity cross-links: {links['entity_count']} case-brief "
+                        f"entit(y/ies) checked against {links['passages_scanned']} "
+                        "collected passage(s).",
+                        tier=Tier.TIER0.value,
+                    )
+                except Exception as exc:
+                    case.log(
+                        "intel.entity_links",
+                        f"entity cross-link error: {exc}. The AI leads above are "
+                        "unaffected — only this cross-linking pass failed.",
+                        result="error",
+                        tier=Tier.TIER0.value,
+                    )
+
+                # -- AI evidence summary: entirely model-authored, entity+yield-scoped -
+                # Separate try/except from the analysis above for the same reason as the
+                # investigation pass: a failure here must not read as "analysis error"
+                # when ai_findings itself is fine — only the narrative layer on top
+                # failed.
+                if cfg.run_ai_summary:
+                    try:
+                        from .intel.ai_summary import generate_ai_evidence_summary
+
+                        summary_bundle = generate_ai_evidence_summary(
+                            case,
+                            profile,
+                            ai_findings,
+                            knowledge_graph=knowledge_graph,
+                            provider=provider,
+                        )
+                        if summary_bundle.get("generated"):
+                            case.log(
+                                "intel.summary",
+                                f"AI evidence summary: {summary_bundle['matched_count']} "
+                                f"finding(s) summarised ({summary_bundle['model']}).",
+                                tier=Tier.TIER0.value,
+                            )
+                        else:
+                            case.log(
+                                "intel.summary",
+                                f"AI evidence summary not generated: "
+                                f"{summary_bundle.get('reason', 'unknown reason')}",
+                                tier=Tier.TIER0.value,
+                            )
+                    except Exception as exc:
+                        case.log(
+                            "intel.summary",
+                            f"AI evidence summary error: {exc}. ai_findings above are "
+                            "unaffected — only this narrative layer failed.",
+                            result="error",
+                            tier=Tier.TIER0.value,
+                        )
             except Exception as exc:
                 case.log(
                     "intel.findings",
@@ -2910,6 +3172,12 @@ def run_acquisition(
         tier=Tier.TIER0.value,
     )
 
+    # Detailed hash-integrity report — re-verifies every manifest entry against what
+    # was recorded at pull time and writes a dedicated report; see
+    # _generate_hash_integrity_report's docstring for why this is the one lifecycle
+    # point where that re-hash is actually meaningful. Never fatal to the acquisition.
+    _generate_hash_integrity_report(case.root)
+
     progress("done", 1.0, "Acquisition complete")
 
     # -- Completion notification (opt-in) ---------------------------------------
@@ -2949,6 +3217,7 @@ def run_acquisition(
     # ── Cleanup: stop auto-save, clear checkpoint, record total time ────────
     stop_autosave(_autosave_thread)
     battery_monitor.stop()
+    case.flush_manifest()  # final guarantee: no batched manifest writes left buffered
     try:
         clear_checkpoint(case.root)
     except Exception:
@@ -3247,9 +3516,24 @@ def _process_pulled_file(
         dt = None
         loc_source = "exif"
         loc_label = f"photo {name}"
+        # Enhanced fields (altitude/device/software) are image-only — EXIF has no
+        # equivalent for video/audio, so these stay None there rather than pretend
+        # a value was looked up and came back empty.
+        altitude = None
+        device_make = None
+        device_model = None
+        software = None
         if category == "image":
-            gps = extract_gps(stored)
-            dt = _iso_or_none(extract_datetime(stored))
+            enhanced = extract_gps_enhanced(stored)
+            gps = enhanced["gps"]
+            # Already ISO-8601 (extract_gps_enhanced normalises it internally) —
+            # _iso_or_none() expects the raw "YYYY:MM:DD HH:MM:SS" EXIF form and
+            # would silently return None if re-applied to an already-ISO string.
+            dt = enhanced["timestamp"]
+            altitude = enhanced["altitude"]
+            device_make = enhanced["device_make"]
+            device_model = enhanced["device_model"]
+            software = enhanced["software"]
         elif category == "video":
             vid = extract_video_location(stored)
             if vid:
@@ -3270,6 +3554,11 @@ def _process_pulled_file(
             timestamp=dt,
             gps=gps,
             sha256=rec.sha256,
+            device_path=dev_path,
+            altitude=altitude,
+            device_make=device_make,
+            device_model=device_model,
+            software=software,
         )
         result["media_items"].append(mi)
         if gps:
@@ -3421,7 +3710,12 @@ def _process_pulled_file(
                     tier=Tier.TIER0.value,
                 )
 
-    # Tier-1 helper output (contacts / call log / SMS JSON)
+    # Tier-1 helper output (contacts / call log / SMS JSON). A bare `except: pass` here
+    # used to mean a parse failure and a genuinely empty file were indistinguishable —
+    # the dashboard showed "No contacts acquired" either way, with no record that the
+    # helper actually wrote data the engine then failed to read. Logged as an error now,
+    # same as the app-db branch above, so a bad parse shows up in the audit trail instead
+    # of masquerading as an honest empty result.
     if name == "contacts.json":
         try:
             c = parse_contacts_json(stored)
@@ -3432,8 +3726,13 @@ def _process_pulled_file(
                 tier=Tier.TIER1.value,
                 alters_device=False,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            case.log(
+                "parse.contacts",
+                f"contacts.json parse error: {exc}",
+                result="error",
+                tier=Tier.TIER1.value,
+            )
     if name == "calllog.json":
         try:
             cl = parse_calllog_json(stored)
@@ -3443,8 +3742,13 @@ def _process_pulled_file(
                 f"{len(cl)} calls (Tier 1 helper)",
                 tier=Tier.TIER1.value,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            case.log(
+                "parse.calllog",
+                f"calllog.json parse error: {exc}",
+                result="error",
+                tier=Tier.TIER1.value,
+            )
     if name == "sms.json":
         try:
             sms = parse_sms_json(stored)
@@ -3452,8 +3756,13 @@ def _process_pulled_file(
             case.log(
                 "parse.sms", f"{len(sms)} SMS (Tier 1 helper)", tier=Tier.TIER1.value
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            case.log(
+                "parse.sms",
+                f"sms.json parse error: {exc}",
+                result="error",
+                tier=Tier.TIER1.value,
+            )
 
     # Expanded Collector-APK outputs
     if name == "media_inventory.json":
@@ -3465,8 +3774,13 @@ def _process_pulled_file(
                 f"{len(inv)} MediaStore entries (Tier 1 helper)",
                 tier=Tier.TIER1.value,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            case.log(
+                "parse.media_inventory",
+                f"media_inventory.json parse error: {exc}",
+                result="error",
+                tier=Tier.TIER1.value,
+            )
     if name == "apps.json":
         try:
             apps_list = parse_apps(stored)
@@ -3562,6 +3876,14 @@ def _pull_and_process_file(
     if use_priority_filter and not should_pull_file(device_path, elapsed):
         return None  # defer or skip based on time budget
 
+    # ── Connection guard: stop immediately if device has disconnected ─────
+    # Checked before every pull so a cable pull aborts at the first subsequent
+    # file rather than issuing thousands of doomed ADB commands.
+    if hasattr(source, 'is_device_connected') and not source.is_device_connected():
+        raise DeviceDisconnectedError(
+            f"Device disconnected before pull of {device_path}"
+        )
+
     # ── Pull (runs in parallel — the slow part) ──────────────────────────
     _t0 = start_timer()
     try:
@@ -3586,23 +3908,198 @@ def _pull_and_process_file(
         )
         return None
 
-    # ── Ingest (serialised — protects the manifest and artifact store) ───
+    return _hash_ingest_and_process(
+        device_path, pulled.local_path, pulled.flags, source, case, ingest_lock
+    )
+
+
+def _hash_ingest_and_process(
+    device_path: str,
+    local_path: Path,
+    flags: list[str],
+    source: AcquisitionSource,
+    case: Any,
+    ingest_lock: threading.Lock,
+    method_suffix: str = "",
+) -> Optional[Dict]:
+    """Shared tail for both pull paths: hash → ingest (serialised) → per-file parse.
+
+    *local_path* must already be fully staged locally — either freshly pulled by
+    :func:`_pull_and_process_file` or extracted from a batch tar archive by
+    :func:`_ingest_extracted_batch_file` — this function does no device I/O itself,
+    so it makes no difference to either caller how the file got there.
+    """
+    # ── Hash (CPU/IO-bound, runs in parallel) ─────────────────────────────
+    # Hashing a multi-GB file can take real time; computing it here, on the
+    # thread's own already-staged file, before touching ingest_lock, keeps the
+    # other workers moving instead of all queued behind one hash.
     category, app = _categorise(device_path)
+    try:
+        precomputed = file_hashes(local_path)
+    except OSError as exc:
+        case.log(
+            "adb.pull",
+            f"could not hash {device_path}: {exc}",
+            result="error",
+            tier=Tier.TIER0.value,
+        )
+        return None
+
+    # ── Ingest (serialised — protects the manifest and artifact store) ───
+    # Only the fast part (move + manifest append) is under the lock now.
+    # flush=False: this loop pulls thousands of files, and a full manifest.json
+    # rewrite on every single one is O(n^2) I/O; the caller (_parallel_pull_files
+    # or _batch_pull_files) flushes periodically instead. `case.manifest`
+    # (in-memory) is unaffected and is what every other in-process reader uses.
     with ingest_lock:
         rec = case.ingest_file(
-            pulled.local_path,
+            local_path,
             source_path=device_path,
             tier=Tier.TIER0,
-            method=source.method,
+            method=source.method + method_suffix,
             category=category,
             app=app,
-            flags=pulled.flags,
+            flags=flags,
             move=True,
+            precomputed_hashes=precomputed,
+            flush=False,
         )
+    add_bytes(rec.size_bytes)
     stored = case.root / rec.stored_path
 
     # ── Per-file processing (parse / EXIF / DB — can run in parallel) ───
+    pulled = PulledFile(device_path=device_path, local_path=local_path, flags=flags)
     return _process_pulled_file(pulled, rec, stored, device_path, case)
+
+
+def _ingest_extracted_batch_file(
+    device_path: str,
+    local_path: Path,
+    source: AcquisitionSource,
+    case: Any,
+    ingest_lock: threading.Lock,
+    cancel_token: Optional[CancellationToken] = None,
+) -> Optional[Dict]:
+    """Ingest+process a file already staged locally by a batch tar pull.
+
+    Calls the same :func:`_hash_ingest_and_process` tail as the per-file path,
+    since :func:`_batch_pull_files` already produced *local_path* by extracting
+    it from a device-side archive — nothing here needs to talk to the device.
+    """
+    if cancel_token: cancel_token.raise_if_cancelled()
+
+    flags = (
+        ["trashed"]
+        if "/.trashed-" in device_path or Path(device_path).name.startswith(".trashed-")
+        else []
+    )
+    return _hash_ingest_and_process(
+        device_path, local_path, flags, source, case, ingest_lock,
+        method_suffix=" (batch tar)",
+    )
+
+
+def _batch_pull_files(
+    files: List[str],
+    source: RealDeviceSource,
+    staging: Path,
+    case: Any,
+    progress: ProgressFn,
+    pull_start: float,
+    total: int,
+    ingest_lock: threading.Lock,
+    chunk_size: int,
+    max_workers: int = 8,
+    cancel_token: Optional[CancellationToken] = None,
+) -> tuple[List[Dict], List[str]]:
+    """Pull *files* by tarring them into chunks on the device (see batch_transfer.py).
+
+    Real-device only: needs raw shell/push/pull access, so this must never be
+    called with a non-:class:`RealDeviceSource` (a :class:`MockDeviceSource` has no
+    ``.adb``). Also incompatible with ``use_priority_filter``, which decides
+    file-by-file, in real time, whether to defer/skip a file based on elapsed time
+    — a decision a pre-built archive has already committed past.
+
+    Chunks are pulled one at a time (they already share the one physical USB/adb
+    link, so overlapping ``adb pull`` calls for several chunks would not add real
+    bandwidth); within each chunk, the extracted files are hashed/ingested/parsed
+    in parallel via the same thread pool the per-file path uses.
+
+    Returns ``(results, leftover_files)``: *leftover_files* is every file that a
+    chunk did not recover (a whole chunk failing, or an individual file missing
+    from an otherwise-successful archive) — the caller is expected to retry these
+    through the ordinary per-file :func:`_parallel_pull_files` path so nothing is
+    silently skipped, only slower than the fast path for that subset.
+    """
+    results: List[Dict] = []
+    leftover: List[str] = []
+    chunks = chunk_files(files, chunk_size)
+    done_count = 0
+
+    for chunk in chunks:
+        if cancel_token: cancel_token.raise_if_cancelled()
+        pulled = pull_chunk(chunk, source.adb, staging)
+        recovered_paths = {p.device_path for p in pulled}
+        leftover.extend(f for f in chunk if f not in recovered_paths)
+
+        if not pulled:
+            # Whole chunk failed (or every file in it was unrecoverable) -- already
+            # queued above for the per-file fallback; nothing more to do here.
+            continue
+
+        workers = min(max_workers, max(len(pulled), 1))
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="triage_batch_ingest"
+        ) as executor:
+            future_to_item = {
+                executor.submit(
+                    _ingest_extracted_batch_file,
+                    item.device_path,
+                    item.local_path,
+                    source,
+                    case,
+                    ingest_lock,
+                    cancel_token,
+                ): item
+                for item in pulled
+            }
+            for future in concurrent.futures.as_completed(future_to_item):
+                # Checked here (not just before the next chunk's pull_chunk call)
+                # so a cancellation mid-chunk is honored promptly instead of every
+                # in-flight worker's own raise_if_cancelled() being caught below
+                # and misreported as an ordinary ingest failure.
+                if cancel_token: cancel_token.raise_if_cancelled()
+                item = future_to_item[future]
+                done_count += 1
+                pct = 0.10 + 0.42 * (done_count / max(total, 1))
+                name = item.device_path.rsplit("/", 1)[-1]
+                progress("pull", pct, f"Pulled {name} ({done_count}/{len(files)})")
+                try:
+                    res = future.result()
+                    if res is not None:
+                        results.append(res)
+                    else:
+                        leftover.append(item.device_path)
+                except Exception as exc:
+                    case.log(
+                        "adb.pull",
+                        f"batch ingest error for {item.device_path}: {exc}",
+                        result="error",
+                        tier=Tier.TIER0.value,
+                    )
+                    leftover.append(item.device_path)
+
+        case.flush_manifest()  # checkpoint after each chunk, not just at the very end
+
+        # Any file that failed to ingest (e.g. the hash step hit an OSError) was
+        # never moved out of the extraction folder (case.ingest_file(move=True)
+        # only runs on success) and is already queued in `leftover` for a per-file
+        # retry -- so the whole chunk's extraction folder is safe to discard now,
+        # rather than leaking staged copies for the rest of a large multi-chunk pull.
+        if pulled:
+            shutil.rmtree(pulled[0].local_path.parent, ignore_errors=True)
+
+    return results, leftover
 
 
 def _parallel_pull_files(
@@ -3618,6 +4115,7 @@ def _parallel_pull_files(
     use_priority_filter: bool,
     max_workers: int = 8,
     cancel_token: Optional[CancellationToken] = None,
+    done_offset: int = 0,
 ) -> List[Dict]:
     """Pull multiple files in parallel using ThreadPoolExecutor.
 
@@ -3649,6 +4147,11 @@ def _parallel_pull_files(
         Forward to :func:`_pull_and_process_file`.
     max_workers:
         Thread pool size (defaults to ``min(8, len(files))``).
+    done_offset:
+        Files already accounted for elsewhere against the same ``total`` (e.g. a
+        batch tar pull that ran first and is retrying only its leftovers here) —
+        added to this call's own ``done_count`` so the reported percentage keeps
+        climbing from where the earlier phase left off instead of restarting.
 
     Returns
     -------
@@ -3658,13 +4161,27 @@ def _parallel_pull_files(
     results: List[Dict] = []
     workers = min(max_workers, max(len(files), 1))
     done_count = 0
+    _last_flush = time.monotonic()
 
     # Filter out tier-1 skips before submitting
     to_pull = [f for f in files if f not in tier1_skip_paths]
 
-    with concurrent.futures.ThreadPoolExecutor(
+    # NOT a `with` block: ThreadPoolExecutor.__exit__ always calls
+    # shutdown(wait=True) with cancel_futures defaulting to False — on a plain
+    # exception unwind (e.g. AcquisitionCancelled below) that BLOCKS until
+    # every already-submitted future finishes, including ones still queued
+    # and never even started. Since every file is submitted up front, that
+    # meant Stop had no effect until the whole backlog drained — exactly the
+    # "stop does nothing after 1-2GB" bug. cancel_futures=True in the
+    # explicit shutdown() below drops the queued-but-not-started futures
+    # immediately; the ones already mid-pull are handled by Adb.run() itself,
+    # which now kills its subprocess as soon as the token is cancelled
+    # (see triage/adb.py, triage/cancellation.py) instead of blocking to
+    # completion.
+    executor = concurrent.futures.ThreadPoolExecutor(
         max_workers=workers, thread_name_prefix="triage_pull"
-    ) as executor:
+    )
+    try:
         future_to_path = {
             executor.submit(
                 _pull_and_process_file,
@@ -3684,13 +4201,30 @@ def _parallel_pull_files(
             if cancel_token: cancel_token.raise_if_cancelled()
             dev_path = future_to_path[future]
             done_count += 1
-            pct = 0.10 + 0.42 * (done_count / max(total, 1))
+            pct = 0.10 + 0.42 * ((done_offset + done_count) / max(total, 1))
             name = dev_path.rsplit("/", 1)[-1]
             progress("pull", pct, f"Pulled {name} ({done_count}/{len(to_pull)})")
             try:
                 res = future.result()
                 if res is not None:
                     results.append(res)
+            except DeviceDisconnectedError as exc:
+                # Device cable pulled mid-acquisition.  Cancel immediately so
+                # all pending futures are abandoned rather than issuing
+                # thousands of doomed ADB commands.
+                case.log(
+                    "adb.disconnect",
+                    str(exc),
+                    result="error",
+                    tier=Tier.TIER0.value,
+                )
+                if cancel_token:
+                    cancel_token.cancel()
+                # Break out of the as_completed loop; pending futures are
+                # abandoned below by executor.shutdown(cancel_futures=True).
+                break
+            except AcquisitionCancelled:
+                break
             except Exception as exc:
                 case.log(
                     "adb.pull",
@@ -3698,6 +4232,27 @@ def _parallel_pull_files(
                     result="error",
                     tier=Tier.TIER0.value,
                 )
+
+            # _pull_and_process_file ingests with flush=False (see its comment) to
+            # avoid an O(n^2) manifest.json rewrite; flush periodically here so the
+            # on-disk copy is never far behind (bounded by count or time, whichever
+            # comes first), not just at the very end of the phase.
+            now = time.monotonic()
+            if case is not None and (
+                done_count % Case.MANIFEST_FLUSH_EVERY == 0
+                or (now - _last_flush) >= Case.MANIFEST_FLUSH_INTERVAL_SECS
+            ):
+                case.flush_manifest()
+                _last_flush = now
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+        # Guarantee no batched manifest entries are left unflushed on disk, even if
+        # this phase was cancelled or a worker raised past the loop above. `case` is
+        # only None in unit tests that exercise cancellation/executor-teardown timing
+        # in isolation (see test_parallel_pull_cancel.py) — every real call site passes
+        # a live Case.
+        if case is not None:
+            case.flush_manifest()
 
     return results
 
@@ -5034,8 +5589,11 @@ def _run_tier2_bt_config(
             f"timestamps are pairing-record writes — NOT connection or co-location times.",
             tier=Tier.TIER2.value,
         )
-    else:
-        result.setdefault("bonds", [])
+    # else: leave `result` empty. Bluetooth.tsx's bondStoreRead check is
+    # Object.keys(report).length > 0 — forcing a "bonds": [] key here made a failed
+    # root pull indistinguishable from "the bond store was read and had zero bonds".
+    # `result` may still end up non-empty below if the OPP transfer log or the
+    # connection-order store were readable even though bt_config.conf/.bak were not.
 
     # -- OPP transfer log + connection-order store ---------------------------
     # Pulled through the same stage so one root Bluetooth toggle covers all of it.
@@ -5131,6 +5689,11 @@ def _run_tier2_wifi(
     device's *own* hotspot credential, a different fact from any network it joined,
     and is flagged ``is_softap`` by the parser.
 
+    A ``wifi_report`` dataset is also written, carrying the *why* behind an
+    empty result: root missing, no config store found, or a store that was
+    genuinely empty are three different facts and the dashboard must not
+    collapse them into one "no networks" message.
+
     Returns
     -------
     list[WifiNetwork]
@@ -5158,6 +5721,22 @@ def _run_tier2_wifi(
             result="skipped",
             tier=Tier.TIER2.value,
         )
+        case.write_derived(
+            "wifi_report",
+            {
+                "root_ok": False,
+                "files_found": False,
+                "network_count": 0,
+                "with_password_count": 0,
+                "password_unreadable_count": 0,
+                "caveats": [
+                    "Root was not available on this acquisition, so the Wi-Fi "
+                    "config store was never opened. This is an un-acquired "
+                    "artefact, not a finding that the device had no saved "
+                    "networks — re-acquire with Tier 2 (root) to establish that.",
+                ],
+            },
+        )
         return []
 
     pulled = _root_pull_paths(
@@ -5175,6 +5754,24 @@ def _run_tier2_wifi(
             f"({len(WIFI_CONFIG_PATHS)} paths probed)",
             result="skipped",
             tier=Tier.TIER2.value,
+        )
+        case.write_derived(
+            "wifi_report",
+            {
+                "root_ok": True,
+                "files_found": False,
+                "network_count": 0,
+                "with_password_count": 0,
+                "password_unreadable_count": 0,
+                "caveats": [
+                    f"Root was available but no Wi-Fi config store was found at any "
+                    f"of the {len(WIFI_CONFIG_PATHS)} known Android-version paths. "
+                    "This can mean a wiped/reset device, a manufacturer path this "
+                    "build doesn't yet probe, or file-based encryption still "
+                    "locking the partition (AFU) — not necessarily an absence of "
+                    "saved networks.",
+                ],
+            },
         )
         return []
 
@@ -5205,17 +5802,113 @@ def _run_tier2_wifi(
 
     joined = [n for n in wifi_networks if not n.is_softap]
     softap = [n for n in wifi_networks if n.is_softap]
+    with_password = sum(1 for n in joined if n.password)
+    unreadable = sum(1 for n in wifi_networks if n.password_unreadable)
     case.log(
         "tier2.wifi.done",
         f"Wi-Fi recovery: {len(joined)} saved network(s) "
-        f"({sum(1 for n in joined if n.password)} with password), "
+        f"({with_password} with password, {unreadable} password-unreadable), "
         f"{len(softap)} own-hotspot config(s). Saved != connected: check the "
         f"has_ever_connected flag per network, and note the store carries no "
         f"connection timestamp.",
         tier=Tier.TIER2.value,
     )
 
+    report_caveats: list[str] = []
+    if not wifi_networks:
+        report_caveats.append(
+            "The Wi-Fi config store was found and read successfully, and it "
+            "contained no saved networks. Networks removed before seizure "
+            "leave no entry here."
+        )
+    if unreadable:
+        report_caveats.append(
+            f"{unreadable} network(s) have a PreSharedKey/Passphrase present in "
+            "the store but stored in a form this parser cannot decode "
+            "(Keystore-encrypted) — see each network's own caveats. Their "
+            "password is unrecoverable off-device, not absent."
+        )
+    case.write_derived(
+        "wifi_report",
+        {
+            "root_ok": True,
+            "files_found": True,
+            "network_count": len(joined),
+            "with_password_count": with_password,
+            "password_unreadable_count": unreadable,
+            "softap_count": len(softap),
+            "caveats": report_caveats,
+        },
+    )
+
     return wifi_networks
+
+
+def _run_tier2_hotspot_leases(
+    source: "RealDeviceSource",
+    case: "Case",
+    staging: "Path",
+) -> dict:
+    """Root-pull the dnsmasq lease file(s) behind this device's own hotspot.  Tier 2.
+
+    Gated by the same ``tier2_wifi`` opt-in as the saved-network credential
+    recovery — both are root-only reads of ``/data/misc/{dhcp,wifi}/*`` and a
+    device either offers root for that tier or it doesn't. See
+    :mod:`triage.parsers.dhcp_leases` for why this is a best-effort probe: the
+    lease file only exists at all on the legacy dnsmasq tethering stack, not
+    on the mainline Tethering module most current stock devices run.
+
+    Returns
+    -------
+    dict
+        ``{"leases": [...], "caveats": [...]}`` — ``leases`` empty and
+        ``caveats`` explaining why is a valid, honest result, not an error.
+    """
+    from .parsers.dhcp_leases import (
+        LEASE_PATHS,
+        CAVEAT_NOT_PERSISTED,
+        collect_hotspot_leases,
+    )
+
+    # Verify root FIRST, same reasoning as `_run_tier2_wifi`: without it every
+    # `su -c test -e` probe fails identically to "file absent".
+    root_check = source.adb.shell("su -c 'id'")
+    if not root_check.ok:
+        case.log(
+            "tier2.hotspot_leases",
+            "root not available; hotspot client-lease recovery skipped. This is "
+            "NOT a finding that no client ever joined this device's hotspot.",
+            result="skipped",
+            tier=Tier.TIER2.value,
+        )
+        return {"leases": [], "caveats": []}
+
+    pulled = _root_pull_paths(
+        source,
+        case,
+        staging,
+        LEASE_PATHS,
+        label="hotspot_leases",
+        category="wifi_config",
+    )
+    if not pulled:
+        case.log(
+            "tier2.hotspot_leases",
+            "no dnsmasq lease file found at any known location "
+            f"({len(LEASE_PATHS)} paths probed). " + CAVEAT_NOT_PERSISTED,
+            result="skipped",
+            tier=Tier.TIER2.value,
+        )
+        return {"leases": [], "caveats": [CAVEAT_NOT_PERSISTED]}
+
+    result = collect_hotspot_leases(pulled)
+    case.log(
+        "tier2.hotspot_leases.done",
+        f"hotspot client-lease recovery: {len(result['leases'])} lease record(s) "
+        f"from {len(pulled)} file(s)",
+        tier=Tier.TIER2.value,
+    )
+    return result
 
 
 # Chromium-family browsers that store history in the same ``urls``-table schema under
@@ -5263,7 +5956,24 @@ def _run_tier2_browser_history(
     via ``su -c cp`` the same way every other Tier-2 app pull works, and runs the same
     deleted-row carver used everywhere else in the tool so cleared history shows up as
     :class:`~triage.config.Confidence.DELETION_DETECTED`, not silence.
+
+    Every exit path also writes ``browser_presence`` (same pattern as Telegram's
+    ``telegram_presence``) — the capability catalogue's ``browser`` entry used to have no
+    corroborating record at all (its own comment said so: "there is no corroborator to
+    give this one"), so a real device with root failure, a flag left off, or a genuinely
+    empty History file all rendered the same generic "unverified" empty state, with no way
+    for the examiner to tell which of the three actually happened. ``available=False``
+    only for a genuine access failure (no root); a root session that ran and found no
+    browsers is a real finding about the device, not a gap.
     """
+
+    def _presence(available: bool, reason: Optional[str] = None, **extra: Any) -> None:
+        _write_case_derived(
+            case,
+            "browser_presence",
+            {"attempted": True, "available": available, "reason": reason, **extra},
+        )
+
     # Verify root FIRST. _root_pull_paths' `su -c 'test -e ...'` probe fails identically
     # whether the target genuinely doesn't exist or `su` itself is missing — without this
     # check, a non-rooted phone would get every browser logged as "not present on device",
@@ -5279,14 +5989,17 @@ def _run_tier2_browser_history(
         tier=Tier.TIER2.value,
     )
     if not root_check.ok:
+        reason = (
+            "root not available; app-private History databases are unreachable without "
+            "root on this device"
+        )
         case.log(
             "tier2.browser_history",
-            "root not available; browser history recovery skipped. This is NOT a "
-            "finding that no browsers are installed — app-private History databases "
-            "are unreachable without root on this device.",
+            f"{reason}. This is NOT a finding that no browsers are installed.",
             result="skipped",
             tier=Tier.TIER2.value,
         )
+        _presence(False, reason)
         return {"browsers_found": 0, "rows": 0}
 
     specs: list[tuple[str, str]] = []
@@ -5319,6 +6032,10 @@ def _run_tier2_browser_history(
             result="skipped",
             tier=Tier.TIER2.value,
         )
+        # Root worked and the known paths were checked — a real finding, not an access
+        # failure, so `available=True` (an empty result here defers to the ordinary
+        # count-based EMPTY state rather than being surfaced as "could not check").
+        _presence(True, browsers_found=0, rows=0)
         return {"browsers_found": 0, "rows": 0}
 
     pulled = _root_pull_paths(
@@ -5419,6 +6136,7 @@ def _run_tier2_browser_history(
         f"found on device",
         tier=Tier.TIER2.value,
     )
+    _presence(True, browsers_found=len(pulled), rows=total_rows)
     return {"browsers_found": len(pulled), "rows": total_rows}
 
 
@@ -5843,6 +6561,62 @@ _TIER1_INTERACTIVE_QUIRKS = {
     "usb_debug_timeout",            # Honor — ADB authorization itself may need re-doing
 }
 
+# Maps a Collector-APK registry key (MainActivity.kt's `registry` map / `CollectionResult.name`)
+# to the acq_activity.py source key used for the dashboard's live activity feed, and to a
+# human-readable label for the event sentence. Kept separate from SOURCE_ICON_MAP itself so a
+# renamed collector only needs updating in one place.
+_TIER1_COLLECTOR_SOURCE: dict[str, str] = {
+    "contacts": "contacts", "calllog": "calls", "sms": "sms",
+    "calendar": "calendar", "accounts": "accounts", "apps": "apps",
+    "usage": "usage", "media": "media", "recordings": "recordings",
+    "notifications": "notifications", "location": "location",
+    "wifi": "wifi", "bluetooth": "bluetooth", "device": "device",
+}
+_TIER1_COLLECTOR_LABEL: dict[str, str] = {
+    "contacts": "Contacts", "calllog": "Call log", "sms": "SMS",
+    "calendar": "Calendar", "accounts": "Accounts", "apps": "Installed apps",
+    "usage": "App usage", "media": "Media inventory", "recordings": "Call recordings",
+    "notifications": "Notification history", "location": "Location",
+    "wifi": "Wi-Fi", "bluetooth": "Bluetooth", "device": "Device info",
+}
+
+
+def _emit_tier1_collector_events(case: Case, socketio: Any, collectors: list[dict]) -> None:
+    """Turn one collector_manifest.json ``collectors`` list into live dashboard events.
+
+    This is the device's own self-report (Kotlin ``CollectionResult.summary()``) — the same
+    authoritative source the report/audit trail already uses — so every row the helper actually
+    ran is represented here, including ones the engine doesn't yet parse into a typed dataset
+    (e.g. ``recordings``/``notifications``). Showing "collected but not yet a dashboard view" is
+    more honest than showing nothing for it.
+    """
+    for row in collectors:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("collector") or "")
+        status_raw = str(row.get("status") or "")
+        count = row.get("count")
+        error = row.get("error")
+        src = _TIER1_COLLECTOR_SOURCE.get(name, "unknown")
+        label = _TIER1_COLLECTOR_LABEL.get(name, name or "Unknown collector")
+        item_count = count if isinstance(count, int) else None
+        if status_raw in ("ok", "empty"):
+            emit_acq_event(case, socketio, source=src, tier="tier1",
+                           action=f"{label} collected from device", status="completed",
+                           item_count=item_count)
+        elif status_raw == "denied":
+            emit_acq_event(case, socketio, source=src, tier="tier1",
+                           action=f"{label} — permission denied on device", status="skipped",
+                           skip_reason=error or "permission not granted")
+        elif status_raw == "unsupported":
+            emit_acq_event(case, socketio, source=src, tier="tier1",
+                           action=f"{label} — not supported on this device", status="skipped",
+                           skip_reason=error or "unsupported on this Android version/OEM build")
+        else:  # "error" or an unrecognized status string
+            emit_acq_event(case, socketio, source=src, tier="tier1",
+                           action=f"{label} — collector error", status="failed",
+                           skip_reason=error or "unknown error")
+
 
 def _wait_for_tier1_manifest(
     source: RealDeviceSource,
@@ -5895,7 +6669,8 @@ def _wait_for_tier1_manifest(
 
 
 def _run_tier1_calllog_helper(
-    source: RealDeviceSource, case: Case, staging: Path, *, oem_quirks: Optional[list[str]] = None
+    source: RealDeviceSource, case: Case, staging: Path, *,
+    oem_quirks: Optional[list[str]] = None, socketio: Any = None,
 ) -> tuple[list, set[str]]:
     """Run helper-APK call-log workflow and ingest calllog.json as Tier-1 evidence."""
     package = "io.erakshak.collector"
@@ -5951,8 +6726,13 @@ def _run_tier1_calllog_helper(
     if dump.ok:
         _tier1_ledger().record_device_file(remote_calllog)
     if not dump.ok:
+        emit_acq_event(case, socketio, source="calls", tier="tier1",
+                       action="Failed to launch Collector helper activity", status="failed",
+                       skip_reason=dump.stderr or "am start failed")
         _best_effort_uninstall(source, case, package)
         return [], set()
+    emit_acq_event(case, socketio, source="calls", tier="tier1",
+                   action="Collector helper running on device — call log", status="accessing")
 
     _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks)
 
@@ -5966,6 +6746,9 @@ def _run_tier1_calllog_helper(
         alters_device=False,
     )
     if not pull.ok or not local_calllog.exists():
+        emit_acq_event(case, socketio, source="calls", tier="tier1",
+                       action="Call log — not produced by helper", status="skipped",
+                       skip_reason="calllog.json not found on device (denied or timed out)")
         _best_effort_uninstall(source, case, package)
         return [], set()
 
@@ -5985,13 +6768,17 @@ def _run_tier1_calllog_helper(
         tier=Tier.TIER1.value,
         alters_device=False,
     )
+    emit_acq_event(case, socketio, source="calls", tier="tier1",
+                   action="Call log collected from device", status="completed",
+                   item_count=len(calls))
 
     _best_effort_uninstall(source, case, package)
     return calls, {remote_calllog}
 
 
 def _run_tier1_sms_helper(
-    source: RealDeviceSource, case: Case, staging: Path, *, oem_quirks: Optional[list[str]] = None
+    source: RealDeviceSource, case: Case, staging: Path, *,
+    oem_quirks: Optional[list[str]] = None, socketio: Any = None,
 ) -> tuple[list, set[str]]:
     """Run helper-APK SMS workflow and ingest sms.json as Tier-1 evidence."""
     package = "io.erakshak.collector"
@@ -6044,8 +6831,13 @@ def _run_tier1_sms_helper(
     if dump.ok:
         _tier1_ledger().record_device_file(remote_sms)
     if not dump.ok:
+        emit_acq_event(case, socketio, source="sms", tier="tier1",
+                       action="Failed to launch Collector helper activity", status="failed",
+                       skip_reason=dump.stderr or "am start failed")
         _best_effort_uninstall(source, case, package)
         return [], set()
+    emit_acq_event(case, socketio, source="sms", tier="tier1",
+                   action="Collector helper running on device — SMS", status="accessing")
 
     _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks)
 
@@ -6059,6 +6851,9 @@ def _run_tier1_sms_helper(
         alters_device=False,
     )
     if not pull.ok or not local_sms.exists():
+        emit_acq_event(case, socketio, source="sms", tier="tier1",
+                       action="SMS — not produced by helper", status="skipped",
+                       skip_reason="sms.json not found on device (denied or timed out)")
         _best_effort_uninstall(source, case, package)
         return [], set()
 
@@ -6078,13 +6873,17 @@ def _run_tier1_sms_helper(
         tier=Tier.TIER1.value,
         alters_device=False,
     )
+    emit_acq_event(case, socketio, source="sms", tier="tier1",
+                   action="SMS collected from device", status="completed",
+                   item_count=len(sms_msgs))
 
     _best_effort_uninstall(source, case, package)
     return sms_msgs, {remote_sms}
 
 
 def _run_tier1_contacts_helper(
-    source: RealDeviceSource, case: Case, staging: Path, *, oem_quirks: Optional[list[str]] = None
+    source: RealDeviceSource, case: Case, staging: Path, *,
+    oem_quirks: Optional[list[str]] = None, socketio: Any = None,
 ) -> tuple[list, set[str]]:
     """Run helper-APK contacts workflow and ingest contacts.json as Tier-1 evidence."""
     package = "io.erakshak.collector"
@@ -6137,8 +6936,13 @@ def _run_tier1_contacts_helper(
     if dump.ok:
         _tier1_ledger().record_device_file(remote_contacts)
     if not dump.ok:
+        emit_acq_event(case, socketio, source="contacts", tier="tier1",
+                       action="Failed to launch Collector helper activity", status="failed",
+                       skip_reason=dump.stderr or "am start failed")
         _best_effort_uninstall(source, case, package)
         return [], set()
+    emit_acq_event(case, socketio, source="contacts", tier="tier1",
+                   action="Collector helper running on device — contacts", status="accessing")
 
     _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks)
 
@@ -6152,6 +6956,9 @@ def _run_tier1_contacts_helper(
         alters_device=False,
     )
     if not pull.ok or not local_contacts.exists():
+        emit_acq_event(case, socketio, source="contacts", tier="tier1",
+                       action="Contacts — not produced by helper", status="skipped",
+                       skip_reason="contacts.json not found on device (denied or timed out)")
         _best_effort_uninstall(source, case, package)
         return [], set()
 
@@ -6171,6 +6978,9 @@ def _run_tier1_contacts_helper(
         tier=Tier.TIER1.value,
         alters_device=False,
     )
+    emit_acq_event(case, socketio, source="contacts", tier="tier1",
+                   action="Contacts collected from device", status="completed",
+                   item_count=len(contacts))
 
     _best_effort_uninstall(source, case, package)
     return contacts, {remote_contacts}
@@ -6192,6 +7002,7 @@ def _run_tier1_collect_all(
     bluetooth_devices: list,
     skip_paths: set[str],
     oem_quirks: Optional[list[str]] = None,
+    socketio: Any = None,
 ) -> None:
     """Drive the Collector helper's ``dump_all`` action and ingest every output.
 
@@ -6288,8 +7099,14 @@ def _run_tier1_collect_all(
         ):
             _tier1_ledger().record_device_file(f"/sdcard/Download/{_out}")
     if not dump.ok:
+        emit_acq_event(case, socketio, source="device", tier="tier1",
+                       action="Failed to launch Collector helper activity", status="failed",
+                       skip_reason=dump.stderr or "am start failed")
         _best_effort_uninstall(source, case, package)
         return
+    emit_acq_event(case, socketio, source="device", tier="tier1",
+                   action="Collector helper running on device — full collection (14 collectors)",
+                   status="accessing")
     # MediaStore enumeration + app inventory take a few seconds even on a clean stock
     # build; on an OEM with an interactive quirk (a permission dialog, a lock-screen PIN)
     # the examiner needs real time to clear it. Poll for the manifest rather than guess.
@@ -6350,6 +7167,7 @@ def _run_tier1_collect_all(
     # dataset interpretable — it records, per collector, whether the run was ok/empty/denied and
     # the grant state of every permission requested. Without it "0 rows" and "refused" look the
     # same in the report, which the honesty model forbids.
+    manifest_events_emitted = False
     for meta_file in ("collector_manifest.json", "device_extra.json"):
         remote = f"/sdcard/Download/{meta_file}"
         local = staging / f"tier1_{meta_file}"
@@ -6382,6 +7200,13 @@ def _run_tier1_collect_all(
                                 tier=Tier.TIER1.value,
                                 artifact_id=rec.artifact_id,
                             )
+                        collectors = manifest.get("collectors") or []
+                        if collectors:
+                            emit_acq_event(case, socketio, source="device", tier="tier1",
+                                           action="Collector finished — per-artifact results below",
+                                           status="completed")
+                            _emit_tier1_collector_events(case, socketio, collectors)
+                            manifest_events_emitted = True
                 except Exception as exc:
                     case.log(
                         "tier1.helper.manifest",
@@ -6389,6 +7214,15 @@ def _run_tier1_collect_all(
                         result="error",
                         tier=Tier.TIER1.value,
                     )
+
+    if not manifest_events_emitted:
+        # Resolve the earlier "accessing" placeholder either way — an indefinitely-pulsing
+        # row would misrepresent a timed-out/unparseable run as still in progress.
+        emit_acq_event(case, socketio, source="device", tier="tier1",
+                       action="Collector manifest not received — device may not have finished "
+                              "in time, or the write failed; whatever files did land were still "
+                              "pulled and parsed above", status="failed",
+                       skip_reason="collector_manifest.json not produced within the wait window")
 
     _best_effort_uninstall(source, case, package)
 
@@ -6603,6 +7437,30 @@ def _detect_location_anomalies(locations: List[Dict[str, Any]]) -> List[Dict[str
         return []
 
 
+def _generate_hash_integrity_report(case_dir: Path) -> None:
+    """Generate ``<case_dir>/reports/detailed_hash_integrity.html``.
+
+    Reuses ``forensics/integrity_report.py``'s ``generate_integrity_report()`` — real
+    logic already built on the fixed manifest schema (P0-1) and already unit-tested
+    (``tests/test_integrity_verification.py``), but with no call site of its own
+    anywhere in the codebase until now. Called once, at the end of ``run_acquisition``,
+    same lifecycle point as ``_generate_location_report`` below — the manifest is
+    complete by then, so this is the one time re-hashing every artifact and comparing
+    against what custody.py recorded at pull time is actually meaningful (see
+    ``auto_verify_on_open`` in ``server.py``'s ``case_overview`` for the *reopen* case,
+    which is a different lifecycle point with its own 24h/mtime cache).
+    """
+    try:
+        from .forensics.integrity_report import generate_integrity_report
+
+        reports_dir = case_dir / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        html = generate_integrity_report(case_dir)
+        (reports_dir / "detailed_hash_integrity.html").write_text(html, encoding="utf-8")
+    except Exception as exc:  # pragma: no cover - must never abort acquisition
+        logger.error("Failed to generate hash integrity report: %s", exc)
+
+
 def _generate_location_report(locations: List[Dict[str, Any]], case_dir: Path) -> None:
     """Generate an HTML location summary report in the case directory.
 
@@ -6644,66 +7502,19 @@ def _generate_location_report(locations: List[Dict[str, Any]], case_dir: Path) -
 # ---------------------------------------------------------------------------
 
 
-def _initialize_optimizations(
-    device_id: str, installed_apps: List[str], adb: Any
-) -> None:
-    """Initialize all optimizations: setup persistent connection, load profile."""
-    try:
-        # 1. Setup persistent ADB connection if supported
-        if hasattr(adb, "_connect_transport"):
-            adb._connect_transport()
-
-        # 2. Start pre-fetching predicted files
-        from .forensics.prefetch import predict_files, start_prefetch
-
-        predicted = predict_files({"manufacturer": "unknown"}, installed_apps)
-        if predicted:
-            start_prefetch(predicted, adb)
-    except Exception:
-        pass
-
-
-# REMOVED (P2-5): _run_optimized_acquisition() was a stub that returned {} while its
-# docstring claimed to "run acquisition with all optimizations". The optimisations it
-# named are real and already applied inline by run_acquisition (priority filtering via
-# cfg.use_priority_filter, parallel pulls via _parallel_pull_files, profile-driven
-# ordering via _get_optimal_file_order) — the stub only added a way to report a
-# successful acquisition that never happened.
-
-
-def _get_optimal_file_order(device_id: str, files: List[str]) -> List[str]:
-    """Get optimal order from profile."""
-    try:
-        from .forensics.profile_optimizer import get_optimal_file_order
-
-        return get_optimal_file_order(device_id, files)
-    except ImportError:
-        return files
-
-
-def _track_performance(device_id: str, stage: str, elapsed: float) -> None:
-    """Track performance metrics and update profile."""
-    try:
-        # Local metrics are already tracked via track_stage_time
-        # We just need to update the persistent profile
-        from .forensics.profile_optimizer import update_profile
-        import time
-
-        update_profile(
-            device_id, {"timestamp": time.time(), "stage_timings": {stage: elapsed}}
-        )
-    except ImportError:
-        pass
-
-
-def _generate_performance_summary(case_dir: Path) -> None:
-    """Generate performance summary."""
-    try:
-        from .forensics.performance_dashboard import generate_performance_dashboard
-
-        generate_performance_dashboard(case_dir)
-    except Exception:
-        pass
+# REMOVED (2026-09): _initialize_optimizations()/_get_optimal_file_order()/
+# _track_performance()/_generate_performance_summary() had zero call sites in
+# run_acquisition — verified via grep, not just doc claims. Each was a thin wrapper
+# around a per-device "profile" concept (forensics/prefetch.py, profile_optimizer.py,
+# performance_dashboard.py) that nothing ever built, updated, or read: predicted-file
+# pre-fetch, adaptive pull ordering, and a performance dashboard that would have
+# summarised metrics no acquisition ever recorded. Same shape as the P2-5 removal
+# above (_run_optimized_acquisition) — unreachable scaffolding for an optimisation
+# layer that was never actually wired in, not a working feature with a missing call.
+# The three backing modules were deleted alongside these wrappers since nothing else
+# in the codebase imports them (grep confirmed zero other references, no test
+# coverage). Real per-file parallelism is _parallel_pull_files(); real per-stage
+# timing is track_stage_time().
 
 
 # ---------------------------------------------------------------------------
@@ -6735,96 +7546,21 @@ def _emit_hash_progress(file_path: str, sha256: str, md5: str, size: int) -> Non
     pass
 
 
-def _update_hash_progress(current: int, total: int) -> None:
-    """Update hash progress tracking."""
-    pct = (current / total) * 100 if total > 0 else 0
-    logger.debug(f"Hash Progress: {current}/{total} ({pct:.1f}%)")
-
-
-# ---------------------------------------------------------------------------
-# Task 11: Pipeline Integration (Hash Integrity)
-# ---------------------------------------------------------------------------
-
-
-def _initialize_hashing() -> None:
-    """Initialize hashing system and alerting."""
-    # Reset any existing alerts or continuous state
-    logger.info("Initializing hash integrity and alerting system...")
-    try:
-        from .forensics.continuous_hash import ContinuousHashVerifier
-
-        # The verifier instance could be attached to a class or global state
-        # depending on pipeline architecture.
-    except ImportError:
-        pass
-
-
-def _process_hash(file_path: Path) -> Dict[str, str]:
-    """Process hash for a file, returning sha256 and md5."""
-    import hashlib
-
-    sha256 = hashlib.sha256()
-    md5 = hashlib.md5()
-
-    try:
-        with open(file_path, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                sha256.update(chunk)
-                md5.update(chunk)
-        return {"sha256": sha256.hexdigest(), "md5": md5.hexdigest()}
-    except Exception as exc:
-        logger.error("Failed to hash %s: %s", file_path, exc)
-        return {"sha256": "", "md5": ""}
-
-
-def _verify_hash(file_path: Path, expected_hash: str) -> bool:
-    """Verify hash during extraction, checking for alerts."""
-    try:
-        from .forensics.hash_alerts import check_hash_alert, log_hash_alert
-
-        hashes = _process_hash(file_path)
-        actual_hash = hashes.get("sha256", "")
-
-        # Check and log alert if mismatch
-        alert_data = check_hash_alert(expected_hash, actual_hash, str(file_path))
-        if alert_data:
-            # Assuming we can determine case_dir from file_path, or pass it in a real refactor
-            case_dir = file_path.parent
-            while case_dir.name != "artifacts" and case_dir.parent != case_dir:
-                case_dir = case_dir.parent
-            if case_dir.name == "artifacts":
-                case_dir = case_dir.parent
-
-            log_hash_alert(alert_data, case_dir)
-            return False
-
-        return expected_hash.lower() == actual_hash.lower()
-    except Exception:
-        return False
-
-
-def _generate_hash_report(case_dir: Path) -> None:
-    """Generate comprehensive hash integrity report."""
-    try:
-        from .forensics.integrity_report import generate_integrity_report
-
-        html = generate_integrity_report(case_dir)
-        reports_dir = case_dir / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        (reports_dir / "detailed_hash_integrity.html").write_text(
-            html, encoding="utf-8"
-        )
-        logger.info("Generated detailed hash integrity report")
-    except Exception as exc:
-        logger.error("Failed to generate hash report: %s", exc)
-
-
-def _auto_verify_on_complete(case_dir: Path) -> None:
-    """Auto-verify hashes on acquisition completion."""
-    try:
-        from .forensics.auto_verify import auto_verify_on_open
-
-        logger.info("Running post-acquisition auto-verification...")
-        auto_verify_on_open(case_dir)
-    except Exception as exc:
-        logger.error("Failed to auto-verify on complete: %s", exc)
+# REMOVED (2026-09): _update_hash_progress() (a bare logger.debug percentage line) and
+# _initialize_hashing() (imported ContinuousHashVerifier and did nothing else with it —
+# no instance ever created, no state ever reset) had zero call sites. _process_hash()
+# and _verify_hash() were a second, parallel hashing/alerting entry point — file
+# ingestion already computes and stores sha256/md5 on ArtifactRecord at pull time
+# (custody.py Case.ingest_file), so wiring these in would have double-hashed every
+# artifact against a codepath the rest of the tool doesn't use. forensics/
+# continuous_hash.py and hash_alerts.py were deleted alongside these wrappers — each
+# was reachable only from here (grep confirmed), with no test coverage.
+#
+# generate_integrity_report() and auto_verify_on_open() (forensics/integrity_report.py,
+# auto_verify.py) are real and correctly built on the fixed hash_verification.py
+# schema (see P0-1 above) — those two are NOT deleted, just moved to where they
+# actually belong: a per-case detailed report at the end of run_acquisition (below,
+# where _generate_location_report already runs), and a case-open freshness check in
+# server.py's case_overview route (auto_verify_on_open is explicitly "verify when a
+# case is opened", not "verify the manifest you just this second finished writing" —
+# the old _auto_verify_on_complete() called it from the wrong lifecycle point entirely).

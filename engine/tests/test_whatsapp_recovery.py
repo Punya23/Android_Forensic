@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from triage.config import Confidence
-from triage.models import Message
+from triage.models import Contact, Message
 from triage.parsers import (
     parse_whatsapp_export,
     stream_whatsapp_export,
@@ -773,6 +773,127 @@ class TestAdvancedFeatures:
         """Social graph has at least one edge."""
         result = aff.analyze_social_graph(sample_messages)
         assert len(result["edges"]) >= 1
+
+    def test_social_graph_keys_nodes_by_identifier_not_name(
+        self, aff: AdvancedForensicFeatures
+    ):
+        """Two numbers saved under one contact name stay two nodes.
+
+        The device holds one saved name against two numbers. Keying the graph on
+        the resolved name would report a single participant with the combined
+        count — an identity claim the acquisition cannot support, and one that
+        is invisible in the output. Counts must stay separate, and the
+        identifier must reach the consumer so the rows can be told apart.
+        """
+        msgs = [
+            Message(
+                app="sms",
+                sender="+91 78750 91022",
+                body="a",
+                timestamp="2026-01-01T10:00:00Z",
+                direction="incoming",
+                confidence=Confidence.LIVE,
+                source_file="mmssms.db",
+            )
+            for _ in range(5)
+        ] + [
+            Message(
+                app="sms",
+                sender="+919284078848",
+                body="b",
+                timestamp="2026-01-01T11:00:00Z",
+                direction="incoming",
+                confidence=Confidence.LIVE,
+                source_file="mmssms.db",
+            )
+            for _ in range(3)
+        ]
+        contacts = [
+            Contact(name="Vedant Yeole", number="+917875091022"),
+            Contact(name="Vedant Yeole", number="+919284078848"),
+        ]
+
+        result = aff.analyze_social_graph(msgs, contacts)
+
+        assert result["stats"]["unique_contacts"] == 2
+        participants = [n for n in result["nodes"] if n["id"] != "SUBJECT"]
+        assert {n["id"] for n in participants} == {
+            "num:917875091022",
+            "num:919284078848",
+        }
+        # Both carry the same display label — that is expected, and precisely why
+        # the id has to be there.
+        assert {n["label"] for n in participants} == {"Vedant Yeole"}
+        assert sorted(n["messages"] for n in participants) == [3, 5]
+
+        by_id = {t["id"]: t for t in result["top_contacts"]}
+        assert by_id["num:917875091022"]["messages"] == 5
+        assert by_id["num:919284078848"]["messages"] == 3
+        assert all(t["name"] == "Vedant Yeole" for t in result["top_contacts"])
+        # 8 would mean the two participants were silently summed into one.
+        assert sum(t["messages"] for t in result["top_contacts"]) == 8
+
+        assert result["stats"]["most_active"] == "Vedant Yeole"
+        assert result["stats"]["most_active_id"] == "num:917875091022"
+
+    def test_social_graph_named_senders_keep_their_name_as_label(
+        self, aff: AdvancedForensicFeatures, sample_messages: list
+    ):
+        """A sender with no phone number keys on its handle, label unchanged."""
+        result = aff.analyze_social_graph(sample_messages)
+        labels = {n["label"] for n in result["nodes"] if n["id"] != "SUBJECT"}
+        assert {"Rahul", "Priya", "Imran", "Kiran"} <= labels
+        assert {n["id"] for n in result["nodes"]} >= {"name:Rahul", "name:Priya"}
+
+    def test_social_graph_folds_plus_prefixed_and_bare_same_number(
+        self, aff: AdvancedForensicFeatures
+    ):
+        """``+918879041080`` and ``918879041080`` are one identifier, one node.
+
+        Both spellings appear as senders in CASE-REAL-005. The digits are
+        identical, so this is formatting, not two participants.
+        """
+        msgs = [
+            Message(
+                app="sms",
+                sender=sender,
+                body="x",
+                timestamp="2026-01-01T10:00:00Z",
+                direction="incoming",
+                confidence=Confidence.LIVE,
+                source_file="mmssms.db",
+            )
+            for sender in ("+918879041080", "918879041080", "+91 88790 41080")
+        ]
+        result = aff.analyze_social_graph(msgs)
+        assert result["stats"]["unique_contacts"] == 1
+        assert result["top_contacts"][0]["id"] == "num:918879041080"
+        assert result["top_contacts"][0]["messages"] == 3
+
+    def test_social_graph_does_not_case_fold_handles(
+        self, aff: AdvancedForensicFeatures
+    ):
+        """Two sender strings differing only in case stay two participants.
+
+        Real SMS sender IDs on CASE-REAL-005 arrive as both ``JX-IRSMSa-S`` and
+        ``JX-IRSMSA-S``. Nothing in the acquisition establishes they are one
+        sender, so their counts are reported separately.
+        """
+        msgs = [
+            Message(
+                app="sms",
+                sender=sender,
+                body="x",
+                timestamp="2026-01-01T10:00:00Z",
+                direction="incoming",
+                confidence=Confidence.LIVE,
+                source_file="mmssms.db",
+            )
+            for sender in ("JX-IRSMSa-S", "JX-IRSMSA-S")
+        ]
+        result = aff.analyze_social_graph(msgs)
+        assert result["stats"]["unique_contacts"] == 2
+        assert {t["messages"] for t in result["top_contacts"]} == {1}
 
     def test_detect_patterns_burst(
         self, aff: AdvancedForensicFeatures, sample_messages: list

@@ -23,7 +23,11 @@ import type { ViewKey } from "../components/Sidebar";
 // ---------------------------------------------------------------------------
 
 export interface SocialGraphNode {
+  /** Stable participant key derived from the identifier ("num:+9178…" / "name:rahul"),
+   *  never from the display name — two numbers saved under one contact name are two
+   *  nodes, not one. `id` is also what edge source/target refer to. */
   id: string;
+  label?: string;
   messages: number;
   sent: number;
   received: number;
@@ -35,13 +39,21 @@ export interface SocialGraphEdge {
   direction: "outgoing" | "incoming";
 }
 export interface TopContact {
+  /** Identifier key (see SocialGraphNode.id). Optional: an "advanced" dataset written
+   *  before the engine carried the id through has the name only. */
+  id?: string;
   name: string;
   messages: number;
 }
 export interface SocialGraph {
   nodes: SocialGraphNode[];
   edges: SocialGraphEdge[];
-  stats: { unique_contacts: number; total_edges: number; most_active: string | null };
+  stats: {
+    unique_contacts: number;
+    total_edges: number;
+    most_active: string | null;
+    most_active_id?: string | null;
+  };
   top_contacts: TopContact[];
 }
 
@@ -173,6 +185,23 @@ function Chip({ children, tone }: { children: React.ReactNode; tone?: string }) 
   );
 }
 
+/**
+ * Strip the namespace off a participant key: "num:+917875091022" -> "+917875091022".
+ * The bare identifier is what an examiner recognises; the namespace is plumbing.
+ */
+function identOf(id: string | null | undefined, name: string): string {
+  const raw = id ?? "";
+  const ident = raw.includes(":") ? raw.slice(raw.indexOf(":") + 1) : raw;
+  return ident && ident !== name ? ident : "";
+}
+
+/** Display names that more than one participant in the list shares. */
+function duplicateNames(items: TopContact[]): Set<string> {
+  const counts = new Map<string, number>();
+  for (const c of items) counts.set(c.name, (counts.get(c.name) ?? 0) + 1);
+  return new Set([...counts].filter(([, n]) => n > 1).map(([name]) => name));
+}
+
 function MiniStat({ n, label }: { n: React.ReactNode; label: string }) {
   return (
     <div className="text-center">
@@ -267,6 +296,13 @@ export function AdvancedAnalyticsView({
   const timeline = rec.timeline;
   const anomalies = rec.anomalies;
   const recovery = rec.recovery_metrics;
+  // Two participants can legitimately share a saved contact name; the ranking must not
+  // read as the same person listed twice, so those rows get their identifier shown.
+  const ambiguousContacts = duplicateNames(social?.top_contacts ?? []);
+  const mostActiveIdent =
+    social?.stats.most_active && ambiguousContacts.has(social.stats.most_active)
+      ? identOf(social.stats.most_active_id, social.stats.most_active)
+      : "";
 
   const header = (
     <div className="mb-5">
@@ -391,22 +427,53 @@ export function AdvancedAnalyticsView({
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
               <MiniStat n={social.stats.unique_contacts} label="Unique contacts" />
               <MiniStat n={social.stats.total_edges} label="Edges" />
-              <MiniStat n={social.stats.most_active ?? "—"} label="Most active contact" />
+              <MiniStat
+                n={
+                  !social.stats.most_active ? (
+                    "—"
+                  ) : (
+                    <span>
+                      {social.stats.most_active}
+                      {mostActiveIdent && (
+                        <span className="block text-[10px] font-mono font-normal text-muted">
+                          {mostActiveIdent}
+                        </span>
+                      )}
+                    </span>
+                  )
+                }
+                label="Most active contact"
+              />
             </div>
             <div className="text-[10px] uppercase tracking-wider text-muted mb-1.5">
               Top contacts by message count
             </div>
+            {ambiguousContacts.size > 0 && (
+              <p className="text-[11px] text-muted mb-1.5 leading-snug">
+                A contact name below appears on more than one row: the device holds several
+                identifiers (e.g. two phone numbers) under that name. The identifier is shown
+                alongside and the counts are reported <strong>separately</strong> — they are not
+                combined, because this acquisition cannot establish that two identifiers belong
+                to the same person.
+              </p>
+            )}
             <CappedList
               items={social.top_contacts}
               cap={10}
               noun="contacts"
               emptyText="No contacts ranked."
-              render={(c, i) => (
-                <div key={i} className="flex items-center gap-2 text-xs">
-                  <span className="text-ink truncate flex-1">{c.name}</span>
-                  <span className="text-muted font-mono">{c.messages}</span>
-                </div>
-              )}
+              render={(c, i) => {
+                const ident = ambiguousContacts.has(c.name) ? identOf(c.id, c.name) : "";
+                return (
+                  <div key={c.id ?? i} className="flex items-center gap-2 text-xs">
+                    <span className="text-ink truncate flex-1">
+                      {c.name}
+                      {ident && <span className="text-muted font-mono ml-1">({ident})</span>}
+                    </span>
+                    <span className="text-muted font-mono">{c.messages}</span>
+                  </div>
+                );
+              }}
             />
           </>
         )}

@@ -147,6 +147,73 @@ def test_integrity_report_summary_nonzero(case_dir):
     assert summary["total_files"] > 0
 
 
+# --- pipeline.py wiring: generate_integrity_report()/auto_verify_on_open() had zero --
+# --- call sites anywhere before this (see docs/NOTES.md "Known gaps") ---------------
+
+
+def test_run_acquisition_writes_detailed_hash_integrity_report(case_dir):
+    """_generate_hash_integrity_report() runs at the end of run_acquisition (see
+    pipeline.py, right after the main triage report) — this is the first test that
+    actually exercises that call site rather than just the underlying function."""
+    report_path = case_dir / "reports" / "detailed_hash_integrity.html"
+    assert report_path.exists()
+    html = report_path.read_text(encoding="utf-8")
+    assert "<html" in html.lower()
+
+
+def test_auto_verify_on_open_wired_into_case_overview(case_dir, tmp_path):
+    """server.py's case_overview() (GET /api/case/<id>) now calls
+    forensics/auto_verify.py's auto_verify_on_open() and returns the result as
+    summary["hash_verification"] — previously that module was reachable only via a
+    pipeline.py wrapper (_auto_verify_on_complete) with zero call sites of its own."""
+    import os
+    import shutil
+    import sys as _sys
+    import tempfile
+    from unittest.mock import MagicMock, patch as _patch
+
+    tmp_cases = tempfile.mkdtemp(prefix="snagr_test_cases_")
+    try:
+        with _patch.dict("sys.modules", {
+            "flask_socketio": MagicMock(),
+            "flask_limiter": MagicMock(),
+            "flask_limiter.util": MagicMock(),
+        }), _patch.dict(os.environ, {
+            "SNAGR_AUTH_USER": "admin",
+            "SNAGR_AUTH_PASS": "snagr-demo",
+        }):
+            if "triage.server" in _sys.modules:
+                del _sys.modules["triage.server"]
+            from triage import server as srv
+            app, _ = srv.create_app(cases_root=Path(tmp_cases))
+
+        app.config["TESTING"] = True
+        client = app.test_client()
+
+        # Copy the already-acquired mock case into this server's cases_root.
+        dest = Path(tmp_cases) / case_dir.name
+        shutil.copytree(case_dir, dest)
+
+        login = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "snagr-demo"},
+            content_type="application/json",
+        )
+        token = login.get_json().get("token", "")
+
+        resp = client.get(
+            f"/api/case/{case_dir.name}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert "hash_verification" in body
+        assert body["hash_verification"]["status"] in ("completed", "cached")
+        assert body["hash_verification"]["verified"] > 0
+    finally:
+        shutil.rmtree(tmp_cases, ignore_errors=True)
+
+
 def test_hash_timeline_uses_real_manifest(case_dir):
     tl = hash_timeline.get_hash_timeline(case_dir)
     assert len(tl) > 0

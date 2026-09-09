@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Build
@@ -12,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.app.ActivityCompat
@@ -152,6 +154,15 @@ class MainActivity : Activity() {
         "device" to { c: Context -> DeviceCollector.collect(c) },
     )
 
+    /** Human-readable label per registry key, for the live progress checklist. */
+    private val displayNames: Map<String, String> = mapOf(
+        "contacts" to "Contacts", "calllog" to "Call log", "sms" to "SMS",
+        "calendar" to "Calendar", "accounts" to "Accounts", "apps" to "Installed apps",
+        "usage" to "App usage", "media" to "Media inventory", "recordings" to "Call recordings",
+        "notifications" to "Notification history", "location" to "Location",
+        "wifi" to "Wi-Fi", "bluetooth" to "Bluetooth", "device" to "Device info",
+    )
+
     // ── Action dispatcher ─────────────────────────────────────────────────
 
     private fun executeAction(action: String?) {
@@ -172,19 +183,27 @@ class MainActivity : Activity() {
             return
         }
 
-        showProgressScreen(wanted.size)
+        val done = mutableListOf<CollectionResult>()
+        showLiveProgressScreen(wanted, emptyList())
         // MediaStore enumeration plus per-file EXIF/MP4 GPS reads can run for tens of seconds.
         // Running that on the main thread risks an ANR kill mid-collection, which would leave a
-        // half-written evidence set, so collection happens on a worker and only the result
-        // screen is posted back.
+        // half-written evidence set, so collection happens on a worker. Unlike a single
+        // fire-and-forget batch, each collector's result is posted back to the UI the moment it
+        // finishes — the examiner sees a live checklist tick off with real record counts instead
+        // of a static spinner for the whole run.
         Thread {
-            val results = wanted.map { name -> runCollector(name) }
-            val manifest = writeManifest(action, results)
+            for (name in wanted) {
+                val result = runCollector(name)
+                done.add(result)
+                val snapshot = done.toList()
+                Handler(Looper.getMainLooper()).post { showLiveProgressScreen(wanted, snapshot) }
+            }
+            val manifest = writeManifest(action, done)
             Handler(Looper.getMainLooper()).post {
-                val hasError = results.any {
+                val hasError = done.any {
                     it.status == CollectionResult.ERROR || it.status == CollectionResult.DENIED
                 }
-                showResultScreen(action, renderSummary(results, manifest), hasError)
+                showResultScreen(action, renderSummary(done, manifest), hasError)
                 Handler(Looper.getMainLooper()).postDelayed({ finish() }, 3000)
             }
         }.apply { name = "snagr-collect"; isDaemon = false }.start()
@@ -375,14 +394,75 @@ class MainActivity : Activity() {
         setContentView(ScrollView(this).apply { setBackgroundColor(Color.WHITE); addView(layout) })
     }
 
-    private fun showProgressScreen(count: Int) {
+    /**
+     * Live checklist screen — re-rendered after every collector finishes so the examiner sees
+     * real progress (which artifact, how many records, or why it was denied) instead of a
+     * static spinner for the whole run. [done] holds every completed result so far, in the
+     * order they finished; [wanted] is the full requested list, used to render pending rows.
+     */
+    private fun showLiveProgressScreen(wanted: List<String>, done: List<CollectionResult>) {
+        val total = wanted.size
+        val finishedCount = done.size
+        val allDone = finishedCount == total
         val layout = buildLayout()
-        layout.addView(makeText("⏳ Collecting", 24f, Color.parseColor("#1A237E"), bold = true))
-        layout.addView(makeText("$count collector(s) running…", 14f, Color.DKGRAY))
+
         layout.addView(
-            makeText("Keep this screen in the foreground.", 12f, Color.GRAY)
+            makeText(
+                if (allDone) "✓ Finishing up…" else "⏳ Collecting evidence",
+                24f,
+                Color.parseColor("#1A237E"),
+                bold = true,
+            )
         )
-        setContentView(layout)
+        layout.addView(makeText("$finishedCount / $total complete", 14f, Color.DKGRAY))
+
+        layout.addView(
+            ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = total
+                progress = finishedCount
+                progressTintList = ColorStateList.valueOf(Color.parseColor("#3F51B5"))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { setMargins(0, 20, 0, 24) }
+            }
+        )
+
+        val byName = done.associateBy { it.name }
+        val rows = TextView(this).apply {
+            text = wanted.joinToString("\n") { name ->
+                val label = displayNames[name] ?: name
+                val r = byName[name]
+                if (r == null) {
+                    "  ⋯  $label"
+                } else {
+                    val mark = when (r.status) {
+                        CollectionResult.OK -> "✓"
+                        CollectionResult.EMPTY -> "○"
+                        CollectionResult.DENIED -> "✗"
+                        CollectionResult.UNSUPPORTED -> "–"
+                        else -> "!"
+                    }
+                    val detail = when (r.status) {
+                        CollectionResult.OK -> "${r.count} records"
+                        CollectionResult.EMPTY -> "empty"
+                        else -> r.status
+                    }
+                    "  $mark  $label — $detail"
+                }
+            }
+            textSize = 13f
+            setTextColor(Color.DKGRAY)
+            setBackgroundColor(Color.parseColor("#F5F5F5"))
+            setPadding(28, 24, 28, 24)
+            typeface = Typeface.MONOSPACE
+        }
+        layout.addView(rows)
+
+        if (!allDone) {
+            layout.addView(makeText("Keep this screen in the foreground.", 12f, Color.GRAY))
+        }
+        setContentView(ScrollView(this).apply { setBackgroundColor(Color.WHITE); addView(layout) })
     }
 
     private fun showResultScreen(action: String, status: String, hasError: Boolean = false) {

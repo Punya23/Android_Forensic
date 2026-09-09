@@ -45,21 +45,7 @@ interface AleappResult {
 // hand with PROMOTED_MODULES in engine/triage/aleapp.py. Rows from these
 // modules may legitimately appear twice: verbatim here, and merged into the
 // relevant dashboard view elsewhere.
-const PROMOTED_MODULES = new Set([
-  "accounts_ce",
-  "accounts_de",
-  "sms",
-  "calls",
-  "contacts",
-  "installed_apps",
-  "recent_activity",
-  "chrome_downloads",
-  "chrome_history",
-  "gps",
-  "wifi_profiles",
-  "bluetooth_devices",
-  "notifications",
-]);
+const PROMOTED_MODULES = new Set(["sms", "calls", "contacts", "chrome_history"]);
 
 const MAX_COLUMNS = 12;
 const SAMPLE_ROWS_FOR_COLUMNS = 50;

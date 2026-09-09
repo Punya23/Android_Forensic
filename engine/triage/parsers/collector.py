@@ -144,43 +144,59 @@ def _short_perm(p: str) -> str:
 # --- parsers ----------------------------------------------------------------
 
 
+def _int_or(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def parse_media_inventory(path: str | Path) -> list[MediaInventoryItem]:
     src = Path(path).name
     out: list[MediaInventoryItem] = []
     for r in _load(path, "media", "data"):
-        gps = None
-        if r.get("gps_lat") is not None and r.get("gps_lon") is not None:
-            try:
-                gps = {"lat": float(r["gps_lat"]), "lon": float(r["gps_lon"])}
-            except (TypeError, ValueError):
-                gps = None
-        pkg = str(r.get("owner_package") or "")
-        out.append(
-            MediaInventoryItem(
-                media_id=int(r.get("id") or 0),
-                kind=str(r.get("kind") or "other"),
-                display_name=str(r.get("display_name") or ""),
-                mime_type=str(r.get("mime_type") or ""),
-                size_bytes=int(r.get("size") or 0),
-                date_taken=_ms_to_iso(r.get("date_taken")),
-                date_added=_s_to_iso(r.get("date_added")),
-                date_modified=_s_to_iso(r.get("date_modified")),
-                width=int(r.get("width") or 0),
-                height=int(r.get("height") or 0),
-                duration_ms=int(r.get("duration") or 0),
-                bucket=str(r.get("bucket") or ""),
-                owner_package=pkg,
-                owner_app=app_from_package(pkg),
-                relative_path=str(r.get("relative_path") or ""),
-                data_path=str(r.get("data_path") or ""),
-                is_trashed=bool(r.get("is_trashed")),
-                is_favorite=bool(r.get("is_favorite")),
-                is_pending=bool(r.get("is_pending")),
-                date_expires=_s_to_iso(r.get("date_expires")),
-                gps=gps,
-                source_file=src,
+        # One MediaStore row with an OEM-specific quirk (e.g. `id` shipped as a
+        # non-numeric string) used to raise out of the bare int()/str() calls below
+        # and, since this loop had no per-row isolation, silently drop every other
+        # row already parsed from the file along with it — the exact "OEM quirk
+        # degrades to fewer fields, not an exception" contract this module promises
+        # in its own docstring. Bad rows are now skipped individually instead.
+        try:
+            gps = None
+            if r.get("gps_lat") is not None and r.get("gps_lon") is not None:
+                try:
+                    gps = {"lat": float(r["gps_lat"]), "lon": float(r["gps_lon"])}
+                except (TypeError, ValueError):
+                    gps = None
+            pkg = str(r.get("owner_package") or "")
+            out.append(
+                MediaInventoryItem(
+                    media_id=_int_or(r.get("id")),
+                    kind=str(r.get("kind") or "other"),
+                    display_name=str(r.get("display_name") or ""),
+                    mime_type=str(r.get("mime_type") or ""),
+                    size_bytes=_int_or(r.get("size")),
+                    date_taken=_ms_to_iso(r.get("date_taken")),
+                    date_added=_s_to_iso(r.get("date_added")),
+                    date_modified=_s_to_iso(r.get("date_modified")),
+                    width=_int_or(r.get("width")),
+                    height=_int_or(r.get("height")),
+                    duration_ms=_int_or(r.get("duration")),
+                    bucket=str(r.get("bucket") or ""),
+                    owner_package=pkg,
+                    owner_app=app_from_package(pkg),
+                    relative_path=str(r.get("relative_path") or ""),
+                    data_path=str(r.get("data_path") or ""),
+                    is_trashed=bool(r.get("is_trashed")),
+                    is_favorite=bool(r.get("is_favorite")),
+                    is_pending=bool(r.get("is_pending")),
+                    date_expires=_s_to_iso(r.get("date_expires")),
+                    gps=gps,
+                    source_file=src,
+                )
             )
-        )
+        except Exception:
+            continue
     return out
 
 

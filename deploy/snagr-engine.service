@@ -1,0 +1,45 @@
+[Unit]
+Description=SNAGR engine — headless, serves the dashboard itself over HTTP
+Documentation=file:///opt/snagr/deploy/pi5-setup.md
+After=network-online.target
+Wants=network-online.target
+# Mutually exclusive with the kiosk unit — both would try to bind engine
+# port 5057. Use deploy/set-network-mode.sh to switch between them.
+Conflicts=snagr-kiosk.service
+# If SNAGR_HOST is missing/loopback while in lan mode, triage/server.py's
+# argparse validation exits non-zero on every attempt — stop retrying after a
+# few seconds instead of looping forever; `journalctl -u snagr-engine` will
+# show the exact fix (it prints the required flag and a detected-IP hint).
+StartLimitIntervalSec=30
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=snagr
+Group=snagr
+WorkingDirectory=/opt/snagr/engine
+
+# Written by deploy/set-network-mode.sh: SNAGR_NETWORK_MODE (airgapped|lan)
+# and SNAGR_HOST. --network-mode airgapped force-overrides SNAGR_HOST back to
+# 127.0.0.1 inside triage/server.py regardless of what's in this file, so a
+# stale "lan" host left over from a previous mode can't leak through.
+EnvironmentFile=/etc/snagr/network-mode.env
+EnvironmentFile=/etc/snagr/auth.env
+
+ExecStart=/bin/sh -c '/opt/snagr/engine/triage-engine \
+  --network-mode "${SNAGR_NETWORK_MODE:-airgapped}" \
+  --host "${SNAGR_HOST:-127.0.0.1}" \
+  --port 5057 \
+  --cases /opt/snagr/cases'
+Restart=on-failure
+RestartSec=3
+
+# Light sandboxing — this still needs raw USB access for adb, so it isn't
+# locked down as hard as a pure network service could be.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/snagr/cases
+
+[Install]
+WantedBy=multi-user.target
