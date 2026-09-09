@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { RadioTower, Wifi } from "lucide-react";
+import { Lock, RadioTower, Wifi } from "lucide-react";
 import { api } from "../lib/api";
-import type { WifiNetwork } from "../lib/types";
+import type { WifiNetwork, WifiReport } from "../lib/types";
 import { SortTh, useSort } from "../components/common";
 
 const CONF_COLORS: Record<string, { bg: string; text: string; border: string }> = {
@@ -59,10 +59,57 @@ function SecurityBadge({ value }: { value: string }) {
   );
 }
 
-function PasswordCell({ password }: { password: string }) {
+function WifiTypeBadge({ isSoftap }: { isSoftap?: boolean }) {
+  return (
+    <span
+      className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold whitespace-nowrap"
+      style={
+        isSoftap
+          ? { background: "#f6ecd4", color: "#a6741a" }
+          : { background: "#f0f0f0", color: "#555" }
+      }
+      title={
+        isSoftap
+          ? "This device's OWN hotspot config — proves it was set up, not that it was ever switched on."
+          : "A network this device saved — proves it was configured, not that it was ever joined (see confidence)."
+      }
+    >
+      {isSoftap ? "Own hotspot" : "Joined network"}
+    </span>
+  );
+}
+
+function PasswordCell({
+  password,
+  passwordUnreadable,
+  security,
+}: {
+  password: string;
+  passwordUnreadable?: boolean;
+  security: string;
+}) {
   const [revealed, setRevealed] = useState(false);
   if (!password) {
-    return <span className="text-muted text-xs italic">— open / enterprise</span>;
+    if (passwordUnreadable) {
+      return (
+        <span
+          className="text-warn text-xs italic flex items-center gap-1"
+          title="A password field was present in the device's config store but stored in a form this tool cannot decode — almost certainly Android's hardware-Keystore-backed encryption (common from Android 10+). The password is unrecoverable off-device, not absent."
+        >
+          <Lock className="h-3 w-3 shrink-0" strokeWidth={1.75} aria-hidden />
+          encrypted — unreadable
+        </span>
+      );
+    }
+    // A genuinely blank password only means "open" when the security label agrees.
+    // A blank PSK next to a WPA/WPA2/WEP/WPA3 label is a parser gap, not an open
+    // network — never assert "open / enterprise" in that case.
+    const looksOpen = !security || security === "OPEN";
+    return (
+      <span className="text-muted text-xs italic">
+        {looksOpen ? "— open / enterprise" : "— no password recovered"}
+      </span>
+    );
   }
   return (
     <span className="flex items-center gap-2">
@@ -333,14 +380,26 @@ function CollectorWifiSection({ caseId }: { caseId: string }) {
 
 export function WifiView({ caseId }: { caseId: string }) {
   const [networks, setNetworks] = useState<WifiNetwork[] | null>(null);
+  const [report, setReport] = useState<WifiReport | null>(null);
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let alive = true;
     api
       .dataset<WifiNetwork[]>(caseId, "wifi")
-      .then(setNetworks)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+      .then((d) => alive && setNetworks(d))
+      .catch((e) => alive && setError(e instanceof Error ? e.message : String(e)));
+    // Missing/older cases never wrote this report — default to {} rather than
+    // null so the empty state below has a defined (if unknown) root_ok/files_found
+    // to branch on instead of hanging in "loading" forever.
+    api
+      .dataset<WifiReport>(caseId, "wifi_report")
+      .then((d) => alive && setReport(d ?? {}))
+      .catch(() => alive && setReport({}));
+    return () => {
+      alive = false;
+    };
   }, [caseId]);
 
   // Hooks must run unconditionally on every render — computed here, before either
@@ -363,7 +422,7 @@ export function WifiView({ caseId }: { caseId: string }) {
     );
   }
 
-  if (networks === null) {
+  if (networks === null || report === null) {
     return (
       <div className="p-8 text-muted text-sm animate-pulse">
         Loading Wi-Fi credentials…
@@ -372,6 +431,8 @@ export function WifiView({ caseId }: { caseId: string }) {
   }
 
   const withPassword = networks.filter((n) => n.password).length;
+  const unreadableCount = networks.filter((n) => n.password_unreadable).length;
+  const openCount = networks.length - withPassword - unreadableCount;
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -386,7 +447,9 @@ export function WifiView({ caseId }: { caseId: string }) {
         <p className="text-sm text-muted">
           Stored Wi-Fi credentials recovered from the device's system
           configuration file. No active cracking was performed — passwords are
-          reproduced verbatim from the OS's plaintext storage.
+          reproduced verbatim from the OS's storage. From roughly Android 10+
+          that storage is sometimes Keystore-encrypted; those entries are
+          flagged below, never shown as an open network.
         </p>
       </div>
 
@@ -401,31 +464,70 @@ export function WifiView({ caseId }: { caseId: string }) {
       </div>
 
       {networks.length === 0 ? (
-        /* Empty state */
+        /* Empty state — three distinct causes, never collapsed into one guess. */
         <div className="card p-10 text-center text-muted">
-          <div className="text-4xl mb-3 opacity-40">
-            <Wifi className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+          <div className="text-4xl mb-3 opacity-40 flex justify-center">
+            {report.root_ok ? (
+              <Wifi className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+            ) : (
+              <Lock className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+            )}
           </div>
-          <div className="font-medium mb-1">No Wi-Fi credentials recovered</div>
-          <div className="text-sm">
-            Enable <strong>Tier-2 Wi-Fi Credentials</strong> on the next
-            acquisition, or the device may have no saved networks.
+          <div className="font-medium mb-1 text-ink">
+            {!report.root_ok
+              ? "Not acquired — root required"
+              : !report.files_found
+                ? "No Wi-Fi config store found — root available"
+                : "Config store read — no saved networks present"}
           </div>
+          <p className="text-sm leading-relaxed max-w-lg mx-auto">
+            {!report.root_ok ? (
+              <>
+                Root was not available on this acquisition, so{" "}
+                <code className="font-mono">/data/misc/wifi/</code> was never
+                opened. This is an <strong>un-acquired</strong> artefact, not a
+                finding that the device had no saved networks — re-acquire
+                with <strong>Tier 2 (root)</strong> to establish that.
+              </>
+            ) : !report.files_found ? (
+              <>
+                Root was available, but no Wi-Fi config store was found at any
+                known Android-version path. Treat this as{" "}
+                <strong>unknown</strong>: it can mean a wiped/reset device, an
+                OEM path this build doesn't yet probe, or the partition still
+                being locked by file-based encryption — not necessarily zero
+                saved networks.
+              </>
+            ) : (
+              <>
+                The device's Wi-Fi config store was found and read
+                successfully, and it held no saved networks at acquisition
+                time. Networks removed before seizure leave no entry here.
+              </>
+            )}
+          </p>
         </div>
       ) : (
         <>
           {/* Summary bar */}
           <div className="flex flex-wrap gap-3 mb-4">
-            {[
-              { label: "Total networks", value: networks.length },
-              { label: "With password", value: withPassword },
-              { label: "Open / enterprise", value: networks.length - withPassword },
-            ].map(({ label, value }) => (
+            {(
+              [
+                { label: "Total networks", value: networks.length },
+                { label: "With password", value: withPassword },
+                { label: "Open / enterprise", value: openCount },
+                ...(unreadableCount > 0
+                  ? [{ label: "Password unreadable (encrypted)", value: unreadableCount, warn: true }]
+                  : []),
+              ] as { label: string; value: number; warn?: boolean }[]
+            ).map(({ label, value, warn }) => (
               <div
                 key={label}
                 className="card px-4 py-2 flex flex-col items-center min-w-[110px]"
               >
-                <span className="text-xl font-bold text-accent">{value}</span>
+                <span className={`text-xl font-bold ${warn ? "text-warn" : "text-accent"}`}>
+                  {value}
+                </span>
                 <span className="text-xs text-muted mt-0.5">{label}</span>
               </div>
             ))}
@@ -446,6 +548,7 @@ export function WifiView({ caseId }: { caseId: string }) {
             <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="border-b border-line text-xs uppercase tracking-wider text-muted">
+                  <th className="text-left py-2 px-3 font-semibold">Type</th>
                   <SortTh className="text-left py-2 px-3 font-semibold" label="SSID" sortKeyName="ssid" getValue={(n) => n.ssid} sort={sort} />
                   <SortTh className="text-left py-2 px-3 font-semibold" label="Security" sortKeyName="security" getValue={(n) => n.security} sort={sort} />
                   <SortTh className="text-left py-2 px-3 font-semibold" label="Password" sortKeyName="password" getValue={(n) => n.password} sort={sort} />
@@ -456,7 +559,7 @@ export function WifiView({ caseId }: { caseId: string }) {
               <tbody>
                 {sort.sorted.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="text-center py-8 text-muted text-xs">
+                    <td colSpan={6} className="text-center py-8 text-muted text-xs">
                       No networks match your filter.
                     </td>
                   </tr>
@@ -466,18 +569,33 @@ export function WifiView({ caseId }: { caseId: string }) {
                       key={i}
                       className="border-b border-line/50 hover:bg-panel-2/50 transition-colors"
                     >
+                      <td className="py-2.5 px-3">
+                        <WifiTypeBadge isSoftap={n.is_softap} />
+                      </td>
                       <td className="py-2.5 px-3 font-medium">{n.ssid || <span className="text-muted italic">—</span>}</td>
                       <td className="py-2.5 px-3">
                         <SecurityBadge value={n.security} />
                       </td>
                       <td className="py-2.5 px-3">
-                        <PasswordCell password={n.password} />
+                        <PasswordCell
+                          password={n.password}
+                          passwordUnreadable={n.password_unreadable}
+                          security={n.security}
+                        />
                       </td>
                       <td className="py-2.5 px-3">
                         <ConfidenceBadge value={n.confidence} />
                       </td>
-                      <td className="py-2.5 px-3 font-mono text-xs text-muted">
+                      <td
+                        className="py-2.5 px-3 font-mono text-xs text-muted"
+                        title={n.caveats?.length ? n.caveats.join(" ") : undefined}
+                      >
                         {n.source_file}
+                        {!!n.caveats?.length && (
+                          <span className="ml-1 text-warn" title={n.caveats.join(" ")}>
+                            ⚠
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))

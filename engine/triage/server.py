@@ -1553,6 +1553,7 @@ def create_app(cases_root: Path = CASES_ROOT):
             "encryption_state",
             "device_state",
             "wifi_live",
+            "wifi_report",
             "bluetooth_bond_report",
             "bluetooth_transfer_summary",
             "signal",

@@ -1014,6 +1014,30 @@ export interface WifiNetwork {
   timestamp: string | null;
   confidence: Confidence;
   source_file: string;
+  /** This device's OWN hotspot config (WifiConfigStoreSoftAp.xml), not a network it joined. */
+  is_softap?: boolean;
+  /**
+   * True when `password` is blank because the store held it in a form this
+   * parser can't decode (Keystore-encrypted PSK, common from Android 10+) —
+   * NOT because the network is open. Never render this as "open / enterprise".
+   */
+  password_unreadable?: boolean;
+  caveats?: string[];
+}
+
+/**
+ * The "why" behind an empty/partial Tier-2 Wi-Fi credential result — written
+ * alongside the `wifi` dataset so the dashboard never has to guess between
+ * root-missing, no-config-store-found, and read-but-genuinely-empty.
+ */
+export interface WifiReport {
+  root_ok?: boolean;
+  files_found?: boolean;
+  network_count?: number;
+  with_password_count?: number;
+  password_unreadable_count?: number;
+  softap_count?: number;
+  caveats?: string[];
 }
 
 // --- MediaStore trash (deleted / pending media, non-root recovery) ---------
