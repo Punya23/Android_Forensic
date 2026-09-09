@@ -915,6 +915,7 @@ def run_acquisition(
                 bluetooth_devices=collector_bluetooth,
                 skip_paths=tier1_skip_paths,
                 oem_quirks=device.oem_quirks,
+                socketio=socketio,
             )
         else:
             case.log(
@@ -923,13 +924,17 @@ def run_acquisition(
                 result="skipped",
                 tier=Tier.TIER1.value,
             )
+            emit_acq_event(case, socketio, source="device", tier="tier1",
+                           action="Skipped — mock source has no real device to run the "
+                                  "Collector helper on", status="skipped",
+                           skip_reason="mock/synthetic source — no physical device attached")
 
     # -- Tier 1 (optional): helper APK contacts dump --------------------------
     if cfg.tier1_contacts:
         progress("tier1", 0.05, "Running Tier-1 helper (contacts)")
         if isinstance(source, RealDeviceSource):
             tier1_contacts, tier1_skip_paths = _run_tier1_contacts_helper(
-                source, case, staging, oem_quirks=device.oem_quirks
+                source, case, staging, oem_quirks=device.oem_quirks, socketio=socketio
             )
             contacts.extend(tier1_contacts)
         else:
@@ -939,12 +944,16 @@ def run_acquisition(
                 result="skipped",
                 tier=Tier.TIER1.value,
             )
+            emit_acq_event(case, socketio, source="contacts", tier="tier1",
+                           action="Skipped — mock source has no real device to run the "
+                                  "Collector helper on", status="skipped",
+                           skip_reason="mock/synthetic source — no physical device attached")
             # -- Tier 1 (optional): helper APK call-log dump ---------------------------
     if cfg.tier1_calllog:
         progress("tier1", 0.051, "Running Tier-1 helper (call-log)")
         if isinstance(source, RealDeviceSource):
             tier1_calls, tier1_calllog_skip_paths = _run_tier1_calllog_helper(
-                source, case, staging, oem_quirks=device.oem_quirks
+                source, case, staging, oem_quirks=device.oem_quirks, socketio=socketio
             )
             calls.extend(tier1_calls)
             tier1_skip_paths.update(tier1_calllog_skip_paths)
@@ -955,13 +964,17 @@ def run_acquisition(
                 result="skipped",
                 tier=Tier.TIER1.value,
             )
+            emit_acq_event(case, socketio, source="calls", tier="tier1",
+                           action="Skipped — mock source has no real device to run the "
+                                  "Collector helper on", status="skipped",
+                           skip_reason="mock/synthetic source — no physical device attached")
 
     # -- Tier 1 (optional): helper APK SMS dump --------------------------------
     if cfg.tier1_sms:
         progress("tier1", 0.052, "Running Tier-1 helper (SMS)")
         if isinstance(source, RealDeviceSource):
             tier1_sms_msgs, tier1_sms_skip_paths = _run_tier1_sms_helper(
-                source, case, staging, oem_quirks=device.oem_quirks
+                source, case, staging, oem_quirks=device.oem_quirks, socketio=socketio
             )
             app_messages.extend(tier1_sms_msgs)
             tier1_skip_paths.update(tier1_sms_skip_paths)
@@ -972,6 +985,10 @@ def run_acquisition(
                 result="skipped",
                 tier=Tier.TIER1.value,
             )
+            emit_acq_event(case, socketio, source="sms", tier="tier1",
+                           action="Skipped — mock source has no real device to run the "
+                                  "Collector helper on", status="skipped",
+                           skip_reason="mock/synthetic source — no physical device attached")
 
     # -- Tier 0: shared-storage pull ----------------------------------------
     progress("enumerate", 0.06, "Enumerating shared storage")
@@ -6515,6 +6532,62 @@ _TIER1_INTERACTIVE_QUIRKS = {
     "usb_debug_timeout",            # Honor — ADB authorization itself may need re-doing
 }
 
+# Maps a Collector-APK registry key (MainActivity.kt's `registry` map / `CollectionResult.name`)
+# to the acq_activity.py source key used for the dashboard's live activity feed, and to a
+# human-readable label for the event sentence. Kept separate from SOURCE_ICON_MAP itself so a
+# renamed collector only needs updating in one place.
+_TIER1_COLLECTOR_SOURCE: dict[str, str] = {
+    "contacts": "contacts", "calllog": "calls", "sms": "sms",
+    "calendar": "calendar", "accounts": "accounts", "apps": "apps",
+    "usage": "usage", "media": "media", "recordings": "recordings",
+    "notifications": "notifications", "location": "location",
+    "wifi": "wifi", "bluetooth": "bluetooth", "device": "device",
+}
+_TIER1_COLLECTOR_LABEL: dict[str, str] = {
+    "contacts": "Contacts", "calllog": "Call log", "sms": "SMS",
+    "calendar": "Calendar", "accounts": "Accounts", "apps": "Installed apps",
+    "usage": "App usage", "media": "Media inventory", "recordings": "Call recordings",
+    "notifications": "Notification history", "location": "Location",
+    "wifi": "Wi-Fi", "bluetooth": "Bluetooth", "device": "Device info",
+}
+
+
+def _emit_tier1_collector_events(case: Case, socketio: Any, collectors: list[dict]) -> None:
+    """Turn one collector_manifest.json ``collectors`` list into live dashboard events.
+
+    This is the device's own self-report (Kotlin ``CollectionResult.summary()``) — the same
+    authoritative source the report/audit trail already uses — so every row the helper actually
+    ran is represented here, including ones the engine doesn't yet parse into a typed dataset
+    (e.g. ``recordings``/``notifications``). Showing "collected but not yet a dashboard view" is
+    more honest than showing nothing for it.
+    """
+    for row in collectors:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("collector") or "")
+        status_raw = str(row.get("status") or "")
+        count = row.get("count")
+        error = row.get("error")
+        src = _TIER1_COLLECTOR_SOURCE.get(name, "unknown")
+        label = _TIER1_COLLECTOR_LABEL.get(name, name or "Unknown collector")
+        item_count = count if isinstance(count, int) else None
+        if status_raw in ("ok", "empty"):
+            emit_acq_event(case, socketio, source=src, tier="tier1",
+                           action=f"{label} collected from device", status="completed",
+                           item_count=item_count)
+        elif status_raw == "denied":
+            emit_acq_event(case, socketio, source=src, tier="tier1",
+                           action=f"{label} — permission denied on device", status="skipped",
+                           skip_reason=error or "permission not granted")
+        elif status_raw == "unsupported":
+            emit_acq_event(case, socketio, source=src, tier="tier1",
+                           action=f"{label} — not supported on this device", status="skipped",
+                           skip_reason=error or "unsupported on this Android version/OEM build")
+        else:  # "error" or an unrecognized status string
+            emit_acq_event(case, socketio, source=src, tier="tier1",
+                           action=f"{label} — collector error", status="failed",
+                           skip_reason=error or "unknown error")
+
 
 def _wait_for_tier1_manifest(
     source: RealDeviceSource,
@@ -6567,7 +6640,8 @@ def _wait_for_tier1_manifest(
 
 
 def _run_tier1_calllog_helper(
-    source: RealDeviceSource, case: Case, staging: Path, *, oem_quirks: Optional[list[str]] = None
+    source: RealDeviceSource, case: Case, staging: Path, *,
+    oem_quirks: Optional[list[str]] = None, socketio: Any = None,
 ) -> tuple[list, set[str]]:
     """Run helper-APK call-log workflow and ingest calllog.json as Tier-1 evidence."""
     package = "io.erakshak.collector"
@@ -6623,8 +6697,13 @@ def _run_tier1_calllog_helper(
     if dump.ok:
         _tier1_ledger().record_device_file(remote_calllog)
     if not dump.ok:
+        emit_acq_event(case, socketio, source="calls", tier="tier1",
+                       action="Failed to launch Collector helper activity", status="failed",
+                       skip_reason=dump.stderr or "am start failed")
         _best_effort_uninstall(source, case, package)
         return [], set()
+    emit_acq_event(case, socketio, source="calls", tier="tier1",
+                   action="Collector helper running on device — call log", status="accessing")
 
     _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks)
 
@@ -6638,6 +6717,9 @@ def _run_tier1_calllog_helper(
         alters_device=False,
     )
     if not pull.ok or not local_calllog.exists():
+        emit_acq_event(case, socketio, source="calls", tier="tier1",
+                       action="Call log — not produced by helper", status="skipped",
+                       skip_reason="calllog.json not found on device (denied or timed out)")
         _best_effort_uninstall(source, case, package)
         return [], set()
 
@@ -6657,13 +6739,17 @@ def _run_tier1_calllog_helper(
         tier=Tier.TIER1.value,
         alters_device=False,
     )
+    emit_acq_event(case, socketio, source="calls", tier="tier1",
+                   action="Call log collected from device", status="completed",
+                   item_count=len(calls))
 
     _best_effort_uninstall(source, case, package)
     return calls, {remote_calllog}
 
 
 def _run_tier1_sms_helper(
-    source: RealDeviceSource, case: Case, staging: Path, *, oem_quirks: Optional[list[str]] = None
+    source: RealDeviceSource, case: Case, staging: Path, *,
+    oem_quirks: Optional[list[str]] = None, socketio: Any = None,
 ) -> tuple[list, set[str]]:
     """Run helper-APK SMS workflow and ingest sms.json as Tier-1 evidence."""
     package = "io.erakshak.collector"
@@ -6716,8 +6802,13 @@ def _run_tier1_sms_helper(
     if dump.ok:
         _tier1_ledger().record_device_file(remote_sms)
     if not dump.ok:
+        emit_acq_event(case, socketio, source="sms", tier="tier1",
+                       action="Failed to launch Collector helper activity", status="failed",
+                       skip_reason=dump.stderr or "am start failed")
         _best_effort_uninstall(source, case, package)
         return [], set()
+    emit_acq_event(case, socketio, source="sms", tier="tier1",
+                   action="Collector helper running on device — SMS", status="accessing")
 
     _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks)
 
@@ -6731,6 +6822,9 @@ def _run_tier1_sms_helper(
         alters_device=False,
     )
     if not pull.ok or not local_sms.exists():
+        emit_acq_event(case, socketio, source="sms", tier="tier1",
+                       action="SMS — not produced by helper", status="skipped",
+                       skip_reason="sms.json not found on device (denied or timed out)")
         _best_effort_uninstall(source, case, package)
         return [], set()
 
@@ -6750,13 +6844,17 @@ def _run_tier1_sms_helper(
         tier=Tier.TIER1.value,
         alters_device=False,
     )
+    emit_acq_event(case, socketio, source="sms", tier="tier1",
+                   action="SMS collected from device", status="completed",
+                   item_count=len(sms_msgs))
 
     _best_effort_uninstall(source, case, package)
     return sms_msgs, {remote_sms}
 
 
 def _run_tier1_contacts_helper(
-    source: RealDeviceSource, case: Case, staging: Path, *, oem_quirks: Optional[list[str]] = None
+    source: RealDeviceSource, case: Case, staging: Path, *,
+    oem_quirks: Optional[list[str]] = None, socketio: Any = None,
 ) -> tuple[list, set[str]]:
     """Run helper-APK contacts workflow and ingest contacts.json as Tier-1 evidence."""
     package = "io.erakshak.collector"
@@ -6809,8 +6907,13 @@ def _run_tier1_contacts_helper(
     if dump.ok:
         _tier1_ledger().record_device_file(remote_contacts)
     if not dump.ok:
+        emit_acq_event(case, socketio, source="contacts", tier="tier1",
+                       action="Failed to launch Collector helper activity", status="failed",
+                       skip_reason=dump.stderr or "am start failed")
         _best_effort_uninstall(source, case, package)
         return [], set()
+    emit_acq_event(case, socketio, source="contacts", tier="tier1",
+                   action="Collector helper running on device — contacts", status="accessing")
 
     _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks)
 
@@ -6824,6 +6927,9 @@ def _run_tier1_contacts_helper(
         alters_device=False,
     )
     if not pull.ok or not local_contacts.exists():
+        emit_acq_event(case, socketio, source="contacts", tier="tier1",
+                       action="Contacts — not produced by helper", status="skipped",
+                       skip_reason="contacts.json not found on device (denied or timed out)")
         _best_effort_uninstall(source, case, package)
         return [], set()
 
@@ -6843,6 +6949,9 @@ def _run_tier1_contacts_helper(
         tier=Tier.TIER1.value,
         alters_device=False,
     )
+    emit_acq_event(case, socketio, source="contacts", tier="tier1",
+                   action="Contacts collected from device", status="completed",
+                   item_count=len(contacts))
 
     _best_effort_uninstall(source, case, package)
     return contacts, {remote_contacts}
@@ -6864,6 +6973,7 @@ def _run_tier1_collect_all(
     bluetooth_devices: list,
     skip_paths: set[str],
     oem_quirks: Optional[list[str]] = None,
+    socketio: Any = None,
 ) -> None:
     """Drive the Collector helper's ``dump_all`` action and ingest every output.
 
@@ -6960,8 +7070,14 @@ def _run_tier1_collect_all(
         ):
             _tier1_ledger().record_device_file(f"/sdcard/Download/{_out}")
     if not dump.ok:
+        emit_acq_event(case, socketio, source="device", tier="tier1",
+                       action="Failed to launch Collector helper activity", status="failed",
+                       skip_reason=dump.stderr or "am start failed")
         _best_effort_uninstall(source, case, package)
         return
+    emit_acq_event(case, socketio, source="device", tier="tier1",
+                   action="Collector helper running on device — full collection (14 collectors)",
+                   status="accessing")
     # MediaStore enumeration + app inventory take a few seconds even on a clean stock
     # build; on an OEM with an interactive quirk (a permission dialog, a lock-screen PIN)
     # the examiner needs real time to clear it. Poll for the manifest rather than guess.
@@ -7022,6 +7138,7 @@ def _run_tier1_collect_all(
     # dataset interpretable — it records, per collector, whether the run was ok/empty/denied and
     # the grant state of every permission requested. Without it "0 rows" and "refused" look the
     # same in the report, which the honesty model forbids.
+    manifest_events_emitted = False
     for meta_file in ("collector_manifest.json", "device_extra.json"):
         remote = f"/sdcard/Download/{meta_file}"
         local = staging / f"tier1_{meta_file}"
@@ -7054,6 +7171,13 @@ def _run_tier1_collect_all(
                                 tier=Tier.TIER1.value,
                                 artifact_id=rec.artifact_id,
                             )
+                        collectors = manifest.get("collectors") or []
+                        if collectors:
+                            emit_acq_event(case, socketio, source="device", tier="tier1",
+                                           action="Collector finished — per-artifact results below",
+                                           status="completed")
+                            _emit_tier1_collector_events(case, socketio, collectors)
+                            manifest_events_emitted = True
                 except Exception as exc:
                     case.log(
                         "tier1.helper.manifest",
@@ -7061,6 +7185,15 @@ def _run_tier1_collect_all(
                         result="error",
                         tier=Tier.TIER1.value,
                     )
+
+    if not manifest_events_emitted:
+        # Resolve the earlier "accessing" placeholder either way — an indefinitely-pulsing
+        # row would misrepresent a timed-out/unparseable run as still in progress.
+        emit_acq_event(case, socketio, source="device", tier="tier1",
+                       action="Collector manifest not received — device may not have finished "
+                              "in time, or the write failed; whatever files did land were still "
+                              "pulled and parsed above", status="failed",
+                       skip_reason="collector_manifest.json not produced within the wait window")
 
     _best_effort_uninstall(source, case, package)
 

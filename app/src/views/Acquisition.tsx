@@ -121,6 +121,9 @@ export function AcquisitionView({
     completed_count?: number;
     saved_at?: string;
   } | null>(null);
+  const [watchingDevice, setWatchingDevice] = useState(false);
+  const devicePollRef = useRef<number | null>(null);
+  const autoReassertedRef = useRef<string | null>(null);
 
   // Root vs non-root are two different acquisitions, not one acquisition with some
   // boxes greyed out. A retail phone with no administrator shell is the expected case,
@@ -268,29 +271,76 @@ export function AcquisitionView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.kind, target?.id]);
 
-  async function runDeviceCheck(serial?: string, brand?: string) {
-    setCheckingDevice(true);
-    setReassertMsg(null);
+  // Keep watching the selected real device while it isn't ready yet — the examiner
+  // completes the on-phone Developer-Options/USB-debugging steps at their own pace, and
+  // this notices the instant ADB sees it instead of requiring a manual "Re-check" click.
+  // Never fires during an acquisition (device state won't change mid-run) or once ready.
+  useEffect(() => {
+    const shouldWatch = target?.kind === "real" && !!deviceCheck && !deviceCheck.ready && !running;
+    setWatchingDevice(shouldWatch);
+    if (!shouldWatch) {
+      if (devicePollRef.current) {
+        window.clearInterval(devicePollRef.current);
+        devicePollRef.current = null;
+      }
+      return;
+    }
+    devicePollRef.current = window.setInterval(
+      () => runDeviceCheck(target!.id, undefined, { silent: true }),
+      3000
+    );
+    return () => {
+      if (devicePollRef.current) {
+        window.clearInterval(devicePollRef.current);
+        devicePollRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.kind, target?.id, deviceCheck?.ready, running]);
+
+  // The one step that IS safely automatable once ADB sees the device (see
+  // triage/preflight.py — a first-time enable still needs the examiner's own tap on the
+  // phone, on every brand): re-assert Developer Options the moment readiness is detected,
+  // so a MIUI-style silent flip-back is fixed without the examiner ever clicking the
+  // button themselves. Runs once per serial per session so it never fights a manual click.
+  useEffect(() => {
+    if (
+      target?.kind === "real" &&
+      deviceCheck?.ready &&
+      autoReassertedRef.current !== target.id
+    ) {
+      autoReassertedRef.current = target.id;
+      fixDeveloperOptions({ auto: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.kind, target?.id, deviceCheck?.ready]);
+
+  async function runDeviceCheck(serial?: string, brand?: string, opts?: { silent?: boolean }) {
+    if (!opts?.silent) {
+      setCheckingDevice(true);
+      setReassertMsg(null);
+    }
     try {
       const res = await api.checkDevice({ serial, brand: brand ?? manualBrand ?? undefined });
       setDeviceCheck(res);
     } catch {
-      setDeviceCheck(null);
+      if (!opts?.silent) setDeviceCheck(null);
     } finally {
-      setCheckingDevice(false);
+      if (!opts?.silent) setCheckingDevice(false);
     }
   }
 
-  async function fixDeveloperOptions() {
+  async function fixDeveloperOptions(opts?: { auto?: boolean }) {
     if (!target || target.kind !== "real") return;
     setReasserting(true);
     setReassertMsg(null);
     try {
       const res = await api.reassertDevOptions(target.id);
       const ok = res.development_settings_enabled.ok && res.adb_enabled.ok;
+      const prefix = opts?.auto ? "Auto-detected ready — " : "";
       setReassertMsg(
         ok
-          ? "Re-asserted — development_settings_enabled + adb_enabled set to 1."
+          ? `${prefix}Re-asserted — development_settings_enabled + adb_enabled set to 1.`
           : `Failed: ${res.development_settings_enabled.stderr || res.adb_enabled.stderr || "see engine log"}`
       );
     } catch (e) {
@@ -535,11 +585,25 @@ export function AcquisitionView({
       {target?.kind === "real" && (
         <div className="card p-4 mb-4">
           <div className="flex items-center justify-between mb-2">
-            <div className="label mb-0">Device readiness</div>
+            <div className="flex items-center gap-2">
+              <div className="label mb-0">Device readiness</div>
+              {watchingDevice && (
+                <span className="flex items-center gap-1 text-[10px] text-blue-400 font-semibold">
+                  <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
+                  WATCHING
+                </span>
+              )}
+            </div>
             <button className="btn-ghost text-xs" disabled={checkingDevice} onClick={() => runDeviceCheck(target.id)}>
               {checkingDevice ? "Checking…" : "Re-check"}
             </button>
           </div>
+          {watchingDevice && (
+            <p className="text-[11px] text-muted mb-2">
+              Watching for USB debugging to be authorised — this updates automatically, no
+              need to click Re-check.
+            </p>
+          )}
 
           {checkingDevice && !deviceCheck && <p className="text-xs text-muted">Checking ADB connection…</p>}
 
@@ -585,7 +649,7 @@ export function AcquisitionView({
                     </p>
                   )}
                   <div className="flex items-center gap-2 flex-wrap">
-                    <button className="btn-ghost text-xs" disabled={reasserting} onClick={fixDeveloperOptions}>
+                    <button className="btn-ghost text-xs" disabled={reasserting} onClick={() => fixDeveloperOptions()}>
                       {reasserting ? "Re-asserting…" : "Re-assert Developer Options"}
                     </button>
                     <span className="text-[11px] text-muted">
