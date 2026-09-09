@@ -1114,6 +1114,15 @@ export interface CapabilityState {
   requires: string;
   /** Acquisition flag that gates this stage, when one does. */
   flag: string;
+  /**
+   * True only when turning `flag` on and running the acquisition again would actually
+   * change this outcome. The engine decides it (`triage/capabilities.py`) because only
+   * the engine knows the whole picture: a Tier-2 flag left off on a handset that never
+   * gave up root is `not_collected` in neither spirit nor fact, and a missing case brief
+   * is a gap no re-acquisition closes. The UI reads this instead of re-deriving the
+   * distinction from `state`, so badge and engine cannot end up saying different things.
+   */
+  flag_actionable: boolean;
   count: number;
 }
 
@@ -1149,12 +1158,53 @@ export interface EmbeddingStatus {
   mode: string;
 }
 
+/** This workstation's RAM/CPU/GPU, plus the model that hardware earns it (engine:
+ * triage/intel/hardware.py `detect_hardware` + `recommend_model`). Best-effort —
+ * `recommended_model.model` is null below the minimum tier, meaning stay heuristic. */
+export interface HardwareInfo {
+  platform: string;
+  arch: string;
+  cpu_cores: number;
+  ram_gb: number | null;
+  gpu: string;
+  recommended_model: {
+    model: string | null;
+    note: string;
+    ram_gb: number | null;
+  };
+}
+
+/** A background Ollama install/model-pull kicked off because no local model was
+ * present — see `hardware.ensure_local_model`. `action: "none"` means nothing is
+ * in flight (already have a model, autoinstall disabled, or hardware too small). */
+export interface LlmProvisioning {
+  action: "installing" | "pulling" | "none";
+  model?: string;
+  hardware?: HardwareInfo;
+  install?: { installed: boolean; already_present: boolean; method: string; error: string };
+  reason?: string;
+}
+
+/** What the engine decided at start-up without an operator choice — see
+ * `llm.autodetect_and_configure`. Never overrides an explicit `SNAGR_LLM`. */
+export interface LlmAutodetect {
+  autodetected: boolean;
+  reason?: string;
+  provider?: string;
+  model?: string;
+  /** Present while a background model pull is in progress. */
+  provisioning?: LlmProvisioning;
+  hardware?: HardwareInfo;
+}
+
 export interface LlmStatus {
   configured: string;
   chat_model: string;
   providers: LlmProviderInfo[];
   embedding_models: string[];
   embedding: EmbeddingStatus;
+  hardware?: HardwareInfo;
+  autodetect?: LlmAutodetect;
 }
 
 // --- Deep investigation (engine: triage/intel/investigator.py) -------------
@@ -1186,6 +1236,43 @@ export interface InvestigationTrace {
   disclaimer: string;
 }
 
+// --- AI Evidence Summary (engine: triage/intel/ai_summary.py) --------------
+/** One artifact class the knowledge graph rates at/above the yield floor for this
+ * case's crime type — why a matched finding's category was allowed through. */
+export interface HighYieldArtifact {
+  artifact: string;
+  label: string;
+  blended: number;
+}
+
+/**
+ * Entirely model-authored narrative digest of this case's own `ai_findings`, scoped
+ * to findings that already matched a named person/keyword from the case brief AND sit
+ * in a high-yield artifact class for the crime type. Honestly empty (`generated:
+ * false` + `reason`) when there's no brief, no matches, or no reachable local model —
+ * never a fabricated summary. See `AiEvidenceSummary` in triage/intel/ai_summary.py.
+ */
+export interface AiEvidenceSummary {
+  generated: boolean;
+  provider: string;
+  model: string;
+  /** Back-end that was requested for this summary but was unreachable, if any. */
+  degraded_from: string;
+  crime_type: string;
+  crime_label: string;
+  /** Case-brief entities/keywords actually hit by at least one matched finding. */
+  relevant_entities: string[];
+  high_yield_artifacts: HighYieldArtifact[];
+  /** Ids into this case's own `ai_findings` — the only source material the model saw. */
+  matched_finding_ids: string[];
+  matched_count: number;
+  total_findings_considered: number;
+  narrative: string;
+  disclaimer: string;
+  /** Why `generated` is false — a normal, honest outcome, not an error. */
+  reason: string;
+}
+
 // --- Ask this case (engine: triage/intel/case_qa.py) -------------------------
 export interface Passage {
   id: string;
@@ -1195,6 +1282,33 @@ export interface Passage {
   timestamp: string | null;
   app: string;
   confidence: string;
+}
+
+// --- Entity cross-links (engine: triage/intel/entity_links.py) ---------------
+/**
+ * Every place one case-brief-named entity turns up across this case's own
+ * collected messages/calls/browser/locations/contacts — deterministic substring
+ * match, not identity resolution (see `disclaimer` on `EntityLinksResponse`, always
+ * present and never to be hidden). `occurrences` is capped for display; `truncated`
+ * says how many more exist beyond the cap, `occurrence_count` is always the true
+ * total either way.
+ */
+export interface EntityLink {
+  entity: string;
+  occurrence_count: number;
+  datasets: string[];
+  occurrences: Passage[];
+  truncated: number;
+}
+
+export interface EntityLinksResponse {
+  entities: EntityLink[];
+  entity_count: number;
+  passages_scanned: number;
+  /** Why `entities` is empty — a normal, honest outcome (no brief entities, or
+   * nothing was collected to search), never silently blank. */
+  reason: string;
+  disclaimer: string;
 }
 
 export interface AskCaseResponse {

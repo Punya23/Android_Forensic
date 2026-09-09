@@ -218,7 +218,7 @@ _QA_SYSTEM = (
 
 
 def _synthesize(provider: LLMProvider, question: str, passages: list[Passage]) -> Optional[str]:
-    if not getattr(provider, "available", False) or provider.name == "heuristic":
+    if not provider.is_usable():
         return None
     if not passages:
         return None

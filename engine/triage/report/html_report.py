@@ -306,6 +306,26 @@ def _location_trace_section(traces: list, summary: dict, anomalies: list) -> str
 
 
 _TOC_MARKER = "<!--__TOC_PLACEHOLDER__-->"
+
+# Fallback swatch for a confidence/severity tier this report does not recognise.
+# Deliberately neutral grey: an unknown tier must never inherit the colour of the
+# most-trusted or least-severe one.
+_UNKNOWN_COLORS = ("#5b6570", "#eceeec")
+
+
+def _tier_key(raw: Any) -> str:
+    """Normalise a confidence/severity tier for counting and colour lookup.
+
+    Case is folded because two spellings of one tier are one tier — left raw,
+    "critical" and "CRITICAL" become two dict keys that render as two identically
+    labelled legend rows in different colours. Anything missing, blank or
+    non-string becomes "unknown" rather than silently defaulting to the
+    highest-trust / lowest-severity bucket.
+    """
+    if not isinstance(raw, str):
+        return "unknown"
+    key = raw.strip().lower()
+    return key or "unknown"
 _H2_RE = re.compile(r"<h2>(.*?)</h2>", re.DOTALL)
 
 
@@ -539,28 +559,37 @@ def _overview_charts_section(
     """
     cards: list[str] = []
 
-    comp_svg = charts.bar_chart(composition, color="#7a2e12")
+    def _draw(fn: Any, *args: Any, **kwargs: Any) -> str:
+        """One bad dataset must cost at most its own chart, not the other three."""
+        try:
+            return fn(*args, **kwargs)
+        except Exception:  # pragma: no cover - defensive; a chart is never a gate
+            return ""
+
+    comp_svg = _draw(charts.bar_chart, composition, color="#7a2e12")
     if comp_svg:
         cards.append(f'<div class="chart-card"><h4>Artifact composition</h4>{comp_svg}</div>')
 
-    conf_svg = charts.donut_chart(confidence_segments)
+    conf_svg = _draw(charts.donut_chart, confidence_segments)
     if conf_svg:
         cards.append(
             '<div class="chart-card"><h4>Evidence confidence mix</h4>'
-            f'{conf_svg}<p class="chart-caption">Every message, call, recovered/carved row, '
+            f'{conf_svg}<p class="chart-caption">Counts every message, call, recovered/carved row '
             "and recovered chat/network artifact (Wi-Fi, Telegram, Instagram, Snapchat, "
-            "discovered chats, MediaStore trash) counted by confidence tier — recovered/carved "
-            "rows are never equivalent to live data, see each section's confidence badges. "
-            "Deletion-only findings are excluded here; they record that content is gone, not a "
-            "recovered value — see “Deletion detected” below. A row with a missing or "
-            "unrecognised tier is counted as UNKNOWN, never assumed live.</p></div>"
+            "discovered chats, MediaStore trash) by confidence tier; recovered/carved rows are "
+            "never equivalent to live data — see each section's badges. Deletion-only findings "
+            "are excluded: they record that content is gone, not a recovered value (see "
+            "“Deletion detected” below). A missing or unrecognised tier counts as UNKNOWN, "
+            "never as live.</p></div>"
         )
 
-    sev_svg = charts.donut_chart(severity_segments)
+    sev_svg = _draw(charts.donut_chart, severity_segments)
     if sev_svg:
         cards.append(f'<div class="chart-card"><h4>Flags by severity</h4>{sev_svg}</div>')
 
-    timeline_svg = charts.timeline_chart(timeline_buckets)
+    # Rendered full-width, so its viewBox is sized to match — an SVG coordinate
+    # plot scaled up would print its axis type larger than the rest of the report.
+    timeline_svg = _draw(charts.timeline_chart, timeline_buckets, width=980)
     if timeline_svg:
         cards.append(
             '<div class="chart-card" style="grid-column:1/-1">'
@@ -573,6 +602,158 @@ def _overview_charts_section(
     if not cards:
         return ""
     return f'<div class="charts">{"".join(cards)}</div>'
+
+
+def _ai_case_report_section(
+    case_profile: dict,
+    ai_evidence_summary: dict,
+    investigation_trace: dict,
+    entity_links: dict,
+) -> str:
+    """The enriched, prose-first read of the case — what an officer opening this
+    report is meant to read first. Everything here is either the model's own
+    already-cited narrative (:mod:`~triage.intel.ai_summary`, grounded to finding ids
+    that are themselves listed, unfiltered, in the raw Case Intelligence leads table
+    below) or a deterministic, disclosed pass on top of the same findings
+    (:mod:`~triage.intel.investigator`, :mod:`~triage.intel.entity_links`). Nothing in
+    this section is a new, unauditable claim — see each sub-block's own disclaimer.
+
+    Every one of the three inputs can honestly be empty (no case brief, no model
+    reachable, nothing matched) — this function renders the *reason* in each case
+    rather than a blank space that reads as "nothing was found".
+    """
+    if not isinstance(case_profile, dict) or not case_profile.get("crime_type"):
+        return ""
+
+    crime_label = case_profile.get("crime_label", "General / Unspecified")
+
+    # --- AI Evidence Summary: the model-authored narrative ---------------------
+    if ai_evidence_summary.get("generated"):
+        summary_html = (
+            f'<div style="white-space:pre-wrap;line-height:1.55;font-size:14px;'
+            f'color:#222">{_esc(ai_evidence_summary.get("narrative", ""))}</div>'
+            f'<p style="font-size:11px;color:#777;margin:10px 0 0">'
+            f'{_esc(ai_evidence_summary.get("disclaimer", ""))}</p>'
+        )
+    else:
+        reason = ai_evidence_summary.get("reason") or (
+            "AI evidence summary was not generated for this case (the summarise "
+            "step was not run)."
+        )
+        summary_html = (
+            f'<p style="color:#a6741a;font-size:13px;background:#f6ecd4;'
+            f'border:1px solid #d9c07a;border-radius:4px;padding:8px 12px">'
+            f"No AI-authored narrative available: {_esc(reason)}. The ranked leads "
+            "and full raw evidence below are unaffected — only this prose summary "
+            "could not be written.</p>"
+        )
+
+    # --- Deep investigation: hypotheses + cross-dataset correlations -----------
+    hyp_rows = ""
+    for h in investigation_trace.get("hypotheses", []) or []:
+        status = h.get("status", "pending")
+        status_col = {"answered": "#1c7d3f", "blocked": "#a6741a", "pending": "#666"}
+        hyp_rows += (
+            f'<tr><td style="font-size:12px">{_esc(h.get("question"))}</td>'
+            f'<td><span style="color:{status_col.get(status, "#666")};font-weight:700;'
+            f'text-transform:uppercase;font-size:11px">{_esc(status)}</span></td>'
+            f'<td style="font-size:12px;color:#444">{_esc(h.get("detail") or "—")}</td></tr>'
+        )
+    linked_rows = ""
+    for lf in investigation_trace.get("linked_findings", []) or []:
+        linked_rows += (
+            f'<tr><td style="font-size:11px;font-family:monospace">{_esc(lf.get("left_ref"))} '
+            f'&harr; {_esc(lf.get("right_ref"))}</td>'
+            f'<td style="font-size:12px">{_esc(lf.get("rationale"))}</td>'
+            f'<td style="font-size:11px;color:#666">{_esc(lf.get("gap_seconds"))}s gap</td></tr>'
+        )
+    investigation_narrative = investigation_trace.get("narrative", "")
+    investigation_html = ""
+    if hyp_rows or investigation_narrative:
+        investigation_html = (
+            '<div style="margin-top:16px;border-top:1px dashed #ccd;padding-top:12px">'
+            '<div style="font-size:14px;font-weight:700;color:#334;margin-bottom:6px">'
+            "Deep investigation</div>"
+            + (
+                f'<div style="white-space:pre-wrap;font-size:13px;color:#333;'
+                f'margin-bottom:8px">{_esc(investigation_narrative)}</div>'
+                if investigation_narrative
+                else ""
+            )
+            + (
+                '<table class="tbl" style="width:100%;border-collapse:collapse">'
+                "<thead><tr><th>Question</th><th>Status</th><th>Detail</th></tr></thead>"
+                f"<tbody>{hyp_rows}</tbody></table>"
+                if hyp_rows
+                else ""
+            )
+            + (
+                '<div style="font-size:12px;font-weight:700;color:#334;margin:10px 0 4px">'
+                "Cross-dataset correlations</div>"
+                '<table class="tbl" style="width:100%;border-collapse:collapse">'
+                "<thead><tr><th>Findings</th><th>Why linked</th><th>Time gap</th></tr></thead>"
+                f"<tbody>{linked_rows}</tbody></table>"
+                if linked_rows
+                else ""
+            )
+            + f'<p style="font-size:11px;color:#777;margin:10px 0 0">'
+            f'{_esc(investigation_trace.get("disclaimer", ""))}</p></div>'
+        )
+
+    # --- Entity cross-links: wherever a case-brief name is found ---------------
+    ent_rows = ""
+    for e in entity_links.get("entities", []) or []:
+        datasets = ", ".join(e.get("datasets") or []) or "—"
+        truncated = e.get("truncated") or 0
+        count_str = f"{e.get('occurrence_count')}"
+        if truncated:
+            count_str += f" (+{truncated} more not listed)"
+        ent_rows += (
+            f'<tr><td style="font-size:12px;font-weight:600">{_esc(e.get("entity"))}</td>'
+            f'<td style="font-size:11px;color:#666">{_esc(datasets)}</td>'
+            f'<td style="font-size:12px;text-align:right">{_esc(count_str)}</td></tr>'
+        )
+    entity_html = ""
+    if entity_links.get("entities") or entity_links.get("reason"):
+        if ent_rows:
+            body = (
+                '<table class="tbl" style="width:100%;border-collapse:collapse">'
+                "<thead><tr><th>Named in case brief</th><th>Found in datasets</th>"
+                "<th style=\"text-align:right\">Occurrences</th></tr></thead>"
+                f"<tbody>{ent_rows}</tbody></table>"
+            )
+        else:
+            body = (
+                f'<p style="color:#999;font-size:12px">'
+                f'{_esc(entity_links.get("reason", "No cross-links to show."))}</p>'
+            )
+        entity_html = (
+            '<div style="margin-top:16px;border-top:1px dashed #ccd;padding-top:12px">'
+            '<div style="font-size:14px;font-weight:700;color:#334;margin-bottom:6px">'
+            "Entity cross-links — wherever a named party turns up</div>"
+            f"{body}"
+            f'<p style="font-size:11px;color:#777;margin:10px 0 0">'
+            f'{_esc(entity_links.get("disclaimer", ""))}</p></div>'
+        )
+
+    return f"""
+    <h2>AI Case Report</h2>
+    <p class="note">
+      Enriched, case-brief-driven read of this device's evidence for {_esc(crime_label)}.
+      Every statement below cites a finding id (e.g. <code>F-MSG-0007</code>) that is
+      also listed, unfiltered, in <a href="#raw-evidence-data">Raw Evidence Data</a>
+      below — this section adds no evidence of its own, only prose and correlation on
+      top of what is already there. It is an investigative aid, not a certified
+      conclusion, and this tool has never been independently validated.
+    </p>
+    <div style="border:1px solid #556;border-radius:6px;padding:14px 18px;margin-bottom:22px;background:#fafaff">
+      <div style="font-size:16px;font-weight:700;color:#334;margin-bottom:8px">
+        &#10024; Evidence summary
+      </div>
+      {summary_html}
+      {investigation_html}
+      {entity_html}
+    </div>"""
 
 
 def generate_report(case_dir: str | Path) -> Path:
@@ -620,6 +801,9 @@ def generate_report(case_dir: str | Path) -> Path:
     notable_apps = [a for a in apps if isinstance(a, dict) and a.get("notable")]
     case_profile = case.read_derived("case_profile") or {}
     ai_findings = case.read_derived("ai_findings") or {}
+    investigation_trace = case.read_derived("investigation_trace") or {}
+    ai_evidence_summary = case.read_derived("ai_evidence_summary") or {}
+    entity_links = case.read_derived("entity_links") or {}
     collect_plan = case.read_derived("collection_plan") or {}
     case_learning = case.read_derived("case_learning") or {}
     wifi_networks = case.read_derived("wifi") or []
@@ -668,6 +852,22 @@ def generate_report(case_dir: str | Path) -> Path:
 
     # Triage disclaimer banner
     parts.append(f'<div class="banner">{_esc(ACQUISITION_DISCLAIMER)}</div>')
+
+    # Two ways to read this one document: the enriched narrative, or the complete
+    # unfiltered dataset it is drawn from. Plain anchor links, not a JS/CSS
+    # show-hide toggle — a printed or PDF-exported copy of this report must never
+    # have a section silently disappear because of which view was selected on
+    # screen; both stay fully present, this is just where to jump.
+    if isinstance(case_profile, dict) and case_profile.get("crime_type"):
+        parts.append(
+            '<div style="display:flex;gap:10px;margin-bottom:18px">'
+            '<a href="#ai-case-report" style="flex:1;text-align:center;padding:10px;'
+            'border-radius:6px;background:#334;color:#fff;text-decoration:none;'
+            'font-weight:700;font-size:13px">&#128203; AI Case Report</a>'
+            '<a href="#raw-evidence-data" style="flex:1;text-align:center;padding:10px;'
+            'border-radius:6px;border:1px solid #556;color:#334;text-decoration:none;'
+            'font-weight:700;font-size:13px">&#128196; Raw Evidence Data</a></div>'
+        )
 
     # Table of contents — filled in by _inject_toc() once every section below has
     # been appended, so it never has to be kept in sync by hand.
@@ -719,6 +919,22 @@ def generate_report(case_dir: str | Path) -> Path:
         parts.append(
             "<h2>Encryption posture (FBE / AFU-BFU)</h2>"
             f'<p class="note" style="color:#a5322f">Could not render: {_esc(exc)}</p>'
+        )
+
+    # AI Case Report: the enriched, prose-first read — see _ai_case_report_section's
+    # own docstring for why this sits ahead of the deterministic leads table below
+    # rather than after it. Renders "" (appends nothing) on a briefless case.
+    try:
+        parts.append(
+            _ai_case_report_section(
+                case_profile, ai_evidence_summary, investigation_trace, entity_links
+            )
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        parts.append(
+            "<h2>AI Case Report</h2>"
+            f'<p class="note" style="color:#a5322f">Could not render: {_esc(exc)}. '
+            "The ranked leads and raw evidence below are unaffected.</p>"
         )
 
     # Case-intelligence: profile + AI leads (only if a case brief was provided)
@@ -909,6 +1125,23 @@ def generate_report(case_dir: str | Path) -> Path:
             {_esc(ai_findings.get("disclaimer", "AI-surfaced leads require human verification."))}
           </p>
         </div>"""
+        )
+
+    # Raw Evidence Data: from here down is the complete, unfiltered dataset this
+    # acquisition collected. Every citation in the AI Case Report above (and every
+    # row in its own leads table) references specific entries in these sections by
+    # id — use them to verify, this report never asks a reader to take the summary
+    # on faith.
+    # Only worth its own heading (and the nav strip above pointing at it) when there is
+    # an AI Case Report to distinguish it from — on a briefless case, everything below
+    # already *is* the whole report; a "Raw Evidence Data" label would be a heading
+    # answering a question nobody asked.
+    if isinstance(case_profile, dict) and case_profile.get("crime_type"):
+        parts.append(
+            "<h2>Raw Evidence Data</h2>"
+            '<p class="note">Full, unfiltered artifact detail collected from the '
+            "device — the same data the AI Case Report above is drawn from and "
+            "cites. Nothing here is filtered or reordered by the case brief.</p>"
         )
 
     # Case + device
@@ -1103,23 +1336,20 @@ def generate_report(case_dir: str | Path) -> Path:
             mst_items or [],
         ):
             if isinstance(row, dict):
-                tier = row.get("confidence")
-                key = tier if isinstance(tier, str) and tier else "unknown"
+                key = _tier_key(row.get("confidence"))
                 conf_counts[key] = conf_counts.get(key, 0) + 1
-        _UNKNOWN_COLORS = ("#5b6570", "#eceeec")
         conf_segments = [
-            (str(tier).upper(), n, _CONF_COLORS.get(tier, _UNKNOWN_COLORS)[0])
+            (tier.upper(), n, _CONF_COLORS.get(tier, _UNKNOWN_COLORS)[0])
             for tier, n in conf_counts.items()
         ]
 
         sev_counts: dict[str, int] = {}
         for f in flags:
             if isinstance(f, dict):
-                sev = f.get("severity")
-                key = sev if isinstance(sev, str) and sev else "unknown"
+                key = _tier_key(f.get("severity"))
                 sev_counts[key] = sev_counts.get(key, 0) + 1
         sev_segments = [
-            (str(tier).upper(), n, _SEV_COLORS.get(tier, _UNKNOWN_COLORS)[0])
+            (tier.upper(), n, _SEV_COLORS.get(tier, _UNKNOWN_COLORS)[0])
             for tier, n in sev_counts.items()
         ]
 
@@ -1140,6 +1370,27 @@ def generate_report(case_dir: str | Path) -> Path:
     # Communication graph — top contacts
     stats = graph.get("stats", {})
     if stats.get("top_contacts"):
+        tops = [t for t in stats["top_contacts"] if isinstance(t, dict)]
+        # A device can hold one contact name against two identifiers (two numbers,
+        # or a number and an account handle). Those are two participants and their
+        # counts must NOT be combined — this report cannot establish that two
+        # identifiers belong to one person. They are instead told apart by name,
+        # so the reader is never shown the same label twice with no way to
+        # distinguish the rows.
+        _name_counts: dict[str, int] = {}
+        for t in tops:
+            label = str(t.get("label", "—"))
+            _name_counts[label] = _name_counts.get(label, 0) + 1
+
+        def _participant_label(t: dict) -> str:
+            label = str(t.get("label", "—"))
+            if _name_counts.get(label, 0) < 2:
+                return label
+            ident = str(t.get("id", "")).split(":", 1)[-1]  # "num:+9178…" -> "+9178…"
+            if not ident or ident == label:
+                return label  # graph.json predating the id field: degrade quietly
+            return f"{label} ({ident})"
+
         parts.append("<h2>Communication network — key participants</h2>")
         parts.append(
             f'<p class="note">{_esc(stats.get("participants", 0))} participants, '
@@ -1149,25 +1400,24 @@ def generate_report(case_dir: str | Path) -> Path:
         parts.append(_identity_normalisation_note(stats))
         try:
             contacts_chart = charts.bar_chart(
-                [
-                    (t.get("label", "—"), t.get("weight", 0))
-                    for t in stats["top_contacts"]
-                    if isinstance(t, dict)
-                ],
+                [(_participant_label(t), t.get("weight", 0)) for t in tops],
                 color="#2258a8",
-                unit=" interaction(s)",
             )
         except Exception:  # pragma: no cover - defensive; a chart is never a gate
             contacts_chart = ""
         if contacts_chart:
-            parts.append(f'<div class="chart-card">{contacts_chart}</div>')
+            parts.append(
+                '<div class="chart-card"><h4>Top participants by interaction volume</h4>'
+                f"{contacts_chart}</div>"
+            )
         parts.append(
             "<table><tr><th>Participant</th><th>Interactions</th><th>Channels</th></tr>"
         )
-        for t in stats["top_contacts"]:
+        for t in tops:
             parts.append(
-                f'<tr><td>{_esc(t["label"])}</td><td>{_esc(t["weight"])}</td>'
-                f'<td>{_esc(", ".join(t["channels"]))}</td></tr>'
+                f'<tr><td>{_esc(_participant_label(t))}</td>'
+                f'<td>{_esc(t.get("weight", 0))}</td>'
+                f'<td>{_esc(", ".join(t.get("channels", [])))}</td></tr>'
             )
         parts.append("</table>")
 
@@ -2948,9 +3198,13 @@ _HEAD = """<!doctype html><html lang="en"><head><meta charset="utf-8">
   .stat{border:1px solid var(--line);border-radius:6px;padding:12px;text-align:center;background:#fcfcfb}
   .stat .n{font-size:22px;font-weight:700}.stat .l{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
   table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px}
-  th,td{text-align:left;padding:6px 9px;border-bottom:1px solid var(--line);vertical-align:top}
+  /* overflow-wrap — device-sourced message bodies and URLs arrive as single
+     unbroken runs; without this a cell forces the whole page wider than the
+     viewport and the right-hand text is unreachable on screen and in print. */
+  th,td{text-align:left;padding:6px 9px;border-bottom:1px solid var(--line);vertical-align:top;
+        overflow-wrap:anywhere}
   th{background:#f0f1ee;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
-  .mono{font-family:ui-monospace,monospace;font-size:11.5px}
+  .mono{font-family:ui-monospace,monospace;font-size:11.5px;overflow-wrap:anywhere}
   .hash{word-break:break-all;color:var(--mut)}
   .note{color:var(--mut);font-size:12.5px;margin:4px 0 8px}
   .cert{border:1px solid var(--line);border-radius:6px;padding:16px 20px;background:#fcfcfb}
@@ -2967,18 +3221,35 @@ _HEAD = """<!doctype html><html lang="en"><head><meta charset="utf-8">
   .back-to-top{position:fixed;right:22px;bottom:22px;background:var(--accent);color:#fff;
     border-radius:50%;width:38px;height:38px;line-height:38px;text-align:center;
     text-decoration:none;font-size:17px;box-shadow:0 1px 4px rgba(0,0,0,.35)}
-  .charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin:14px 0 6px}
-  .chart-card{border:1px solid var(--line);border-radius:6px;padding:14px 16px;background:#fcfcfb}
+  /* align-items:start — without it every card stretches to the tallest in its
+     row, leaving a chart with few bars sitting above hundreds of px of void. */
+  /* min(360px,100%) rather than a bare 360px floor: a bare floor cannot shrink, so
+     on a screen narrower than the floor the track overflows the page instead of
+     collapsing to one column. */
+  .charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(360px,100%),1fr));gap:16px;
+          margin:14px 0 6px;align-items:start}
+  .chart-card{border:1px solid var(--line);border-radius:6px;padding:14px 16px;background:#fcfcfb;min-width:0}
   .chart-card h4{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
   .chart-svg{width:100%;height:auto;display:block}
   .chart-caption{font-size:11px;color:var(--mut);margin:6px 0 0}
+  .donut-wrap{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
   .chart-legend{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:7px 14px;font-size:12px}
-  .chart-legend li{display:flex;align-items:center;gap:5px}
+  .chart-legend li{display:flex;align-items:center;gap:5px;min-width:0;overflow-wrap:anywhere}
+  /* Bar charts: HTML text either side of an SVG bar. Text keeps its true size at
+     any container width and the browser decides where it wraps, so a label or a
+     value can never be clipped the way SVG <text> in a fixed viewBox is. */
+  .bar-chart{display:flex;flex-direction:column;gap:7px;margin-top:2px}
+  .bar-row{display:flex;align-items:center;gap:9px;font-size:12px}
+  .bar-label{flex:0 0 32%;max-width:230px;min-width:0;text-align:right;overflow-wrap:anywhere}
+  .bar-track{flex:1 1 auto;min-width:36px;height:17px}
+  .bar-track svg{display:block;width:100%;height:100%}
+  .bar-val{flex:0 0 auto;white-space:nowrap;color:var(--mut);font-variant-numeric:tabular-nums}
   @media print{
     body{background:#fff}.wrap{box-shadow:none;max-width:none}
     .back-to-top{display:none}
     .toc{break-after:page}
     h2{break-after:avoid}
     tr{break-inside:avoid}
+    .chart-card{break-inside:avoid}
   }
 </style></head><body><div class="wrap" id="top">"""

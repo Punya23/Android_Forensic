@@ -23,15 +23,55 @@ def test_bar_chart_all_zero_values_renders_nothing():
 
 
 def test_bar_chart_renders_bars_proportional_to_value():
-    svg = charts.bar_chart([("A", 10), ("B", 5)])
-    assert "<svg" in svg
-    assert "A" in svg and "B" in svg
-    # Larger value must produce a wider bar than the smaller one.
+    out = charts.bar_chart([("A", 10), ("B", 5)])
+    assert "<svg" in out
+    assert "A" in out and "B" in out
+    # Larger value must produce a wider bar than the smaller one. Bar widths are
+    # percentages of the track, so the largest is always 100.
     import re
 
-    rects = re.findall(r'<rect x="190" y="[\d.]+" width="([\d.]+)"[^>]*fill="#7a2e12"', svg)
+    rects = re.findall(r'<rect x="0" y="0" width="([\d.]+)" height="10" fill="#7a2e12"', out)
     assert len(rects) == 2
-    assert float(rects[0]) > float(rects[1])
+    assert float(rects[0]) == 100.0
+    assert float(rects[1]) == 50.0
+
+
+def test_bar_chart_label_and_value_are_html_not_svg_text():
+    """Regression: labels/values used to be SVG <text> inside a fixed viewBox, which
+    clipped anything wider than its hard-coded column and rescaled the type with the
+    container. They must be real HTML so the browser bounds them."""
+    out = charts.bar_chart([("Some Very Long Participant Name Indeed", 10)], unit=" calls")
+    assert "<text" not in out, "chart text must not be SVG <text> any more"
+    assert 'class="bar-label"' in out and 'class="bar-val"' in out
+    assert "10 calls" in out
+
+
+def test_bar_chart_keeps_full_label_in_title_when_truncated():
+    long_label = "X" * 90
+    out = charts.bar_chart([(long_label, 3)])
+    assert f'title="{long_label}"' in out, "the untruncated label must survive in the title"
+    assert "…" in out
+
+
+def test_bar_chart_tiny_value_still_renders_a_visible_bar():
+    out = charts.bar_chart([("Big", 3000), ("Tiny", 1)])
+    import re
+
+    widths = [
+        float(w)
+        for w in re.findall(r'<rect x="0" y="0" width="([\d.]+)" height="10" fill="#7a2e12"', out)
+    ]
+    assert widths[0] == 100.0
+    assert widths[1] > 0, "a real but tiny count must not render as an absent bar"
+
+
+def test_charts_reject_bool_and_non_finite_values():
+    """A bool is not a count, and NaN/inf would reach an SVG attribute as 'nan'."""
+    assert charts.bar_chart([("flag", True)]) == ""
+    assert charts.bar_chart([("nan", float("nan"))]) == ""
+    assert charts.bar_chart([("inf", float("inf"))]) == ""
+    assert charts.donut_chart([("inf", float("inf"), "#000")]) == ""
+    assert charts.timeline_chart([("2026-01-01", float("inf"))]) == ""
 
 
 def test_bar_chart_caps_items_and_states_what_was_dropped():
@@ -98,6 +138,47 @@ def test_timeline_chart_renders_bars_for_each_bucket():
     svg = charts.timeline_chart(buckets)
     assert "<svg" in svg
     assert "2026-01-01" in svg and "2026-01-02" in svg
+
+
+def test_timeline_chart_axis_maximum_is_never_clipped_off_the_left():
+    """Regression: the y-axis maximum was end-anchored in a fixed 34-unit gutter, so a
+    six-figure peak lost its leading digit — a wrong-looking axis maximum in a legal
+    report is worse than a wrong-looking bar."""
+    svg = charts.timeline_chart([("2026-01-01", 1_234_567), ("2026-01-02", 5)])
+    import re
+
+    m = re.search(r'<text x="([\d.]+)"[^>]*text-anchor="end">([\d,]+)</text>', svg)
+    assert m, "the axis maximum label must be present"
+    x_end, label = float(m.group(1)), m.group(2)
+    assert label == "1,234,567"
+    # The label is drawn leftwards from x_end; it must start at or after x=0.
+    assert x_end - charts._text_w(label, 10) >= 0
+
+
+def test_timeline_chart_single_bucket_does_not_read_as_a_range():
+    svg = charts.timeline_chart([("2026-01-01", 4)])
+    assert svg.count("2026-01-01") == 2, "one date in the <title> and one centred axis label"
+    assert 'text-anchor="middle"' in svg
+
+
+def test_donut_chart_folds_excess_segments_and_says_so():
+    segs = [(f"tier{i}", 12 - i, "#123456") for i in range(12)]
+    out = charts.donut_chart(segs, max_segments=5)
+    assert "OTHER (8 tiers)" in out
+    assert "folded, not" in out
+    assert "tier11" in out, "folded tiers must still be named, never silently dropped"
+
+
+def test_donut_chart_shrinks_centre_text_for_huge_totals():
+    small = charts.donut_chart([("live", 3157, "#1c7d3f")])
+    huge = charts.donut_chart([("live", 987654321, "#1c7d3f")])
+    import re
+
+    def _total_fs(out: str) -> float:
+        return float(re.search(r'font-size="([\d.]+)" font-weight="700"', out).group(1))
+
+    assert _total_fs(small) == 20
+    assert _total_fs(huge) < 20, "a huge total must shrink rather than collide with the ring"
 
 
 def test_timeline_chart_groups_beyond_max_bars_without_dropping_rows():

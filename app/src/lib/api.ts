@@ -311,6 +311,28 @@ export const api = {
       body: JSON.stringify(body || {}),
     }),
 
+  // AI Evidence Summary: (re-)generate the entirely model-authored narrative digest
+  // scoped to entity+yield-matched findings only — see triage/intel/ai_summary.py.
+  // Requires a case profile and ai_findings (run analyze() first); the persisted
+  // bundle is otherwise read like any sibling dataset via `api.dataset(id, "ai_evidence_summary")`.
+  summarizeCase: (id: string, body?: { llm_provider?: string }) =>
+    request<import("./types").AiEvidenceSummary>(`/api/case/${id}/summarize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    }),
+
+  // Entity cross-links: (re-)cross-link case-brief-named entities against this
+  // case's own collected data — deterministic, no LLM. See triage/intel/entity_links.py.
+  // Requires a case profile (run analyze() first); the persisted bundle is otherwise
+  // read like any sibling dataset via `api.dataset(id, "entity_links")`.
+  entityLinks: (id: string) =>
+    request<import("./types").EntityLinksResponse>(`/api/case/${id}/entity-links`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }),
+
   // "Ask this case" — free-text Q&A over the case's own already-collected evidence.
   askCase: (
     id: string,
@@ -346,6 +368,9 @@ export const api = {
     /** Load this installation's own promoted cases as retrieval precedent. */
     use_local_corpus?: boolean;
     run_ai_analysis?: boolean;
+    /** Opt-in: generate the AI Evidence Summary after analysis. Needs a reachable
+     * local model — see /api/llm/status — or this stays honestly empty. */
+    run_ai_summary?: boolean;
     learn_from_case?: boolean;
     tier1_contacts?: boolean;
     tier1_calllog?: boolean;

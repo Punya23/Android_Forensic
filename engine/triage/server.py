@@ -827,18 +827,18 @@ def create_app(cases_root: Path = CASES_ROOT):
     @app.post("/api/case/<case_id>/analyze")
     def analyze_case_endpoint(case_id: str):
 
-        case = _open(cases_root, case_id)
-
         body = request.get_json(silent=True) or {}
 
         from .intel import analyze_case, get_provider
-        from .intel.planner import CaseProfile, build_plan, extract_profile
-
-        provider = get_provider(str(body.get("llm_provider", "")) or None)
+        from .intel.planner import build_plan, extract_profile
 
         description = str(body.get("description", "")).strip()
 
         if description:
+
+            case = _open(cases_root, case_id)
+
+            provider = get_provider(str(body.get("llm_provider", "")) or None)
 
             profile = extract_profile(description, provider=provider)
 
@@ -856,13 +856,13 @@ def create_app(cases_root: Path = CASES_ROOT):
 
         else:
 
-            stored = case.read_derived("case_profile")
+            case, profile, provider, error = _load_case_and_profile(
+                cases_root, case_id, body
+            )
 
-            if not stored:
+            if error:
 
-                return jsonify({"error": "no case profile available"}), 400
-
-            profile = CaseProfile(**stored)
+                return error
 
         bundle = analyze_case(case, profile, provider=provider)
 
@@ -874,23 +874,70 @@ def create_app(cases_root: Path = CASES_ROOT):
         """(Re-)run the deep investigation pass against this case's current
         ``ai_findings`` — see triage/intel/investigator.py. Requires a case profile
         (run /analyze first, or supply one this run already has)."""
-        case = _open(cases_root, case_id)
         body = request.get_json(silent=True) or {}
 
-        from .intel import get_provider
         from .intel.investigator import investigate_case
-        from .intel.planner import CaseProfile, CollectionPlan
+        from .intel.planner import CollectionPlan
 
-        stored_profile = case.read_derived("case_profile")
-        if not stored_profile:
-            return jsonify({"error": "no case profile available — run /analyze first"}), 400
-        profile = CaseProfile(**stored_profile)
+        case, profile, provider, error = _load_case_and_profile(
+            cases_root, case_id, body
+        )
+        if error:
+            return error
 
         stored_plan = case.read_derived("collection_plan")
         plan = CollectionPlan.from_dict(stored_plan) if stored_plan else None
 
-        provider = get_provider(str(body.get("llm_provider", "")) or None)
         bundle = investigate_case(case, profile, plan=plan, provider=provider)
+        return jsonify(bundle)
+
+    @app.post("/api/case/<case_id>/summarize")
+    def summarize_case_endpoint(case_id: str):
+        """(Re-)generate the AI Evidence Summary — see triage/intel/ai_summary.py.
+        Requires a case profile and ``ai_findings`` (run /analyze first)."""
+        body = request.get_json(silent=True) or {}
+
+        from .intel import generate_ai_evidence_summary
+
+        case, profile, provider, error = _load_case_and_profile(
+            cases_root, case_id, body
+        )
+        if error:
+            return error
+
+        ai_findings = case.read_derived("ai_findings")
+        if not ai_findings:
+            return (
+                jsonify({"error": "no ai_findings available — run /analyze first"}),
+                400,
+            )
+
+        bundle = generate_ai_evidence_summary(
+            case,
+            profile,
+            ai_findings,
+            knowledge_graph=_knowledge_graph(cases_root),
+            provider=provider,
+        )
+        return jsonify(bundle)
+
+    @app.post("/api/case/<case_id>/entity-links")
+    def entity_links_endpoint(case_id: str):
+        """(Re-)cross-link this case's brief-named entities against its own collected
+        data — see triage/intel/entity_links.py. Deterministic substring match, no
+        LLM; requires a case profile (run /analyze first, or supply one this run
+        already has)."""
+        body = request.get_json(silent=True) or {}
+
+        from .intel.entity_links import build_entity_links_for_case
+
+        case, profile, _provider, error = _load_case_and_profile(
+            cases_root, case_id, body
+        )
+        if error:
+            return error
+
+        bundle = build_entity_links_for_case(case, profile)
         return jsonify(bundle)
 
     @app.post("/api/case/<case_id>/ask")
@@ -1053,6 +1100,7 @@ def create_app(cases_root: Path = CASES_ROOT):
             tier2_maps_location=bool(body.get("tier2_maps_location", False)),
             case_description=case_description,
             run_ai_analysis=bool(body.get("run_ai_analysis", True)),
+            run_ai_summary=bool(body.get("run_ai_summary", False)),
             llm_provider=str(body.get("llm_provider", "") or ""),
             case_number=str(body.get("case_number", "") or ""),
             use_case_bank=bool(body.get("use_case_bank", True)),
@@ -1376,6 +1424,13 @@ def create_app(cases_root: Path = CASES_ROOT):
         except Exception as exc:
             summary["hash_verification"] = {"status": "error", "error": str(exc)}
 
+        ai_summary = case.read_derived("ai_evidence_summary") or {}
+        summary["ai_evidence_summary_status"] = {
+            "generated": bool(ai_summary.get("generated")),
+            "matched_count": ai_summary.get("matched_count", 0),
+            "reason": ai_summary.get("reason", ""),
+        }
+
         return jsonify(summary)
 
     @app.get("/api/case/<case_id>/capabilities")
@@ -1526,6 +1581,12 @@ def create_app(cases_root: Path = CASES_ROOT):
             # Deep investigation: bounded hypothesis pass cross-linking findings
             # analyze_derived's single flat scoring pass can't correlate on its own.
             "investigation_trace",
+            # Entirely model-authored narrative, scoped to entity+yield-matched
+            # findings only — see triage/intel/ai_summary.py.
+            "ai_evidence_summary",
+            # Same-case name/number -> occurrence-across-datasets map — see
+            # triage/intel/entity_links.py.
+            "entity_links",
             "case_profile",
             "collection_plan",
             # Re-analysis writes its re-ranking here rather than over the plan that
@@ -2001,6 +2062,41 @@ def _open(cases_root: Path, case_id: str):
         abort(404)
 
     return Case.open(path)
+
+
+def _load_case_and_profile(cases_root: Path, case_id: str, body: dict):
+    """Open *case_id*, resolve the request's LLM provider, and load its persisted
+    case profile — the exact sequence /analyze's stored-profile path, /investigate
+    and /summarize each repeated independently, with the error message drifting
+    between them ("no case profile available" vs "... — run /analyze first").
+
+    Returns ``(case, profile, provider, None)`` on success, or
+    ``(None, None, None, error_response)`` when no case profile has been
+    persisted yet — the caller returns *error_response* as-is.
+    """
+
+    from .intel import get_provider
+
+    from .intel.planner import CaseProfile
+
+    case = _open(cases_root, case_id)
+
+    provider = get_provider(str(body.get("llm_provider", "")) or None)
+
+    stored_profile = case.read_derived("case_profile")
+
+    if not stored_profile:
+
+        error = (
+            jsonify({"error": "no case profile available — run /analyze first"}),
+            400,
+        )
+
+        return None, None, None, error
+
+    profile = CaseProfile(**stored_profile)
+
+    return case, profile, provider, None
 
 
 def _safe(case_id: str):

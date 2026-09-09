@@ -45,7 +45,7 @@ the engine logs everyone out.
 | `GET /api/cases` | Lightweight case list | Required |
 | `GET /api/case/<id>` | Case overview (counts, risk, throughput, graph stats) | Required |
 | `DELETE /api/case/<id>` | Irreversibly delete a case | Required |
-| `GET /api/case/<id>/capabilities` | Per-dataset state for this case: `populated` / `empty` / `not_collected` / `inaccessible` / `planned`, each with its reason and the acquisition flag that gates it. Registered ahead of the generic dataset route | Required |
+| `GET /api/case/<id>/capabilities` | Per-dataset state for this case: `populated` / `empty` / `not_collected` / `inaccessible` / `planned`, each with its reason, the acquisition flag that gates it, and `flag_actionable` — whether re-running with that flag on would actually change the outcome. `flag` is always the gating flag so the reason can name it; `flag_actionable` is what says it may be offered as the fix, and it is false where the gap closes some other way (a case brief, an account-data export import) or cannot close at all. Registered ahead of the generic dataset route | Required |
 | `GET /api/case/<id>/<dataset>` | One of ~90 derived datasets by name | Required |
 | `GET /api/case/<id>/manifest` | Chain-of-custody artifact manifest | Required |
 | `GET /api/case/<id>/audit` | Audit/action log | Required |

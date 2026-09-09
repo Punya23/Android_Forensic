@@ -242,18 +242,31 @@ function HostedStateBadge({ state }: { state: boolean | null | undefined }) {
 }
 
 function HotspotPostureSection({ hotspot }: { hotspot: WifiLiveHotspot | null | undefined }) {
-  // The backend always emits the hotspot key when the sub-step ran, even with empty
-  // evidence. If the key is entirely absent, the step was not collected.
+  // The backend emits the hotspot key when the sub-step ran, even with empty evidence.
+  // An absent key therefore means this case's wifi_live data carries no hotspot record.
+  //
+  // It does *not* mean the Wi-Fi live step was off. This section renders only past the
+  // `nothingCollected` guard above, so reaching it at all means the wifi_live dataset
+  // exists AND carries an association, saved networks, scans, usage or connectivity —
+  // and the pipeline writes that file only inside `if cfg.wifi_live`. By the time we are
+  // looking at a missing sub-key, the step demonstrably ran. Borrowing the capability
+  // layer's "opt-in
+  // — re-run to collect" vocabulary here asserted a flag was off that we can see was on,
+  // which is the mirror image of the overstatement that vocabulary exists to prevent.
+  // Say only what the data establishes, and keep the "absence is not evidence" framing —
+  // that half was true and is the half the examiner needs.
   if (hotspot === undefined) {
     return (
       <Section
         title="Hotspot Posture"
-        note="This dataset was not collected for this acquisition. Re-run with the Wi-Fi live collection step enabled to capture hotspot state."
+        note="No hotspot record in this case's Wi-Fi live data — the sub-step produced none. Not a finding about the device."
       >
         <div className="card p-4 text-sm text-muted leading-relaxed">
-          <strong className="text-warn">Not collected.</strong>{" "}
-          The hotspot sub-step did not run. Absence here is not evidence that the device
-          had no hotspot activity — it is a gap in the acquisition, not a finding.
+          <strong className="text-warn">No hotspot record was captured.</strong>{" "}
+          The Wi-Fi live collection ran, but its hotspot sub-step left nothing in this
+          case — an older build, or a device that reported no AP state at all. Absence
+          here is not evidence that the device had no hotspot activity; it is a gap in
+          what was recorded, not a finding.
         </div>
       </Section>
     );
