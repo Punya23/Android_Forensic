@@ -633,6 +633,7 @@ def run_acquisition(
     encrypted_apps_result: dict = {}  # SQLCipher apps + FCM fragments (P3-3)
     recent_tasks_result: dict = {}  # recent_tasks + snapshots, AFU-gated (P3-4)
     wifi_networks: list = []  # Wi-Fi credentials (Tier-2 / root)
+    hotspot_leases_result: dict = {}  # dnsmasq client leases behind own hotspot (Tier-2, gated by tier2_wifi)
     wa_backup_messages: list = []  # WhatsApp backup recovered messages (Tier-2)
     wa_backup_media: list = []  # WhatsApp backup recovered media (Tier-2)
     app_messages = []  # WhatsApp export + Telegram/app-DB + SMS
@@ -1734,6 +1735,7 @@ def run_acquisition(
                        status="accessing", artifact_path="/data/misc/wifi/WifiConfigStore.xml")
         if isinstance(source, RealDeviceSource):
             wifi_networks = _run_tier2_wifi(source, case, staging)
+            hotspot_leases_result = _run_tier2_hotspot_leases(source, case, staging)
         else:
             case.log(
                 "tier2.wifi",
@@ -2425,6 +2427,9 @@ def run_acquisition(
             tier=Tier.TIER0.value,
         )
     case.write_derived("wifi", wifi_networks)  # Wi-Fi credentials (Tier 2)
+    case.write_derived(
+        "hotspot_leases", hotspot_leases_result
+    )  # dnsmasq client leases behind own hotspot (Tier 2, gated by tier2_wifi)
     # Helper-APK radio artifacts. Separate datasets from the Tier-2 `wifi` credentials and the
     # dumpsys-derived `bluetooth` list because they were obtained a different way and carry
     # different fields — a reader must be able to tell which is which.
@@ -5497,6 +5502,11 @@ def _run_tier2_wifi(
     device's *own* hotspot credential, a different fact from any network it joined,
     and is flagged ``is_softap`` by the parser.
 
+    A ``wifi_report`` dataset is also written, carrying the *why* behind an
+    empty result: root missing, no config store found, or a store that was
+    genuinely empty are three different facts and the dashboard must not
+    collapse them into one "no networks" message.
+
     Returns
     -------
     list[WifiNetwork]
@@ -5524,6 +5534,22 @@ def _run_tier2_wifi(
             result="skipped",
             tier=Tier.TIER2.value,
         )
+        case.write_derived(
+            "wifi_report",
+            {
+                "root_ok": False,
+                "files_found": False,
+                "network_count": 0,
+                "with_password_count": 0,
+                "password_unreadable_count": 0,
+                "caveats": [
+                    "Root was not available on this acquisition, so the Wi-Fi "
+                    "config store was never opened. This is an un-acquired "
+                    "artefact, not a finding that the device had no saved "
+                    "networks — re-acquire with Tier 2 (root) to establish that.",
+                ],
+            },
+        )
         return []
 
     pulled = _root_pull_paths(
@@ -5541,6 +5567,24 @@ def _run_tier2_wifi(
             f"({len(WIFI_CONFIG_PATHS)} paths probed)",
             result="skipped",
             tier=Tier.TIER2.value,
+        )
+        case.write_derived(
+            "wifi_report",
+            {
+                "root_ok": True,
+                "files_found": False,
+                "network_count": 0,
+                "with_password_count": 0,
+                "password_unreadable_count": 0,
+                "caveats": [
+                    f"Root was available but no Wi-Fi config store was found at any "
+                    f"of the {len(WIFI_CONFIG_PATHS)} known Android-version paths. "
+                    "This can mean a wiped/reset device, a manufacturer path this "
+                    "build doesn't yet probe, or file-based encryption still "
+                    "locking the partition (AFU) — not necessarily an absence of "
+                    "saved networks.",
+                ],
+            },
         )
         return []
 
@@ -5571,17 +5615,113 @@ def _run_tier2_wifi(
 
     joined = [n for n in wifi_networks if not n.is_softap]
     softap = [n for n in wifi_networks if n.is_softap]
+    with_password = sum(1 for n in joined if n.password)
+    unreadable = sum(1 for n in wifi_networks if n.password_unreadable)
     case.log(
         "tier2.wifi.done",
         f"Wi-Fi recovery: {len(joined)} saved network(s) "
-        f"({sum(1 for n in joined if n.password)} with password), "
+        f"({with_password} with password, {unreadable} password-unreadable), "
         f"{len(softap)} own-hotspot config(s). Saved != connected: check the "
         f"has_ever_connected flag per network, and note the store carries no "
         f"connection timestamp.",
         tier=Tier.TIER2.value,
     )
 
+    report_caveats: list[str] = []
+    if not wifi_networks:
+        report_caveats.append(
+            "The Wi-Fi config store was found and read successfully, and it "
+            "contained no saved networks. Networks removed before seizure "
+            "leave no entry here."
+        )
+    if unreadable:
+        report_caveats.append(
+            f"{unreadable} network(s) have a PreSharedKey/Passphrase present in "
+            "the store but stored in a form this parser cannot decode "
+            "(Keystore-encrypted) — see each network's own caveats. Their "
+            "password is unrecoverable off-device, not absent."
+        )
+    case.write_derived(
+        "wifi_report",
+        {
+            "root_ok": True,
+            "files_found": True,
+            "network_count": len(joined),
+            "with_password_count": with_password,
+            "password_unreadable_count": unreadable,
+            "softap_count": len(softap),
+            "caveats": report_caveats,
+        },
+    )
+
     return wifi_networks
+
+
+def _run_tier2_hotspot_leases(
+    source: "RealDeviceSource",
+    case: "Case",
+    staging: "Path",
+) -> dict:
+    """Root-pull the dnsmasq lease file(s) behind this device's own hotspot.  Tier 2.
+
+    Gated by the same ``tier2_wifi`` opt-in as the saved-network credential
+    recovery — both are root-only reads of ``/data/misc/{dhcp,wifi}/*`` and a
+    device either offers root for that tier or it doesn't. See
+    :mod:`triage.parsers.dhcp_leases` for why this is a best-effort probe: the
+    lease file only exists at all on the legacy dnsmasq tethering stack, not
+    on the mainline Tethering module most current stock devices run.
+
+    Returns
+    -------
+    dict
+        ``{"leases": [...], "caveats": [...]}`` — ``leases`` empty and
+        ``caveats`` explaining why is a valid, honest result, not an error.
+    """
+    from .parsers.dhcp_leases import (
+        LEASE_PATHS,
+        CAVEAT_NOT_PERSISTED,
+        collect_hotspot_leases,
+    )
+
+    # Verify root FIRST, same reasoning as `_run_tier2_wifi`: without it every
+    # `su -c test -e` probe fails identically to "file absent".
+    root_check = source.adb.shell("su -c 'id'")
+    if not root_check.ok:
+        case.log(
+            "tier2.hotspot_leases",
+            "root not available; hotspot client-lease recovery skipped. This is "
+            "NOT a finding that no client ever joined this device's hotspot.",
+            result="skipped",
+            tier=Tier.TIER2.value,
+        )
+        return {"leases": [], "caveats": []}
+
+    pulled = _root_pull_paths(
+        source,
+        case,
+        staging,
+        LEASE_PATHS,
+        label="hotspot_leases",
+        category="wifi_config",
+    )
+    if not pulled:
+        case.log(
+            "tier2.hotspot_leases",
+            "no dnsmasq lease file found at any known location "
+            f"({len(LEASE_PATHS)} paths probed). " + CAVEAT_NOT_PERSISTED,
+            result="skipped",
+            tier=Tier.TIER2.value,
+        )
+        return {"leases": [], "caveats": [CAVEAT_NOT_PERSISTED]}
+
+    result = collect_hotspot_leases(pulled)
+    case.log(
+        "tier2.hotspot_leases.done",
+        f"hotspot client-lease recovery: {len(result['leases'])} lease record(s) "
+        f"from {len(pulled)} file(s)",
+        tier=Tier.TIER2.value,
+    )
+    return result
 
 
 # Chromium-family browsers that store history in the same ``urls``-table schema under

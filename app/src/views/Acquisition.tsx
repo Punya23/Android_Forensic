@@ -110,6 +110,34 @@ export function AcquisitionView({
   const [reasserting, setReasserting] = useState(false);
   const [reassertMsg, setReassertMsg] = useState<string | null>(null);
 
+  // Root vs non-root are two different acquisitions, not one acquisition with some
+  // boxes greyed out. A retail phone with no administrator shell is the expected case,
+  // not a degraded one — Tier-1 (sideload, no root) is its whole, best-effort path.
+  // Tier-2 (root shell) is only ever offered once the connected device has actually
+  // proven a root shell via `su -c id` (Adb.is_root_available, surfaced through
+  // /api/devices/check as device.rooted) — never assumed, and never left enabled on
+  // the strength of a *previous* device's check.
+  const rootConfirmed =
+    target?.kind === "real" && deviceCheck?.ready === true && deviceCheck.device?.rooted === true;
+
+  // If the device check flips to "no root" (new device swapped in, or a re-check
+  // reveals root was lost mid-session), drop any Tier-2 flags already ticked so a
+  // stale `true` can never ride along into the acquire() call once the checkbox
+  // re-enables — see the `start()` submission below, which also re-guards on this.
+  useEffect(() => {
+    if (rootConfirmed) return;
+    setTier2Telegram(false);
+    setTier2Instagram(false);
+    setTier2Snapchat(false);
+    setTier2Wifi(false);
+    setTier2BrowserHistory(false);
+    setTier2WhatsappBackup(false);
+    setTier2MapsLocation(false);
+    setTier2BtConfig(false);
+    setTier2AppPresence(false);
+    setTier2AntiForensics(false);
+    setTier2RecentTasks(false);
+  }, [rootConfirmed]);
 
   useEffect(() => {
     api
@@ -318,17 +346,21 @@ export function AcquisitionView({
         tier1_calllog: target.kind === "real" ? tier1Calllog : false,
         tier1_sms: target.kind === "real" ? tier1Sms : false,
         tier1_collect_all: target.kind === "real" ? tier1CollectAll : false,
-        tier2_telegram: target.kind === "real" ? tier2Telegram : false,
-        tier2_instagram: target.kind === "real" ? tier2Instagram : false,
-        tier2_snapchat: target.kind === "real" ? tier2Snapchat : false,
-        tier2_wifi: target.kind === "real" ? tier2Wifi : false,
-        tier2_browser_history: target.kind === "real" ? tier2BrowserHistory : false,
-        tier2_whatsapp_backup: target.kind === "real" ? tier2WhatsappBackup : false,
-        tier2_maps_location: target.kind === "real" ? tier2MapsLocation : false,
-        tier2_bt_config: target.kind === "real" ? tier2BtConfig : false,
-        tier2_app_presence: target.kind === "real" ? tier2AppPresence : false,
-        tier2_antiforensics: target.kind === "real" ? tier2AntiForensics : false,
-        tier2_recent_tasks: target.kind === "real" ? tier2RecentTasks : false,
+        // Tier-2 re-guards on rootConfirmed, not just target.kind: the reset effect
+        // above clears these the moment root drops, but that effect fires a render
+        // after the device-check response lands, so a submit racing that window would
+        // otherwise still see the old `true`.
+        tier2_telegram: rootConfirmed ? tier2Telegram : false,
+        tier2_instagram: rootConfirmed ? tier2Instagram : false,
+        tier2_snapchat: rootConfirmed ? tier2Snapchat : false,
+        tier2_wifi: rootConfirmed ? tier2Wifi : false,
+        tier2_browser_history: rootConfirmed ? tier2BrowserHistory : false,
+        tier2_whatsapp_backup: rootConfirmed ? tier2WhatsappBackup : false,
+        tier2_maps_location: rootConfirmed ? tier2MapsLocation : false,
+        tier2_bt_config: rootConfirmed ? tier2BtConfig : false,
+        tier2_app_presence: rootConfirmed ? tier2AppPresence : false,
+        tier2_antiforensics: rootConfirmed ? tier2AntiForensics : false,
+        tier2_recent_tasks: rootConfirmed ? tier2RecentTasks : false,
       });
     } catch (e) {
       stopTimer();
@@ -450,11 +482,29 @@ export function AcquisitionView({
               <div className="flex items-center gap-2 mb-2 flex-wrap">
                 <StateBadge state={deviceCheck.state} />
                 {deviceCheck.device && (
-                  <span className="text-xs text-muted">
-                    {deviceCheck.device.manufacturer} {deviceCheck.device.model} —{" "}
-                    {deviceCheck.device.os_skin || deviceCheck.device.brand} / Android{" "}
-                    {deviceCheck.device.android_version}
-                  </span>
+                  <>
+                    <span
+                      className={`rounded border px-1.5 py-0.5 text-[10px] font-mono font-semibold ${
+                        deviceCheck.device.rooted
+                          ? "text-live border-live/40 bg-live/10"
+                          : "text-warn border-warn/40 bg-warn/10"
+                      }`}
+                      title={
+                        deviceCheck.device.rooted
+                          ? "su -c id succeeded — Tier-2 (root) options are offered below."
+                          : "No administrator shell on this handset — the expected state for a " +
+                            "retail phone straight from any manufacturer. Tier-2 options stay " +
+                            "disabled; Tier-1 is the full acquisition for this device."
+                      }
+                    >
+                      {deviceCheck.device.rooted ? "ROOTED" : "NOT ROOTED"}
+                    </span>
+                    <span className="text-xs text-muted">
+                      {deviceCheck.device.manufacturer} {deviceCheck.device.model} —{" "}
+                      {deviceCheck.device.os_skin || deviceCheck.device.brand} / Android{" "}
+                      {deviceCheck.device.android_version}
+                    </span>
+                  </>
                 )}
               </div>
 
@@ -933,15 +983,25 @@ export function AcquisitionView({
         </div>
       </div>
 
-      {/* Tier-2 options (root) */}
+      {/* Tier-2 options (root). Gated on rootConfirmed, not target.kind === "real" — a
+          real device with no root shell is the ordinary case (any retail phone from any
+          manufacturer ships without one), not a lesser one, so these stay disabled until
+          /api/devices/check actually proves a root shell rather than being offered and
+          quietly no-op'd per-stage inside the pipeline. */}
       <div className="card p-4 mb-4">
-        <div className="label mb-1">Tier-2 App Recovery (root required, real device only)</div>
+        <div className="label mb-1">Tier-2 App Recovery (root required)</div>
         <p className="text-xs text-muted mb-3">
           These apps keep their chats in app-private storage, unreachable without root. On a
           rooted device the engine copies the databases via <code className="text-accent">su</code>,
-          recovers live + deleted messages with confidence badges, and logs every step. On a
-          non-rooted device the step is logged as skipped.
+          recovers live + deleted messages with confidence badges, and logs every step.
         </p>
+        {target?.kind === "real" && deviceCheck?.ready && !rootConfirmed && (
+          <p className="text-xs text-warn mb-3">
+            This device has not proven a root shell — treated as an ordinary, unrooted retail
+            phone. These options are disabled; the Tier-1 helper above is the full acquisition
+            for this handset.
+          </p>
+        )}
         <div className="space-y-3">
           {[
             { label: "Tier-2 Telegram", db: "cache4.db", checked: tier2Telegram, set: setTier2Telegram },
@@ -952,8 +1012,8 @@ export function AcquisitionView({
               <input
                 type="checkbox"
                 className="mt-1"
-                disabled={!target || target.kind !== "real"}
-                checked={target?.kind === "real" ? t.checked : false}
+                disabled={!rootConfirmed}
+                checked={rootConfirmed ? t.checked : false}
                 onChange={(e) => t.set(e.target.checked)}
               />
               <div>
@@ -970,8 +1030,8 @@ export function AcquisitionView({
             <input
               type="checkbox"
               className="mt-1"
-              disabled={!target || target.kind !== "real"}
-              checked={target?.kind === "real" ? tier2Wifi : false}
+              disabled={!rootConfirmed}
+              checked={rootConfirmed ? tier2Wifi : false}
               onChange={(e) => setTier2Wifi(e.target.checked)}
             />
             <div>
@@ -995,8 +1055,8 @@ export function AcquisitionView({
             <input
               type="checkbox"
               className="mt-1"
-              disabled={!target || target.kind !== "real"}
-              checked={target?.kind === "real" ? tier2BrowserHistory : false}
+              disabled={!rootConfirmed}
+              checked={rootConfirmed ? tier2BrowserHistory : false}
               onChange={(e) => setTier2BrowserHistory(e.target.checked)}
             />
             <div>
@@ -1021,8 +1081,8 @@ export function AcquisitionView({
             <input
               type="checkbox"
               className="mt-1"
-              disabled={!target || target.kind !== "real"}
-              checked={target?.kind === "real" ? tier2WhatsappBackup : false}
+              disabled={!rootConfirmed}
+              checked={rootConfirmed ? tier2WhatsappBackup : false}
               onChange={(e) => setTier2WhatsappBackup(e.target.checked)}
             />
             <div>
@@ -1046,8 +1106,8 @@ export function AcquisitionView({
             <input
               type="checkbox"
               className="mt-1"
-              disabled={!target || target.kind !== "real"}
-              checked={target?.kind === "real" ? tier2MapsLocation : false}
+              disabled={!rootConfirmed}
+              checked={rootConfirmed ? tier2MapsLocation : false}
               onChange={(e) => setTier2MapsLocation(e.target.checked)}
             />
             <div>
@@ -1070,13 +1130,18 @@ export function AcquisitionView({
           specific interpretation limit the examiner must know before enabling it. */}
       <div className="card p-4 mb-4">
         <div className="label mb-1">
-          Deep System Artifacts (root required, real device only)
+          Deep System Artifacts (root required)
         </div>
         <p className="text-xs text-muted mb-3">
           OS-level stores that outlive app uninstalls and answer questions app databases
           cannot. Each is copied read-only via <code className="text-accent">su</code> and
           logged. Read the caveat on each one — they are easy to over-read.
         </p>
+        {target?.kind === "real" && deviceCheck?.ready && !rootConfirmed && (
+          <p className="text-xs text-warn mb-3">
+            This device has not proven a root shell, so these options are disabled.
+          </p>
+        )}
         <div className="space-y-3">
           {[
             {
@@ -1153,8 +1218,8 @@ export function AcquisitionView({
                 <input
                   type="checkbox"
                   className="mt-1"
-                  disabled={!target || target.kind !== "real"}
-                  checked={target?.kind === "real" ? t.checked : false}
+                  disabled={!rootConfirmed}
+                  checked={rootConfirmed ? t.checked : false}
                   onChange={(e) => t.set(e.target.checked)}
                 />
                 <div>

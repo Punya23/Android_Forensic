@@ -22,17 +22,36 @@ export function GlobalSearch({ caseId, setView }: { caseId: string; setView: (v:
     calls: CallRecord[];
     recovered: RecoveredRow[];
   } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    Promise.all([
+    setError(null);
+    const names = ["messages", "contacts", "calls", "recovered"] as const;
+    Promise.allSettled([
       api.dataset<Message[]>(caseId, "messages"),
       api.dataset<Contact[]>(caseId, "contacts"),
       api.dataset<CallRecord[]>(caseId, "calls"),
       api.dataset<RecoveredRow[]>(caseId, "recovered"),
-    ])
-      .then(([messages, contacts, calls, recovered]) => setData({ messages, contacts, calls, recovered }))
-      .catch(() => setData(null));
+    ]).then((results) => {
+      const failed = results
+        .map((r, i) => (r.status === "rejected" ? names[i] : null))
+        .filter((n): n is (typeof names)[number] => n !== null);
+      if (failed.length > 0) {
+        // Surface the failure instead of quietly leaving `data` null — a silent catch here
+        // used to make the search box report "No matches" for every query, indistinguishable
+        // from a case that genuinely has nothing, which is exactly the absent-vs-inaccessible
+        // confusion this tool exists to avoid.
+        console.error(`GlobalSearch: failed to load ${failed.join(", ")} for case ${caseId}`, results);
+        setError(`Search unavailable — couldn't load ${failed.join(", ")}. Check connection and try again.`);
+        setData(null);
+        return;
+      }
+      const [messages, contacts, calls, recovered] = results.map(
+        (r) => (r as PromiseFulfilledResult<unknown>).value
+      ) as [Message[], Contact[], CallRecord[], RecoveredRow[]];
+      setData({ messages, contacts, calls, recovered });
+    });
   }, [caseId]);
 
   useEffect(() => {
@@ -82,7 +101,9 @@ export function GlobalSearch({ caseId, setView }: { caseId: string; setView: (v:
       />
       {open && q.length >= 2 && (
         <div className="absolute top-full mt-1 w-full max-h-96 overflow-auto card z-50 shadow-2xl">
-          {hits.length === 0 ? (
+          {error ? (
+            <div className="p-3 text-sm text-red-500">{error}</div>
+          ) : hits.length === 0 ? (
             <div className="p-3 text-sm text-muted">No matches for “{q}”.</div>
           ) : (
             <>

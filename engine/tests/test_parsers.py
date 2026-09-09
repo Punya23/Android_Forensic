@@ -1428,3 +1428,105 @@ def test_serialisable(tmp_path):
     assert {"ssid", "password", "security", "confidence", "source_file"} <= set(
         d.keys()
     )
+
+
+# ---------------------------------------------------------------------------
+# Keystore-encrypted PreSharedKey — an unreadable password must never be
+# reported the same as a genuinely absent one (would misread as OPEN).
+# ---------------------------------------------------------------------------
+
+_XML_ENCRYPTED_PSK = """\
+<?xml version="1.0" encoding="utf-8"?>
+<WifiConfigStoreData version="3">
+  <NetworkList>
+    <Network>
+      <WifiConfiguration>
+        <string name="SSID">&quot;SecureNet&quot;</string>
+        <EncryptedString name="PreSharedKey">
+          <string name="EncryptedData">abc123==</string>
+          <string name="IV">def456==</string>
+        </EncryptedString>
+        <string name="AllowedKeyMgmt">WPA2_PSK</string>
+      </WifiConfiguration>
+    </Network>
+  </NetworkList>
+</WifiConfigStoreData>
+"""
+
+
+def test_xml_encrypted_psk_flagged_unreadable(tmp_path):
+    """A PreSharedKey wrapped in an unrecognised tag is NOT reported as an open network."""
+    p = tmp_path / "WifiConfigStore.xml"
+    p.write_text(_XML_ENCRYPTED_PSK, encoding="utf-8")
+    nets = parse_wifi_config_store_xml(p)
+    assert len(nets) == 1
+    net = nets[0]
+    assert net.ssid == "SecureNet"
+    assert net.security == "WPA/WPA2"
+    assert net.password == ""
+    assert net.password_unreadable is True
+    assert any("unrecoverable" in c or "Keystore" in c for c in net.caveats)
+
+
+def test_xml_open_network_not_flagged_unreadable(tmp_path):
+    """A genuinely open network (no PreSharedKey element at all) is NOT flagged unreadable."""
+    p = tmp_path / "WifiConfigStore.xml"
+    p.write_text(_XML_TYPICAL, encoding="utf-8")
+    nets = parse_wifi_config_store_xml(p)
+    open_net = next(n for n in nets if n.ssid == "OpenHotspot")
+    assert open_net.password_unreadable is False
+
+
+# ---------------------------------------------------------------------------
+# SoftAp (own hotspot) parser
+# ---------------------------------------------------------------------------
+
+from triage.parsers.wifi import parse_wifi_softap_xml  # noqa: E402
+
+_XML_SOFTAP_TYPICAL = """\
+<?xml version="1.0" encoding="utf-8"?>
+<SoftApConfiguration>
+  <SoftAp>
+    <string name="SSID">&quot;MyPhoneAP&quot;</string>
+    <string name="Passphrase">&quot;hotspotpass123&quot;</string>
+    <int name="SecurityType" value="1" />
+  </SoftAp>
+</SoftApConfiguration>
+"""
+
+_XML_SOFTAP_ENCRYPTED = """\
+<?xml version="1.0" encoding="utf-8"?>
+<SoftApConfiguration>
+  <SoftAp>
+    <string name="SSID">&quot;MyPhoneAP&quot;</string>
+    <EncryptedString name="Passphrase">
+      <string name="EncryptedData">xyz==</string>
+    </EncryptedString>
+  </SoftAp>
+</SoftApConfiguration>
+"""
+
+
+def test_softap_basic(tmp_path):
+    """SoftAp config parses SSID, passphrase and is flagged is_softap."""
+    p = tmp_path / "WifiConfigStoreSoftAp.xml"
+    p.write_text(_XML_SOFTAP_TYPICAL, encoding="utf-8")
+    nets = parse_wifi_softap_xml(p)
+    assert len(nets) == 1
+    net = nets[0]
+    assert net.ssid == "MyPhoneAP"
+    assert net.password == "hotspotpass123"
+    assert net.is_softap is True
+    assert net.password_unreadable is False
+
+
+def test_softap_encrypted_passphrase_flagged_unreadable(tmp_path):
+    """An encrypted SoftAp passphrase is flagged unreadable, never reported as OPEN."""
+    p = tmp_path / "WifiConfigStoreSoftAp.xml"
+    p.write_text(_XML_SOFTAP_ENCRYPTED, encoding="utf-8")
+    nets = parse_wifi_softap_xml(p)
+    assert len(nets) == 1
+    net = nets[0]
+    assert net.password == ""
+    assert net.password_unreadable is True
+    assert net.security != "OPEN"
