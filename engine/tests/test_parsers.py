@@ -75,6 +75,27 @@ def test_contacts_parser(tmp_path):
     assert contacts[1].email == "b@x.com"
 
 
+def test_contacts_parser_nonstring_fields_dont_drop_the_file(tmp_path):
+    """A helper-APK row with a numeric `number` (valid JSON, not the assumed str) used
+    to raise inside the bare `.strip()` call and, with no per-row isolation, take every
+    other contact in the file down with it — the file read back as 0 contacts even
+    though the JSON on disk plainly had entries. Every field is coerced through str()
+    now, so a type surprise degrades that one row instead of the whole file."""
+    p = tmp_path / "contacts.json"
+    p.write_text(
+        json.dumps(
+            [
+                {"name": "A", "number": 9198765432},
+                {"name": "B", "number": "222", "email": None},
+            ]
+        )
+    )
+    contacts = parse_contacts_json(p)
+    assert len(contacts) == 2
+    assert contacts[0].number == "9198765432"
+    assert contacts[1].email == ""
+
+
 def test_calllog_parser(tmp_path):
     p = tmp_path / "calllog.json"
     p.write_text(
