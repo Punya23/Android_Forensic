@@ -245,19 +245,50 @@ already visible in Case Intelligence, and the output always carries a disclaimer
 it is an investigative aid, not a certified conclusion. Re-run it standalone with
 `POST /api/case/<id>/summarize`.
 
-### Packaging (`npm run electron:build`) — wired (2026-09)
+### Packaging (`npm run electron:build`) — builds a real installer, unsigned
 
-`app/package.json` now has a `"build"` config block for electron-builder (`appId`,
-`productName`, `dist-electron` output, per-OS targets) and declares `electron-builder`
-as a devDependency. `electron/main.cjs` expects a packaged build to find a standalone
-`triage-engine` executable under `resources/engine/triage-engine` — `npm run
-build:engine` (new; runs automatically as the first step of `electron:build`) invokes
-`app/scripts/build-engine.mjs`, which runs PyInstaller against `engine/snagr.spec` and
-produces exactly that binary at `engine/dist/triage-engine`. `build.extraResources`
-copies it into the packaged app's `resources/engine/`. (`build_package.py` at the repo
-root remains a separate, manual "portable folder" bundler — it doesn't use
-electron-builder at all — kept for anyone who wants a zip-and-run folder instead of a
-platform installer.)
+Two-step build: PyInstaller freezes the engine into a standalone binary, then
+electron-builder bundles it into the desktop app.
+
+```bash
+# 1. Freeze the engine (from engine/, with .venv active) — produces
+#    engine/dist/triage-engine/triage-engine
+cd engine && .venv/bin/pyinstaller snagr.spec --noconfirm
+
+# 2. Build the desktop app (from app/) — produces app/release/SNAGR-<version>*.dmg
+#    (and mac-arm64/mac x64 unpacked .app builds alongside it)
+cd ../app && npm run electron:build
+```
+
+`app/package.json`'s `"build"` block pins `productName`/`appId`, sends output to
+`app/release/` (not `dist/` — that's vite's build output, would collide), and
+`extraResources` copies `engine/dist/triage-engine/` to `resources/engine/` in the
+packaged app, matching what `electron/main.cjs` expects at that exact path. Icons
+(`app/build/icons/icon.{icns,ico}`, source in `generate.py`) are wired for mac/win/linux.
+(`build_package.py` at the repo root remains a separate, manual "portable folder"
+bundler — it doesn't use electron-builder at all — kept for anyone who wants a
+zip-and-run folder instead of a platform installer.)
+
+Verified: the frozen engine binary answers `GET /api/health` standalone, and the
+packaged `.app` bundles the engine at the right resource path with the icon set
+correctly in `Info.plist`. **Not verified from this checkout:** actually launching the
+packaged GUI and clicking through it — do that once, by hand, before a demo.
+
+Known gaps still open:
+- **Unsigned** — no Apple Developer ID / EV cert here, so macOS Gatekeeper blocks a
+  plain double-click on first run ("unidentified developer"). Workaround:
+  right-click → Open, or `xattr -d com.apple.quarantine SNAGR.app`. Same story on
+  Windows (SmartScreen) without a code-signing cert.
+- **PDF export (Playwright)** — `electron/pdf/pdfRenderer.cjs` renders reports via a
+  headless Chromium that Playwright launches, but `package.json`'s `allowScripts`
+  doesn't permit Playwright's own postinstall, so its browser binary is never
+  downloaded — `npm install` alone does not make PDF export work in a packaged build.
+  Needs `PLAYWRIGHT_BROWSERS_PATH=0` (installs the browser under `node_modules` so
+  electron-builder's default file-set actually picks it up) plus an `asarUnpack` entry
+  for the native binary, then a real `npx playwright install chromium` and a test of
+  the export flow. Left undone here — bundling a ~150–300 MB Chromium wasn't in scope
+  for "make it launch as a downloadable app"; do it separately before relying on the
+  in-app PDF export from a packaged build.
 
 ### APK release build — wired (2026-09)
 

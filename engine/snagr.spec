@@ -57,7 +57,7 @@ HIDDEN = [
     "triage.intel.planner",
     "triage.forensics.section65b",
     "triage.forensics.location_summary",
-    "triage.ai.behavioral_analysis",
+    "triage.forensics.behavioral_analysis",
     "triage.recovery.sqlite_recovery",
     "triage.recovery.sqbrite",
     "triage.parsers.telegram",
@@ -73,8 +73,9 @@ HIDDEN = [
 # Data files to bundle alongside the binary
 # ---------------------------------------------------------------------------
 DATAS = [
-    # Jinja2 templates (used by report.py)
-    ("triage/templates", "triage/templates"),
+    # NOTE: report generation (triage/report/report_engine.py) builds HTML from
+    # inline Python strings, not Jinja2 files — there is no triage/templates
+    # directory to bundle. Re-add a DATAS entry here if that changes.
     # ALEAPP plugins (optional; skip if absent)
     # ("../tools/ALEAPP/scripts", "scripts"),
 ]
