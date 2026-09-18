@@ -79,13 +79,13 @@ class Message(Serialisable):
     app: str
     sender: str
     body: str
-    timestamp: Optional[str] = None  # ISO-8601 if parseable
-    direction: str = "unknown"  # incoming/outgoing/unknown
+    timestamp: Optional[str] = None
+    direction: str = "unknown"
     confidence: Confidence = Confidence.LIVE
     source_file: str = ""
-    provenance: str = ""  # e.g. "wal frame 12", "freelist page 4"
+    provenance: str = ""
+    producer: str = "live_pull"
     flags: list[str] = field(default_factory=list)
-
 
 @dataclass
 class Contact(Serialisable):
@@ -315,8 +315,9 @@ class WhatsAppBackupMessage(Serialisable):
     media_type: str = ""  # image/video/audio/document/…
     media_path: str = ""  # relative path stored in the DB (may not exist on device)
     confidence: Confidence = Confidence.LIVE
-    source_file: str = ""  # decrypted SQLite filename
-    provenance: str = ""  # e.g. "freelist page 4", "WAL frame 12"
+    source_file: str = ""
+    provenance: str = ""
+    producer: str = "backup_recovery"
     flags: list[str] = field(default_factory=list)
 
 

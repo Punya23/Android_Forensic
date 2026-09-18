@@ -567,6 +567,7 @@ def recover_messages_from_db(
                         confidence=Confidence.LIVE,
                         source_file=db_path.name,
                         provenance=f"live row in {msg_table}",
+                        producer="backup_recovery",
                     )
                 )
         con.close()

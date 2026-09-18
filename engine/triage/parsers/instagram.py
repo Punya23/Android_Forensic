@@ -320,6 +320,7 @@ def parse_instagram_export(path: str | Path) -> dict[str, Any]:
                     confidence=Confidence.LIVE.value,
                     source_file="instagram_export",
                     provenance="Download-Your-Data export",
+                    producer="user_export",
                 )
             )
 

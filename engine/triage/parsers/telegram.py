@@ -1388,6 +1388,7 @@ def parse_telegram_export(path: str | Path) -> dict[str, Any]:
                     "provenance": "Telegram Desktop data export (user-supplied, not a device pull)",
                     "warnings": [],
                     "media_artifact_id": None,
+                    "producer": "user_export",
                 }
             )
 

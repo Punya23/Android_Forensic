@@ -472,6 +472,7 @@ def parse_snapchat_export(path: str | Path) -> dict[str, Any]:
                 confidence=Confidence.LIVE.value,
                 source_file="snapchat_export",
                 provenance="My Data export",
+                producer="user_export",
             )
         )
 
