@@ -360,6 +360,8 @@ def _try_external_decrypter(
                     [tool, str(crypt_path), str(out_path), "--hex-key", hex_key],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=60,
                 )
                 case.log(

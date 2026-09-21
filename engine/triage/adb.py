@@ -283,6 +283,8 @@ class Adb:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=not binary,
+                encoding="utf-8" if not binary else None,
+                errors="replace" if not binary else None,
             )
         except Exception as exc:  # pragma: no cover - defensive
             return AdbResult(printable, 1, "", str(exc))
@@ -344,7 +346,12 @@ class Adb:
             return []
         try:
             out = subprocess.run(
-                [path, "devices"], capture_output=True, text=True, timeout=15
+                [path, "devices"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
             ).stdout
         except Exception:
             return []
