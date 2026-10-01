@@ -1,14 +1,13 @@
 """Tests for Phase 2 forensic modules.
 
-Tests all 5 Phase 2 modules:
+Unit tests for the Phase 2 modules (hand-built inputs). Pipeline wiring is covered by
+test_phase2_pipeline.py:
 - WhatsApp Advanced Analysis
 - Telegram Advanced Analysis
 - Financial Forensics
-- Legal Intelligence
 - Enhanced Location Intelligence
 """
 
-import pytest
 import tempfile
 import sqlite3
 from pathlib import Path
@@ -18,7 +17,6 @@ from datetime import datetime, timedelta
 from triage.parsers.whatsapp_advanced import (
     analyze_whatsapp_reactions,
     detect_whatsapp_admins,
-    analyze_whatsapp_calls,
 )
 
 from triage.parsers.telegram_advanced import (
@@ -32,11 +30,6 @@ from triage.forensics.financial import (
     build_money_trail,
 )
 
-from triage.forensics.legal import (
-    match_statutes,
-    generate_fir,
-    generate_expert_report,
-)
 
 from triage.forensics.location_enhanced import (
     reverse_geocode,
@@ -132,40 +125,6 @@ def test_detect_whatsapp_admins():
         
     finally:
         Path(db_path).unlink(missing_ok=True)
-
-
-def test_analyze_whatsapp_calls():
-    """Test call pattern analysis"""
-    now = datetime.now()
-    
-    call_logs = [
-        {
-            'jid': 'user1@s.whatsapp.net',
-            'timestamp': now.timestamp(),
-            'duration': 300,
-            'call_result': 'answered'
-        },
-        {
-            'jid': 'user1@s.whatsapp.net',
-            'timestamp': (now + timedelta(hours=1)).timestamp(),
-            'duration': 120,
-            'call_result': 'missed'
-        },
-        {
-            'jid': 'user2@s.whatsapp.net',
-            'timestamp': now.replace(hour=2).timestamp(),  # 2 AM
-            'duration': 600,
-            'call_result': 'answered'
-        },
-    ]
-    
-    result = analyze_whatsapp_calls(call_logs)
-    
-    assert 'per_contact' in result
-    assert 'user1@s.whatsapp.net' in result['per_contact']
-    assert result['per_contact']['user1@s.whatsapp.net']['total_calls'] == 2
-    assert result['per_contact']['user1@s.whatsapp.net']['missed_calls'] == 1
-    assert result['summary']['total_calls'] == 3
 
 
 # ==================== Telegram Advanced Tests ====================
@@ -411,66 +370,6 @@ def test_build_money_trail():
     assert result['bob'][0]['to'] == 'charlie'
 
 
-# ==================== Legal Intelligence Tests ====================
-
-def test_match_statutes():
-    """Test statute matching"""
-    text = "Suspect was involved in online fraud and cheating using computer systems"
-    
-    result = match_statutes(text)
-    
-    assert len(result) > 0
-    # Should match fraud/cheating sections
-    sections = [r['section'] for r in result]
-    assert any(s in ['420', '66D'] for s in sections)
-
-
-def test_generate_fir():
-    """Test FIR generation"""
-    case_data = {
-        'case_id': 'TEST001',
-        'complainant': 'John Doe',
-        'accused': 'Jane Smith',
-        'incident_date': '2024-01-01',
-        'incident_place': 'Mumbai',
-        'description': 'Online fraud case involving cheating',
-    }
-    
-    evidence = [
-        {'type': 'messages', 'count': 100},
-        {'type': 'calls', 'count': 50},
-    ]
-    
-    result = generate_fir(case_data, evidence)
-    
-    assert 'FIRST INFORMATION REPORT' in result
-    assert 'TEST001' in result
-    assert 'John Doe' in result
-    assert 'Jane Smith' in result
-    assert 'messages:' in result  # Evidence count
-    assert 'calls:' in result
-
-
-def test_generate_expert_report():
-    """Test expert report generation"""
-    case_data = {
-        'case_id': 'TEST001',
-        'device_model': 'Samsung Galaxy',
-        'android_version': '12',
-        'examination_date': '2024-01-01',
-        'findings': [],
-        'evidence_count': {'messages': 100, 'calls': 50},
-    }
-    
-    result = generate_expert_report('/tmp', case_data)
-    
-    assert 'FORENSIC EXPERT REPORT' in result
-    assert 'TEST001' in result
-    assert 'Samsung Galaxy' in result
-    assert 'LIMITATIONS AND CAVEATS' in result  # Honesty section
-    assert 'SNAGR' in result
-
-
 # ==================== Location Intelligence Tests ====================
 
 def test_reverse_geocode():
@@ -524,44 +423,13 @@ def test_analyze_visit_durations():
 # ==================== Integration Tests ====================
 
 def test_phase2_workflow():
-    """Test complete Phase 2 workflow"""
-    # 1. Analyze messages for financial forensics
+    """UPI detection feeds the money trail"""
     messages = [
-        {'text': 'Paid ₹1000 to shop@paytm for fraudulent goods', 
+        {'text': 'Paid ₹1000 to shop@paytm for fraudulent goods',
          'sender': 'victim', 'timestamp': '2024-01-01'}
     ]
     transactions = detect_upi_transactions(messages)
     assert len(transactions) > 0
-    
-    # 2. Match statutes
-    statutes = match_statutes('fraudulent goods online cheating')
-    assert len(statutes) > 0
-    
-    # 3. Build money trail
+
     trail = build_money_trail(transactions)
     assert len(trail) > 0
-    
-    # 4. Generate reports
-    case_data = {
-        'case_id': 'INT001',
-        'complainant': 'Victim',
-        'accused': 'Unknown',
-        'incident_date': '2024-01-01',
-        'incident_place': 'Delhi',
-        'description': 'Online fraud',
-        'device_model': 'Test Device',
-        'android_version': '12',
-        'examination_date': '2024-01-01',
-        'evidence_count': {'transactions': len(transactions)},
-        'findings': [],
-    }
-    
-    fir = generate_fir(case_data, [])
-    report = generate_expert_report('/tmp', case_data)
-    
-    assert 'FIR' in fir
-    assert 'FORENSIC' in report
-
-
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])

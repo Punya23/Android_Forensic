@@ -841,6 +841,8 @@ def generate_report(case_dir: str | Path) -> Path:
     # --- New artifact datasets: call recordings + notification history ---
     call_recordings = case.read_derived("recordings") or []
     notifications   = case.read_derived("notifications") or []
+    upi_transactions = case.read_derived("upi_transactions") or []
+    money_trail = case.read_derived("money_trail") or {}
 
     parts: list[str] = []
     parts.append(_HEAD)
@@ -1618,6 +1620,9 @@ def generate_report(case_dir: str | Path) -> Path:
     if notifications:
         parts.append(_notifications_section(notifications))
 
+    # --- Financial trail (UPI) ---
+    parts.append(_financial_trail_section(upi_transactions, money_trail))
+
     # Hash manifest
     parts.append("<h2>Hash manifest (per-artifact SHA-256)</h2>")
     parts.append(
@@ -1839,6 +1844,54 @@ def _notifications_section(notifications: list[dict]) -> str:
         "<th>Date/Time</th><th>App</th><th>Title</th>"
         "<th>Body</th><th>Channel</th><th>Source</th>"
         f"</tr>{rows}</table>"
+    )
+
+
+def _financial_trail_section(transactions: list[dict], money_trail: dict) -> str:
+    """Render payments detected in message text, for the officer who drafts the FIR.
+
+    Every row quotes the message it came from: the detector pattern-matches free text, so
+    the reader must be able to check each amount and party against the source.
+    """
+    if not transactions:
+        return ""
+
+    def _row(t: dict) -> str:
+        counterparty = t.get("receiver") if not t.get("is_credit") else t.get("sender")
+        return (
+            "<tr>"
+            f'<td class="mono">{_esc(t.get("timestamp") or "—")}</td>'
+            f'<td>{"Received" if t.get("is_credit") else "Paid"}</td>'
+            f'<td>{_esc(t.get("sender"))} &rarr; {_esc(t.get("receiver"))}</td>'
+            f'<td class="mono">{_esc(t.get("upi_id") or counterparty or "—")}</td>'
+            f'<td class="mono">{t.get("amount", 0):,.2f}</td>'
+            f'<td class="mono">{_esc(t.get("transaction_id") or "—")}</td>'
+            f'<td>{_esc(t.get("source_app") or "—")}<br>'
+            f'<span class="mono" style="font-size:10px">{_esc(t.get("source_file") or "")}</span></td>'
+            f'<td>{_esc(t.get("confidence"))}</td>'
+            f'<td style="font-size:11px">{_esc(t.get("source_message"))}</td>'
+            "</tr>"
+        )
+
+    rows = "".join(_row(t) for t in sorted(transactions, key=lambda t: str(t.get("timestamp") or "")))
+    flows = "".join(
+        f"<tr><td>{_esc(sender)}</td><td>{_esc(f['to'])}</td>"
+        f'<td class="mono">{f["total_amount"]:,.2f}</td><td>{_esc(f["transaction_count"])}</td></tr>'
+        for sender, outgoing in money_trail.items()
+        for f in outgoing
+    )
+    return (
+        "<h2>Financial trail</h2>"
+        f'<p class="note">{_esc(len(transactions))} payment(s) detected by pattern-matching '
+        "message text (bank SMS, payment-app notifications, chats). Amounts and parties are "
+        "as written in the message and are not verified against bank records; "
+        "&ldquo;device owner&rdquo; is the account holder of the examined handset. Confirm each "
+        "row against the quoted source message before relying on it.</p>"
+        "<table><tr><th>Date/Time</th><th>Direction</th><th>From &rarr; To</th><th>UPI ID / party</th>"
+        "<th>Amount (INR)</th><th>UTR / Ref</th><th>Source</th><th>Confidence</th>"
+        f"<th>Source message</th></tr>{rows}</table>"
+        "<h3>Money flow</h3>"
+        f"<table><tr><th>From</th><th>To</th><th>Total (INR)</th><th>Payments</th></tr>{flows}</table>"
     )
 
 

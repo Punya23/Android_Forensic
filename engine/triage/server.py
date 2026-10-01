@@ -1688,6 +1688,9 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             "collector_bluetooth",
             "whatsapp_media",
             "aleapp",
+            # Phase 2 forensic stages (financial trail, sighting spans).
+            "upi_transactions",
+            "visit_durations",
         }
 
         obj_sets = {
@@ -1755,6 +1758,14 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             "url_location_summary",
             # Per-run helper-APK audit record: what ran, what was denied, and why.
             "collector_manifest",
+            # Phase 2 forensic stages.
+            "money_trail",
+            "whatsapp_reactions",
+            "whatsapp_admins",
+            "telegram_bots",
+            "telegram_group_stats",
+            # Own-hotspot client leases (Tier 2) — {"leases": [...], "caveats": [...]}.
+            "hotspot_leases",
         }
 
         if dataset not in (list_sets | obj_sets):
@@ -1821,6 +1832,34 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
     # Instagram / Snapchat / Telegram / WhatsApp (non-root acquisition path)
     # ---------------------------------------------------------
 
+    def _refresh_report(case, trigger: str) -> str:
+        """Regenerate report.html and its history snapshot. Returns the error text ("" on
+        success) so a failure reaches the caller instead of being swallowed."""
+        from .report import generate_report
+
+        try:
+            generate_report(case.root)
+            _finalize_report(case, trigger=trigger)
+            return ""
+        except Exception as exc:
+            return str(exc)
+
+    @app.post("/api/case/<case_id>/rebuild")
+    def rebuild_case_analysis(case_id: str):
+        """Re-derive graph / financial trail / risk from the case's stored datasets — for
+        cases built by older engine code, or after any change to those analysers."""
+        from .rebuild import rebuild_analysis
+
+        case = _open(cases_root, case_id)
+
+        try:
+            summary = rebuild_analysis(case)
+        except Exception as exc:
+            return jsonify({"error": f"analysis rebuild failed: {exc}"}), 500
+
+        report_error = _refresh_report(case, "rebuild")
+        return jsonify({**summary, **({"report_error": report_error} if report_error else {})})
+
     @app.post("/api/case/<case_id>/import/<app_name>")
     def import_export(case_id: str, app_name: str):
 
@@ -1845,7 +1884,7 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
                 return jsonify({"error": "no file uploaded"}), 400
 
             from .parsers.whatsapp_batch import parse_whatsapp_batch, get_batch_stats
-            from .report import generate_report
+            from .rebuild import apply_imported_messages
 
             key_upload = request.files.get("key")
 
@@ -1910,26 +1949,31 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
                     )
 
                 # Merge into the same "messages" dataset live acquisition writes to
-                # (pipeline.py) — Message.to_dict() is the same shape either way, so
-                # Messages/Timeline/GlobalSearch pick these up with no separate view.
-                existing = case.read_derived("messages") or []
-
-                merged = list(existing) + [m.to_dict() for m in messages]
-
-                case.write_derived("messages", merged)
-
+                # (pipeline.py) — Message.to_dict() is the same shape either way — and
+                # re-derive the graph / timeline / flags / risk / financial trail from
+                # the grown pool, all-or-nothing (see triage/rebuild.py).
                 try:
 
-                    generate_report(case.root)
+                    summary = apply_imported_messages(
+                        case, [m.to_dict() for m in messages]
+                    )
 
-                    _finalize_report(case, trigger="import:whatsapp_batch")
+                except Exception as exc:
 
-                except Exception:
+                    return (
+                        jsonify({"error": f"import not applied — analysis failed: {exc}"}),
+                        500,
+                    )
 
-                    pass
+                report_error = _refresh_report(case, "import:whatsapp_batch")
 
                 return jsonify(
-                    {"imported": len(messages), "total": len(merged), "stats": stats}
+                    {
+                        "imported": len(messages),
+                        "total": summary["messages"],
+                        "stats": stats,
+                        **({"report_error": report_error} if report_error else {}),
+                    }
                 )
 
             finally:
@@ -1950,7 +1994,7 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             build_conversations,
         )
 
-        from .report import generate_report
+        from .rebuild import apply_imported_messages, chat_row_as_message
 
         suffix = Path(upload.filename).suffix or ".zip"
 
@@ -2027,17 +2071,35 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
                     f"{app_name}_conversations", thread_conversations(merged, users)
                 )
 
+            # The app dataset above is saved; the unified message pool and everything
+            # derived from it (graph, timeline, flags, risk, financial trail) follow.
             try:
 
-                generate_report(case.root)
+                apply_imported_messages(
+                    case, [chat_row_as_message(r, app_name) for r in messages]
+                )
 
-                _finalize_report(case, trigger=f"import:{app_name}")
+            except Exception as exc:
 
-            except Exception:
+                return (
+                    jsonify(
+                        {
+                            "error": f"imported {len(messages)} messages, but the analysis "
+                            f"refresh failed: {exc}"
+                        }
+                    ),
+                    500,
+                )
 
-                pass
+            report_error = _refresh_report(case, f"import:{app_name}")
 
-            return jsonify({"imported": len(messages), "total": len(merged)})
+            return jsonify(
+                {
+                    "imported": len(messages),
+                    "total": len(merged),
+                    **({"report_error": report_error} if report_error else {}),
+                }
+            )
 
         finally:
 

@@ -2562,14 +2562,12 @@ def run_acquisition(
     # WhatsApp Advanced Analysis
     whatsapp_reactions = {}
     whatsapp_admins = {}
-    whatsapp_call_analysis = {}
     try:
         from .parsers.whatsapp_advanced import (
             analyze_whatsapp_reactions,
             detect_whatsapp_admins,
-            analyze_whatsapp_calls,
         )
-        
+
         # Find WhatsApp databases
         wa_db_paths = []
         for artifact_path, artifact_rec in db_artifacts:
@@ -2585,19 +2583,13 @@ def run_acquisition(
             if admins:
                 whatsapp_admins.update(admins)
         
-        # Analyze call patterns from call logs
-        wa_calls = [c for c in calls if c.get('source') == 'whatsapp' or 'whatsapp' in c.get('app', '').lower()]
-        if wa_calls:
-            whatsapp_call_analysis = analyze_whatsapp_calls(wa_calls)
-        
         case.write_derived("whatsapp_reactions", whatsapp_reactions)
         case.write_derived("whatsapp_admins", whatsapp_admins)
-        case.write_derived("whatsapp_call_analysis", whatsapp_call_analysis)
-        
+
         case.log(
             "phase2.whatsapp_advanced",
-            f"WhatsApp advanced analysis: {len(whatsapp_reactions)} reactions, "
-            f"{len(whatsapp_admins)} admin groups, call patterns analyzed",
+            f"WhatsApp advanced analysis: {len(whatsapp_reactions)} reacted messages, "
+            f"{len(whatsapp_admins)} groups with admins",
             tier=Tier.TIER0.value,
         )
     except Exception as exc:
@@ -2658,8 +2650,8 @@ def run_acquisition(
             build_money_trail,
         )
         
-        # Detect UPI transactions from all messages
-        upi_transactions = detect_upi_transactions(all_messages)
+        # Detect UPI transactions from all messages (dict form: the detector reads fields)
+        upi_transactions = detect_upi_transactions(msg_dicts)
         
         # Build money trail graph
         if upi_transactions:
@@ -2682,82 +2674,6 @@ def run_acquisition(
             tier=Tier.TIER0.value,
         )
     
-    # Legal Intelligence
-    matched_statutes = []
-    fir_draft = ""
-    expert_report = ""
-    try:
-        from .forensics.legal import (
-            match_statutes,
-            generate_fir,
-            generate_expert_report,
-        )
-        
-        # Match statutes from case description or evidence
-        evidence_text = cfg.case_description or ""
-        if evidence_text:
-            matched_statutes = match_statutes(evidence_text)
-        
-        # Generate FIR if case data available
-        if cfg.case_id:
-            case_data = {
-                'case_id': cfg.case_id,
-                'complainant': cfg.examiner or 'Unknown',
-                'accused': 'Unknown',
-                'incident_date': 'Unknown',
-                'incident_place': 'Unknown',
-                'description': cfg.case_description or 'No description provided',
-            }
-            
-            # Prepare evidence list
-            evidence_list = [
-                {'type': 'messages', 'count': len(all_messages)},
-                {'type': 'calls', 'count': len(calls)},
-                {'type': 'media', 'count': len(media_items)},
-                {'type': 'contacts', 'count': len(contacts)},
-            ]
-            
-            fir_draft = generate_fir(case_data, evidence_list)
-            
-            # Generate expert report
-            expert_case_data = {
-                **case_data,
-                'device_model': device.manufacturer + " " + device.model,
-                'android_version': device.android_version,
-                'examination_date': datetime.now().strftime('%Y-%m-%d'),
-                'received_date': datetime.now().strftime('%Y-%m-%d'),
-                'exam_start': datetime.now().strftime('%Y-%m-%d'),
-                'extraction_date': datetime.now().strftime('%Y-%m-%d'),
-                'analysis_date': datetime.now().strftime('%Y-%m-%d'),
-                'acquisition_tier': f"Tier {cfg.max_tier}",
-                'evidence_count': {
-                    'messages': len(all_messages),
-                    'calls': len(calls),
-                    'media': len(media_items),
-                    'contacts': len(contacts),
-                },
-                'findings': flags,
-            }
-            expert_report = generate_expert_report(str(case.root), expert_case_data)
-        
-        case.write_derived("matched_statutes", matched_statutes)
-        case.write_derived("fir_draft", fir_draft)
-        case.write_derived("expert_report", expert_report)
-        
-        case.log(
-            "phase2.legal_intelligence",
-            f"Legal intelligence: {len(matched_statutes)} statutes matched, "
-            "FIR and expert report generated",
-            tier=Tier.TIER0.value,
-        )
-    except Exception as exc:
-        case.log(
-            "phase2.legal_intelligence",
-            f"Legal intelligence error: {exc}",
-            result="error",
-            tier=Tier.TIER0.value,
-        )
-    
     # Enhanced Location Intelligence
     visit_durations = []
     try:
@@ -2766,7 +2682,7 @@ def run_acquisition(
         )
         
         # Analyze visit durations from all location data
-        all_locations = locations + maps_locations
+        all_locations = [p.to_dict() for p in locations] + maps_locations
         if all_locations:
             visit_durations = analyze_visit_durations(all_locations)
         

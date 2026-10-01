@@ -7,9 +7,8 @@ for location-based evidence.
 from __future__ import annotations
 
 import math
-from collections import defaultdict
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 
 # Simplified city database (lat, lon, name)
@@ -131,9 +130,14 @@ def detect_poi(lat: float, lon: float, radius_km: float = 1.0) -> List[str]:
 def analyze_visit_durations(locations: List[Dict]) -> List[Dict[str, Any]]:
     """Analyze time spent at different locations.
     
+    The span is first-to-last *sighting* — a lower bound on presence, not a measured stay.
+    A place seen once has duration 0 and ``single_observation`` True; no dwell time is
+    invented for it.
+
     Args:
-        locations: List of location dicts with 'lat', 'lon', 'timestamp' fields
-        
+        locations: List of location dicts with 'lat'/'lon' (or the pipeline's
+            'latitude'/'longitude') and 'timestamp' fields
+
     Returns:
         List of visit duration dicts:
         [{
@@ -155,8 +159,8 @@ def analyze_visit_durations(locations: List[Dict]) -> List[Dict[str, Any]]:
     PROXIMITY_THRESHOLD_KM = 0.1  # 100 meters
     
     for loc in locations:
-        lat = loc.get('lat')
-        lon = loc.get('lon')
+        lat = loc.get('lat', loc.get('latitude'))
+        lon = loc.get('lon', loc.get('longitude'))
         timestamp = loc.get('timestamp')
         
         if lat is None or lon is None or timestamp is None:
@@ -195,13 +199,7 @@ def analyze_visit_durations(locations: List[Dict]) -> List[Dict[str, Any]]:
     for group in location_groups:
         timestamps = sorted(group['timestamps'])
         
-        if len(timestamps) < 2:
-            # Single point, assume 5 minute visit
-            duration_seconds = 300
-        else:
-            # Calculate duration from first to last timestamp
-            duration = timestamps[-1] - timestamps[0]
-            duration_seconds = int(duration.total_seconds())
+        duration_seconds = int((timestamps[-1] - timestamps[0]).total_seconds())
         
         # Get location name
         location_name = reverse_geocode(group['lat'], group['lon'])
@@ -219,7 +217,8 @@ def analyze_visit_durations(locations: List[Dict]) -> List[Dict[str, Any]]:
             'duration_readable': _format_duration(duration_seconds),
             'first_seen': timestamps[0].isoformat(),
             'last_seen': timestamps[-1].isoformat(),
-            'visit_count': len(timestamps)
+            'visit_count': len(timestamps),
+            'single_observation': len(timestamps) == 1,
         })
     
     # Sort by duration (longest first)
@@ -293,30 +292,34 @@ def _get_region(lat: float, lon: float) -> Optional[str]:
     return None
 
 
+def _utc(dt: datetime) -> datetime:
+    """Timezone-aware UTC. Sightings arrive as epochs, 'Z' ISO strings and naive ISO
+    strings; they must all be comparable, so a naive value is read as UTC (a device-local
+    time of unknown zone cannot be placed any better)."""
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+
 def _parse_timestamp(ts: Any) -> datetime:
-    """Parse timestamp from various formats."""
+    """Parse timestamp from various formats into an aware UTC datetime."""
     if isinstance(ts, datetime):
-        return ts
-    
+        return _utc(ts)
+
     if isinstance(ts, (int, float)):
         # Unix timestamp (milliseconds or seconds)
-        if ts > 10**10:  # Milliseconds
-            return datetime.fromtimestamp(ts / 1000)
-        else:
-            return datetime.fromtimestamp(ts)
-    
+        return datetime.fromtimestamp(ts / 1000 if ts > 10**10 else ts, tz=timezone.utc)
+
     if isinstance(ts, str):
         # ISO format
         ts_clean = ts.replace("Z", "+00:00")
         try:
-            return datetime.fromisoformat(ts_clean)
+            return _utc(datetime.fromisoformat(ts_clean))
         except Exception:
             # Try parsing as timestamp
             try:
-                return datetime.fromtimestamp(float(ts))
+                return _parse_timestamp(float(ts))
             except Exception:
                 pass
-    
+
     raise ValueError(f"Cannot parse timestamp: {ts}")
 
 

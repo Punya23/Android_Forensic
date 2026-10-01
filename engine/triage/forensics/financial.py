@@ -8,17 +8,33 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
+
+#: Party label for the handset's own account holder. A bank / payment-app notification names
+#: only the counterparty — the SMS *sender* is the notifier, not a party to the payment.
+OWNER = "device owner"
+
+_CREDIT_WORDS = re.compile(r"\b(?:received|credited|got)\b")
+_DEBIT_WORDS = re.compile(r"\b(?:debited|paid|sent|transferred|withdrawn)\b")
+
+
+def _is_credit(text_lower: str) -> bool:
+    """Money came in. A bare "from" is not evidence ("debited from A/c XX1 to VPA x" is a
+    debit); an explicit debit word wins when both appear."""
+    return bool(_CREDIT_WORDS.search(text_lower)) and not _DEBIT_WORDS.search(text_lower)
 
 
 def detect_upi_transactions(messages: List[Dict]) -> List[Dict[str, Any]]:
     """Extract UPI payment transactions from message text.
-    
-    Detects both user-initiated payments and payment app confirmation messages.
-    
+
+    Detects both user-initiated payments and payment app confirmation messages. Pattern
+    matches on free text — heuristic, so each row carries its confidence and the source
+    message for an examiner to verify.
+
     Args:
-        messages: List of message dicts with 'text', 'sender', 'timestamp' fields
-        
+        messages: List of message dicts (``Message.to_dict()``): 'body' (or legacy 'text'),
+            'sender', 'timestamp', optionally 'app' and 'source_file'
+
     Returns:
         List of transaction dicts:
         [{
@@ -94,7 +110,7 @@ def detect_upi_transactions(messages: List[Dict]) -> List[Dict[str, Any]]:
     ]
     
     for msg in messages:
-        text = msg.get('text', '')
+        text = msg.get('body') or msg.get('text') or ''
         if not text or not isinstance(text, str):
             continue
         
@@ -119,39 +135,38 @@ def detect_upi_transactions(messages: List[Dict]) -> List[Dict[str, Any]]:
         # Choose appropriate pattern set
         patterns_to_try = confirmation_patterns if is_confirmation else user_patterns
         
-        # Try each pattern
+        # Try each pattern. Several patterns overlap on one notification ("credited ... from
+        # VPA x" matches both the generic and the bank-SMS form); one message states one
+        # payment, so the first pattern to yield an amount owns it.
+        recorded_amounts: set[float] = set()
         for pattern in patterns_to_try:
             matches = re.finditer(pattern, text_lower, re.IGNORECASE)
-            
+
             for match in matches:
                 amount_str = match.group(1).replace(',', '').replace('rs.', '').replace('rs', '').strip()
-                counterparty = match.group(2).strip()
-                
+                counterparty = re.sub(r'^vpa\s+', '', match.group(2).strip())
+
                 try:
                     amount = float(amount_str)
                 except ValueError:
                     continue
-                
+
                 # Skip unreasonably large or small amounts
                 if amount < 1 or amount > 10000000:  # 1 rupee to 1 crore
                     continue
-                
-                # Determine sender/receiver based on context
-                sender = msg_sender
-                receiver = counterparty
+                if amount in recorded_amounts:
+                    continue
+                recorded_amounts.add(amount)
+
                 upi_id = counterparty if '@' in counterparty else ''
-                
-                # Check if this is a credit (money received) transaction
-                is_credit = any(word in text_lower for word in ['received', 'got', 'credited', 'from'])
-                
-                if is_credit:
-                    # Reverse: sender is the counterparty, receiver is message owner
-                    sender = counterparty
-                    receiver = msg_sender
-                    if not upi_id and '@' not in counterparty:
-                        # If counterparty is name, not UPI ID
-                        upi_id = ''
-                
+                is_credit = _is_credit(text_lower)
+
+                # Who paid whom. A notification (bank SMS / payment app) is about the
+                # handset's own account, so the owner is the other party; in a chat
+                # message the sender is whoever typed it.
+                local_party = OWNER if is_confirmation else msg_sender
+                sender, receiver = (counterparty, local_party) if is_credit else (local_party, counterparty)
+
                 # Detect payment app
                 payment_app = 'UPI'
                 for keyword, app_name in payment_apps.items():
@@ -189,6 +204,8 @@ def detect_upi_transactions(messages: List[Dict]) -> List[Dict[str, Any]]:
                     'transaction_id': transaction_id,
                     'timestamp': msg.get('timestamp', ''),
                     'source_message': text[:200],
+                    'source_app': msg.get('app', ''),
+                    'source_file': msg.get('source_file', ''),
                     'confidence': confidence,
                     'payment_app': payment_app,
                     'message_type': 'payment_confirmation' if is_confirmation else 'user_message',

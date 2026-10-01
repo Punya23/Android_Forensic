@@ -79,7 +79,8 @@ the engine logs everyone out.
 | `POST /api/case/<id>/ask` | "Ask this case" — free-text Q&A over the case's own already-collected evidence. Body: `{question, llm_provider?, top_k?, use_embeddings?}`. Retrieval always runs; synthesis only when a model is configured, grounded strictly to the retrieved passages (`triage/intel/case_qa.py`) | Required |
 | `GET /api/case/<id>/linked-cases` | Other cases on this installation sharing a phone number/UPI ID/email with this one, indexed via `triage/registry.py`'s `case_identifiers` table | Required |
 | `GET /api/nomenclature` \| `POST /api/nomenclature/check` | Controlled forensic vocabulary | Required |
-| `POST /api/case/<id>/import/<app>` | Non-root import (instagram/snapchat/telegram export) | Required |
+| `POST /api/case/<id>/import/<app>` | Non-root import (instagram/snapchat/telegram/whatsapp export). Merges into the `messages` pool and re-derives graph / timeline / flags / risk / financial trail all-or-nothing (`triage/rebuild.py`) | Required |
+| `POST /api/case/<id>/rebuild` | Re-derive graph / financial trail / risk from the case's stored messages, calls and contacts — for cases built by older engine code. Returns `{added, messages, participants, flags, upi_transactions}` | Required |
 
 ## Socket.IO (server → client only, no client-emitted events)
 

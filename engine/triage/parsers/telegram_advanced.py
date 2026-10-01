@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 
 def detect_telegram_bots(db_path: str) -> Dict[str, Dict[str, Any]]:
@@ -37,9 +37,11 @@ def detect_telegram_bots(db_path: str) -> Dict[str, Dict[str, Any]]:
         return {}
     
     bots_data = {}
-    
+
     try:
-        conn = sqlite3.connect(db_path)
+        # Read-only + immutable: a plain connect would checkpoint a WAL into the stored
+        # evidence file and delete the sidecar (same rule as parsers/google_maps).
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
         cursor = conn.cursor()
         
         # Try to find bots in users table
@@ -158,9 +160,9 @@ def analyze_telegram_groups(db_path: str) -> Dict[str, Dict[str, Any]]:
         return {}
     
     groups_data = {}
-    
+
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
         cursor = conn.cursor()
         
         # Find all groups

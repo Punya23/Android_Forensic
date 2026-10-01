@@ -3,16 +3,29 @@
 Provides deeper forensic analysis of WhatsApp data including:
 - Reaction analysis from message_reactions table
 - Admin detection from group_participants table
-- Call pattern analysis with suspicious behavior detection
+
+WhatsApp *call* analytics are deliberately absent: the pipeline's call log is the Android
+call-log provider (number / type / duration), which carries no WhatsApp calls, and nothing
+parses msgstore.db's ``call_log`` table yet. An analyser with no producer would only ever
+report an empty result that reads as "no WhatsApp calls".
 """
 
 from __future__ import annotations
 
 import sqlite3
 from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
+
+
+def _open_readonly(db_path: str) -> sqlite3.Connection:
+    """Open a stored artifact without any possibility of writing to it.
+
+    A plain ``sqlite3.connect`` on a WAL-mode database checkpoints the WAL into the main
+    file and deletes the sidecar on close — silently changing the evidence after its hash
+    was recorded. ``mode=ro&immutable=1`` forbids that (same rule as parsers/google_maps).
+    """
+    return sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
 
 
 def analyze_whatsapp_reactions(db_path: str) -> Dict[str, Dict[str, Any]]:
@@ -37,7 +50,7 @@ def analyze_whatsapp_reactions(db_path: str) -> Dict[str, Dict[str, Any]]:
     reactions_data = {}
     
     try:
-        conn = sqlite3.connect(db_path)
+        conn = _open_readonly(db_path)
         cursor = conn.cursor()
         
         # Try to query message_reactions table
@@ -109,7 +122,7 @@ def detect_whatsapp_admins(db_path: str) -> Dict[str, List[str]]:
     admins_data = defaultdict(list)
     
     try:
-        conn = sqlite3.connect(db_path)
+        conn = _open_readonly(db_path)
         cursor = conn.cursor()
         
         # Try multiple schema variations
@@ -148,176 +161,3 @@ def detect_whatsapp_admins(db_path: str) -> Dict[str, List[str]]:
         pass
     
     return dict(admins_data)
-
-
-def analyze_whatsapp_calls(call_logs: List[Dict]) -> Dict[str, Any]:
-    """Analyze WhatsApp call patterns for forensic insights.
-    
-    Args:
-        call_logs: List of call records with fields:
-            - jid: Contact JID
-            - timestamp: Call timestamp
-            - duration: Call duration in seconds
-            - call_result: 'answered', 'missed', 'rejected', etc.
-            
-    Returns:
-        Dict with per-contact statistics and suspicious patterns:
-        {
-            'per_contact': {
-                jid: {
-                    'total_calls': int,
-                    'total_duration': int,
-                    'missed_calls': int,
-                    'answered_calls': int,
-                    'rejected_calls': int,
-                    'average_duration': float,
-                    'night_calls': int,  # 1-5 AM
-                    'suspicious_patterns': []
-                }
-            },
-            'suspicious_patterns': [
-                {'type': 'high_frequency', 'jid': str, 'details': str},
-                {'type': 'odd_hours', 'jid': str, 'details': str}
-            ]
-        }
-    """
-    per_contact = defaultdict(lambda: {
-        'total_calls': 0,
-        'total_duration': 0,
-        'missed_calls': 0,
-        'answered_calls': 0,
-        'rejected_calls': 0,
-        'durations': [],
-        'night_calls': 0,
-        'timestamps': []
-    })
-    
-    # Analyze each call
-    for call in call_logs:
-        jid = call.get('jid', 'unknown')
-        duration = call.get('duration', 0)
-        result = call.get('call_result', '').lower()
-        timestamp = call.get('timestamp')
-        
-        per_contact[jid]['total_calls'] += 1
-        per_contact[jid]['total_duration'] += duration
-        per_contact[jid]['durations'].append(duration)
-        
-        # Count by result
-        if 'miss' in result:
-            per_contact[jid]['missed_calls'] += 1
-        elif 'answer' in result or 'accept' in result:
-            per_contact[jid]['answered_calls'] += 1
-        elif 'reject' in result or 'decline' in result:
-            per_contact[jid]['rejected_calls'] += 1
-        
-        # Check for night calls (1-5 AM)
-        if timestamp:
-            try:
-                dt = _parse_timestamp(timestamp)
-                per_contact[jid]['timestamps'].append(dt)
-                
-                if dt.hour in [1, 2, 3, 4, 5]:
-                    per_contact[jid]['night_calls'] += 1
-            except Exception:
-                pass
-    
-    # Calculate statistics and detect patterns
-    suspicious_patterns = []
-    
-    for jid, stats in per_contact.items():
-        # Average duration
-        if stats['durations']:
-            stats['average_duration'] = sum(stats['durations']) / len(stats['durations'])
-        else:
-            stats['average_duration'] = 0
-        
-        # Remove temporary list (not JSON serializable)
-        del stats['durations']
-        
-        # Detect suspicious patterns
-        
-        # 1. High frequency (>20 calls)
-        if stats['total_calls'] > 20:
-            suspicious_patterns.append({
-                'type': 'high_frequency',
-                'jid': jid,
-                'details': f"{stats['total_calls']} calls detected",
-                'severity': 'MEDIUM'
-            })
-        
-        # 2. Odd hours (>5 night calls)
-        if stats['night_calls'] > 5:
-            suspicious_patterns.append({
-                'type': 'odd_hours',
-                'jid': jid,
-                'details': f"{stats['night_calls']} calls between 1-5 AM",
-                'severity': 'HIGH'
-            })
-        
-        # 3. High missed call ratio (>70%)
-        if stats['total_calls'] > 5:
-            missed_ratio = stats['missed_calls'] / stats['total_calls']
-            if missed_ratio > 0.7:
-                suspicious_patterns.append({
-                    'type': 'high_missed_ratio',
-                    'jid': jid,
-                    'details': f"{int(missed_ratio * 100)}% calls missed",
-                    'severity': 'MEDIUM'
-                })
-        
-        # 4. Frequency spike detection
-        if len(stats['timestamps']) > 10:
-            # Check for bursts (5+ calls in 10 minutes)
-            sorted_times = sorted(stats['timestamps'])
-            for i in range(len(sorted_times) - 4):
-                window = sorted_times[i:i+5]
-                if (window[-1] - window[0]).total_seconds() < 600:  # 10 minutes
-                    suspicious_patterns.append({
-                        'type': 'frequency_spike',
-                        'jid': jid,
-                        'details': '5+ calls in 10 minutes',
-                        'severity': 'HIGH'
-                    })
-                    break
-        
-        # Remove timestamps list (not serializable)
-        del stats['timestamps']
-    
-    return {
-        'per_contact': dict(per_contact),
-        'suspicious_patterns': suspicious_patterns,
-        'summary': {
-            'total_contacts': len(per_contact),
-            'total_calls': sum(s['total_calls'] for s in per_contact.values()),
-            'total_duration': sum(s['total_duration'] for s in per_contact.values()),
-            'suspicious_contacts': len(set(p['jid'] for p in suspicious_patterns))
-        }
-    }
-
-
-def _parse_timestamp(ts: Any) -> datetime:
-    """Parse timestamp from various formats."""
-    if isinstance(ts, datetime):
-        return ts
-    
-    if isinstance(ts, (int, float)):
-        # Unix timestamp (milliseconds or seconds)
-        if ts > 10**10:  # Milliseconds
-            return datetime.fromtimestamp(ts / 1000)
-        else:
-            return datetime.fromtimestamp(ts)
-    
-    if isinstance(ts, str):
-        # ISO format
-        ts_clean = ts.replace("Z", "+00:00")
-        try:
-            return datetime.fromisoformat(ts_clean)
-        except Exception:
-            # Try parsing as timestamp
-            try:
-                return datetime.fromtimestamp(float(ts))
-            except Exception:
-                pass
-    
-    raise ValueError(f"Cannot parse timestamp: {ts}")
