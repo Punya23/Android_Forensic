@@ -294,6 +294,18 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  // Re-derive graph / financial trail / risk from the case's stored messages, calls and
+  // contacts — for a case built by older engine code (see triage/rebuild.py).
+  rebuildAnalysis: (id: string) =>
+    request<{
+      added: number;
+      messages: number;
+      participants: number;
+      flags: number;
+      upi_transactions: number;
+      report_error?: string;
+    }>(`/api/case/${id}/rebuild`, { method: "POST" }),
+
   // Case-intelligence: (re-)run the AI findings analysis over a collected case.
   analyze: (id: string, body?: { description?: string; llm_provider?: string }) =>
     request<import("./types").AIFindings>(`/api/case/${id}/analyze`, {

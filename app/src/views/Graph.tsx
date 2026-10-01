@@ -4,6 +4,18 @@ import { api } from "../lib/api";
 import type { CommunicationGraph, GraphNode } from "../lib/types";
 import { SectionHeader } from "../components/common";
 import { DatasetEmpty } from "../lib/capabilities";
+import {
+  CANVAS_H as H,
+  CANVAS_W as W,
+  LAYOUT_ITERATIONS,
+  layoutStep,
+  layoutTemperature,
+  maxNodeRadius,
+  seedPositions,
+  selectDrawn,
+  type SimNode,
+  type Vec,
+} from "../lib/graphLayout";
 
 const CHANNEL_COLOR: Record<string, string> = {
   whatsapp: "#4fb477",
@@ -26,94 +38,8 @@ function channelColor(ch: string): string {
   return `hsl(${h % 360}, 55%, 60%)`;
 }
 
-type Vec = { x: number; y: number };
-type SimNode = Vec & { vx: number; vy: number; pinned: boolean };
-
-const W = 1000;
-const H = 640;
 const ZOOM_MIN = 0.15;
 const ZOOM_MAX = 4;
-
-/** Deterministic initial layout: a ring, so nodes start apart rather than stacked at the
- * origin (which the repulsion force can't meaningfully push apart from a shared point). */
-function seedPositions(nodes: GraphNode[]): Record<string, SimNode> {
-  const pos: Record<string, SimNode> = {};
-  const others = nodes.filter((n) => n.type !== "owner");
-  const R = Math.min(W, H) * 0.32;
-  others.forEach((n, i) => {
-    const a = (i / Math.max(others.length, 1)) * Math.PI * 2;
-    pos[n.id] = { x: W / 2 + R * Math.cos(a), y: H / 2 + R * Math.sin(a), vx: 0, vy: 0, pinned: false };
-  });
-  const owner = nodes.find((n) => n.type === "owner");
-  if (owner) pos[owner.id] = { x: W / 2, y: H / 2, vx: 0, vy: 0, pinned: true };
-  return pos;
-}
-
-/** One tick of a hand-rolled force simulation: nodes repel each other (so labels don't
- * overlap), edges pull their endpoints together (so connected pairs end up near each
- * other), everything is drawn weakly toward the centre (so the graph doesn't drift off
- * canvas), and velocity damps each tick (so it settles instead of oscillating forever).
- * No dependency pulled in for this — a hundred-node graph is cheap enough that a plain
- * O(n²) repulsion pass runs in well under a frame budget. */
-function tick(positions: Record<string, SimNode>, edges: { source: string; target: string }[], ids: string[]) {
-  const REPULSION = 18000;
-  const SPRING = 0.02;
-  const REST_LENGTH = 90;
-  const CENTER_PULL = 0.01;
-  const DAMPING = 0.82;
-
-  for (const id of ids) {
-    const n = positions[id];
-    if (!n || n.pinned) continue;
-    let fx = 0;
-    let fy = 0;
-    for (const other of ids) {
-      if (other === id) continue;
-      const o = positions[other];
-      if (!o) continue;
-      let dx = n.x - o.x;
-      let dy = n.y - o.y;
-      let d2 = dx * dx + dy * dy;
-      if (d2 < 1) d2 = 1;
-      const f = REPULSION / d2;
-      const d = Math.sqrt(d2);
-      fx += (dx / d) * f;
-      fy += (dy / d) * f;
-    }
-    fx += (W / 2 - n.x) * CENTER_PULL;
-    fy += (H / 2 - n.y) * CENTER_PULL;
-    n.vx = (n.vx + fx) * DAMPING;
-    n.vy = (n.vy + fy) * DAMPING;
-  }
-  for (const e of edges) {
-    const a = positions[e.source];
-    const b = positions[e.target];
-    if (!a || !b) continue;
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const d = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-    const stretch = d - REST_LENGTH;
-    const fx = (dx / d) * stretch * SPRING;
-    const fy = (dy / d) * stretch * SPRING;
-    if (!a.pinned) {
-      a.vx += fx;
-      a.vy += fy;
-    }
-    if (!b.pinned) {
-      b.vx -= fx;
-      b.vy -= fy;
-    }
-  }
-  let energy = 0;
-  for (const id of ids) {
-    const n = positions[id];
-    if (!n || n.pinned) continue;
-    n.x += n.vx;
-    n.y += n.vy;
-    energy += n.vx * n.vx + n.vy * n.vy;
-  }
-  return energy;
-}
 
 export function GraphView({ caseId }: { caseId: string }) {
   const [graph, setGraph] = useState<CommunicationGraph | null>(null);
@@ -132,31 +58,65 @@ export function GraphView({ caseId }: { caseId: string }) {
   const viewRef = useRef({ x: 0, y: 0, k: 1 });
   const dragRef = useRef<{ kind: "node" | "pan"; id?: string; startClientX: number; startClientY: number; startView: Vec } | null>(null);
 
+  // A failed fetch is not "no communication network": the two are told apart on screen.
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [rebuilding, setRebuilding] = useState(false);
+  const [rebuildNote, setRebuildNote] = useState<string | null>(null);
+
   useEffect(() => {
     setLoading(true);
+    setError(null);
     api
       .dataset<CommunicationGraph>(caseId, "graph")
       .then((g) => setGraph((g as CommunicationGraph)?.nodes ? (g as CommunicationGraph) : null))
-      .catch(() => setGraph(null))
+      .catch((err) => {
+        setGraph(null);
+        setError(err instanceof Error ? err.message : String(err));
+      })
       .finally(() => setLoading(false));
+  }, [caseId, reloadKey]);
+
+  // Re-derive graph / financial trail / risk from the case's stored messages, calls and
+  // contacts — for a case built by older engine code, or after an import.
+  const rebuild = useCallback(async () => {
+    setRebuilding(true);
+    setRebuildNote(null);
+    try {
+      const r = await api.rebuildAnalysis(caseId);
+      setRebuildNote(`Rebuilt from ${r.messages} messages — ${r.participants} participants.`);
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      setRebuildNote(`Rebuild failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRebuilding(false);
+    }
   }, [caseId]);
 
-  // (Re)seed the simulation whenever the case's graph data changes, and run it until it
-  // settles (or a hard tick cap, so a pathological graph can't spin the CPU forever).
+  // Only participants with recorded interaction are drawn (see lib/graphLayout).
+  const drawn = useMemo(() => (graph ? selectDrawn(graph.nodes, graph.edges) : null), [graph]);
+
+  // (Re)seed the layout whenever the case's graph data changes. Each frame runs as many
+  // iterations as fit in ~8 ms, so the page stays responsive; the temperature reaches zero
+  // after LAYOUT_ITERATIONS, so the layout always ends.
   const restart = useCallback(() => {
-    if (!graph) return;
-    positionsRef.current = seedPositions(graph.nodes);
+    if (!drawn) return;
+    positionsRef.current = seedPositions(drawn.nodes);
     viewRef.current = { x: 0, y: 0, k: 1 };
     setSettled(false);
     setExpandedIds(new Set());
-    let ticks = 0;
-    const ids = graph.nodes.map((n) => n.id);
-    const edges = graph.edges;
+    let iter = 0;
+    const ids = drawn.nodes.map((n) => n.id);
+    const edges = drawn.edges;
     const step = () => {
-      const energy = tick(positionsRef.current, edges, ids);
-      ticks += 1;
+      const t0 = performance.now();
+      let moved = 0;
+      do {
+        moved = layoutStep(positionsRef.current, edges, ids, layoutTemperature(iter));
+        iter += 1;
+      } while (iter < LAYOUT_ITERATIONS && performance.now() - t0 < 8);
       forceRender((v) => v + 1);
-      if (energy > 0.05 && ticks < 500) {
+      if (iter < LAYOUT_ITERATIONS && moved > 0.05) {
         rafRef.current = requestAnimationFrame(step);
       } else {
         setSettled(true);
@@ -165,7 +125,7 @@ export function GraphView({ caseId }: { caseId: string }) {
     };
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(step);
-  }, [graph]);
+  }, [drawn]);
 
   useEffect(() => {
     restart();
@@ -173,7 +133,7 @@ export function GraphView({ caseId }: { caseId: string }) {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph]);
+  }, [drawn]);
 
   const screenToGraph = useCallback((clientX: number, clientY: number): Vec => {
     const svg = svgRef.current;
@@ -291,11 +251,32 @@ export function GraphView({ caseId }: { caseId: string }) {
     forceRender((v) => v + 1);
   }, []);
 
-  const nodeById = useMemo(() => new Map(graph?.nodes.map((n) => [n.id, n]) ?? []), [graph]);
-  const maxEdge = useMemo(() => Math.max(...(graph?.edges.map((e) => e.weight) ?? [1]), 1), [graph]);
+  // Frame the settled layout once, so a large graph opens readable rather than as a dot.
+  useEffect(() => {
+    if (settled) fitToView();
+  }, [settled, fitToView]);
+
+  const nodeById = useMemo(() => new Map(drawn?.nodes.map((n) => [n.id, n]) ?? []), [drawn]);
+  const maxEdge = useMemo(() => Math.max(...(drawn?.edges.map((e) => e.weight) ?? [1]), 1), [drawn]);
   const maxNode = useMemo(
-    () => Math.max(...(graph?.nodes.filter((n) => n.type !== "owner").map((n) => n.weight) ?? [1]), 1),
-    [graph]
+    () => Math.max(...(drawn?.nodes.filter((n) => n.type !== "owner").map((n) => n.weight) ?? [1]), 1),
+    [drawn]
+  );
+  // Past ~80 nodes, a label on every node overprints into noise: label the strongest 20
+  // until the user zooms in (hover and selection always label).
+  const labelCutoff = useMemo(() => {
+    const weights = (drawn?.nodes ?? []).filter((n) => n.type !== "owner").map((n) => n.weight).sort((a, b) => b - a);
+    return weights.length > 80 ? weights[19] : 0;
+  }, [drawn]);
+  // Node radius shrinks as the canvas fills, so a real handset's graph is not a blob.
+  const rMax = useMemo(() => maxNodeRadius(drawn?.nodes.length ?? 0), [drawn]);
+  const nodeRadius = useCallback(
+    (n: GraphNode) => {
+      if (n.type === "owner") return 26;
+      const lo = Math.min(8, rMax / 2);
+      return lo + (n.weight / maxNode) * (rMax - lo);
+    },
+    [rMax, maxNode]
   );
 
   // The device can hold one saved contact name against several identifiers, so two
@@ -342,16 +323,48 @@ export function GraphView({ caseId }: { caseId: string }) {
     });
   }, []);
 
+  const rebuildButton = (
+    <button className="btn-ghost text-xs" disabled={rebuilding} onClick={rebuild}>
+      {rebuilding ? "Rebuilding…" : "Rebuild analysis"}
+    </button>
+  );
+
   if (loading) return <div className="p-8 text-muted">Loading communication graph…</div>;
-  if (!graph || graph.nodes.length <= 1) {
+  if (error) {
+    return (
+      <div className="p-6 h-full">
+        <SectionHeader title="Communication Network" />
+        <div role="alert" className="card p-4 text-sm">
+          <div className="text-red-500">Couldn't load the communication graph: {error}</div>
+          <div className="flex gap-2 mt-3">
+            <button className="btn-ghost text-xs" onClick={() => setReloadKey((k) => k + 1)}>
+              Retry
+            </button>
+            {rebuildButton}
+          </div>
+          {rebuildNote && <div className="text-muted mt-2">{rebuildNote}</div>}
+        </div>
+      </div>
+    );
+  }
+  if (!graph || !drawn || drawn.nodes.length <= 1) {
     return (
       <div className="p-6 h-full">
         <SectionHeader title="Communication Network" />
         <DatasetEmpty
           dataset="graph"
           title="No communication network"
-          detail="No messages or calls were attributable to participants."
+          detail={
+            "No messages or calls were attributable to participants" +
+            (drawn && drawn.dormant > 0
+              ? `; ${drawn.dormant} saved contact(s) have no recorded interaction.`
+              : ".")
+          }
         />
+        <div className="flex items-center gap-2 justify-center">
+          {rebuildButton}
+          {rebuildNote && <span className="text-xs text-muted">{rebuildNote}</span>}
+        </div>
       </div>
     );
   }
@@ -364,7 +377,7 @@ export function GraphView({ caseId }: { caseId: string }) {
         title="Communication Network"
         sub={`${graph.stats.participants} participants · ${graph.stats.interactions} interactions · ${graph.stats.channels.join(", ")}`}
       />
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex flex-wrap items-center gap-2 mb-2">
         <input
           className="input max-w-xs"
           placeholder="Filter by name…"
@@ -377,11 +390,21 @@ export function GraphView({ caseId }: { caseId: string }) {
         <button className="btn-ghost text-xs" onClick={restart}>
           Reset layout
         </button>
+        {rebuildButton}
         <span className="text-[11px] text-muted ml-auto">
           Scroll to zoom · drag background to pan · drag a node to reposition it
           {!settled && " · settling…"}
         </span>
       </div>
+      {(drawn.dormant > 0 || drawn.truncated > 0 || rebuildNote) && (
+        <div className="text-[11px] text-muted mb-2" role="status">
+          {drawn.dormant > 0 &&
+            `${drawn.dormant} saved contact(s) with no recorded call or message are not drawn (see Contacts). `}
+          {drawn.truncated > 0 &&
+            `Drawing the ${drawn.nodes.length - 1} strongest of ${drawn.nodes.length - 1 + drawn.truncated} participants by interaction volume. `}
+          {rebuildNote}
+        </div>
+      )}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 flex-1 min-h-0">
         <div className="lg:col-span-3 card p-0 relative overflow-hidden">
           <svg
@@ -396,7 +419,7 @@ export function GraphView({ caseId }: { caseId: string }) {
             onClick={() => setSelected(null)}
           >
             <g transform={`translate(${vx},${vy}) scale(${k})`}>
-              {graph.edges.map((e, i) => {
+              {drawn.edges.map((e, i) => {
                 const a = positionsRef.current[e.source];
                 const b = positionsRef.current[e.target];
                 if (!a || !b) return null;
@@ -417,11 +440,11 @@ export function GraphView({ caseId }: { caseId: string }) {
                   />
                 );
               })}
-              {graph.nodes.map((n) => {
+              {drawn.nodes.map((n) => {
                 const p = positionsRef.current[n.id];
                 if (!p) return null;
                 const isOwner = n.type === "owner";
-                const r = isOwner ? 26 : 8 + (n.weight / maxNode) * 16;
+                const r = nodeRadius(n);
                 const color = isOwner ? "#d8823c" : channelColor(n.channels[0] ?? "app-db");
                 const match = matchesQuery(n);
                 const isSelected = selected?.id === n.id;
@@ -449,7 +472,7 @@ export function GraphView({ caseId }: { caseId: string }) {
                         stroke={isSelected ? "#1a1d21" : "#0d0f12"}
                         strokeWidth={(isSelected ? 3 : 2) / k}
                       />
-                      {(isHover || isSelected || k > 0.6) && (
+                      {(isHover || isSelected || (k > 0.6 && n.weight >= labelCutoff) || k > 2.2) && (
                         <text
                           x={p.x} y={p.y + r + 12 / k}
                           textAnchor="middle"
@@ -486,13 +509,13 @@ export function GraphView({ caseId }: { caseId: string }) {
                   </g>
                 );
               })}
-              {graph.nodes.flatMap((n) => {
+              {drawn.nodes.flatMap((n) => {
                 const p = positionsRef.current[n.id];
                 if (!p || !expandedIds.has(n.id)) return [];
                 const breakdown = channelBreakdown(n);
                 if (breakdown.length <= 1) return [];
                 const parentTotal = breakdown.reduce((sum, [, w]) => sum + w, 0) || 1;
-                const dist = (n.type === "owner" ? 26 : 8 + (n.weight / maxNode) * 16) + 36;
+                const dist = nodeRadius(n) + 36;
                 return breakdown.map(([channel, weight], i) => {
                   const angle = (i / breakdown.length) * Math.PI * 2 - Math.PI / 2;
                   const cx = p.x + Math.cos(angle) * dist;
