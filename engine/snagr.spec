@@ -73,7 +73,7 @@ HIDDEN = [
 # Data files to bundle alongside the binary
 # ---------------------------------------------------------------------------
 DATAS = [
-    # NOTE: report generation (triage/report/report_engine.py) builds HTML from
+    # NOTE: report generation (triage/report/html_report.py) builds HTML from
     # inline Python strings, not Jinja2 files — there is no triage/templates
     # directory to bundle. Re-add a DATAS entry here if that changes.
     # ALEAPP plugins (optional; skip if absent)

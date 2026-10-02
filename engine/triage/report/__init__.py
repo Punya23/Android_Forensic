@@ -10,19 +10,7 @@ from __future__ import annotations
 # Primary HTML report generator (NIST SP 800-101r1 / SWGDE-aligned).
 from .html_report import generate_report, _generate_hash_verification_section  # noqa: F401
 
-# AI-driven report engine (automated writing, summarisation, translation).
-from .report_engine import (  # noqa: F401
-    generate_forensic_report,
-    summarize_report,
-    translate_report,
-    personalize_report,
-)
-
 __all__ = [
     "generate_report",
     "_generate_hash_verification_section",
-    "generate_forensic_report",
-    "summarize_report",
-    "translate_report",
-    "personalize_report",
 ]
