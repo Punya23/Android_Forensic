@@ -91,7 +91,8 @@ export function SnapchatView({ caseId }: { caseId: string }) {
           emptyTitle="No Snapchat messages found"
           emptyDetail={
             "Snapchat chats (arroyo.db / protobuf) live in app-private storage and require " +
-            "Tier-2 (root) access — enable 'Tier-2 Snapchat' on the Acquisition screen, " +
+            "root access, which is used automatically when the device proves a root shell. On an " +
+            "unrooted phone it cannot be read; instead " +
             "or load a 'Download My Data' export from Snapchat -> Settings -> Privacy -> Download My Data. " +
             "Ephemeral messages are carved from WAL/freelist where present."
           }

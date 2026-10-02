@@ -77,8 +77,9 @@ export function InstagramView({ caseId }: { caseId: string }) {
           emptyTitle="No Instagram messages found"
           emptyDetail={
             "Instagram Direct (direct.db) lives in app-private storage and requires " +
-            "Tier-2 (root) access — enable 'Tier-2 Instagram' on the Acquisition screen, " +
-            "or load a 'Download Your Data' export from Instagram > Settings > Privacy."
+            "root access, which is used automatically when the device proves a root shell. On an " +
+            "unrooted phone it cannot be read; instead " +
+            "load a 'Download Your Data' export from Instagram > Settings > Privacy."
           }
         />
       </div>

@@ -87,10 +87,10 @@ export function AcquisitionView({
   const [reportReady, setReportReady] = useState(false);
   const [acquiredCaseId, setAcquiredCaseId] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [tier1Contacts, setTier1Contacts] = useState(false);
-  const [tier1Calllog, setTier1Calllog] = useState(false);
-  const [tier1Sms, setTier1Sms] = useState(false);
-  const [tier1CollectAll, setTier1CollectAll] = useState(false);
+  const [tier1Contacts, setTier1Contacts] = useState(true);
+  const [tier1Calllog, setTier1Calllog] = useState(true);
+  const [tier1Sms, setTier1Sms] = useState(true);
+  const [tier1CollectAll, setTier1CollectAll] = useState(true);
   const [tier2Telegram, setTier2Telegram] = useState(false);
   const [tier2Instagram, setTier2Instagram] = useState(false);
   const [tier2Snapchat, setTier2Snapchat] = useState(false);
@@ -135,23 +135,23 @@ export function AcquisitionView({
   const rootConfirmed =
     target?.kind === "real" && deviceCheck?.ready === true && deviceCheck.device?.rooted === true;
 
-  // If the device check flips to "no root" (new device swapped in, or a re-check
-  // reveals root was lost mid-session), drop any Tier-2 flags already ticked so a
-  // stale `true` can never ride along into the acquire() call once the checkbox
-  // re-enables — see the `start()` submission below, which also re-guards on this.
+  // Tier-2 follows the proof of root, both ways. The moment `su -c id` succeeds every
+  // root-only stage is switched on (the examiner can still untick one); if the check flips
+  // to "no root" (new device swapped in, or root lost mid-session) they are all dropped so a
+  // stale `true` can never ride along into acquire() — `start()` also re-guards on this.
   useEffect(() => {
-    if (rootConfirmed) return;
-    setTier2Telegram(false);
-    setTier2Instagram(false);
-    setTier2Snapchat(false);
-    setTier2Wifi(false);
-    setTier2BrowserHistory(false);
-    setTier2WhatsappBackup(false);
-    setTier2MapsLocation(false);
-    setTier2BtConfig(false);
-    setTier2AppPresence(false);
-    setTier2AntiForensics(false);
-    setTier2RecentTasks(false);
+    const on = rootConfirmed;
+    setTier2Telegram(on);
+    setTier2Instagram(on);
+    setTier2Snapchat(on);
+    setTier2Wifi(on);
+    setTier2BrowserHistory(on);
+    setTier2WhatsappBackup(on);
+    setTier2MapsLocation(on);
+    setTier2BtConfig(on);
+    setTier2AppPresence(on);
+    setTier2AntiForensics(on);
+    setTier2RecentTasks(on);
   }, [rootConfirmed]);
 
   useEffect(() => {
