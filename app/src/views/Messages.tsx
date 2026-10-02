@@ -95,11 +95,11 @@ export function MessagesView({ caseId }: { caseId: string }) {
           <thead>
             <tr>
               <th className="th w-8"></th>
-              <th className="th w-40">Time</th>
-              <th className="th w-24">App</th>
-              <th className="th w-36">Sender</th>
+              <th className="th">Time</th>
+              <th className="th">App</th>
+              <th className="th">Sender</th>
               <th className="th">Message</th>
-              <th className="th w-28">Confidence</th>
+              <th className="th">Confidence</th>
             </tr>
           </thead>
           <tbody>
@@ -112,7 +112,7 @@ export function MessagesView({ caseId }: { caseId: string }) {
                 </td>
                 <td className="td">{m.sender}</td>
                 <td className="td">
-                  <div className="whitespace-pre-wrap">{highlight(m.body, query)}</div>
+                  <div className="whitespace-pre-wrap [overflow-wrap:anywhere] min-w-[10rem]">{highlight(m.body, query)}</div>
                   {m.provenance && (
                     <div className="text-[10px] text-muted/70 font-mono mt-0.5">{m.provenance}</div>
                   )}
