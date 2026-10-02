@@ -205,8 +205,10 @@ def _detect_gpu(system: str) -> str:
 
 
 # --- 2. model fit: which local model can this laptop actually carry? ------------
-#: RAM kept for the OS, the Electron dashboard and the Python engine — never given to a model.
-HEADROOM_GB = 3.0
+#: RAM kept back on top of what is already free, so a model never takes the last of it. Free
+#: RAM already excludes what the OS, dashboard and engine occupy, so this is a margin, not a
+#: reservation — 3 GB here told a normally-busy 16 GB laptop that nothing fit.
+HEADROOM_GB = 1.5
 #: A model may use at most this share of the machine even when more happens to be free.
 MAX_RAM_FRACTION = 0.6
 #: Ollama's default context for machines under 24 GB. KV cache grows linearly with it.
@@ -295,18 +297,69 @@ def assess_models(hw: dict, installed: list[dict], num_ctx: int = DEFAULT_NUM_CT
     return sorted(rows.values(), key=lambda r: (-r["params_b"], r["name"]))
 
 
-def select_model(rows: list[dict], installed_only: bool = False) -> Optional[str]:
+#: Default ceiling on the model the engine runs. Term picking, brief JSON and short summaries
+#: do not need more, and a small model leaves the laptop responsive. ``SNAGR_LLM_MAX_PARAMS_B``
+#: raises it for an operator who wants a bigger one.
+DEFAULT_MAX_PARAMS_B = 4.0
+
+
+def preferred_max_params_b() -> float:
+    try:
+        return float(os.environ.get("SNAGR_LLM_MAX_PARAMS_B", DEFAULT_MAX_PARAMS_B))
+    except ValueError:
+        return DEFAULT_MAX_PARAMS_B
+
+
+def select_model(rows: list[dict], installed_only: bool = False, max_params_b: Optional[float] = None) -> Optional[str]:
     """The strongest model that comfortably ``fits`` — never one that is merely ``tight`` —
-    preferring an already-pulled one on a tie. ``None`` when nothing fits."""
-    fits = [r for r in rows if r["verdict"] == "fits" and (r["installed"] or not installed_only)]
+    up to *max_params_b* billion parameters, preferring an already-pulled one on a tie.
+    ``None`` when nothing qualifies."""
+    fits = [
+        r for r in rows
+        if r["verdict"] == "fits"
+        and (r["installed"] or not installed_only)
+        and (max_params_b is None or r["params_b"] <= max_params_b)
+    ]
     return max(fits, key=lambda r: (r["params_b"], r["installed"]))["name"] if fits else None
+
+
+def _same_model(a: str, b: str) -> bool:
+    """``nomic-embed-text`` and ``nomic-embed-text:latest`` are one model."""
+    norm = lambda n: n if ":" in n else f"{n}:latest"  # noqa: E731
+    return norm(a) == norm(b)
+
+
+def _post_json(url: str, body: dict, timeout: float = 5.0) -> bool:
+    try:
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode("utf-8"), headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def unload_other_models(keep: str, host: Optional[str] = None) -> list[str]:
+    """Evict every model Ollama has resident except *keep* (``keep_alive: 0``), so at most
+    one model ever occupies memory — a second resident model (a chat model next to the
+    embedder, or a big one left from earlier) is what pushed a 16 GB laptop to ~20 GB.
+    Returns the names evicted; never raises."""
+    host = (host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")).rstrip("/")
+    gone = []
+    for m in _ollama_loaded(host):
+        if m["name"] and not _same_model(m["name"], keep) and _post_json(
+            f"{host}/api/generate", {"model": m["name"], "keep_alive": 0}
+        ):
+            gone.append(m["name"])
+    return gone
 
 
 def recommend_model(hw: Optional[dict] = None) -> dict:
     """The model to download for this machine (``None`` when nothing fits: stay on the
-    heuristic back-end). Unknown RAM counts as none."""
+    heuristic back-end), capped to a small model. Unknown RAM counts as none."""
     hw = hw or detect_hardware()
-    name = select_model(assess_models(hw, []))
+    name = select_model(assess_models(hw, []), max_params_b=preferred_max_params_b())
     disk = next((d for n, _, d in CATALOG if n == name), None)
     return {
         "model": name,
@@ -347,7 +400,8 @@ def fit_report(num_ctx: int = DEFAULT_NUM_CTX) -> dict:
         )
     elif loaded and resident > memory_budget_gb(hw):
         advice.append(f"{loaded[0]['name']} holds {resident} GB, more than this machine's {memory_budget_gb(hw)} GB budget.")
-    chosen = select_model(rows, installed_only=True)
+    cap = preferred_max_params_b()
+    chosen = select_model(rows, installed_only=True, max_params_b=cap)
     if chosen is None and any(r["installed"] for r in rows):
         advice.append("No pulled model fits comfortably — use a smaller one or free memory; staying on the heuristic back-end.")
     return {
@@ -356,7 +410,8 @@ def fit_report(num_ctx: int = DEFAULT_NUM_CTX) -> dict:
         "num_ctx": num_ctx,
         "models": rows,
         "use_installed": chosen,
-        "download_recommendation": select_model(rows),
+        "max_params_b": cap,
+        "download_recommendation": select_model(rows, max_params_b=cap),
         "loaded": loaded,
         "advice": advice,
     }

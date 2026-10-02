@@ -27,6 +27,7 @@ import hashlib
 import json
 import math
 import os
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -82,6 +83,7 @@ class LocalEmbedder:
         self.cache_path = Path(cache_path) if cache_path else None
         self._cache: dict[str, list[float]] = {}
         self._cache_dirty = False
+        self._last_exclusive = 0.0  # last time other resident models were evicted
         self._load_cache()
         #: Reason the embedder is unavailable, for the examiner-facing plan note.
         self.unavailable_reason = ""
@@ -158,7 +160,17 @@ class LocalEmbedder:
 
     # -- embedding ---------------------------------------------------------
     def _embed_one(self, text: str) -> Optional[list[float]]:
-        body = json.dumps({"model": self.model, "prompt": text}).encode("utf-8")
+        # One resident model at a time: evict the chat model before the embedder loads (at
+        # most every few seconds — a batch embeds many texts), and let the embedder go soon.
+        if time.monotonic() - self._last_exclusive > 5.0:
+            try:
+                from .hardware import unload_other_models
+
+                unload_other_models(self.model, self.host)
+            except Exception:
+                pass
+            self._last_exclusive = time.monotonic()
+        body = json.dumps({"model": self.model, "prompt": text, "keep_alive": "30s"}).encode("utf-8")
         try:
             req = urllib.request.Request(
                 f"{self.host}/api/embeddings",

@@ -127,6 +127,12 @@ class OllamaProvider(LLMProvider):
         if force_json:
             body["format"] = "json"
         try:
+            from .hardware import unload_other_models
+
+            unload_other_models(self.model, self.host)  # one resident model at a time
+        except Exception:
+            pass
+        try:
             data = json.dumps(body).encode("utf-8")
             req = urllib.request.Request(
                 f"{self.host}/api/chat",
@@ -235,10 +241,10 @@ def autodetect_and_configure(force: bool = False) -> dict:
     models = list_ollama_models()
     # Choose by what this machine can carry, not by size: the largest pulled model on a
     # 16 GB laptop pushed Ollama to ~20 GB and every prompt into swap.
-    from .hardware import assess_models, detect_hardware, select_model
+    from .hardware import assess_models, detect_hardware, preferred_max_params_b, select_model
 
     fit = assess_models(detect_hardware(), models)
-    best = select_model(fit, installed_only=True)
+    best = select_model(fit, installed_only=True, max_params_b=preferred_max_params_b())
     pulled = [r for r in fit if r["installed"]]
     if not best and pulled:
         smallest = min(pulled, key=lambda r: r["footprint_gb"])
