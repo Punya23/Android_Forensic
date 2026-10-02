@@ -35,7 +35,6 @@ type Turn = {
   response: AskCaseResponse | null;
   /** A model-written summary is still being generated for this turn's hits. */
   summarising?: boolean;
-  summaryError?: string;
   error?: string;
 };
 
@@ -166,27 +165,41 @@ export function AskTheCaseView({ caseId }: { caseId: string }) {
   const patch = (turn: Turn, change: Partial<Turn>) =>
     setTurns((t) => t.map((x) => (x === turn ? Object.assign(x, change) && { ...x } : x)));
 
-  /** Grep first (instant), then — only if a model is selected — its summary of those hits. */
+  /** Chat-style: the real grep matches appear at once, then — if a model is selected — its
+   * answer types out below them. Brief terms (no question) are a plain grep, no model. */
   async function run(label: string, opts: { scope?: "question" | "brief"; text?: string }) {
     if (asking) return;
     setAsking(true);
     const turn: Turn = { question: label, response: null };
     setTurns((t) => [...t, turn]);
-    const base = { llm_provider: provider, scope: opts.scope };
     try {
-      const response = await api.askCase(caseId, opts.text ?? "", { ...base, synthesize: false });
-      patch(turn, { response });
-      if (provider !== "heuristic" && opts.text && response.passages.length > 0) {
-        patch(turn, { summarising: true });
-        try {
-          const full = await api.askCase(caseId, opts.text, { ...base, synthesize: true });
-          patch(turn, { response: full, summarising: false });
-        } catch (e) {
-          patch(turn, { summarising: false, summaryError: e instanceof Error ? e.message : String(e) });
-        }
+      if (opts.scope === "brief" || !opts.text) {
+        const response = await api.askCase(caseId, opts.text ?? "", {
+          llm_provider: provider,
+          scope: opts.scope,
+          synthesize: false,
+        });
+        patch(turn, { response });
+        return;
       }
+      await api.askCaseStream(caseId, opts.text, { llm_provider: provider }, (ev) => {
+        if (ev.type === "search") {
+          patch(turn, { response: ev.bundle, summarising: provider !== "heuristic" && ev.bundle.passages.length > 0 });
+        } else if (ev.type === "token") {
+          const cur = turn.response;
+          if (cur) patch(turn, { response: { ...cur, answer: cur.answer + ev.text } });
+        } else if (turn.response) {
+          const search = turn.response.search
+            ? { ...turn.response.search, notes: [...turn.response.search.notes, ...(ev.note ? [ev.note] : [])] }
+            : turn.response.search;
+          patch(turn, {
+            response: { ...turn.response, method: ev.method, disclaimer: ev.disclaimer, search },
+            summarising: false,
+          });
+        }
+      });
     } catch (e) {
-      patch(turn, { error: e instanceof Error ? e.message : String(e) });
+      patch(turn, { error: e instanceof Error ? e.message : String(e), summarising: false });
     } finally {
       setAsking(false);
     }
@@ -270,7 +283,6 @@ export function AskTheCaseView({ caseId }: { caseId: string }) {
                   ) : (
                     t.summarising && <div className="text-xs text-muted animate-pulse">Writing a summary of these matches…</div>
                   )}
-                  {t.summaryError && <div className="text-xs text-deletion">Summary unavailable: {t.summaryError}</div>}
                   {t.response.passages.length > 0 ? (
                     <div>
                       <div className="text-[11px] text-muted mb-1.5">

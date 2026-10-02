@@ -356,6 +356,47 @@ export const api = {
       body: JSON.stringify({}),
     }),
 
+  /** Chat-style "ask this case": the grep matches arrive first, then the model's answer
+   * token by token. Calls `onEvent` per event and resolves when the stream ends. */
+  askCaseStream: async (
+    id: string,
+    question: string,
+    opts: { llm_provider?: string; top_k?: number; use_brief?: boolean },
+    onEvent: (e: import("./types").AskStreamEvent) => void,
+    signal?: AbortSignal
+  ) => {
+    const init: RequestInit = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, ...opts }),
+      signal,
+    };
+    const res = await fetch(`${BASE}/api/case/${id}/ask/stream`, { ...init, headers: authHeaders(init) });
+    if (res.status === 401) {
+      setAuthToken(null);
+      onUnauthorized?.();
+      throw new Error("unauthorized");
+    }
+    if (!res.ok || !res.body) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error((data as { error?: string }).error || `ask/stream -> HTTP ${res.status}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (line) onEvent(JSON.parse(line));
+      }
+    }
+  },
+
   // "Ask this case" — free-text Q&A over the case's own already-collected evidence.
   askCase: (
     id: string,

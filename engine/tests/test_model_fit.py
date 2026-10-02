@@ -242,3 +242,71 @@ def test_embedding_calls_evict_the_chat_model_and_do_not_linger(monkeypatch):
                                        (20, "qwen2.5:3b-instruct"), (30, "qwen2.5:3b-instruct"), (64, "qwen2.5:3b-instruct")])
 def test_recommend_model_is_hardware_fit_capped_to_a_small_model(ram, model):
     assert recommend_model({"ram_gb": ram})["model"] == model
+
+
+# --- OllamaProvider must only ever ask for a model that is actually pulled ----------------
+def _installed(monkeypatch, names):
+    from triage.intel import llm
+
+    monkeypatch.setattr(
+        llm,
+        "list_ollama_models",
+        lambda *a, **k: [
+            {"name": n, "size_bytes": sz, "embedding_only": "embed" in n} for n, sz in names
+        ],
+    )
+    monkeypatch.setattr(llm.OllamaProvider, "_ping", lambda self: True)
+    monkeypatch.delenv("SNAGR_LLM_MODEL", raising=False)
+    return llm
+
+
+def test_unset_model_uses_smallest_installed_chat_model(monkeypatch):
+    llm = _installed(
+        monkeypatch,
+        [("llama3.1:8b", 4_900_000_000), ("llama3.2:1b", 1_300_000_000), ("nomic-embed-text:latest", 270_000_000)],
+    )
+    assert llm.OllamaProvider().model == "llama3.2:1b"  # not the bare, uninstalled "llama3.1"
+
+
+def test_bare_tag_resolves_to_the_installed_tag(monkeypatch):
+    llm = _installed(monkeypatch, [("llama3.1:8b", 4_900_000_000)])
+    monkeypatch.setenv("SNAGR_LLM_MODEL", "llama3.1")
+    assert llm.OllamaProvider().model == "llama3.1:8b"
+
+
+def test_explicit_installed_model_is_kept(monkeypatch):
+    llm = _installed(monkeypatch, [("llama3.1:8b", 4_900_000_000), ("llama3.2:1b", 1_300_000_000)])
+    assert llm.OllamaProvider(model="llama3.1:8b").model == "llama3.1:8b"
+
+
+def test_chat_requests_pin_a_small_context_window(monkeypatch):
+    # Ollama's default context can be 128k tokens: a 1B model then sits at ~6 GB resident.
+    import io
+    import json as _json
+
+    llm = _installed(monkeypatch, [("llama3.2:1b", 1_300_000_000)])
+    sent = []
+
+    class _Resp(io.BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        sent.append(_json.loads(req.data.decode()))
+        return _Resp(b'{"message": {"content": "hi"}, "done": true}\n')
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr("triage.intel.hardware.unload_other_models", lambda *a, **k: None)
+    p = llm.OllamaProvider()
+    p.generate("s", "p")
+    list(p.stream("s", "p"))
+    assert len(sent) == 2
+    assert all(0 < b["options"]["num_ctx"] <= 8192 for b in sent)
+    # an uncapped JSON-mode call on a small model can run until the 60 s timeout, holding the
+    # one-model lock the whole time and starving the answer behind it
+    assert all(0 < b["options"]["num_predict"] <= 1024 for b in sent)

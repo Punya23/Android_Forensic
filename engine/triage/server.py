@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, send_file, send_from_directory, abort
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory, abort, stream_with_context
 from flask_cors import CORS
 
 # Load engine/.env (sibling of the triage/ package, not cwd — so this works whether
@@ -983,28 +983,23 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         bundle = build_entity_links_for_case(case, profile)
         return jsonify(bundle)
 
-    @app.post("/api/case/<case_id>/ask")
-    def ask_case_endpoint(case_id: str):
-        """"Ask this case" — free-text Q&A over the case's own already-collected
-        evidence. Local retrieval always runs; a grounded LLM synthesis on top is
-        added only when a model is configured, and it is instructed to answer
-        strictly from the retrieved passages — see triage/intel/case_qa.py.
-        """
-        from .intel import get_provider
-        from .intel.case_qa import PASSAGE_SOURCES, answer_question, build_passages
+    def _ask_inputs(case_id: str):
+        """Shared by /ask and /ask/stream: validated question, scope, brief and passages, or
+        an ``(error_response, status)`` pair."""
+        from .intel.case_qa import PASSAGE_SOURCES, build_passages
 
         case = _open(cases_root, case_id)
         body = request.get_json(silent=True) or {}
         question = str(body.get("question", "")).strip()
         scope = "brief" if body.get("scope") == "brief" else "question"
         if scope == "question" and not question:
-            return jsonify({"error": "a question is required"}), 400
+            return None, (jsonify({"error": "a question is required"}), 400)
 
         # The case brief the local model already turned into JSON at acquisition.
         profile = case.read_derived("case_profile")
         brief = profile if isinstance(profile, dict) and profile else None
         if scope == "brief" and brief is None:
-            return jsonify({"error": "this case has no case brief — run the analysis with a brief first"}), 409
+            return None, (jsonify({"error": "this case has no case brief — run the analysis with a brief first"}), 409)
 
         # Passages are rebuilt only when a source dataset file changed on disk.
         files = [case.derived_dir / f"{name}.json" for name in PASSAGE_SOURCES]
@@ -1016,17 +1011,69 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             passages = build_passages({name: case.read_derived(name) for name in PASSAGE_SOURCES})
             state["ask_passages"][case_id] = (stamp, passages)
 
+        return {
+            "body": body,
+            "question": question,
+            "scope": scope,
+            "brief": brief if scope == "brief" or body.get("use_brief", True) else None,
+            "passages": passages,
+            "top_k": min(max(int(body.get("top_k", 10)), 1), 50),
+        }, None
+
+    @app.post("/api/case/<case_id>/ask")
+    def ask_case_endpoint(case_id: str):
+        """"Ask this case" — free-text Q&A over the case's own already-collected
+        evidence. Local retrieval always runs; a grounded LLM synthesis on top is
+        added only when a model is configured, and it is instructed to answer
+        strictly from the retrieved passages — see triage/intel/case_qa.py.
+        """
+        from .intel import get_provider
+        from .intel.case_qa import answer_question
+
+        ctx, err = _ask_inputs(case_id)
+        if err:
+            return err
         bundle = answer_question(
-            question,
-            passages,
-            provider=get_provider(str(body.get("llm_provider", "")) or None),
-            top_k=min(max(int(body.get("top_k", 10)), 1), 50),
-            brief=brief if scope == "brief" or body.get("use_brief", True) else None,
-            scope=scope,
-            synthesize=bool(body.get("synthesize", True)),
+            ctx["question"],
+            ctx["passages"],
+            provider=get_provider(str(ctx["body"].get("llm_provider", "")) or None),
+            top_k=ctx["top_k"],
+            brief=ctx["brief"],
+            scope=ctx["scope"],
+            synthesize=bool(ctx["body"].get("synthesize", True)),
         )
-        bundle["passages_available"] = len(passages)
+        bundle["passages_available"] = len(ctx["passages"])
         return jsonify(bundle)
+
+    @app.post("/api/case/<case_id>/ask/stream")
+    def ask_case_stream_endpoint(case_id: str):
+        """Chat-style variant of /ask: newline-delimited JSON events — the grep matches
+        first, then the model's answer token by token, then a closing ``done`` event."""
+        from .intel import get_provider
+        from .intel.case_qa import stream_answer
+
+        ctx, err = _ask_inputs(case_id)
+        if err:
+            return err
+        events = stream_answer(
+            ctx["question"],
+            ctx["passages"],
+            provider=get_provider(str(ctx["body"].get("llm_provider", "")) or None),
+            top_k=ctx["top_k"],
+            brief=ctx["brief"],
+            scope=ctx["scope"],
+        )
+
+        def generate():
+            for ev in events:
+                if ev["type"] == "search":
+                    ev["bundle"]["passages_available"] = len(ctx["passages"])
+                yield json.dumps(ev) + "\n"
+
+        resp = Response(stream_with_context(generate()), mimetype="application/x-ndjson")
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["X-Accel-Buffering"] = "no"  # proxies must not buffer the stream
+        return resp
 
     @app.get("/api/case/<case_id>/linked-cases")
     def linked_cases_endpoint(case_id: str):

@@ -295,3 +295,30 @@ def test_brief_scope_greps_the_brief_terms_and_needs_no_question():
     bundle = answer_question("", passages, brief=BRIEF, scope="brief")
     assert [p["id"] for p in bundle["passages"]] == ["P-00001"]
     assert bundle["search"]["terms"][0]["source"] == "brief"
+
+
+# --- carved blobs must not crowd out the real messages --------------------------------------
+def _msg_row(body, conf="live", sender="Rahul"):
+    return {"app": "whatsapp", "sender": sender, "body": body, "timestamp": None, "source_file": "x", "confidence": conf}
+
+
+def test_short_message_outranks_a_huge_blob_containing_the_same_terms():
+    from triage.intel.case_qa import build_passages
+    from triage.intel.search import deterministic_spec, grep
+
+    blob = "\x00junk" * 3000 + " cash transfer weapon " + "\x01junk" * 3000
+    ps = build_passages({"messages": [_msg_row(blob, "carved", "<recovered>"), _msg_row("The cash transfer to account 4471 is done")]})
+    hits = grep(deterministic_spec("cash transfer weapon"), ps, top_k=5).hits
+    assert hits[0].passage.confidence == "live"
+
+
+def test_near_identical_blobs_collapse_to_one_hit_but_short_repeats_stay():
+    from triage.intel.case_qa import build_passages
+    from triage.intel.search import deterministic_spec, grep
+
+    blobs = [_msg_row(f"{i}" * 800 + "x" * 100 + " the cash transfer is done " + "z" * 800, "carved", "<recovered>") for i in range(6)]
+    repeats = [_msg_row("ok send the cash"), _msg_row("ok send the cash")]
+    ps = build_passages({"messages": blobs + repeats})
+    hits = grep(deterministic_spec("cash"), ps, top_k=10).hits
+    assert sum(1 for h in hits if h.passage.confidence == "carved") == 1
+    assert sum(1 for h in hits if h.passage.text.endswith("send the cash")) == 2

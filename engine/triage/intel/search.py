@@ -259,6 +259,11 @@ def _compile(term: Term) -> re.Pattern:
     return re.compile(r"(?<!\w)" + re.escape(stem), re.IGNORECASE)
 
 
+#: Passages longer than this are treated as documents (carved pages, long notes), not messages:
+#: their score is length-normalised and near-identical copies are collapsed.
+_LONG_PASSAGE = 500
+
+
 def grep(spec: SearchSpec, passages: list, top_k: int = 10) -> GrepResult:
     """Scan every passage for every term. A passage is a hit when at least one ``match``
     term occurs; its score is the rarity-weighted sum of the terms found, so a name that
@@ -285,14 +290,30 @@ def grep(spec: SearchSpec, passages: list, top_k: int = 10) -> GrepResult:
         score = sum(terms[ti].weight * idf[ti] for ti in match_idx)
         score *= 1 + 0.25 * (len(match_idx) - 1)
         score += sum(0.5 * terms[ti].weight * idf[ti] for ti in idx if terms[ti].role == "boost")
+        # A carved page of tens of kilobytes "contains" every term by sheer size; normalise so
+        # the short message that actually states the fact is not buried under it.
+        length = len(passages[pi].text)
+        if length > _LONG_PASSAGE:
+            score /= 1 + math.log(length / _LONG_PASSAGE)
         scored.append((score, pi, idx))
     scored.sort(key=lambda s: (-s[0], s[1]))
 
     hits = []
-    for score, pi, idx in scored[:top_k]:
+    seen_windows: set[str] = set()
+    for score, pi, idx in scored:
+        if len(hits) >= top_k:
+            break
         text = passages[pi].text
         spans: list[tuple[int, int]] = []
         for ti in idx:
             spans += [m.span() for m in list(compiled[ti][1].finditer(text))[:_SPANS_PER_TERM]]
-        hits.append(Hit(passages[pi], round(score, 3), [terms[ti].text for ti in idx], sorted(set(spans))))
+        spans = sorted(set(spans))
+        if len(text) > _LONG_PASSAGE and spans:
+            # Re-carved copies of one page differ everywhere except around the real text; show
+            # the examiner that window once, not ten times. Short repeats are separate evidence.
+            key = " ".join(text[max(0, spans[0][0] - 40) : spans[0][0] + 120].split())
+            if key in seen_windows:
+                continue
+            seen_windows.add(key)
+        hits.append(Hit(passages[pi], round(score, 3), [terms[ti].text for ti in idx], spans))
     return GrepResult(hits, {t.text: df[i] for i, t in enumerate(terms)}, n)

@@ -21,9 +21,12 @@ what was collected, not that nothing happened.
 
 from __future__ import annotations
 
+import re
+import time
 from dataclasses import asdict, dataclass
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
+from . import search as _search
 from .llm import LLMProvider, get_provider
 from .search import (
     LLM_TIMEOUT_S,
@@ -38,6 +41,16 @@ from .search import (
 
 #: Longest the examiner waits for a model-written summary; the grep hits never wait.
 SYNTH_TIMEOUT_S = 45.0
+
+#: The model reads only the best few hits, each trimmed: a small local model answers in
+#: seconds from 8 short passages and in minutes from 50 long ones. The examiner still sees
+#: every match; this only bounds what the summary is written from.
+#: How long a streamed answer waits for the model to finish an earlier call (a cold model can
+#: still be loading the previous request) before settling for the matches alone.
+BUSY_WAIT_S = 20.0
+
+SYNTH_TOP_N = 8
+SYNTH_SNIPPET_CHARS = 240
 
 #: Datasets flattened into passages. Every one names the field its timestamp / source file
 #: come from so a passage never cites a value that is not in the underlying row.
@@ -152,17 +165,49 @@ _QA_SYSTEM = (
 )
 
 
+_JUNK = re.compile(r"[^\S ]+|[\x00-\x08\x0b-\x1f\x7f-\x9f\ufffd]+")
+
+
+def _snippet(row: dict) -> str:
+    """The text the model reads for one hit: a window around the first matched term (a carved
+    page can be kilobytes of binary with the real words deep inside), with control bytes and
+    replacement characters collapsed so no junk reaches the prompt."""
+    text = row["text"]
+    spans = row.get("spans") or []
+    start = max(0, spans[0][0] - SYNTH_SNIPPET_CHARS // 3) if spans else 0
+    return _JUNK.sub(" ", text[start : start + SYNTH_SNIPPET_CHARS * 2]).strip()[:SYNTH_SNIPPET_CHARS]
+
+
+_CONF_RANK = {"live": 0, "recovered_verified": 1, "recovered": 1, "carved_partial": 2, "carved": 3, "deletion_detected": 3}
+
+
+def _readable(snippet: str) -> bool:
+    """False for a snippet that is mostly binary residue — worth nothing to a model."""
+    letters = sum(c.isalpha() and c.isascii() or c.isspace() or c.isdigit() for c in snippet)
+    return bool(snippet) and letters / len(snippet) >= 0.6
+
+
+def _synth_prompt(question: str, rows: list[dict]) -> str:
+    """The model reads the best few *readable* hits, live evidence first: a small model given
+    carved fragments ahead of the actual message gives up with "the passages don't say"."""
+    ranked = sorted(rows, key=lambda r: _CONF_RANK.get(str(r.get("confidence", "live")).lower(), 2))
+    lines = []
+    for r in ranked:
+        snip = _snippet(r)
+        if _readable(snip):
+            lines.append(f"[{r['id']}] ({r['source_type']}, {r.get('timestamp') or 'no timestamp'}): {snip}")
+        if len(lines) >= SYNTH_TOP_N:
+            break
+    return f"Question: {question}\n\nPassages:\n" + "\n".join(lines)
+
+
 def _synthesize(
     provider: LLMProvider, question: str, passages: list[Passage], timeout: float
 ) -> tuple[Optional[str], str]:
     """``(answer, problem)``: the model's grounded summary, or why there isn't one."""
     if not provider.is_usable() or not passages:
         return None, ""
-    lines = [
-        f"[{p.id}] ({p.source_type}, {p.timestamp or 'no timestamp'}): {p.text[:300]}"
-        for p in passages
-    ]
-    prompt = f"Question: {question}\n\nPassages:\n" + "\n".join(lines)
+    prompt = _synth_prompt(question, [p.to_dict() for p in passages])
     answer, problem = call_bounded(provider.generate, _QA_SYSTEM, prompt, timeout=timeout)
     return (answer or None), problem
 
@@ -177,6 +222,23 @@ def _bundle(question: str, answer: str, method: str, passages: list[dict], searc
         "search": search,
         "disclaimer": disclaimer,
     }
+
+
+def _disclaimer(answered: bool) -> str:
+    if answered:
+        return (
+            "AI-surfaced answer over this case's own already-collected evidence. "
+            "Every claim must be verified against its cited passage's source artifact "
+            "— this is not a determination of guilt, and an empty result means "
+            "nothing relevant was found in what was collected, not that nothing "
+            "happened."
+        )
+    return (
+        "No model was configured, so this shows the passages that literally matched "
+        "the search terms, with no synthesized answer — read them directly rather than a "
+        "generated summary. No matches means nothing in what was collected, not that "
+        "nothing happened."
+    )
 
 
 def answer_question(
@@ -231,16 +293,56 @@ def answer_question(
         f"llm:{provider.name}" if answer else "grep",
         found,
         search,
-        (
-            "AI-surfaced answer over this case's own already-collected evidence. "
-            "Every claim must be verified against its cited passage's source artifact "
-            "— this is not a determination of guilt, and an empty result means "
-            "nothing relevant was found in what was collected, not that nothing "
-            "happened."
-            if answer
-            else "No model was configured, so this shows the passages that literally matched "
-            "the search terms, with no synthesized answer — read them directly rather than a "
-            "generated summary. No matches means nothing in what was collected, not that "
-            "nothing happened."
-        ),
+        _disclaimer(bool(answer)),
     )
+
+
+def stream_answer(
+    question: str,
+    passages: list[Passage],
+    provider: Optional[LLMProvider] = None,
+    top_k: int = 10,
+    brief: Optional[dict] = None,
+    scope: str = "question",
+    llm_timeout: float = LLM_TIMEOUT_S,
+    synth_timeout: float = SYNTH_TIMEOUT_S,
+    busy_wait: float = BUSY_WAIT_S,
+) -> Iterator[dict]:
+    """Chat-style Q&A: yield the grep matches at once, then the model's answer as it is typed.
+
+    Events: ``{"type": "search", "bundle": …}`` (the real matches, no answer yet), then
+    ``{"type": "token", "text": …}`` per chunk, then ``{"type": "done", "method", "note",
+    "disclaimer"}``. A missing, busy, slow or failing model only shortens the stream — the
+    matches in the first event are always the result."""
+    provider = provider or get_provider()
+    bundle = answer_question(
+        question, passages, provider, top_k, brief, scope, llm_timeout, synthesize=False
+    )
+    yield {"type": "search", "bundle": bundle}
+
+    note = ""
+    got = False
+    hits = bundle["passages"]
+    if question and hits and provider.is_usable():
+        lock = _search._MODEL_BUSY  # read at call time: one lock for the one local model
+        if not lock.acquire(timeout=busy_wait):
+            note = "the model is still busy with an earlier request — the matched passages below are the result"
+        else:
+            deadline = time.monotonic() + synth_timeout
+            try:
+                for chunk in provider.stream(_QA_SYSTEM, _synth_prompt(question, hits)):
+                    if time.monotonic() > deadline:
+                        note = f"the summary timed out after {synth_timeout:g}s and may be cut short"
+                        break
+                    got = True
+                    yield {"type": "token", "text": chunk}
+            finally:
+                lock.release()
+            if not got and not note:
+                note = "the model returned no summary — the matched passages below are the result"
+    yield {
+        "type": "done",
+        "method": f"llm:{provider.name}" if got else "grep",
+        "note": note,
+        "disclaimer": _disclaimer(got),
+    }

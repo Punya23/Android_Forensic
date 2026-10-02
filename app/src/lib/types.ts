@@ -1399,6 +1399,12 @@ export interface AskCaseResponse {
   passages_available: number;
 }
 
+/** One line of the NDJSON stream from POST /api/case/<id>/ask/stream. */
+export type AskStreamEvent =
+  | { type: "search"; bundle: AskCaseResponse }
+  | { type: "token"; text: string }
+  | { type: "done"; method: string; note: string; disclaimer: string };
+
 // --- Cross-case identifier linking (engine: triage/registry.py) --------------
 export interface SharedIdentifier {
   category: string;

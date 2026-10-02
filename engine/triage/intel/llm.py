@@ -52,6 +52,13 @@ class LLMProvider(ABC):
     def generate(self, system: str, prompt: str) -> Optional[str]:
         """Return free-text, or None if the provider can't answer."""
 
+    def stream(self, system: str, prompt: str):
+        """Yield the answer in chunks. Providers without real streaming yield the whole
+        :meth:`generate` result once, so callers need only one code path."""
+        text = self.generate(system, prompt)
+        if text:
+            yield text
+
     def is_usable(self) -> bool:
         """Whether this provider can actually be asked to write prose/JSON right now.
 
@@ -85,6 +92,29 @@ class HeuristicProvider(LLMProvider):
 
 
 # --- Ollama (local) ----------------------------------------------------------
+#: Output caps. A search-term object is ~100 tokens and a grounded summary of eight passages
+#: ~250; anything beyond that on a small model is rambling, not answer.
+JSON_MAX_TOKENS = 300
+STREAM_MAX_TOKENS = 400
+
+
+def _options(max_tokens: int) -> dict:
+    """Per-request model options: low temperature, a small context window and a hard cap on
+    output tokens, so no call can run unbounded while it holds the one-model lock."""
+    return {"temperature": 0.1, "num_ctx": _num_ctx(), "num_predict": max_tokens}
+
+
+def _num_ctx() -> int:
+    """Context window requested for every chat call. Prompts here are short (a question plus a
+    few trimmed passages), but Ollama's default window can be 128k tokens and a model's KV cache
+    scales with it — a 1B model then sits at ~6 GB resident. Override: ``SNAGR_LLM_NUM_CTX``."""
+    try:
+        return max(512, int(os.environ.get("SNAGR_LLM_NUM_CTX", "4096")))
+    except ValueError:
+        return 4096
+
+
+
 class OllamaProvider(LLMProvider):
     """Local model via Ollama's HTTP API. Keeps all case data on-device."""
 
@@ -99,9 +129,30 @@ class OllamaProvider(LLMProvider):
         self.host = (
             host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
         ).rstrip("/")
-        self.model = model or os.environ.get("SNAGR_LLM_MODEL", "llama3.1")
         self.timeout = timeout
         self.available = self._ping()
+        self.model = self._resolve_model(model or os.environ.get("SNAGR_LLM_MODEL", ""))
+
+    def _resolve_model(self, wanted: str) -> str:
+        """The name of a model that is actually pulled, so a request can never 404.
+
+        A bare tag ("llama3.1") resolves to the installed one ("llama3.1:8b"); with nothing
+        asked for, the smallest pulled chat model is used — the same bias towards a small,
+        fast model as :func:`autodetect_and_configure`. An explicit name that is not
+        installed is kept as given (the failure is then the truthful one)."""
+        if not self.available:
+            return wanted or "llama3.1"
+        chat = [m for m in list_ollama_models(self.host) if not m.get("embedding_only")]
+        names = [m["name"] for m in chat]
+        if wanted in names:
+            return wanted
+        if wanted:
+            base = wanted.split(":")[0]
+            same = [n for n in names if n.split(":")[0] == base]
+            return same[0] if same else wanted
+        if chat:
+            return min(chat, key=lambda m: m["size_bytes"] or 10**15)["name"]
+        return "llama3.1"
 
     def _ping(self) -> bool:
         try:
@@ -111,7 +162,7 @@ class OllamaProvider(LLMProvider):
         except Exception:
             return False
 
-    def _chat(self, system: str, prompt: str, force_json: bool) -> Optional[str]:
+    def _chat(self, system: str, prompt: str, force_json: bool, max_tokens: int = 512) -> Optional[str]:
         body = {
             "model": self.model,
             "stream": False,
@@ -119,7 +170,7 @@ class OllamaProvider(LLMProvider):
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
-            "options": {"temperature": 0.1},
+            "options": _options(max_tokens),
             # Unload soon after use (Ollama's default is 5 min) so a finished request does
             # not keep gigabytes resident next to the dashboard and the engine.
             "keep_alive": os.environ.get("SNAGR_LLM_KEEP_ALIVE", "2m"),
@@ -145,8 +196,48 @@ class OllamaProvider(LLMProvider):
         except Exception:
             return None
 
+    def stream(self, system, prompt):
+        """Yield content chunks from Ollama as they are generated (``stream: true``).
+
+        Stops quietly on any failure — the caller already holds the grep matches, so a model
+        that dies mid-answer costs the summary, never the result."""
+        body = {
+            "model": self.model,
+            "stream": True,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            "options": _options(STREAM_MAX_TOKENS),
+            "keep_alive": os.environ.get("SNAGR_LLM_KEEP_ALIVE", "2m"),
+        }
+        try:
+            from .hardware import unload_other_models
+
+            unload_other_models(self.model, self.host)  # one resident model at a time
+        except Exception:
+            pass
+        try:
+            req = urllib.request.Request(
+                f"{self.host}/api/chat",
+                data=json.dumps(body).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                for line in resp:  # newline-delimited JSON, one object per chunk
+                    if not line.strip():
+                        continue
+                    part = json.loads(line.decode("utf-8"))
+                    chunk = (part.get("message", {}) or {}).get("content")
+                    if chunk:
+                        yield chunk
+                    if part.get("done"):
+                        return
+        except Exception:
+            return
+
     def extract_json(self, system, prompt, schema_hint=None):
-        raw = self._chat(system, prompt, force_json=True)
+        raw = self._chat(system, prompt, force_json=True, max_tokens=JSON_MAX_TOKENS)
         return _safe_json(raw)
 
     def generate(self, system, prompt):
