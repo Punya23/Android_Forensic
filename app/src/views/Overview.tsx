@@ -58,7 +58,7 @@ export function OverviewView({ caseId, setView }: { caseId: string; setView: (v:
   return (
     <div className="p-6 max-w-6xl mx-auto">
       {/* Disclaimer banner */}
-      <div className="card border-accent/40 bg-accent/5 p-3 mb-4 text-sm flex gap-2">
+      <div className="card border-accent/40 bg-accent/5 p-3 mb-4 text-sm flex flex-col sm:flex-row gap-1 sm:gap-2">
         <span className="text-accent font-semibold shrink-0">TRIAGE PREVIEW</span>
         <span className="text-muted">{summary.disclaimer}</span>
       </div>

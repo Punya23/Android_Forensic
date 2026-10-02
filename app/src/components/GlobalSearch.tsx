@@ -88,7 +88,7 @@ export function GlobalSearch({ caseId, setView }: { caseId: string; setView: (v:
   }
 
   return (
-    <div ref={ref} className="relative flex-1 max-w-lg">
+    <div ref={ref} className="relative flex-1 min-w-[9rem] max-w-lg">
       <input
         className="input py-1.5"
         placeholder="Search all artifacts…  (messages, contacts, calls, recovered)"

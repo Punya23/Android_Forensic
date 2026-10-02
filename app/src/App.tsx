@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ShieldCheck, FolderOpen, Cpu, Usb, CircleUserRound, LogOut } from "lucide-react";
+import { ShieldCheck, FolderOpen, Cpu, Usb, CircleUserRound, LogOut, Menu } from "lucide-react";
 import { api, hasAuthToken, setOnUnauthorized } from "./lib/api";
 import type { Health } from "./lib/types";
 import { TagProvider } from "./lib/tagStore";
@@ -66,6 +66,8 @@ export default function App() {
   // Set by MediaView's "View on map" button; consumed by LocationsView to fly
   // the map to that exact photo's point on arrival, then cleared so revisiting
   // Locations later doesn't re-trigger the same fly-to.
+  // Narrow screens show the sidebar as a slide-over drawer instead of a fixed rail.
+  const [navOpen, setNavOpen] = useState(false);
   const [mediaMapFocus, setMediaMapFocus] = useState<string | null>(null);
 
   // --- auth / onboarding gate ---------------------------------------------
@@ -141,15 +143,28 @@ export default function App() {
 
   const body = (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar
-        view={view}
-        setView={setView}
-        caseId={caseId}
-        health={health}
-        onNewAcquisition={() => setView("acquire")}
-      />
+      <div className={`${navOpen ? "fixed inset-0 z-40 flex" : "hidden"} md:static md:z-auto md:flex`}>
+        <Sidebar
+          view={view}
+          setView={(v) => {
+            setView(v);
+            setNavOpen(false);
+          }}
+          caseId={caseId}
+          health={health}
+          onNewAcquisition={() => {
+            setView("acquire");
+            setNavOpen(false);
+          }}
+        />
+        <button
+          aria-label="Close menu"
+          className="flex-1 bg-black/50 md:hidden"
+          onClick={() => setNavOpen(false)}
+        />
+      </div>
       <main className="flex-1 overflow-hidden flex flex-col">
-        <TopBar health={health} caseId={caseId} setView={setView} username={username} onLogout={onLogout} />
+        <TopBar health={health} caseId={caseId} setView={setView} username={username} onLogout={onLogout} onMenu={() => setNavOpen(true)} />
         {/* One strip, above whichever view is routed, saying why this view's data is
             absent when it is. Renders nothing when the dataset is populated, and
             nothing for views that aren't about a single dataset. */}
@@ -242,21 +257,26 @@ function TopBar({
   setView,
   username,
   onLogout,
+  onMenu,
 }: {
   health: Health | null;
   caseId: string | null;
   setView: (v: ViewKey) => void;
   username: string | null;
   onLogout: () => void;
+  onMenu: () => void;
 }) {
   return (
-    <header className="h-14 border-b border-line flex items-center justify-between px-5 bg-panel-2 shrink-0 gap-4">
+    <header className="h-14 border-b border-line flex items-center justify-between px-3 md:px-5 bg-panel-2 shrink-0 gap-3 md:gap-4">
       <div className="flex items-center gap-3 text-sm shrink-0">
+        <button className="md:hidden btn-ghost !px-2 !py-1.5" aria-label="Open menu" onClick={onMenu}>
+          <Menu className="h-4 w-4" aria-hidden />
+        </button>
         <div className="flex items-center gap-1.5 text-accent font-semibold">
           <ShieldCheck className="h-[18px] w-[18px]" strokeWidth={2.25} aria-hidden />
           SNAGR
         </div>
-        <span className="text-muted hidden md:inline">Android Rapid Evidence Triage</span>
+        <span className="text-muted hidden xl:inline">Android Rapid Evidence Triage</span>
         {caseId && (
           <span className="flex items-center gap-1.5 font-mono text-xs bg-panel px-2 py-1 rounded-md border border-line">
             <FolderOpen className="h-3.5 w-3.5 text-muted" strokeWidth={1.75} aria-hidden />
@@ -266,16 +286,16 @@ function TopBar({
       </div>
       {caseId && <GlobalSearch caseId={caseId} setView={setView} />}
       <div className="flex items-center gap-3 text-xs text-muted shrink-0">
-        <span className="flex items-center gap-1.5">
+        <span className="hidden sm:flex items-center gap-1.5">
           <Cpu className={`h-3.5 w-3.5 ${health ? "text-live" : "text-deletion"}`} strokeWidth={1.75} aria-hidden />
-          {health ? `engine v${health.version}` : "engine offline"}
+          <span className="hidden xl:inline">{health ? `engine v${health.version}` : "engine offline"}</span>
         </span>
-        <span className={`flex items-center gap-1.5 ${health?.adb ? "text-live" : "text-warn"}`}>
+        <span className={`hidden sm:flex items-center gap-1.5 ${health?.adb ? "text-live" : "text-warn"}`}>
           <Usb className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
-          {health?.adb ? "adb ready" : "adb not found"}
+          <span className="hidden xl:inline">{health?.adb ? "adb ready" : "adb not found"}</span>
         </span>
         {username && (
-          <span className="flex items-center gap-1.5 text-muted">
+          <span className="hidden lg:flex items-center gap-1.5 text-muted">
             <CircleUserRound className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
             {username}
           </span>
@@ -283,7 +303,7 @@ function TopBar({
         <ThemeToggle />
         <button className="btn-ghost !px-2.5 !py-1.5 text-xs flex items-center gap-1.5" onClick={onLogout}>
           <LogOut className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
-          Sign out
+          <span className="hidden sm:inline">Sign out</span>
         </button>
       </div>
     </header>
