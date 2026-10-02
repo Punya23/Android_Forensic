@@ -94,14 +94,16 @@ class HeuristicProvider(LLMProvider):
 # --- Ollama (local) ----------------------------------------------------------
 #: Output caps. A search-term object is ~100 tokens and a grounded summary of eight passages
 #: ~250; anything beyond that on a small model is rambling, not answer.
-JSON_MAX_TOKENS = 300
+JSON_MAX_TOKENS = 150
 STREAM_MAX_TOKENS = 400
 
 
 def _options(max_tokens: int) -> dict:
     """Per-request model options: low temperature, a small context window and a hard cap on
     output tokens, so no call can run unbounded while it holds the one-model lock."""
-    return {"temperature": 0.1, "num_ctx": _num_ctx(), "num_predict": max_tokens}
+    # repeat_penalty: greedy decoding in JSON mode made an 8B model loop the same terms until the
+    # token cap (~15 s); a mild penalty ends the object instead.
+    return {"temperature": 0.1, "num_ctx": _num_ctx(), "num_predict": max_tokens, "repeat_penalty": 1.2}
 
 
 def _num_ctx() -> int:
@@ -142,16 +144,21 @@ class OllamaProvider(LLMProvider):
         installed is kept as given (the failure is then the truthful one)."""
         if not self.available:
             return wanted or "llama3.1"
-        chat = [m for m in list_ollama_models(self.host) if not m.get("embedding_only")]
+        installed = list_ollama_models(self.host)
+        chat = [m for m in installed if not m.get("embedding_only")]
         names = [m["name"] for m in chat]
+        # No model named, or the name is just what autodetect chose at startup: decide now, from
+        # the memory free *now*. An operator-pinned model is never second-guessed.
+        if not wanted or wanted == _AUTO_PINNED.get("model"):
+            from . import hardware
+
+            return hardware.pick_model_now(installed) or "llama3.1"
         if wanted in names:
             return wanted
         if wanted:
             base = wanted.split(":")[0]
             same = [n for n in names if n.split(":")[0] == base]
             return same[0] if same else wanted
-        if chat:
-            return min(chat, key=lambda m: m["size_bytes"] or 10**15)["name"]
         return "llama3.1"
 
     def _ping(self) -> bool:
@@ -308,6 +315,10 @@ def list_ollama_models(host: Optional[str] = None, timeout: float = 3.0) -> list
 #: the operator vs. picked automatically at engine start).
 _last_autodetect: dict = {}
 
+#: The model autodetect chose at engine start (as opposed to one an operator pinned). Requests
+#: re-pick from current memory only while the configured name is this one.
+_AUTO_PINNED: dict = {}
+
 
 def autodetect_and_configure(force: bool = False) -> dict:
     """Probe Ollama once at engine start and, if the operator hasn't already made an
@@ -335,7 +346,7 @@ def autodetect_and_configure(force: bool = False) -> dict:
     from .hardware import assess_models, detect_hardware, preferred_max_params_b, select_model
 
     fit = assess_models(detect_hardware(), models)
-    best = select_model(fit, installed_only=True, max_params_b=preferred_max_params_b())
+    best = select_model(fit, installed_only=True, max_params_b=preferred_max_params_b(), allow_tight=True)
     pulled = [r for r in fit if r["installed"]]
     if not best and pulled:
         smallest = min(pulled, key=lambda r: r["footprint_gb"])
@@ -408,6 +419,7 @@ def autodetect_and_configure(force: bool = False) -> dict:
     # SNAGR_LLM; only fill in the model when nothing was pinned.
     if not os.environ.get("SNAGR_LLM_MODEL", "").strip():
         os.environ["SNAGR_LLM_MODEL"] = best
+        _AUTO_PINNED["model"] = best
     _last_autodetect = {
         "autodetected": True,
         "provider": "ollama",

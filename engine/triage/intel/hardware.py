@@ -100,7 +100,19 @@ def _detect_available_ram_gb(system: str) -> Optional[float]:
                 int(re.search(rf"{label}:\s+(\d+)", out).group(1))
                 for label in ("Pages free", "Pages inactive", "Pages speculative")
             )
-            return pages * page / (1024 ** 3)
+            counted = pages * page / (1024 ** 3)
+            # free+inactive undercounts: macOS also reclaims file cache and compressed pages on
+            # demand, and reports the share it considers free. A 16 GB Mac that "has" 3.8 GB by
+            # the page count has ~7 GB it will hand over under pressure — the difference between
+            # a 7-8B model being refused and loading fine.
+            total = _detect_ram_gb(system) or 0.0
+            try:
+                mp = subprocess.run(["memory_pressure"], capture_output=True, text=True, timeout=3.0).stdout
+                pct = int(re.search(r"free percentage:\s*(\d+)%", mp).group(1))
+                counted = max(counted, total * pct / 100.0)
+            except Exception as exc:
+                log.debug("memory_pressure unavailable, using page counts: %s", exc)
+            return counted
         if system == "windows":
             return _windows_memory().ullAvailPhys / (1024 ** 3)
     except Exception as exc:
@@ -208,9 +220,9 @@ def _detect_gpu(system: str) -> str:
 #: RAM kept back on top of what is already free, so a model never takes the last of it. Free
 #: RAM already excludes what the OS, dashboard and engine occupy, so this is a margin, not a
 #: reservation — 3 GB here told a normally-busy 16 GB laptop that nothing fit.
-HEADROOM_GB = 1.5
+HEADROOM_GB = 1.0
 #: A model may use at most this share of the machine even when more happens to be free.
-MAX_RAM_FRACTION = 0.6
+MAX_RAM_FRACTION = 0.7
 #: Ollama's default context for machines under 24 GB. KV cache grows linearly with it.
 DEFAULT_NUM_CTX = 4096
 _RUNTIME_OVERHEAD_GB = 0.5
@@ -297,10 +309,12 @@ def assess_models(hw: dict, installed: list[dict], num_ctx: int = DEFAULT_NUM_CT
     return sorted(rows.values(), key=lambda r: (-r["params_b"], r["name"]))
 
 
-#: Default ceiling on the model the engine runs. Term picking, brief JSON and short summaries
-#: do not need more, and a small model leaves the laptop responsive. ``SNAGR_LLM_MAX_PARAMS_B``
-#: raises it for an operator who wants a bigger one.
-DEFAULT_MAX_PARAMS_B = 4.0
+#: Default ceiling on the model the engine runs: a 7-8B model is the best quality a laptop
+#: carries comfortably once the context window is pinned (see llm._num_ctx — the earlier ~20 GB
+#: blow-up was Ollama's 128k default context, not the model). The memory budget still decides
+#: whether it fits *right now*; this only stops a roomy workstation jumping to a 14-32B model.
+#: ``SNAGR_LLM_MAX_PARAMS_B`` changes it.
+DEFAULT_MAX_PARAMS_B = 8.0
 
 
 def preferred_max_params_b() -> float:
@@ -310,17 +324,49 @@ def preferred_max_params_b() -> float:
         return DEFAULT_MAX_PARAMS_B
 
 
-def select_model(rows: list[dict], installed_only: bool = False, max_params_b: Optional[float] = None) -> Optional[str]:
-    """The strongest model that comfortably ``fits`` — never one that is merely ``tight`` —
-    up to *max_params_b* billion parameters, preferring an already-pulled one on a tie.
+def select_model(
+    rows: list[dict],
+    installed_only: bool = False,
+    max_params_b: Optional[float] = None,
+    allow_tight: bool = False,
+) -> Optional[str]:
+    """The strongest model that ``fits`` up to *max_params_b* billion parameters, preferring an
+    already-pulled one on a tie. With ``allow_tight`` a model that merely loads with little to
+    spare also qualifies — used for pulled models, where "loads" beats "falls back to a 1B". A
+    general-purpose model always outranks a code model: evidence Q&A is not a coding task.
     ``None`` when nothing qualifies."""
-    fits = [
+    ok = ("fits", "tight") if allow_tight else ("fits",)
+    eligible = [
         r for r in rows
-        if r["verdict"] == "fits"
+        if r["verdict"] in ok
         and (r["installed"] or not installed_only)
         and (max_params_b is None or r["params_b"] <= max_params_b)
     ]
-    return max(fits, key=lambda r: (r["params_b"], r["installed"]))["name"] if fits else None
+    best = max(eligible, key=lambda r: ("coder" not in r["name"].lower(), r["params_b"], r["installed"]), default=None)
+    return best["name"] if best else None
+
+
+def _count_resident_as_available(hw: dict, loaded: list[dict]) -> dict:
+    """Memory Ollama already holds is ours to reuse (one model at a time: whatever is resident
+    is evicted for the one we run). Without adding it back, loading the 8B drops the free-memory
+    figure by its own size and the next request judges it too big and swaps it out."""
+    held = sum(m.get("size_gb") or 0.0 for m in loaded)
+    if hw.get("available_ram_gb") is None or not held:
+        return hw
+    return {**hw, "available_ram_gb": hw["available_ram_gb"] + held}
+
+
+def pick_model_now(installed: list[dict]) -> Optional[str]:
+    """The model to run *at this moment*: the strongest pulled chat model the current free
+    memory can carry (within the size cap), else the smallest pulled one so the request still
+    works. Re-evaluated per request so a busy laptop steps down instead of swapping."""
+    chat = [m for m in installed if m.get("name") and not m.get("embedding_only")]
+    if not chat:
+        return None
+    hw = _count_resident_as_available(detect_hardware(), _ollama_loaded())
+    rows = assess_models(hw, chat)
+    best = select_model(rows, installed_only=True, max_params_b=preferred_max_params_b(), allow_tight=True)
+    return best or min(chat, key=lambda m: m.get("size_bytes") or 10**15)["name"]
 
 
 def _same_model(a: str, b: str) -> bool:
@@ -357,9 +403,9 @@ def unload_other_models(keep: str, host: Optional[str] = None) -> list[str]:
 
 def recommend_model(hw: Optional[dict] = None) -> dict:
     """The model to download for this machine (``None`` when nothing fits: stay on the
-    heuristic back-end), capped to a small model. Unknown RAM counts as none."""
+    heuristic back-end), capped at the default 7-8B size. Unknown RAM counts as none."""
     hw = hw or detect_hardware()
-    name = select_model(assess_models(hw, []), max_params_b=preferred_max_params_b())
+    name = select_model(assess_models(hw, []), max_params_b=preferred_max_params_b(), allow_tight=True)
     disk = next((d for n, _, d in CATALOG if n == name), None)
     return {
         "model": name,
@@ -389,8 +435,10 @@ def fit_report(num_ctx: int = DEFAULT_NUM_CTX) -> dict:
     from .llm import list_ollama_models
 
     hw = detect_hardware()
-    rows = assess_models(hw, list_ollama_models(), num_ctx)
     loaded = _ollama_loaded()
+    # Verdicts are "what can I run now": memory a resident model already holds is reusable.
+    hw_eff = _count_resident_as_available(hw, loaded)
+    rows = assess_models(hw_eff, list_ollama_models(), num_ctx)
     advice = []
     resident = round(sum(m["size_gb"] for m in loaded), 1)
     if len(loaded) > 1:
@@ -398,20 +446,20 @@ def fit_report(num_ctx: int = DEFAULT_NUM_CTX) -> dict:
             f"{len(loaded)} models are loaded at once ({resident} GB). Set OLLAMA_MAX_LOADED_MODELS=1 "
             "so only the one in use stays in memory."
         )
-    elif loaded and resident > memory_budget_gb(hw):
-        advice.append(f"{loaded[0]['name']} holds {resident} GB, more than this machine's {memory_budget_gb(hw)} GB budget.")
+    elif loaded and resident > memory_budget_gb(hw_eff):
+        advice.append(f"{loaded[0]['name']} holds {resident} GB, more than this machine's {memory_budget_gb(hw_eff)} GB budget.")
     cap = preferred_max_params_b()
-    chosen = select_model(rows, installed_only=True, max_params_b=cap)
+    chosen = select_model(rows, installed_only=True, max_params_b=cap, allow_tight=True)
     if chosen is None and any(r["installed"] for r in rows):
         advice.append("No pulled model fits comfortably — use a smaller one or free memory; staying on the heuristic back-end.")
     return {
         "hardware": hw,
-        "budget_gb": memory_budget_gb(hw),
+        "budget_gb": memory_budget_gb(hw_eff),
         "num_ctx": num_ctx,
         "models": rows,
         "use_installed": chosen,
         "max_params_b": cap,
-        "download_recommendation": select_model(rows, max_params_b=cap),
+        "download_recommendation": select_model(rows, max_params_b=cap, allow_tight=True),
         "loaded": loaded,
         "advice": advice,
     }

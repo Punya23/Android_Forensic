@@ -49,6 +49,10 @@ SYNTH_TIMEOUT_S = 45.0
 #: still be loading the previous request) before settling for the matches alone.
 BUSY_WAIT_S = 20.0
 
+#: How long a streamed answer waits for the model's extra search terms. The matches are already
+#: on screen, so this only delays the start of the answer, never the first results.
+TERM_WAIT_S = 10.0
+
 SYNTH_TOP_N = 8
 SYNTH_SNIPPET_CHARS = 240
 
@@ -251,6 +255,7 @@ def answer_question(
     llm_timeout: float = LLM_TIMEOUT_S,
     synthesize: bool = True,
     synth_timeout: float = SYNTH_TIMEOUT_S,
+    use_llm_terms: bool = True,
 ) -> dict:
     """Grep *passages* for *question* — or, with ``scope="brief"``, for the case brief's own
     JSON terms. Never raises: a model failure degrades to the literal search. With
@@ -266,7 +271,8 @@ def answer_question(
     else:
         if not question:
             return _bundle(question, "", "none", [], {}, "No question was asked.")
-        spec = llm_spec(question, provider, deterministic_spec(question), llm_timeout)
+        base = deterministic_spec(question)
+        spec = llm_spec(question, provider, base, llm_timeout) if use_llm_terms else base
         if brief:
             spec = SearchSpec(spec.terms + as_boost(brief_spec(brief)), spec.method, spec.notes)
         if not spec.terms:
@@ -307,6 +313,7 @@ def stream_answer(
     llm_timeout: float = LLM_TIMEOUT_S,
     synth_timeout: float = SYNTH_TIMEOUT_S,
     busy_wait: float = BUSY_WAIT_S,
+    term_wait: float = TERM_WAIT_S,
 ) -> Iterator[dict]:
     """Chat-style Q&A: yield the grep matches at once, then the model's answer as it is typed.
 
@@ -315,10 +322,21 @@ def stream_answer(
     "disclaimer"}``. A missing, busy, slow or failing model only shortens the stream — the
     matches in the first event are always the result."""
     provider = provider or get_provider()
+    # 1. Instant: grep the literal terms. Nothing here waits on the model.
     bundle = answer_question(
-        question, passages, provider, top_k, brief, scope, llm_timeout, synthesize=False
+        question, passages, provider, top_k, brief, scope, llm_timeout, synthesize=False, use_llm_terms=False
     )
     yield {"type": "search", "bundle": bundle}
+
+    # 2. Refine: let the model suggest extra terms (synonyms, Hinglish spellings). If it answers in
+    # time the matches are re-ranked and sent again; if not, the literal matches stand.
+    if scope == "question" and question and provider.is_usable():
+        refined = llm_spec(question, provider, deterministic_spec(question), term_wait)
+        if refined.method.startswith("llm"):  # cached by llm_spec, so this re-grep calls no model
+            bundle = answer_question(
+                question, passages, provider, top_k, brief, scope, term_wait, synthesize=False
+            )
+            yield {"type": "search", "bundle": bundle}
 
     note = ""
     got = False

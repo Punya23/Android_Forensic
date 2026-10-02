@@ -48,16 +48,18 @@ def test_footprint_is_weights_plus_kv_cache_plus_overhead_and_grows_with_context
 
 def test_budget_uses_what_is_free_not_just_what_is_installed():
     assert memory_budget_gb(hw(16, available=4)) < memory_budget_gb(hw(16, available=12))
-    assert memory_budget_gb(hw(16, available=12)) <= 16 * 0.6, "never more than 60% of the machine"
+    assert memory_budget_gb(hw(16, available=14)) <= 16 * 0.7, "never more than 70% of the machine"
     assert memory_budget_gb(hw(8, available=1)) == 0.0, "OS + dashboard headroom comes off first"
     assert memory_budget_gb(hw(16)) > 0, "unknown free RAM is assumed 60% free, not zero"
 
 
-# --- the reported bug: 16 GB laptop, 8B installed ------------------------------------------
-def test_a_16gb_laptop_does_not_get_the_8b_model():
-    rows = by_name(assess_models(hw(16, available=9), [installed("llama3.1:8b", 4.9, "8.0B")]))
-    assert rows["llama3.1:8b"]["verdict"] in ("tight", "too_big")
-    assert select_model(list(rows.values())) != "llama3.1:8b"
+# --- 16 GB laptop, 8B installed: use it when memory allows, not when the laptop is busy ----------
+def test_a_16gb_laptop_runs_the_8b_when_memory_allows_and_not_when_busy():
+    roomy = assess_models(hw(16, available=9), [installed("llama3.1:8b", 4.9, "8.0B")])
+    assert select_model(roomy, installed_only=True, allow_tight=True) == "llama3.1:8b"
+    busy = by_name(assess_models(hw(16, available=4), [installed("llama3.1:8b", 4.9, "8.0B")]))
+    assert busy["llama3.1:8b"]["verdict"] == "too_big"
+    assert select_model(list(busy.values()), installed_only=True, allow_tight=True) is None
 
 
 def test_a_roomy_machine_gets_the_strongest_model_that_fits():
@@ -118,10 +120,12 @@ def _autodetect(monkeypatch, machine, models):
     return llm.autodetect_and_configure(force=True)
 
 
-def test_autodetect_picks_the_pulled_model_that_fits_not_the_largest(monkeypatch):
+def test_autodetect_picks_the_strongest_pulled_model_the_free_memory_carries(monkeypatch):
     models = [installed("llama3.1:8b", 4.9, "8.0B"), installed("llama3.2:1b", 1.3, "1.2B")]
     result = _autodetect(monkeypatch, hw(16, available=9), models)
-    assert result["autodetected"] and result["model"] == "llama3.2:1b"
+    assert result["autodetected"] and result["model"] == "llama3.1:8b"
+    busy = _autodetect(monkeypatch, hw(16, available=3.5), models)
+    assert busy["autodetected"] and busy["model"] == "llama3.2:1b"
 
 
 def test_autodetect_stays_on_heuristic_and_says_why_when_no_pulled_model_fits(monkeypatch):
@@ -135,13 +139,15 @@ def test_fit_route_reports_the_machine_every_model_and_the_choice(tmp_path, monk
     from triage.intel import hardware
 
     monkeypatch.setattr(hardware, "detect_hardware", lambda: hw(16, available=9, gpu="apple_silicon", vram_gb=10.6, vram_kind="unified"))
+    monkeypatch.setattr(hardware, "_ollama_loaded", lambda host=None: [])  # not whatever this machine has resident
     app, _ = _make_server_app(tmp_path)
     c = app.test_client()
     token = c.post("/api/auth/login", json={"username": "admin", "password": "snagr-demo"}).get_json()["token"]
     body = c.get("/api/llm/fit", headers={"Authorization": f"Bearer {token}"}).get_json()
-    assert body["hardware"]["ram_gb"] == 16 and body["budget_gb"] == 7.5
+    assert body["hardware"]["ram_gb"] == 16 and body["budget_gb"] == 8.0
     assert {"llama3.1:8b", "llama3.2:1b"} <= {m["name"] for m in body["models"]}
-    assert body["download_recommendation"] == "qwen2.5:3b-instruct"
+    assert body["download_recommendation"] == "llama3.1:8b"
+    assert body["use_installed"] == "llama3.1:8b"
 
 
 def test_a_busy_laptop_with_a_few_gb_free_can_still_run_the_smallest_model():
@@ -159,11 +165,11 @@ def test_a_size_cap_keeps_a_big_machine_on_a_small_model():
     assert select_model(rows, max_params_b=4.0) == "qwen2.5:3b-instruct"
 
 
-def test_autodetect_prefers_a_small_model_even_when_a_big_one_fits(monkeypatch):
+def test_autodetect_honours_the_operators_size_cap(monkeypatch):
     models = [installed("llama3.1:8b", 4.9, "8.0B"), installed("llama3.2:1b", 1.3, "1.2B")]
+    assert _autodetect(monkeypatch, hw(64, available=48), models)["model"] == "llama3.1:8b"  # default cap is 8B
+    monkeypatch.setenv("SNAGR_LLM_MAX_PARAMS_B", "4")  # operator wants a small, quick model
     assert _autodetect(monkeypatch, hw(64, available=48), models)["model"] == "llama3.2:1b"
-    monkeypatch.setenv("SNAGR_LLM_MAX_PARAMS_B", "10")  # operator opts into a bigger one
-    assert _autodetect(monkeypatch, hw(64, available=48), models)["model"] == "llama3.1:8b"
 
 
 # --- never more than one model resident ---------------------------------------------------------
@@ -238,9 +244,9 @@ def test_embedding_calls_evict_the_chat_model_and_do_not_linger(monkeypatch):
 
 
 # --- the old API keeps working on top of it ---------------------------------------------------
-@pytest.mark.parametrize("ram,model", [(4, None), (None, None), (12, "qwen2.5:3b-instruct"), (16, "qwen2.5:3b-instruct"),
-                                       (20, "qwen2.5:3b-instruct"), (30, "qwen2.5:3b-instruct"), (64, "qwen2.5:3b-instruct")])
-def test_recommend_model_is_hardware_fit_capped_to_a_small_model(ram, model):
+@pytest.mark.parametrize("ram,model", [(4, None), (None, None), (12, "llama3.1:8b"), (16, "llama3.1:8b"),
+                                       (20, "llama3.1:8b"), (30, "llama3.1:8b"), (64, "llama3.1:8b")])
+def test_recommend_model_is_hardware_fit_capped_at_the_8b_default(ram, model):
     assert recommend_model({"ram_gb": ram})["model"] == model
 
 
@@ -260,7 +266,10 @@ def _installed(monkeypatch, names):
     return llm
 
 
-def test_unset_model_uses_smallest_installed_chat_model(monkeypatch):
+def test_unset_model_steps_down_to_the_smallest_installed_chat_model_when_memory_is_tight(monkeypatch):
+    import triage.intel.hardware as hwmod
+
+    monkeypatch.setattr(hwmod, "detect_hardware", lambda: hw(16, available=3.0))
     llm = _installed(
         monkeypatch,
         [("llama3.1:8b", 4_900_000_000), ("llama3.2:1b", 1_300_000_000), ("nomic-embed-text:latest", 270_000_000)],
@@ -310,3 +319,99 @@ def test_chat_requests_pin_a_small_context_window(monkeypatch):
     # an uncapped JSON-mode call on a small model can run until the 60 s timeout, holding the
     # one-model lock the whole time and starving the answer behind it
     assert all(0 < b["options"]["num_predict"] <= 1024 for b in sent)
+
+
+# --- quality-first selection: use the good model the laptop can really carry ---------------
+def test_default_cap_allows_a_7_to_8b_model(monkeypatch):
+    monkeypatch.delenv("SNAGR_LLM_MAX_PARAMS_B", raising=False)
+    from triage.intel.hardware import preferred_max_params_b
+
+    assert preferred_max_params_b() >= 8.0
+
+
+def test_macos_reclaimable_memory_counts_not_just_free_and_inactive(monkeypatch):
+    from triage.intel import hardware as hwmod
+
+    vm = "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free: 6000.\nPages inactive: 242000.\nPages speculative: 3000.\n"
+    mp = "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 45%\n"
+
+    class _R:
+        def __init__(self, out):
+            self.stdout = out
+
+    monkeypatch.setattr(hwmod.subprocess, "run", lambda cmd, **k: _R(mp if cmd[0] == "memory_pressure" else vm))
+    monkeypatch.setattr(hwmod, "_detect_ram_gb", lambda system: 16.0)
+    got = hwmod._detect_available_ram_gb("darwin")
+    assert got is not None and got > 7.0, "macOS says 45% of 16 GB is reclaimable (~7.2 GB), far above free+inactive (~4 GB)"
+
+
+def test_a_tight_but_loadable_model_is_used_when_asked():
+    rows = assess_models(hw(16, available=8.0), [{"name": "llama3.1:8b", "size_bytes": 4_900_000_000, "parameter_size": "8.0B"},
+                                                  {"name": "llama3.2:1b", "size_bytes": 1_300_000_000, "parameter_size": "1.2B"}])
+    by = {r["name"]: r for r in rows}
+    assert by["llama3.1:8b"]["verdict"] in ("tight", "fits")
+    assert select_model(rows, installed_only=True, max_params_b=8.0, allow_tight=True) == "llama3.1:8b"
+
+
+def test_a_general_model_beats_a_coder_model_of_similar_size():
+    rows = assess_models(hw(32, available=24.0), [
+        {"name": "qwen2.5-coder:7b", "size_bytes": 4_700_000_000, "parameter_size": "7.6B"},
+        {"name": "deepseek-coder:6.7b", "size_bytes": 3_800_000_000, "parameter_size": "7B"},
+        {"name": "llama3.1:8b", "size_bytes": 4_900_000_000, "parameter_size": "8.0B"},
+    ])
+    assert select_model(rows, installed_only=True, max_params_b=8.0, allow_tight=True) == "llama3.1:8b"
+    only_coders = [r for r in rows if "coder" in r["name"]]
+    assert select_model(only_coders, installed_only=True, max_params_b=8.0, allow_tight=True) == "qwen2.5-coder:7b"
+
+
+def test_model_is_chosen_per_request_from_current_memory(monkeypatch):
+    # The engine auto-pinned the 8B model at startup while memory was free; when the laptop
+    # is busy later, requests must step down to the small model instead of swapping.
+    from triage.intel import llm
+
+    monkeypatch.setattr(llm.OllamaProvider, "_ping", lambda self: True)
+    monkeypatch.setattr(
+        llm, "list_ollama_models",
+        lambda *a, **k: [
+            {"name": "llama3.1:8b", "size_bytes": 4_900_000_000, "parameter_size": "8.0B", "embedding_only": False},
+            {"name": "llama3.2:1b", "size_bytes": 1_300_000_000, "parameter_size": "1.2B", "embedding_only": False},
+        ],
+    )
+    monkeypatch.setenv("SNAGR_LLM_MODEL", "llama3.1:8b")
+    monkeypatch.setattr(llm, "_AUTO_PINNED", {"model": "llama3.1:8b"})
+    import triage.intel.hardware as hwmod
+
+    monkeypatch.setattr(hwmod, "detect_hardware", lambda: hw(16, available=3.5))
+    assert llm.OllamaProvider().model == "llama3.2:1b"
+    monkeypatch.setattr(hwmod, "detect_hardware", lambda: hw(16, available=9.0))
+    assert llm.OllamaProvider().model == "llama3.1:8b"
+
+
+def test_an_operator_pinned_model_is_never_second_guessed(monkeypatch):
+    from triage.intel import llm
+
+    monkeypatch.setattr(llm.OllamaProvider, "_ping", lambda self: True)
+    monkeypatch.setattr(
+        llm, "list_ollama_models",
+        lambda *a, **k: [{"name": "llama3.1:8b", "size_bytes": 4_900_000_000, "parameter_size": "8.0B", "embedding_only": False},
+                         {"name": "llama3.2:1b", "size_bytes": 1_300_000_000, "parameter_size": "1.2B", "embedding_only": False}],
+    )
+    monkeypatch.setenv("SNAGR_LLM_MODEL", "llama3.1:8b")
+    monkeypatch.setattr(llm, "_AUTO_PINNED", {})  # not set by autodetect: the operator chose it
+    import triage.intel.hardware as hwmod
+
+    monkeypatch.setattr(hwmod, "detect_hardware", lambda: hw(16, available=3.0))
+    assert llm.OllamaProvider().model == "llama3.1:8b"
+
+
+def test_memory_a_model_already_holds_counts_as_available_to_it(monkeypatch):
+    # Once the 8B is loaded the free-memory figure drops by its own 5.3 GB. Re-picking from that
+    # alone would evict it for the 1B and flip models on every question.
+    from triage.intel import hardware as hwmod
+
+    chat = [installed("llama3.1:8b", 4.9, "8.0B"), installed("llama3.2:1b", 1.3, "1.2B")]
+    monkeypatch.setattr(hwmod, "detect_hardware", lambda: hw(16, available=3.5))
+    monkeypatch.setattr(hwmod, "_ollama_loaded", lambda host=None: [])
+    assert hwmod.pick_model_now(chat) == "llama3.2:1b"  # nothing resident, a busy laptop: step down
+    monkeypatch.setattr(hwmod, "_ollama_loaded", lambda host=None: [{"name": "llama3.1:8b", "size_gb": 5.3}])
+    assert hwmod.pick_model_now(chat) == "llama3.1:8b"  # it is already paid for: keep it

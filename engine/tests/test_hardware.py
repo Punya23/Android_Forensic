@@ -37,11 +37,11 @@ def test_recommend_model_unknown_ram_treated_as_minimum():
 @pytest.mark.parametrize(
     "ram_gb,expected_model",
     [
-        (12.0, "qwen2.5:3b-instruct"),
-        # Capped to a small model by default (SNAGR_LLM_MAX_PARAMS_B), however big the machine.
-        (20.0, "qwen2.5:3b-instruct"),
-        (30.0, "qwen2.5:3b-instruct"),
-        (64.0, "qwen2.5:3b-instruct"),
+        (12.0, "llama3.1:8b"),
+        # Capped at the 8B default (SNAGR_LLM_MAX_PARAMS_B), however big the machine.
+        (20.0, "llama3.1:8b"),
+        (30.0, "llama3.1:8b"),
+        (64.0, "llama3.1:8b"),
     ],
 )
 def test_recommend_model_tiers(ram_gb, expected_model):
@@ -298,4 +298,4 @@ def test_full_chain_no_binary_to_running_provider_flip(monkeypatch):
     assert result["action"] == "installing"
 
     assert done.wait(timeout=5.0), "on_done never fired — the chain stalled somewhere"
-    assert outcome == {"success": True, "model": "qwen2.5:3b-instruct"}  # small default, not the biggest that fits
+    assert outcome == {"success": True, "model": "llama3.1:8b"}  # best model the machine carries, within the 8B default

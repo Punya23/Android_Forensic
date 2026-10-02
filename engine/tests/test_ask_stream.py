@@ -169,3 +169,42 @@ def test_prompt_leads_with_live_evidence_and_skips_junk_snippets():
     lines = [ln for ln in model.prompts[0].splitlines() if ln.startswith("[P-")]
     assert "Rahul" in lines[0], "live evidence must come first"
     assert all("ÿ" not in ln for ln in lines), "a mostly-junk snippet must not be offered to the model"
+
+
+class TermsModel(FakeModel):
+    """Suggests an extra search term; records when the term-extraction call happens."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.calls = []
+
+    def extract_json(self, system, prompt, schema_hint=None):
+        self.calls.append("extract_json")
+        return {"terms": [{"term": "transfer", "kind": "word", "weight": 1}, {"term": "payment", "kind": "word", "weight": 1}]}
+
+    def stream(self, system, prompt):
+        self.calls.append("stream")
+        yield from self.chunks
+
+
+def test_matches_appear_before_the_model_is_asked_for_extra_terms():
+    model = TermsModel()
+    gen = stream_answer("cash", build_passages(ROWS), provider=model)
+    first = next(gen)
+    assert first["type"] == "search" and first["bundle"]["passages"]
+    assert first["bundle"]["search"]["method"] == "deterministic"
+    assert model.calls == [], "the instant grep must not wait on (or trigger) the model"
+    rest = list(gen)
+    # refined matches arrive as a second search event, then the answer
+    kinds = [e["type"] for e in rest]
+    assert kinds[0] == "search" and kinds[-1] == "done" and kinds.count("token") == 3
+    assert rest[0]["bundle"]["search"]["method"].startswith("llm")
+    assert model.calls == ["extract_json", "stream"]
+
+
+def test_json_calls_are_short_and_do_not_loop(monkeypatch):
+    # an 8B model in JSON mode emitted 300 tokens of repeated terms (~15 s) — capped and penalised
+    from triage.intel import llm
+
+    assert llm.JSON_MAX_TOKENS <= 160
+    assert llm._options(llm.JSON_MAX_TOKENS)["repeat_penalty"] > 1.0
