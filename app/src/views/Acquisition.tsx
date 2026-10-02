@@ -68,7 +68,7 @@ export function AcquisitionView({
   // Opt-in: generate the AI Evidence Summary after analysis (triage/intel/ai_summary.py).
   // Off by default — it needs a reachable local model, and an examiner should choose it
   // deliberately rather than inherit it.
-  const [runAiSummary, setRunAiSummary] = useState(false);
+  const [runAiSummary, setRunAiSummary] = useState(true);
   // Whether the plan may switch on root-only pulls. Collection scope is the examiner's
   // decision: a case brief alone must not be able to widen it without them saying so.
   const [planAllowTier2, setPlanAllowTier2] = useState(true);
