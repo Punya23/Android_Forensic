@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
@@ -121,6 +120,9 @@ class OllamaProvider(LLMProvider):
                 {"role": "user", "content": prompt},
             ],
             "options": {"temperature": 0.1},
+            # Unload soon after use (Ollama's default is 5 min) so a finished request does
+            # not keep gigabytes resident next to the dashboard and the engine.
+            "keep_alive": os.environ.get("SNAGR_LLM_KEEP_ALIVE", "2m"),
         }
         if force_json:
             body["format"] = "json"
@@ -204,29 +206,6 @@ def list_ollama_models(host: Optional[str] = None, timeout: float = 3.0) -> list
     return out
 
 
-def _param_size_billions(parameter_size: str) -> float:
-    """Parse Ollama's ``parameter_size`` (``"8.0B"``, ``"70B"``, ``"350M"``) into a
-    comparable billions-of-parameters float. Unparseable/empty → 0.0, so a model with
-    no reported size sorts last rather than crashing the comparison."""
-    m = re.match(r"([\d.]+)\s*([BM])", (parameter_size or "").strip(), re.IGNORECASE)
-    if not m:
-        return 0.0
-    value = float(m.group(1))
-    return value / 1000.0 if m.group(2).upper() == "M" else value
-
-
-def pick_best_chat_model(models: list[dict]) -> Optional[str]:
-    """Pick the strongest chat-capable model already pulled, or ``None`` if there
-    isn't one. "Best" = largest parameter count — a reasonable local proxy for
-    capability, and the only thing we can measure without actually running each
-    model. Ties break alphabetically for determinism."""
-    chat_models = [m for m in models if not m.get("embedding_only")]
-    if not chat_models:
-        return None
-    chat_models.sort(key=lambda m: (-_param_size_billions(m["parameter_size"]), m["name"]))
-    return chat_models[0]["name"]
-
-
 #: Result of the most recent :func:`autodetect_and_configure` call, so
 #: ``provider_status`` can report *why* the current back-end is what it is (chosen by
 #: the operator vs. picked automatically at engine start).
@@ -254,7 +233,22 @@ def autodetect_and_configure(force: bool = False) -> dict:
         return _last_autodetect
 
     models = list_ollama_models()
-    best = pick_best_chat_model(models)
+    # Choose by what this machine can carry, not by size: the largest pulled model on a
+    # 16 GB laptop pushed Ollama to ~20 GB and every prompt into swap.
+    from .hardware import assess_models, detect_hardware, select_model
+
+    fit = assess_models(detect_hardware(), models)
+    best = select_model(fit, installed_only=True)
+    pulled = [r for r in fit if r["installed"]]
+    if not best and pulled:
+        smallest = min(pulled, key=lambda r: r["footprint_gb"])
+        _last_autodetect = {
+            "autodetected": False,
+            "provider": "heuristic",
+            "reason": f"no pulled model fits this machine's free memory (smallest: {smallest['name']}, "
+            f"{smallest['reason']}) — staying on heuristic",
+        }
+        return _last_autodetect
     if not best:
         # Nothing usable yet. Before settling for heuristic, try to provision a local
         # model ourselves — this is the multi-examiner-machine path: the engine may be
@@ -285,7 +279,7 @@ def autodetect_and_configure(force: bool = False) -> dict:
             }
 
         # Chat-capable only — `best` is already None precisely because
-        # pick_best_chat_model() found no chat model among `models`, so passing the
+        # select_model() found no pulled chat model that fits among `models`, so passing the
         # unfiltered list back in here would let a pulled *embedding* model (e.g.
         # nomic-embed-text, which docs/SETUP.md tells examiners to pull separately)
         # read as "a chat model is already pulled" and permanently skip provisioning.

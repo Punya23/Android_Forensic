@@ -1,51 +1,56 @@
-""""Ask this case": free-text question answering over a case's own already-collected
-evidence — local retrieval (BM25, optionally blended with the same local embedding
-model used for precedent retrieval) plus, only if a model is configured, a strictly
-grounded synthesis on top.
+""""Ask this case": questions over a case's own already-collected evidence, answered with
+the real matches.
 
-This supersedes the abandoned ``triage/ai/assistant.py`` (deleted alongside this
-module landing), which wrapped an extractive-QA ``transformers`` pipeline over a single
-pre-assembled text blob passed in by the caller, cited nothing but the fixed string
-"Extracted text context", and required a dependency this project never declared in
-``requirements.txt``. This module answers over the case's actual derived datasets, with
-per-passage citations (dataset, source file, timestamp), reusing the exact retrieval
-math already validated for precedent search (:mod:`.casebank`, :mod:`.embeddings`) —
-the offline-first, local-model, no-fabrication commitments those already made apply
-here unchanged.
+The question (or the case brief's JSON) becomes a :class:`~.search.SearchSpec` — literal
+terms, extended by the local model when one is configured — and :func:`~.search.grep`
+scans every passage for them. What comes back is what was actually found, highlighted and
+cited (dataset, source file, timestamp), plus the list of terms searched with their hit
+counts, so an empty result still shows exactly what was looked for.
 
-**The contract that matters most.** When an LLM is configured, it is instructed to
-answer *only* from the retrieved passages and to say plainly when they don't answer the
-question — never to fill a gap from its own training data about how investigations
-"usually" go. When no model is configured (the required default), there is no synthesis
-step at all: the answer is the ranked passages themselves, exactly what retrieval found,
-with nothing written on top of them. Both paths return the same passages either way, so
-an examiner can check the retrieval regardless of which mode ran.
+This replaced a BM25 + embedding retrieval that re-embedded every passage through Ollama on
+every question (minutes on a real handset) and could rank a literal name or number below
+irrelevant text.
+
+**The contract that matters most.** When an LLM is configured it may (a) suggest extra
+search terms and (b) write a synthesis that is instructed to answer *only* from the matched
+passages and to say plainly when they don't answer the question. When no model is
+configured (the required default) there is no synthesis: the answer is the matched passages
+themselves, with nothing written on top of them. An empty result means nothing matched in
+what was collected, not that nothing happened.
 """
 
 from __future__ import annotations
 
-import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Any, Optional
 
-from .casebank import _tokenize
 from .llm import LLMProvider, get_provider
+from .search import (
+    LLM_TIMEOUT_S,
+    SearchSpec,
+    as_boost,
+    brief_spec,
+    call_bounded,
+    deterministic_spec,
+    grep,
+    llm_spec,
+)
 
-#: How much of a hybrid retrieval score comes from the embedding model — the same
-#: figure and the same reasoning as casebank._SEMANTIC_WEIGHT: exact terms (a name, a
-#: number, a place) matter more here than a semantic near-miss.
-_SEMANTIC_WEIGHT = 0.4
+#: Longest the examiner waits for a model-written summary; the grep hits never wait.
+SYNTH_TIMEOUT_S = 45.0
 
-#: Datasets flattened into passages, and how each row's text is built. Every entry
-#: names the field the timestamp/source_file come from so a passage is never citing a
-#: value that doesn't exist in the underlying row.
-_PASSAGE_SOURCES = (
+#: Datasets flattened into passages. Every one names the field its timestamp / source file
+#: come from so a passage never cites a value that is not in the underlying row.
+PASSAGE_SOURCES = (
     "messages",
     "recovered",
     "calls",
     "browser",
     "locations",
     "contacts",
+    "notifications",
+    "search_history",
+    "calendar",
 )
 
 
@@ -81,6 +86,7 @@ def _passage_text(source_type: str, row: dict[str, Any]) -> str:
         return (
             f"{row.get('call_type', 'call')} — {row.get('name') or row.get('number', '')}"
             + (f" ({row.get('duration_s')}s)" if row.get("duration_s") else "")
+            + (f" {row.get('number')}" if row.get("name") and row.get("number") else "")
         )
     if source_type == "browser":
         return f"{row.get('title', '')} {row.get('url', '')}".strip()
@@ -89,21 +95,28 @@ def _passage_text(source_type: str, row: dict[str, Any]) -> str:
             f"({row.get('latitude')}, {row.get('longitude')})"
     if source_type == "contacts":
         return f"Contact: {row.get('name', '')} {row.get('number', '')} {row.get('email', '')}".strip()
+    if source_type == "notifications":
+        return f"{row.get('title', '')}: {row.get('text') or row.get('big_text') or ''}".strip(": ")
+    if source_type == "search_history":
+        return f"Search: {row.get('query', '')} {row.get('url', '')}".strip()
+    if source_type == "calendar":
+        return " ".join(
+            str(row.get(k, "")) for k in ("title", "location", "description", "organizer") if row.get(k)
+        )
     return str(row)
 
 
-def build_passages(derived: dict[str, Any], max_per_source: int = 2000) -> list[Passage]:
+def build_passages(derived: dict[str, Any], max_per_source: int = 250_000) -> list[Passage]:
     """Flatten a case's derived datasets into a uniform, citable passage list.
 
     *derived* is ``{dataset_name: data}`` — the same plain-dict contract
-    ``analyze_derived`` uses, so this is unit-testable with no live case on disk.
-    Capped per source (default 2000) so one enormous SMS export can't make every query
-    against a case scan tens of thousands of rows; a case that large is exactly the
-    scenario retrieval exists to make tractable, so the cap is generous, not tight.
+    ``analyze_derived`` uses, so this is unit-testable with no live case on disk. The cap is
+    a safety valve against a pathological export, far above any real handset: grep scans
+    every passage in well under a second, so there is no reason to hide evidence from it.
     """
     passages: list[Passage] = []
     n = 0
-    for source_type in _PASSAGE_SOURCES:
+    for source_type in PASSAGE_SOURCES:
         rows = derived.get(source_type) or []
         for row in rows[:max_per_source]:
             if not isinstance(row, dict):
@@ -117,91 +130,13 @@ def build_passages(derived: dict[str, Any], max_per_source: int = 2000) -> list[
                     id=f"P-{n:05d}",
                     text=text.strip(),
                     source_type=source_type,
-                    source_file=str(row.get("source_file", "")),
-                    timestamp=row.get("timestamp") or row.get("last_visit"),
-                    app=str(row.get("app", "")),
+                    source_file=str(row.get("source_file") or row.get("source") or ""),
+                    timestamp=row.get("timestamp") or row.get("last_visit") or row.get("dtstart"),
+                    app=str(row.get("app") or row.get("app_name") or ""),
                     confidence=str(row.get("confidence", "live")),
                 )
             )
     return passages
-
-
-# --- retrieval ----------------------------------------------------------------
-def _bm25_scores(query_tokens: list[str], doc_tokens: list[list[str]]) -> list[float]:
-    """Standalone BM25 over an already-tokenised passage list.
-
-    Deliberately not shared state with :class:`~.casebank.CaseBank` — a case's own
-    passage set is rebuilt fresh per question (no persistent index to maintain), and a
-    case rarely holds enough passages for that to matter performance-wise. The scoring
-    math itself — IDF with +1 smoothing, k1=1.5, b=0.75 — is the same as CaseBank's, so
-    a passage and a precedent study rank on identical footing.
-    """
-    n_docs = len(doc_tokens)
-    if n_docs == 0:
-        return []
-    df: dict[str, int] = {}
-    for tokens in doc_tokens:
-        for term in set(tokens):
-            df[term] = df.get(term, 0) + 1
-    avg_len = sum(len(t) for t in doc_tokens) / n_docs
-
-    scores = []
-    for tokens in doc_tokens:
-        doc_len = len(tokens)
-        freqs: dict[str, int] = {}
-        for t in tokens:
-            freqs[t] = freqs.get(t, 0) + 1
-        score = 0.0
-        for term in set(query_tokens):
-            f = freqs.get(term, 0)
-            if not f:
-                continue
-            d = df.get(term, 0)
-            idf = math.log(1 + (n_docs - d + 0.5) / (d + 0.5))
-            denom = f + 1.5 * (1 - 0.75 + 0.75 * (doc_len / avg_len if avg_len else 1))
-            score += idf * (f * 2.5) / denom
-        scores.append(score)
-    return scores
-
-
-def retrieve(
-    question: str, passages: list[Passage], embedder=None, top_k: int = 6
-) -> tuple[list[Passage], str]:
-    """Rank *passages* against *question*. Returns ``(top passages, retrieval_mode)``.
-
-    ``retrieval_mode`` is ``"hybrid"`` when a working embedder was passed and produced
-    a query vector, ``"lexical"`` otherwise — reported so a caller (and, in the API
-    response, the examiner) can tell which basis the ranking actually had, the same
-    discipline :attr:`~.casebank.CaseBank.retrieval_mode` already applies to precedent
-    retrieval.
-    """
-    if not passages:
-        return [], "none"
-    q_tokens = _tokenize(question)
-    doc_tokens = [_tokenize(p.text) for p in passages]
-    lex_scores = _bm25_scores(q_tokens, doc_tokens)
-    peak = max(lex_scores, default=0.0) or 1.0
-    norm_lex = [s / peak for s in lex_scores]
-
-    mode = "lexical"
-    combined = norm_lex
-    if embedder is not None and getattr(embedder, "available", False):
-        q_vec = embedder.embed(question)
-        if q_vec:
-            vectors = embedder.embed_many([p.text for p in passages])
-            if vectors:
-                mode = "hybrid"
-                combined = [
-                    (1 - _SEMANTIC_WEIGHT) * norm_lex[i]
-                    + _SEMANTIC_WEIGHT * (
-                        embedder.similarity(q_vec, vectors[i]) if i in vectors else 0.0
-                    )
-                    for i in range(len(passages))
-                ]
-
-    ranked = sorted(zip(passages, combined), key=lambda pair: pair[1], reverse=True)
-    top = [p for p, score in ranked[:top_k] if score > 0]
-    return top, mode
 
 
 # --- grounded synthesis (LLM, opt-in) ------------------------------------------
@@ -217,59 +152,95 @@ _QA_SYSTEM = (
 )
 
 
-def _synthesize(provider: LLMProvider, question: str, passages: list[Passage]) -> Optional[str]:
-    if not provider.is_usable():
-        return None
-    if not passages:
-        return None
+def _synthesize(
+    provider: LLMProvider, question: str, passages: list[Passage], timeout: float
+) -> tuple[Optional[str], str]:
+    """``(answer, problem)``: the model's grounded summary, or why there isn't one."""
+    if not provider.is_usable() or not passages:
+        return None, ""
     lines = [
         f"[{p.id}] ({p.source_type}, {p.timestamp or 'no timestamp'}): {p.text[:300]}"
         for p in passages
     ]
     prompt = f"Question: {question}\n\nPassages:\n" + "\n".join(lines)
-    return provider.generate(_QA_SYSTEM, prompt)
+    answer, problem = call_bounded(provider.generate, _QA_SYSTEM, prompt, timeout=timeout)
+    return (answer or None), problem
+
+
+def _bundle(question: str, answer: str, method: str, passages: list[dict], search: dict, disclaimer: str) -> dict:
+    return {
+        "question": question,
+        "answer": answer,
+        "method": method,
+        "retrieval_mode": "grep" if search else "none",
+        "passages": passages,
+        "search": search,
+        "disclaimer": disclaimer,
+    }
 
 
 def answer_question(
     question: str,
     passages: list[Passage],
-    embedder=None,
     provider: Optional[LLMProvider] = None,
-    top_k: int = 6,
+    top_k: int = 10,
+    brief: Optional[dict] = None,
+    scope: str = "question",
+    llm_timeout: float = LLM_TIMEOUT_S,
+    synthesize: bool = True,
+    synth_timeout: float = SYNTH_TIMEOUT_S,
 ) -> dict:
-    """Answer *question* over *passages*. Never raises: a retrieval or synthesis
-    failure degrades to fewer/no results rather than propagating."""
+    """Grep *passages* for *question* — or, with ``scope="brief"``, for the case brief's own
+    JSON terms. Never raises: a model failure degrades to the literal search. With
+    ``synthesize=False`` the model is not asked to write a summary, so the real matches
+    return without waiting for it."""
     provider = provider or get_provider()
     question = (question or "").strip()
-    if not question:
-        return {
-            "question": question,
-            "answer": "",
-            "method": "none",
-            "retrieval_mode": "none",
-            "passages": [],
-            "disclaimer": "No question was asked.",
-        }
 
-    top, mode = retrieve(question, passages, embedder=embedder, top_k=top_k)
-    answer = _synthesize(provider, question, top) if top else None
-    method = f"llm:{provider.name}" if answer else "retrieval-only"
+    if scope == "brief":
+        spec = brief_spec(brief or {})
+        if not spec.terms:
+            return _bundle(question, "", "none", [], {}, "The case brief produced no searchable terms.")
+    else:
+        if not question:
+            return _bundle(question, "", "none", [], {}, "No question was asked.")
+        spec = llm_spec(question, provider, deterministic_spec(question), llm_timeout)
+        if brief:
+            spec = SearchSpec(spec.terms + as_boost(brief_spec(brief)), spec.method, spec.notes)
+        if not spec.terms:
+            return _bundle(
+                question, "", "none", [], {},
+                "The question contained nothing searchable — name a person, number, place or keyword.",
+            )
 
-    return {
-        "question": question,
-        "answer": answer or "",
-        "method": method,
-        "retrieval_mode": mode,
-        "passages": [p.to_dict() for p in top],
-        "disclaimer": (
+    result = grep(spec, passages, top_k=top_k)
+    found = [
+        {**h.passage.to_dict(), "matched": h.matched, "spans": [list(s) for s in h.spans], "score": h.score}
+        for h in result.hits
+    ]
+    search = {**spec.to_dict(), "term_hits": result.term_hits, "scanned": result.scanned}
+
+    answer = None
+    if synthesize and result.hits and question:
+        answer, problem = _synthesize(provider, question, [h.passage for h in result.hits], synth_timeout)
+        if problem:
+            search["notes"].append(f"summary {problem} — the matched passages below are the result")
+    return _bundle(
+        question,
+        answer or "",
+        f"llm:{provider.name}" if answer else "grep",
+        found,
+        search,
+        (
             "AI-surfaced answer over this case's own already-collected evidence. "
             "Every claim must be verified against its cited passage's source artifact "
             "— this is not a determination of guilt, and an empty result means "
             "nothing relevant was found in what was collected, not that nothing "
             "happened."
             if answer
-            else "No model was configured, so this shows the most relevant passages "
-            "retrieved for the question with no synthesized answer — read them "
-            "directly rather than a generated summary."
+            else "No model was configured, so this shows the passages that literally matched "
+            "the search terms, with no synthesized answer — read them directly rather than a "
+            "generated summary. No matches means nothing in what was collected, not that "
+            "nothing happened."
         ),
-    }
+    )

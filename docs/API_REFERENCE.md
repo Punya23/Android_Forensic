@@ -30,6 +30,7 @@ the engine logs everyone out.
 | `GET /api/validation` | Self-test + CFTT coverage (runs fresh each call) | Required |
 | `GET /api/capabilities` | The dataset catalogue with no case attached — what this build can and cannot do | Required |
 | `GET /api/llm/status[?refresh=1]` | Which case-intelligence back-ends this workstation can actually use, asked of the local Ollama daemon and the engine environment. Lists the chat models pulled locally and the embedding model backing semantic retrieval | Required |
+| `GET /api/llm/fit` | Which local model this laptop can carry (`triage/intel/hardware.py`; CLI: `python -m triage.intel.hardware`). Free RAM / VRAM (Apple unified or NVIDIA), every pulled and downloadable chat model with its real footprint (weights + KV cache + overhead) and a `fits` / `tight` / `too_big` verdict, the model to use from those already pulled, the best one to download, what Ollama holds in memory now, and advice | Required |
 
 ## Devices & acquisition
 
@@ -76,7 +77,7 @@ the engine logs everyone out.
 | `POST /api/case/<id>/outcome` | Record examiner-confirmed outcomes | Required |
 | `POST /api/case/<id>/analyze` | Run/re-run AI case analysis | Required |
 | `POST /api/case/<id>/investigate` | Run/re-run deep investigation — a bounded, deterministic multi-hypothesis pass cross-linking findings `analyze` scored independently (`triage/intel/investigator.py`). Requires a case profile from `/analyze` first | Required |
-| `POST /api/case/<id>/ask` | "Ask this case" — free-text Q&A over the case's own already-collected evidence. Body: `{question, llm_provider?, top_k?, use_embeddings?}`. Retrieval always runs; synthesis only when a model is configured, grounded strictly to the retrieved passages (`triage/intel/case_qa.py`) | Required |
+| `POST /api/case/<id>/ask` | "Ask this case" — a real grep of the case's own collected evidence (messages, recovered rows, calls, browser, locations, contacts, notifications, search history, calendar). Body: `{question?, scope?: "question"|"brief", synthesize?, use_brief?, llm_provider?, top_k?}`. The question (or, with `scope:"brief"`, the case brief's `case_profile` JSON — 409 if none) becomes literal search terms, extended by the local model when available (6 s cap, literal terms only, falls back and says so); returns highlighted, cited `passages` plus a `search` block (terms, per-term hit counts, notes). `synthesize:false` returns the hits without waiting for a model-written summary. Embeddings are no longer used | Required |
 | `GET /api/case/<id>/linked-cases` | Other cases on this installation sharing a phone number/UPI ID/email with this one, indexed via `triage/registry.py`'s `case_identifiers` table | Required |
 | `GET /api/nomenclature` \| `POST /api/nomenclature/check` | Controlled forensic vocabulary | Required |
 | `POST /api/case/<id>/import/<app>` | Non-root import (instagram/snapchat/telegram/whatsapp export). Merges into the `messages` pool and re-derives graph / timeline / flags / risk / financial trail all-or-nothing (`triage/rebuild.py`) | Required |

@@ -1,6 +1,7 @@
 """pytest conftest — makes ``engine/`` importable as the root for ``triage`` and ``tools``."""
 
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -28,3 +29,8 @@ def _hermetic_llm_env(monkeypatch):
     """
     monkeypatch.setenv("SNAGR_LLM", "heuristic")
     monkeypatch.setenv("SNAGR_LLM_AUTOINSTALL", "0")
+    # A test that abandons a slow fake model must not leave the next test seeing "busy".
+    from triage.intel import search
+
+    monkeypatch.setattr(search, "_MODEL_BUSY", threading.Lock())
+    monkeypatch.setattr(search, "_SPEC_CACHE", {})

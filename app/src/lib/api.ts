@@ -349,7 +349,16 @@ export const api = {
   askCase: (
     id: string,
     question: string,
-    opts?: { llm_provider?: string; top_k?: number; use_embeddings?: boolean }
+    opts?: {
+      llm_provider?: string;
+      top_k?: number;
+      /** "brief" greps the case brief's own JSON terms (no question needed). */
+      scope?: "question" | "brief";
+      /** false = return the grep hits without waiting for a model-written summary. */
+      synthesize?: boolean;
+      /** Rank passages mentioning the brief's suspects/entities higher (default true). */
+      use_brief?: boolean;
+    }
   ) =>
     request<import("./types").AskCaseResponse>(`/api/case/${id}/ask`, {
       method: "POST",

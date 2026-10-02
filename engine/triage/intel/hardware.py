@@ -32,9 +32,11 @@ never reach out to the network on its own without a way to turn that off.
 from __future__ import annotations
 
 import ctypes
+import json
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
 import threading
@@ -66,13 +68,80 @@ def detect_hardware() -> dict:
     """
     system = platform.system().lower()  # "darwin" | "linux" | "windows"
     ram_gb = _detect_ram_gb(system)
+    gpu = _detect_gpu(system)
+    available = _detect_available_ram_gb(system)
+    vram_gb, vram_kind = _detect_vram(gpu, ram_gb)
     return {
         "platform": system,
         "arch": platform.machine() or "unknown",
         "cpu_cores": os.cpu_count() or 1,
         "ram_gb": round(ram_gb, 1) if ram_gb else None,
-        "gpu": _detect_gpu(system),
+        # Free right now (not total): what a model can actually be given.
+        "available_ram_gb": round(available, 1) if available is not None else None,
+        "gpu": gpu,
+        # Memory the GPU can use: unified (Apple silicon: ~2/3 of RAM) or dedicated VRAM.
+        "vram_gb": round(vram_gb, 1) if vram_gb else None,
+        "vram_kind": vram_kind,
     }
+
+
+def _detect_available_ram_gb(system: str) -> Optional[float]:
+    """RAM that is free or immediately reclaimable right now; ``None`` if unknown."""
+    try:
+        if system == "linux":
+            with open("/proc/meminfo") as fh:
+                for line in fh:
+                    if line.startswith("MemAvailable:"):
+                        return int(line.split()[1]) / (1024 * 1024)
+        if system == "darwin":
+            out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=3.0, check=True).stdout
+            page = int(re.search(r"page size of (\d+) bytes", out).group(1))
+            pages = sum(
+                int(re.search(rf"{label}:\s+(\d+)", out).group(1))
+                for label in ("Pages free", "Pages inactive", "Pages speculative")
+            )
+            return pages * page / (1024 ** 3)
+        if system == "windows":
+            return _windows_memory().ullAvailPhys / (1024 ** 3)
+    except Exception as exc:
+        log.debug("available-RAM detection failed on %s: %s", system, exc)
+    return None
+
+
+def _detect_vram(gpu: str, ram_gb: Optional[float]) -> tuple[Optional[float], Optional[str]]:
+    """``(GB the GPU can use, "unified" | "dedicated")`` or ``(None, None)``."""
+    try:
+        if gpu == "apple_silicon" and ram_gb:
+            return ram_gb * 0.66, "unified"  # macOS lets the GPU wire ~2/3 of RAM by default
+        if gpu == "nvidia":
+            out = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5.0, check=True,
+            ).stdout
+            return max(float(line) for line in out.split() if line.strip()) / 1024, "dedicated"
+    except Exception as exc:
+        log.debug("VRAM detection failed: %s", exc)
+    return None, None
+
+
+def _windows_memory():
+    class _MEMORYSTATUSEX(ctypes.Structure):
+        _fields_ = [
+            ("dwLength", ctypes.c_ulong),
+            ("dwMemoryLoad", ctypes.c_ulong),
+            ("ullTotalPhys", ctypes.c_ulonglong),
+            ("ullAvailPhys", ctypes.c_ulonglong),
+            ("ullTotalPageFile", ctypes.c_ulonglong),
+            ("ullAvailPageFile", ctypes.c_ulonglong),
+            ("ullTotalVirtual", ctypes.c_ulonglong),
+            ("ullAvailVirtual", ctypes.c_ulonglong),
+            ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+        ]
+
+    stat = _MEMORYSTATUSEX()
+    stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))  # type: ignore[attr-defined]
+    return stat
 
 
 def _detect_ram_gb(system: str) -> Optional[float]:
@@ -135,42 +204,184 @@ def _detect_gpu(system: str) -> str:
     return "unknown"
 
 
-# --- 2. model tier selection ---------------------------------------------------
-# (ram_ceiling_gb, model, note) — a machine qualifies for the first tier whose ceiling
-# it is strictly below (see recommend_model), so the tuple's first field is an upper
-# bound, not a minimum. RAM-gated, not VRAM-gated: Ollama on a machine with no
-# dedicated GPU still runs on CPU, just slower — the ceiling that actually crashes the
-# box is unified/system RAM, since the model, the OS, the Electron dashboard and the
-# Python engine all share it. Each tier leaves roughly half the machine's RAM for
-# everything else, which is conservative on purpose — a forensic workstation running
-# out of memory mid-acquisition is a worse failure than an examiner getting the
-# second-best model.
-_MODEL_TIERS: list[tuple[float, Optional[str], str]] = [
-    (10.0, None, "below 10 GB RAM — local AI summaries stay off; heuristic only"),
-    (16.0, "qwen2.5:3b-instruct", "~2 GB download"),
-    (24.0, "llama3.1:8b", "~4.7 GB download"),
-    (40.0, "qwen2.5:14b-instruct", "~9 GB download"),
-    (float("inf"), "qwen2.5:32b-instruct", "~19 GB download"),
-]
+# --- 2. model fit: which local model can this laptop actually carry? ------------
+#: RAM kept for the OS, the Electron dashboard and the Python engine — never given to a model.
+HEADROOM_GB = 3.0
+#: A model may use at most this share of the machine even when more happens to be free.
+MAX_RAM_FRACTION = 0.6
+#: Ollama's default context for machines under 24 GB. KV cache grows linearly with it.
+DEFAULT_NUM_CTX = 4096
+_RUNTIME_OVERHEAD_GB = 0.5
+#: A model above this share of the budget is "tight": it loads, but a browser tab or a
+#: second model tips the machine into swap, where every prompt takes minutes.
+_TIGHT_SHARE = 0.75
+
+#: (Ollama name, billions of parameters, GB on disk at Ollama's default 4-bit quantisation):
+#: the chat models worth offering to download, weakest to strongest.
+CATALOG: tuple[tuple[str, float, float], ...] = (
+    ("llama3.2:1b", 1.2, 1.3),
+    ("qwen2.5:3b-instruct", 3.1, 1.9),
+    ("qwen2.5:7b-instruct", 7.6, 4.7),
+    ("llama3.1:8b", 8.0, 4.9),
+    ("qwen2.5:14b-instruct", 14.8, 9.0),
+    ("qwen2.5:32b-instruct", 32.8, 19.0),
+)
+
+
+def model_footprint_gb(params_b: float, disk_gb: float, num_ctx: int = DEFAULT_NUM_CTX) -> float:
+    """RAM/VRAM a loaded model really occupies: weights + KV cache + runtime overhead.
+
+    KV cache is ~0.0156 MB per token per billion parameters (an 8B model: 0.125 MB/token,
+    so 0.5 GB at 4k context but 4 GB at 32k) — the part a file-size check never sees.
+    """
+    kv_gb = num_ctx * max(0.0156 * params_b, 0.05) / 1024
+    return round(disk_gb + kv_gb + _RUNTIME_OVERHEAD_GB, 2)
+
+
+def memory_budget_gb(hw: dict) -> float:
+    """What a model may use: the smaller of what is free and 60% of the machine, minus the
+    headroom the OS and the rest of the tool need. Unknown free RAM is taken as 60% of
+    total — the cautious direction."""
+    total = hw.get("ram_gb") or 0.0
+    available = hw.get("available_ram_gb")
+    if available is None:
+        available = total * MAX_RAM_FRACTION
+    return round(max(0.0, min(available, total * MAX_RAM_FRACTION) - HEADROOM_GB), 2)
+
+
+def _billions(parameter_size: str) -> float:
+    m = re.match(r"([\d.]+)\s*([BM])", (parameter_size or "").strip(), re.IGNORECASE)
+    if not m:
+        return 0.0
+    return float(m.group(1)) / (1000.0 if m.group(2).upper() == "M" else 1.0)
+
+
+def _row(hw: dict, budget: float, num_ctx: int, name: str, params_b: float, disk_gb: float, installed: bool) -> dict:
+    footprint = model_footprint_gb(params_b, disk_gb, num_ctx)
+    verdict = "too_big" if footprint > budget else "tight" if footprint > _TIGHT_SHARE * budget else "fits"
+    vram, kind = hw.get("vram_gb"), hw.get("vram_kind")
+    speed = "cpu" if not kind else "gpu" if vram and footprint <= vram else "cpu-offload"
+    avail = hw.get("available_ram_gb")
+    return {
+        "name": name,
+        "installed": installed,
+        "params_b": params_b,
+        "footprint_gb": footprint,
+        "verdict": verdict,
+        "speed": speed,
+        "needs_download_gb": None if installed else disk_gb,
+        "reason": (
+            f"needs ~{footprint} GB, budget {budget} GB "
+            f"({hw.get('ram_gb')} GB RAM{f', {avail} GB free' if avail is not None else ''})"
+        ),
+    }
+
+
+def assess_models(hw: dict, installed: list[dict], num_ctx: int = DEFAULT_NUM_CTX) -> list[dict]:
+    """Every chat model — pulled or downloadable — with its footprint and a verdict
+    (``fits`` / ``tight`` / ``too_big``) against this machine's memory budget. Embedding
+    models are not chat candidates and are left out. Strongest first."""
+    budget = memory_budget_gb(hw)
+    rows: dict[str, dict] = {}
+    for m in installed:
+        if m.get("embedding_only") or not m.get("name"):
+            continue
+        rows[m["name"]] = _row(
+            hw, budget, num_ctx, m["name"], _billions(m.get("parameter_size", "")),
+            (m.get("size_bytes") or 0) / 1e9, True,
+        )
+    for name, params_b, disk_gb in CATALOG:
+        rows.setdefault(name, _row(hw, budget, num_ctx, name, params_b, disk_gb, False))
+    return sorted(rows.values(), key=lambda r: (-r["params_b"], r["name"]))
+
+
+def select_model(rows: list[dict], installed_only: bool = False) -> Optional[str]:
+    """The strongest model that comfortably ``fits`` — never one that is merely ``tight`` —
+    preferring an already-pulled one on a tie. ``None`` when nothing fits."""
+    fits = [r for r in rows if r["verdict"] == "fits" and (r["installed"] or not installed_only)]
+    return max(fits, key=lambda r: (r["params_b"], r["installed"]))["name"] if fits else None
 
 
 def recommend_model(hw: Optional[dict] = None) -> dict:
-    """Pick the strongest chat model this machine's RAM can carry.
-
-    ``model`` is ``None`` when the machine is below the minimum tier — the caller
-    must not attempt a pull in that case and should stay on the heuristic provider.
-    Unknown RAM (probe failed) is treated as the minimum tier: the safe direction to
-    guess wrong in is "smaller model", not "crash a low-memory machine".
-    """
+    """The model to download for this machine (``None`` when nothing fits: stay on the
+    heuristic back-end). Unknown RAM counts as none."""
     hw = hw or detect_hardware()
-    ram = hw.get("ram_gb")
-    if not ram:
-        ram = 0.0
-    for ceiling, model, note in _MODEL_TIERS:
-        if ram < ceiling:
-            return {"model": model, "note": note, "ram_gb": hw.get("ram_gb")}
-    # Unreachable (last ceiling is inf) but keeps the function total.
-    return {"model": None, "note": "no tier matched", "ram_gb": hw.get("ram_gb")}
+    name = select_model(assess_models(hw, []))
+    disk = next((d for n, _, d in CATALOG if n == name), None)
+    return {
+        "model": name,
+        "note": f"~{disk:g} GB download" if name else "not enough free memory for a local model — heuristic only",
+        "ram_gb": hw.get("ram_gb"),
+    }
+
+
+def _ollama_loaded(host: Optional[str] = None) -> list[dict]:
+    """Models Ollama has resident in memory right now (``/api/ps``) — what actually costs RAM."""
+    host = (host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")).rstrip("/")
+    try:
+        with urllib.request.urlopen(f"{host}/api/ps", timeout=3.0) as resp:
+            models = json.loads(resp.read().decode("utf-8")).get("models") or []
+    except Exception:
+        return []
+    return [
+        {"name": m.get("name", ""), "size_gb": round((m.get("size") or 0) / 1e9, 1),
+         "vram_gb": round((m.get("size_vram") or 0) / 1e9, 1)}
+        for m in models
+    ]
+
+
+def fit_report(num_ctx: int = DEFAULT_NUM_CTX) -> dict:
+    """Everything the dashboard / CLI shows: this machine, each pulled and downloadable
+    model with its verdict, what to use, and what is eating memory right now."""
+    from .llm import list_ollama_models
+
+    hw = detect_hardware()
+    rows = assess_models(hw, list_ollama_models(), num_ctx)
+    loaded = _ollama_loaded()
+    advice = []
+    resident = round(sum(m["size_gb"] for m in loaded), 1)
+    if len(loaded) > 1:
+        advice.append(
+            f"{len(loaded)} models are loaded at once ({resident} GB). Set OLLAMA_MAX_LOADED_MODELS=1 "
+            "so only the one in use stays in memory."
+        )
+    elif loaded and resident > memory_budget_gb(hw):
+        advice.append(f"{loaded[0]['name']} holds {resident} GB, more than this machine's {memory_budget_gb(hw)} GB budget.")
+    chosen = select_model(rows, installed_only=True)
+    if chosen is None and any(r["installed"] for r in rows):
+        advice.append("No pulled model fits comfortably — use a smaller one or free memory; staying on the heuristic back-end.")
+    return {
+        "hardware": hw,
+        "budget_gb": memory_budget_gb(hw),
+        "num_ctx": num_ctx,
+        "models": rows,
+        "use_installed": chosen,
+        "download_recommendation": select_model(rows),
+        "loaded": loaded,
+        "advice": advice,
+    }
+
+
+def _print_report() -> None:  # pragma: no cover - interactive
+    r = fit_report()
+    hw = r["hardware"]
+    print(f"Machine: {hw['ram_gb']} GB RAM ({hw['available_ram_gb']} GB free), GPU {hw['gpu']}"
+          + (f", {hw['vram_gb']} GB {hw['vram_kind']} VRAM" if hw["vram_gb"] else ""))
+    print(f"Model budget: {r['budget_gb']} GB (after {HEADROOM_GB:g} GB headroom, max {MAX_RAM_FRACTION:.0%} of RAM), context {r['num_ctx']}\n")
+    print(f"{'model':26} {'state':14} {'needs':>8}  {'verdict':8} speed")
+    for m in r["models"]:
+        state = "installed" if m["installed"] else f"download {m['needs_download_gb']:g} GB"
+        print(f"{m['name']:26} {state:14} {m['footprint_gb']:>6} GB  {m['verdict']:8} {m['speed']}")
+    print(f"\nUse (already pulled): {r['use_installed'] or 'none fits — heuristic'}")
+    print(f"Best to download:     {r['download_recommendation'] or 'none fits'}")
+    for m in r["loaded"]:
+        print(f"Loaded now: {m['name']} {m['size_gb']} GB")
+    for a in r["advice"]:
+        print(f"! {a}")
+
+
+if __name__ == "__main__":  # pragma: no cover
+    _print_report()
 
 
 # --- 3. provisioning: install the binary, pull the model ----------------------

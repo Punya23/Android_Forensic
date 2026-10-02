@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from triage.intel.case_qa import Passage, answer_question, build_passages, retrieve  # noqa: E402
+from triage.intel.case_qa import answer_question, build_passages  # noqa: E402
 from triage.intel.llm import HeuristicProvider, LLMProvider  # noqa: E402
 
 
@@ -78,25 +78,22 @@ def test_non_dict_rows_do_not_crash():
     assert build_passages(derived) == []
 
 
-# --- retrieval ---------------------------------------------------------------
-def test_retrieve_finds_the_relevant_passage_first():
-    passages = build_passages(_DERIVED)
-    top, mode = retrieve("where are they meeting", passages)
-    assert mode == "lexical"
-    assert top
-    assert "warehouse" in top[0].text.lower()
+# --- retrieval (grep) ----------------------------------------------------------
+def test_answer_finds_the_relevant_passage_first():
+    bundle = answer_question("where are they meeting", build_passages(_DERIVED), provider=HeuristicProvider())
+    assert bundle["retrieval_mode"] == "grep"
+    assert "warehouse" in bundle["passages"][0]["text"].lower()
 
 
-def test_retrieve_empty_passages_returns_empty():
-    top, mode = retrieve("anything", [])
-    assert top == []
-    assert mode == "none"
+def test_answer_over_no_passages_is_empty_not_an_error():
+    bundle = answer_question("anything", [], provider=HeuristicProvider())
+    assert bundle["passages"] == []
 
 
-def test_retrieve_respects_top_k():
-    passages = [Passage(id=f"P-{i}", text=f"warehouse {i} meeting", source_type="messages") for i in range(20)]
-    top, _ = retrieve("warehouse meeting", passages, top_k=3)
-    assert len(top) <= 3
+def test_answer_respects_top_k():
+    derived = {"messages": [{"body": f"warehouse {i} meeting", "timestamp": "t", "source_file": "m.db"} for i in range(20)]}
+    bundle = answer_question("warehouse meeting", build_passages(derived), provider=HeuristicProvider(), top_k=3)
+    assert len(bundle["passages"]) == 3
 
 
 # --- answer_question: no-model path --------------------------------------------
@@ -104,7 +101,7 @@ def test_no_provider_returns_passages_only_no_synthesis():
     passages = build_passages(_DERIVED)
     bundle = answer_question("where are they meeting", passages, provider=HeuristicProvider())
     assert bundle["answer"] == ""
-    assert bundle["method"] == "retrieval-only"
+    assert bundle["method"] == "grep"
     assert bundle["passages"]
     assert "no synthesized answer" in bundle["disclaimer"].lower() or "no model" in bundle["disclaimer"].lower()
 

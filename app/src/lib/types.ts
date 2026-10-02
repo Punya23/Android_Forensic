@@ -1330,6 +1330,32 @@ export interface Passage {
   timestamp: string | null;
   app: string;
   confidence: string;
+  /** Terms that matched this passage (grep result). */
+  matched?: string[];
+  /** [start, end) character ranges of the matches in `text`, for highlighting. */
+  spans?: [number, number][];
+  score?: number;
+}
+
+/** One grep term: what was searched for, where it came from, and how often it hit. */
+export interface SearchTerm {
+  text: string;
+  kind: "word" | "phrase" | "name" | "number";
+  weight: number;
+  /** question | brief (the case brief's JSON) | llm (a model-suggested variant). */
+  source: string;
+  /** "boost" terms only rank passages that already matched. */
+  role: string;
+}
+
+export interface AskSearch {
+  /** "deterministic" | "llm:<provider>" — who chose the terms. */
+  method: string;
+  /** Why the model's help was skipped (timeout / busy / bad JSON), if it was. */
+  notes: string[];
+  terms: SearchTerm[];
+  term_hits: Record<string, number>;
+  scanned: number;
 }
 
 // --- Entity cross-links (engine: triage/intel/entity_links.py) ---------------
@@ -1362,11 +1388,13 @@ export interface EntityLinksResponse {
 export interface AskCaseResponse {
   question: string;
   answer: string;
-  /** "llm:<provider>" when a model synthesised an answer, else "retrieval-only". */
+  /** "llm:<provider>" when a model wrote a summary, else "grep". */
   method: string;
-  /** "hybrid" (BM25 + local embeddings) | "lexical" | "none". */
+  /** "grep" (a real scan of the case's evidence) | "none". */
   retrieval_mode: string;
   passages: Passage[];
+  /** What was searched for and how often each term hit; absent only for a no-op request. */
+  search?: AskSearch;
   disclaimer: string;
   passages_available: number;
 }

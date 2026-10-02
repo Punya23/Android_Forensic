@@ -990,27 +990,39 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         strictly from the retrieved passages — see triage/intel/case_qa.py.
         """
         from .intel import get_provider
-        from .intel.case_qa import answer_question, build_passages
+        from .intel.case_qa import PASSAGE_SOURCES, answer_question, build_passages
 
         case = _open(cases_root, case_id)
         body = request.get_json(silent=True) or {}
         question = str(body.get("question", "")).strip()
-        if not question:
+        scope = "brief" if body.get("scope") == "brief" else "question"
+        if scope == "question" and not question:
             return jsonify({"error": "a question is required"}), 400
 
-        derived = {
-            name: case.read_derived(name)
-            for name in ("messages", "recovered", "calls", "browser", "locations", "contacts")
-        }
-        passages = build_passages(derived)
-        provider = get_provider(str(body.get("llm_provider", "")) or None)
-        embedder = _embedder() if bool(body.get("use_embeddings", True)) else None
+        # The case brief the local model already turned into JSON at acquisition.
+        profile = case.read_derived("case_profile")
+        brief = profile if isinstance(profile, dict) and profile else None
+        if scope == "brief" and brief is None:
+            return jsonify({"error": "this case has no case brief — run the analysis with a brief first"}), 409
+
+        # Passages are rebuilt only when a source dataset file changed on disk.
+        files = [case.derived_dir / f"{name}.json" for name in PASSAGE_SOURCES]
+        stamp = tuple((f.stat().st_mtime_ns, f.stat().st_size) if f.exists() else None for f in files)
+        cached = state.setdefault("ask_passages", {}).get(case_id)
+        if cached and cached[0] == stamp:
+            passages = cached[1]
+        else:
+            passages = build_passages({name: case.read_derived(name) for name in PASSAGE_SOURCES})
+            state["ask_passages"][case_id] = (stamp, passages)
+
         bundle = answer_question(
             question,
             passages,
-            embedder=embedder,
-            provider=provider,
-            top_k=int(body.get("top_k", 6)),
+            provider=get_provider(str(body.get("llm_provider", "")) or None),
+            top_k=min(max(int(body.get("top_k", 10)), 1), 50),
+            brief=brief if scope == "brief" or body.get("use_brief", True) else None,
+            scope=scope,
+            synthesize=bool(body.get("synthesize", True)),
         )
         bundle["passages_available"] = len(passages)
         return jsonify(bundle)
@@ -1583,6 +1595,15 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             embedder.status() if embedder else {"available": False, "mode": "disabled"}
         )
         return jsonify(status)
+
+    @app.get("/api/llm/fit")
+    def llm_fit():
+        """Which local model this laptop can carry: free RAM / VRAM, every pulled and
+        downloadable model's real footprint with a fits/tight/too_big verdict, what to use,
+        and what Ollama is holding in memory right now (triage/intel/hardware.py)."""
+        from .intel.hardware import fit_report
+
+        return jsonify(fit_report())
 
     @app.get("/api/capabilities")
     def capabilities_catalogue():

@@ -13,7 +13,6 @@ import pytest
 
 from triage.intel.hardware import (
     _autoinstall_enabled,
-    _MODEL_TIERS,
     _pulling,
     ensure_local_model,
     ensure_ollama_running,
@@ -46,11 +45,6 @@ def test_recommend_model_unknown_ram_treated_as_minimum():
 )
 def test_recommend_model_tiers(ram_gb, expected_model):
     assert recommend_model({"ram_gb": ram_gb})["model"] == expected_model
-
-
-def test_model_tiers_strictly_increasing_ceilings():
-    ceilings = [ceiling for ceiling, _, _ in _MODEL_TIERS]
-    assert ceilings == sorted(ceilings)
 
 
 # --- autoinstall escape hatch ---------------------------------------------------
@@ -107,7 +101,7 @@ def test_ensure_local_model_noop_on_underpowered_hardware(monkeypatch):
     )
     result = ensure_local_model([])
     assert result["action"] == "none"
-    assert "below" in result["reason"]
+    assert "not enough free memory" in result["reason"]
 
 
 def test_ensure_local_model_never_calls_binary_install_on_the_calling_thread(monkeypatch):
