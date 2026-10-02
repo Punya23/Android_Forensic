@@ -6,6 +6,7 @@ import type { ViewKey } from "../components/Sidebar";
 import { StatCard, bytes } from "../components/common";
 import { SeverityBadge } from "../components/Badges";
 import { RiskCard } from "../components/RiskCard";
+import { caseNarrative } from "../lib/caseNarrative";
 
 // Flagged-for-review panel is capped like Aleapp.tsx's table / Messages.tsx's list, with the
 // same "N of M — click to show all" control so the cap is disclosed rather than silently
@@ -60,6 +61,16 @@ export function OverviewView({ caseId, setView }: { caseId: string; setView: (v:
       <div className="card border-accent/40 bg-accent/5 p-3 mb-4 text-sm flex gap-2">
         <span className="text-accent font-semibold shrink-0">TRIAGE PREVIEW</span>
         <span className="text-muted">{summary.disclaimer}</span>
+      </div>
+
+      {/* Plain-language summary, derived only from the numbers below */}
+      <div className="card p-4 mb-4">
+        <h3 className="text-xs uppercase tracking-wider text-muted mb-2">Summary</h3>
+        <div className="space-y-1.5 text-sm text-ink/90 leading-relaxed">
+          {caseNarrative(summary, flags).map((line, i) => (
+            <p key={i}>{line}</p>
+          ))}
+        </div>
       </div>
 
       {/* Traffic-light risk verdict */}

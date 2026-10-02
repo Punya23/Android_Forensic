@@ -107,7 +107,7 @@ const NAV: { key: ViewKey; label: string; icon: LucideIcon; group?: string }[] =
   { key: "overview", label: "Overview", icon: LayoutDashboard },
   { key: "ask", label: "Ask This Case", icon: MessageSquareText },
   { key: "intel", label: "Case Intelligence", icon: Sparkles },
-  { key: "report", label: "Report for Police", icon: FileText },
+  { key: "report", label: "Report", icon: FileText },
 
   { key: "messages", label: "Messages (SMS)", icon: MessageSquare, group: "Communications" },
   { key: "calls", label: "Calls", icon: Phone },

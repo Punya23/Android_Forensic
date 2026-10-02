@@ -12,6 +12,7 @@
     "typecheck": "tsc -b",
     "check:graph": "node scripts/graph-layout.check.ts",
     "check:errors": "node scripts/fetch-errors.check.ts",
+    "check:summary": "node scripts/case-narrative.check.ts",
     "preview": "vite preview",
     "electron:dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
     "build:engine": "node scripts/build-engine.mjs",
