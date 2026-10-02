@@ -50,7 +50,7 @@ export function ReportView({ caseId }: { caseId: string }) {
   return (
     <div className="p-6 h-full flex flex-col">
       <SectionHeader
-        title="Triage Report"
+        title="Report for Police"
         sub="NIST/SWGDE-aligned, with a BSA 2023 s.63 Schedule certificate block (replaces the repealed IEA s.65B) — printable to PDF from the browser"
         right={
           <div className="flex gap-2">

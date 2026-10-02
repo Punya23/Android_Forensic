@@ -563,7 +563,7 @@ export function LocationsView({
     <div className="p-4 h-full flex flex-col gap-3 overflow-y-auto">
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <SectionHeader
-        title="Location Tracing"
+        title="Photo Locations"
         sub={`${totalGps} geotagged point${totalGps !== 1 ? "s" : ""} · source: EXIF photo metadata`}
         right={
           <span className="text-xs text-warn bg-warn/10 border border-warn/30 rounded px-2 py-0.5">

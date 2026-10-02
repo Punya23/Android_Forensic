@@ -48,7 +48,7 @@ export function MediaView({
   return (
     <div className="p-6 h-full flex flex-col">
       <SectionHeader
-        title="Media"
+        title="Photos & Videos"
         sub={`${data.length} pulled · ${screenshots.length} screen capture${screenshots.length === 1 ? "" : "s"} · ${waMedia.length} on-device WhatsApp media`}
       />
       <div className="flex flex-wrap gap-2 mb-4">

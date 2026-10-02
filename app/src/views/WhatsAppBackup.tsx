@@ -402,7 +402,7 @@ export function WhatsAppBackupView({ caseId }: { caseId: string }) {
   if (messages.length === 0) {
     return (
       <div className="p-8">
-        <SectionHeader title="WhatsApp Backup Recovery" />
+        <SectionHeader title="WhatsApp Backup" />
         <EmptyState
           dataset="whatsapp_backup_messages"
         title="No WhatsApp backup messages recovered."

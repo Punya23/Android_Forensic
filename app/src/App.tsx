@@ -100,6 +100,20 @@ export default function App() {
     setView("overview");
   }
 
+  /** Land on the most recent case's Overview; with no cases yet, stay on New Acquisition.
+   * A failed lookup is not fatal — the failure banner shows it and the examiner can still
+   * open a case from Case History. */
+  async function enterDashboard() {
+    setOnboarded(true);
+    try {
+      const cases = await api.cases();
+      const latest = [...cases].sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+      if (latest) onCaseReady(latest.case_id);
+    } catch {
+      /* recorded by api.get */
+    }
+  }
+
   function onLogout() {
     api.logout().finally(() => {
       setAuthed(false);
@@ -122,7 +136,7 @@ export default function App() {
   }
 
   if (!onboarded) {
-    return <OnboardingView username={username} onContinue={() => setOnboarded(true)} />;
+    return <OnboardingView username={username} onContinue={enterDashboard} />;
   }
 
   const body = (

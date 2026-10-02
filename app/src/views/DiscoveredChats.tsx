@@ -63,7 +63,7 @@ export function DiscoveredChatsView({ caseId }: { caseId: string }) {
   return (
     <div className="p-6 h-full flex flex-col">
       <SectionHeader
-        title="Discovered Chats"
+        title="Other Chat Apps"
         sub="Generic Dynamic App Finder — chat tables auto-detected in unknown app databases"
       />
 
