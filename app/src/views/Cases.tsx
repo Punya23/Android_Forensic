@@ -3,6 +3,7 @@ import { ArrowRight } from "lucide-react";
 import { api } from "../lib/api";
 import { bytes, EmptyState, SectionHeader, StatCard } from "../components/common";
 import { fmtTs } from "../lib/hooks";
+import { Select } from "../components/fields";
 import type { RegistryCase, RegistryStats, ReportVersion } from "../lib/types";
 
 export function CasesView({ onOpenCase }: { onOpenCase: (id: string) => void }) {
@@ -80,14 +81,19 @@ export function CasesView({ onOpenCase }: { onOpenCase: (id: string) => void }) 
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <select className="input w-auto" value={sort} onChange={(e) => setSort(e.target.value)}>
-          <option value="-updated_at">Recently updated</option>
-          <option value="-created_at">Newest first</option>
-          <option value="created_at">Oldest first</option>
-          <option value="examiner">Examiner (A–Z)</option>
-          <option value="-artifact_count">Most artifacts</option>
-          <option value="-report_count">Most reports</option>
-        </select>
+        <Select
+          value={sort}
+          onChange={setSort}
+          ariaLabel="Sort cases"
+          options={[
+            { value: "-updated_at", label: "Recently updated" },
+            { value: "-created_at", label: "Newest first" },
+            { value: "created_at", label: "Oldest first" },
+            { value: "examiner", label: "Examiner (A–Z)" },
+            { value: "-artifact_count", label: "Most artifacts" },
+            { value: "-report_count", label: "Most reports" },
+          ]}
+        />
       </div>
 
       {error && (

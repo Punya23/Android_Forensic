@@ -8,6 +8,7 @@ import type {
   Precedent,
 } from "../lib/types";
 import { SectionHeader, EmptyState, SortTh, useSort } from "../components/common";
+import { Select } from "../components/fields";
 
 const CRIME_TYPES = [
   "murder",
@@ -119,17 +120,13 @@ export function KnowledgeBaseView() {
           <div className="card p-4 mb-4">
             <div className="flex flex-wrap items-center gap-3 mb-3">
               <label className="label mb-0">Crime type</label>
-              <select
+              <Select
                 className="input max-w-xs"
                 value={crime}
-                onChange={(e) => setCrime(e.target.value)}
-              >
-                {CRIME_TYPES.map((c) => (
-                  <option key={c} value={c}>
-                    {label(c)}
-                  </option>
-                ))}
-              </select>
+                onChange={setCrime}
+                ariaLabel="Crime type"
+                options={CRIME_TYPES.map((c) => ({ value: c, label: label(c) }))}
+              />
               <span className="text-xs text-muted">
                 {graph.stats.distinct_cases} case(s) observed · {graph.stats.observed_edges}{" "}
                 edges · {graph.stats.well_observed_edges} well observed

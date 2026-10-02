@@ -15,6 +15,7 @@ import type {
 } from "../lib/types";
 import { fmtTs } from "../lib/hooks";
 import { ConfidenceBadge } from "../components/Badges";
+import { Select } from "../components/fields";
 import {
   AnalysisCaveats,
   DeprioritisedList,
@@ -659,14 +660,16 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
         <div className="flex items-center gap-3 mt-2 flex-wrap">
           <div className="flex items-center gap-2">
             <label className="label mb-0">AI back-end</label>
-            <select
+            <Select
               className="input w-auto py-1"
               value={rerunProvider}
-              onChange={(e) => setRerunProvider(e.target.value as typeof rerunProvider)}
-            >
-              <option value="heuristic">Heuristic (offline)</option>
-              <option value="ollama">Ollama (local)</option>
-            </select>
+              onChange={(v) => setRerunProvider(v as typeof rerunProvider)}
+              ariaLabel="AI back-end"
+              options={[
+                { value: "heuristic", label: "Heuristic (offline)" },
+                { value: "ollama", label: "Ollama (local)" },
+              ]}
+            />
           </div>
           <button className="btn-accent" disabled={busy} onClick={reanalyze}>
             {busy ? "Analyzing…" : "Run analysis"}

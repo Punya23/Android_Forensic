@@ -63,6 +63,7 @@ import { useDataset, fmtTs } from "../lib/hooks";
 import { api } from "../lib/api";
 import { SectionHeader, EmptyState, StatCard } from "../components/common";
 import { SeverityBadge } from "../components/Badges";
+import { DateField } from "../components/fields";
 
 // ---------------------------------------------------------------------------
 // Configuration — change the tile URL here to switch providers.
@@ -588,19 +589,9 @@ export function LocationsView({
       {/* ── Filters bar ────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2 shrink-0">
         <span className="text-xs text-muted">From</span>
-        <input
-          type="date"
-          className="input w-auto text-xs"
-          value={fromDate}
-          onChange={(e) => setFromDate(e.target.value)}
-        />
+        <DateField className="input w-auto text-xs" ariaLabel="From date" value={fromDate} onChange={setFromDate} />
         <span className="text-xs text-muted">To</span>
-        <input
-          type="date"
-          className="input w-auto text-xs"
-          value={toDate}
-          onChange={(e) => setToDate(e.target.value)}
-        />
+        <DateField className="input w-auto text-xs" ariaLabel="To date" value={toDate} onChange={setToDate} />
 
         {/* Source filter */}
         <div className="flex gap-1 ml-2">

@@ -11,6 +11,7 @@
  * See engine: triage/intel/search.py, triage/intel/case_qa.py.
  */
 import { useEffect, useRef, useState } from "react";
+import { Select } from "../components/fields";
 import {
   MessageSquare,
   Recycle,
@@ -207,19 +208,21 @@ export function AskTheCaseView({ caseId }: { caseId: string }) {
         />
         <div className="flex items-center gap-2 mt-1 flex-wrap">
           <label className="text-[11px] text-muted">AI back-end</label>
-          <select
+          <Select
             className="input w-auto py-1 text-xs"
             value={provider}
-            onChange={(e) => setProvider(e.target.value as typeof provider)}
-          >
-            {(llmStatus?.providers ?? []).map((p) => (
-              <option key={p.name} value={p.name} disabled={!p.available}>
-                {p.label}
-                {p.available ? "" : " — unavailable"}
-              </option>
-            ))}
-            {!llmStatus && <option value="heuristic">Heuristic (offline)</option>}
-          </select>
+            onChange={(v) => setProvider(v as typeof provider)}
+            ariaLabel="AI back-end"
+            options={
+              llmStatus
+                ? llmStatus.providers.map((p) => ({
+                    value: p.name,
+                    label: p.available ? p.label : `${p.label} — unavailable`,
+                    disabled: !p.available,
+                  }))
+                : [{ value: "heuristic", label: "Heuristic (offline)" }]
+            }
+          />
           <span className="text-[11px] text-muted">
             {provider === "heuristic"
               ? "Literal search — real matches, no generated text."

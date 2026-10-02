@@ -10,6 +10,7 @@ import type {
   Progress,
 } from "../lib/types";
 import { AcquisitionActivityPanel } from "../components/AcquisitionActivityPanel";
+import { Select } from "../components/fields";
 
 // Brands with known extra Developer-Options friction (see triage/preflight.py) — the
 // dashboard's only source for this list is the engine itself, but a fixed set here lets
@@ -553,12 +554,15 @@ export function AcquisitionView({
         {!devices?.real.length && (
           <div className="mt-3 pt-3 border-t border-line flex flex-wrap items-center gap-2">
             <span className="text-xs text-muted">No device on the ADB bus yet — pick a brand for setup steps:</span>
-            <select className="input w-auto" value={manualBrand} onChange={(e) => setManualBrand(e.target.value)}>
-              <option value="">Generic Android</option>
-              {COMMON_BRANDS.map((b) => (
-                <option key={b} value={b}>{b}</option>
-              ))}
-            </select>
+            <Select
+              value={manualBrand}
+              onChange={setManualBrand}
+              ariaLabel="Device brand"
+              options={[
+                { value: "", label: "Generic Android" },
+                ...COMMON_BRANDS.map((b) => ({ value: b, label: b })),
+              ]}
+            />
             <button
               className="btn-ghost text-xs"
               disabled={checkingDevice}
@@ -714,19 +718,21 @@ export function AcquisitionView({
           </div>
           <div>
             <label className="label">AI back-end</label>
-            <select
+            <Select
               className="input"
               value={llmProvider}
-              onChange={(e) => setLlmProvider(e.target.value as typeof llmProvider)}
-            >
-              {(llmStatus?.providers ?? []).map((p) => (
-                <option key={p.name} value={p.name} disabled={!p.available}>
-                  {p.label}
-                  {p.available ? "" : " — unavailable"}
-                </option>
-              ))}
-              {!llmStatus && <option value="heuristic">Heuristic (offline, default)</option>}
-            </select>
+              onChange={(v) => setLlmProvider(v as typeof llmProvider)}
+              ariaLabel="AI back-end"
+              options={
+                llmStatus
+                  ? llmStatus.providers.map((p) => ({
+                      value: p.name,
+                      label: p.available ? p.label : `${p.label} — unavailable`,
+                      disabled: !p.available,
+                    }))
+                  : [{ value: "heuristic", label: "Heuristic (offline, default)" }]
+              }
+            />
           </div>
           <div className="flex items-end">
             <div className="text-[11px] text-muted leading-relaxed">

@@ -18,6 +18,7 @@
  */
 
 import { useMemo, useState } from "react";
+import { Select } from "./fields";
 import type { AcqEvent, AcqStatus } from "../lib/types";
 import {
   BarChart2,
@@ -378,17 +379,16 @@ export function AcquisitionActivityPanel({
 
         {/* Source select */}
         {availableSources.length > 1 && (
-          <select
+          <Select
             value={sourceFilter}
-            onChange={(e) => setSourceFilter(e.target.value)}
+            onChange={setSourceFilter}
             className="text-[10px] rounded border border-line bg-panel text-muted px-1.5 py-0.5 ml-auto"
-            aria-label="Filter by source"
-          >
-            <option value="all">All sources</option>
-            {availableSources.map((s) => (
-              <option key={s} value={s}>{SOURCE_LABELS[s] ?? s}</option>
-            ))}
-          </select>
+            ariaLabel="Filter by source"
+            options={[
+              { value: "all", label: "All sources" },
+              ...availableSources.map((s) => ({ value: s, label: SOURCE_LABELS[s] ?? s })),
+            ]}
+          />
         )}
       </div>
 

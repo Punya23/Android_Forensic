@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { DatasetEmpty } from "../lib/capabilities";
+import { DateField } from "./fields";
 
 /**
  * A stat tile. Pass `onClick` to make it a filter toggle (e.g. "click 'critical' to
@@ -186,9 +187,9 @@ export function Filters({
       {onFrom && (
         <>
           <span className="text-xs text-muted">from</span>
-          <input type="date" className="input w-auto" value={from} onChange={(e) => onFrom(e.target.value)} />
+          <DateField ariaLabel="From date" value={from ?? ""} onChange={onFrom} />
           <span className="text-xs text-muted">to</span>
-          <input type="date" className="input w-auto" value={to} onChange={(e) => onTo?.(e.target.value)} />
+          <DateField ariaLabel="To date" value={to ?? ""} onChange={(v) => onTo?.(v)} />
         </>
       )}
     </div>

@@ -4,6 +4,7 @@ import type { MediaItem, Screenshot, WhatsAppMediaItem } from "../lib/types";
 import { useDataset, fmtTs } from "../lib/hooks";
 import { api } from "../lib/api";
 import { SectionHeader, EmptyState, Filters, bytes } from "../components/common";
+import { Select } from "../components/fields";
 
 type Source = "pulled" | "screenshots" | "whatsapp";
 
@@ -348,12 +349,12 @@ function WhatsAppMediaSection({ data }: { data: WhatsAppMediaItem[] }) {
       </div>
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <Filters query={query} onQuery={setQuery} placeholder="Search filename or path…" />
-        <select className="input w-auto" value={kind} onChange={(e) => setKind(e.target.value)}>
-          <option value="all">All types</option>
-          {kinds.map((k) => (
-            <option key={k} value={k}>{k}</option>
-          ))}
-        </select>
+        <Select
+          value={kind}
+          onChange={setKind}
+          ariaLabel="Media type"
+          options={[{ value: "all", label: "All types" }, ...kinds.map((k) => ({ value: k, label: k }))]}
+        />
       </div>
       <div className="card overflow-auto flex-1">
         <table className="w-full text-sm">

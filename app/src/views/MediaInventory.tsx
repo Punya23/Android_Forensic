@@ -9,6 +9,7 @@ import { useMemo, useState } from "react";
 import { Star } from "lucide-react";
 import type { MediaInventoryItem } from "../lib/types";
 import { useDataset, fmtTs } from "../lib/hooks";
+import { Select } from "../components/fields";
 import { SectionHeader, EmptyState, StatCard, Filters, bytes, SortTh, useSort } from "../components/common";
 
 type Flag = "all" | "trashed" | "favorite" | "gps";
@@ -84,12 +85,12 @@ export function MediaInventoryView({ caseId }: { caseId: string }) {
 
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <Filters query={query} onQuery={setQuery} placeholder="Search name, app, or path…" />
-        <select className="input w-auto" value={kind} onChange={(e) => setKind(e.target.value)}>
-          <option value="all">All kinds</option>
-          {kinds.map((k) => (
-            <option key={k} value={k}>{k}</option>
-          ))}
-        </select>
+        <Select
+          value={kind}
+          onChange={setKind}
+          ariaLabel="Media kind"
+          options={[{ value: "all", label: "All kinds" }, ...kinds.map((k) => ({ value: k, label: k }))]}
+        />
         {chip("trashed", `Trashed (${trashed})`)}
         {chip("favorite", `Favorite (${favorite})`)}
         {chip("gps", `Geotagged (${withGps})`)}
