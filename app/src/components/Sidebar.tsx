@@ -42,8 +42,10 @@ import {
   BookOpen,
   FileText,
   Plus,
+  ChevronRight,
   type LucideIcon,
 } from "lucide-react";
+import { useState } from "react";
 import type { CapabilityState, Health } from "../lib/types";
 import { useCapabilities } from "../lib/capabilities";
 
@@ -95,52 +97,64 @@ export type ViewKey =
   | "custody"
   | "report";
 
+/**
+ * Sidebar order follows an investigator's flow: open the case → ask it questions →
+ * work the evidence by kind → analyse → check risk flags → verify integrity & report.
+ * The first item of each group carries `group`; groups are collapsible in the render.
+ */
 const NAV: { key: ViewKey; label: string; icon: LucideIcon; group?: string }[] = [
-  { key: "cases", label: "Case History", icon: Archive },
+  { key: "cases", label: "Case History", icon: Archive, group: "Case" },
   { key: "overview", label: "Overview", icon: LayoutDashboard },
-  { key: "intel", label: "Case Intelligence", icon: Sparkles },
   { key: "ask", label: "Ask This Case", icon: MessageSquareText },
-  { key: "messages", label: "Messages", icon: MessageSquare, group: "Communications" },
+  { key: "intel", label: "Case Intelligence", icon: Sparkles },
+  { key: "report", label: "Report for Police", icon: FileText },
+
+  { key: "messages", label: "Messages (SMS)", icon: MessageSquare, group: "Communications" },
+  { key: "calls", label: "Calls", icon: Phone },
+  { key: "contacts", label: "Contacts", icon: User },
+  { key: "notifications", label: "Notifications", icon: Bell },
   { key: "telegram", label: "Telegram", icon: Send },
-  { key: "whatsapp_backup", label: "WA Backup Recovery", icon: Unlock },
   { key: "instagram", label: "Instagram", icon: Camera },
   { key: "snapchat", label: "Snapchat", icon: Ghost },
-  { key: "discovered", label: "Discovered Chats", icon: ScanSearch },
-  { key: "contacts", label: "Contacts", icon: User },
-  { key: "calls", label: "Calls", icon: Phone },
-  { key: "notifications", label: "Notifications", icon: Bell },
-  { key: "media", label: "Media", icon: Image, group: "Device" },
+  { key: "whatsapp_backup", label: "WhatsApp Backup", icon: Unlock },
+  { key: "discovered", label: "Other Chat Apps", icon: ScanSearch },
+
+  { key: "media", label: "Photos & Videos", icon: Image, group: "Media" },
   { key: "mediainv", label: "Media Inventory", icon: FolderOpen },
   { key: "deletedmedia", label: "Deleted Media", icon: Trash2 },
-  { key: "apps", label: "Installed Apps", icon: Package },
-  { key: "accounts", label: "Accounts", icon: KeyRound },
-  { key: "calendar", label: "Calendar", icon: Calendar },
-  { key: "wifi", label: "Wi-Fi Passwords", icon: Wifi },
-  { key: "screentime", label: "Screen & App Usage", icon: Hourglass },
-  { key: "search", label: "Search History", icon: Search },
-  { key: "gaccounts", label: "Registered Accounts", icon: Users },
-  { key: "loctrace", label: "Location Trace (all sources)", icon: Globe },
-  { key: "locations", label: "Location Tracing (photos)", icon: Globe2 },
-  { key: "browser", label: "Browser History", icon: Globe2 },
-  { key: "wifi_live", label: "Wi-Fi (live, non-root)", icon: RadioTower, group: "Connectivity" },
-  { key: "bluetooth", label: "Bluetooth", icon: Bluetooth },
+
+  { key: "loctrace", label: "Location Trace", icon: Globe, group: "Location & Network" },
+  { key: "locations", label: "Photo Locations", icon: Globe2 },
   { key: "celltower", label: "Cell Towers", icon: RadioTower },
-  { key: "timeline", label: "Timeline", icon: Clock, group: "Analysis" },
-  { key: "recovered", label: "Recovered / Deleted", icon: Recycle },
-  { key: "graph", label: "Social Graph", icon: Network },
-  { key: "advanced", label: "Advanced Analytics", icon: Brain },
+  { key: "wifi_live", label: "Wi-Fi Networks (live)", icon: RadioTower },
+  { key: "wifi", label: "Saved Wi-Fi", icon: Wifi },
+  { key: "bluetooth", label: "Bluetooth", icon: Bluetooth },
+
+  { key: "browser", label: "Browser History", icon: Globe2, group: "Activity & Accounts" },
+  { key: "search", label: "Search History", icon: Search },
+  { key: "apps", label: "Installed Apps", icon: Package },
   { key: "apppresence", label: "App Presence", icon: Puzzle },
-  { key: "antiforensics", label: "Anti-Forensics", icon: ShieldAlert },
+  { key: "screentime", label: "Screen & App Usage", icon: Hourglass },
   { key: "recenttasks", label: "Recent Tasks", icon: AppWindow },
-  { key: "encryptedapps", label: "Encrypted Apps", icon: Lock },
-  { key: "aleapp", label: "ALEAPP Artifacts", icon: FlaskConical },
+  { key: "accounts", label: "Device Accounts", icon: KeyRound },
+  { key: "gaccounts", label: "Registered Accounts", icon: Users },
+  { key: "calendar", label: "Calendar", icon: Calendar },
+
+  { key: "timeline", label: "Timeline", icon: Clock, group: "Analysis" },
+  { key: "graph", label: "Communication Network", icon: Network },
+  { key: "recovered", label: "Recovered / Deleted", icon: Recycle },
+  { key: "advanced", label: "Advanced Analytics", icon: Brain },
   { key: "tagged", label: "Tagged Items", icon: Star },
-  { key: "custody", label: "Chain of Custody", icon: ShieldCheck, group: "Forensics" },
+
+  { key: "antiforensics", label: "Anti-Forensics", icon: ShieldAlert, group: "Risk Flags" },
+  { key: "encryptedapps", label: "Encrypted Apps", icon: Lock },
   { key: "encryption", label: "Encryption Posture", icon: ShieldCheck },
+
+  { key: "custody", label: "Chain of Custody", icon: ShieldCheck, group: "Integrity & Tools" },
   { key: "devicestate", label: "Device State (pre/post)", icon: RefreshCw },
   { key: "validation", label: "Tool Validation", icon: CircleCheck },
+  { key: "aleapp", label: "ALEAPP Artifacts", icon: FlaskConical },
   { key: "knowledge", label: "Knowledge Base", icon: BookOpen },
-  { key: "report", label: "Report", icon: FileText },
 ];
 
 /**
@@ -278,6 +292,27 @@ function navTitle(cap?: CapabilityState): string | undefined {
   return cap.requires ? `${cap.reason}\n\nRequires: ${cap.requires}` : cap.reason;
 }
 
+type NavItem = (typeof NAV)[number];
+const SECTIONS: { name: string; items: NavItem[] }[] = [];
+for (const item of NAV) {
+  if (item.group) SECTIONS.push({ name: item.group, items: [] });
+  SECTIONS[SECTIONS.length - 1].items.push(item);
+}
+
+/** Sections open on first visit; the rest start collapsed so the rail stays short. */
+const DEFAULT_OPEN = new Set(["Case", "Communications"]);
+const OPEN_KEY = "snagr.sidebar.open";
+
+function loadOpen(): Set<string> {
+  try {
+    const raw = localStorage.getItem(OPEN_KEY);
+    if (raw) return new Set(JSON.parse(raw) as string[]);
+  } catch {
+    /* storage blocked or corrupt — fall back to defaults */
+  }
+  return new Set(DEFAULT_OPEN);
+}
+
 export function Sidebar({
   view,
   setView,
@@ -291,8 +326,20 @@ export function Sidebar({
   health: Health | null;
   onNewAcquisition: () => void;
 }) {
-  let lastGroup = "";
   const caps = useCapabilities();
+  const [open, setOpen] = useState<Set<string>>(loadOpen);
+
+  function toggle(name: string) {
+    const next = new Set(open);
+    if (!next.delete(name)) next.add(name);
+    setOpen(next);
+    try {
+      localStorage.setItem(OPEN_KEY, JSON.stringify([...next]));
+    } catch {
+      /* per-viewer convenience only */
+    }
+  }
+
   return (
     <aside className="w-64 shrink-0 border-r border-line bg-panel-2 flex flex-col">
       <div className="p-3 border-b border-line">
@@ -305,42 +352,59 @@ export function Sidebar({
         </button>
       </div>
       <nav className="flex-1 overflow-y-auto py-2 px-2">
-        {NAV.map((item) => {
-          const showGroup = item.group && item.group !== lastGroup;
-          if (item.group) lastGroup = item.group;
-          // The Knowledge Base reads installation-wide state, so it stays reachable
-          // before any case is loaded.
-          const disabled = !caseId && !isCaseIndependent(item.key);
-          const active = view === item.key;
-          const Icon = item.icon;
-          // Resolved once per row and shared by the badge and its tooltip, so the two
-          // can never disagree about which state they are describing.
-          const cap = caps?.by_dataset[VIEW_DATASET[item.key] ?? ""];
+        {SECTIONS.map((sec) => {
+          const hasActive = sec.items.some((i) => i.key === view);
+          // The section holding the current view is always open, so the examiner can
+          // see where they are even if they collapsed it earlier.
+          const expanded = open.has(sec.name) || hasActive;
           return (
-            <div key={item.key}>
-              {showGroup && (
-                <div className="mt-4 pt-3 pb-1 px-2.5 border-t border-line text-[10px] font-semibold uppercase tracking-widest text-muted/70">
-                  {item.group}
-                </div>
-              )}
+            <div key={sec.name} className="mb-1">
               <button
-                disabled={disabled}
-                title={navTitle(cap)}
-                onClick={() => setView(item.key)}
-                className={`w-full text-left mb-0.5 px-2.5 py-[7px] rounded-md text-[13px] font-medium flex items-center gap-2.5 transition-colors ${
-                  active
-                    ? "bg-accent/12 text-accent"
-                    : "text-ink/75 hover:bg-panel disabled:opacity-30 disabled:hover:bg-transparent"
-                }`}
+                onClick={() => toggle(sec.name)}
+                aria-expanded={expanded}
+                className="w-full flex items-center gap-1.5 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted/80 hover:text-ink"
               >
-                <Icon
-                  className="h-[15px] w-[15px] shrink-0"
-                  strokeWidth={active ? 2.25 : 1.75}
+                <ChevronRight
+                  className={`h-3 w-3 transition-transform ${expanded ? "rotate-90" : ""}`}
                   aria-hidden
                 />
-                <span className="truncate">{item.label}</span>
-                <NavState cap={cap} />
+                {sec.name}
+                <span className="ml-auto font-mono normal-case tracking-normal text-muted/60">
+                  {sec.items.length}
+                </span>
               </button>
+              {expanded &&
+                sec.items.map((item) => {
+                  // The Knowledge Base reads installation-wide state, so it stays
+                  // reachable before any case is loaded.
+                  const disabled = !caseId && !isCaseIndependent(item.key);
+                  const active = view === item.key;
+                  const Icon = item.icon;
+                  // Resolved once per row and shared by the badge and its tooltip, so the
+                  // two can never disagree about which state they are describing.
+                  const cap = caps?.by_dataset[VIEW_DATASET[item.key] ?? ""];
+                  return (
+                    <button
+                      key={item.key}
+                      disabled={disabled}
+                      title={navTitle(cap)}
+                      onClick={() => setView(item.key)}
+                      className={`w-full text-left mb-0.5 px-2.5 py-[7px] rounded-md text-[13px] font-medium flex items-center gap-2.5 transition-colors ${
+                        active
+                          ? "bg-accent/12 text-accent"
+                          : "text-ink/75 hover:bg-panel disabled:opacity-30 disabled:hover:bg-transparent"
+                      }`}
+                    >
+                      <Icon
+                        className="h-[15px] w-[15px] shrink-0"
+                        strokeWidth={active ? 2.25 : 1.75}
+                        aria-hidden
+                      />
+                      <span className="truncate">{item.label}</span>
+                      <NavState cap={cap} />
+                    </button>
+                  );
+                })}
             </div>
           );
         })}
