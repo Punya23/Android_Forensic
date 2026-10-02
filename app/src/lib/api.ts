@@ -1,6 +1,7 @@
 // API client for the local Python engine. In dev, Vite proxies /api and /socket.io to
 // :5057; in the packaged Electron app we hit the engine directly on localhost.
 import { io, Socket } from "socket.io-client";
+import { clearFetchFailure, recordFetchFailure } from "./fetchErrors";
 import type {
   AcqEvent,
   AuditEvent,
@@ -78,8 +79,18 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+/** GET that records failures for the shell's banner (see fetchErrors.ts). Callers keep
+ * their own `.catch` for local fallback state; this only guarantees the failure is seen.
+ * "unauthorized" is excluded — the login screen already handles it. */
 async function get<T>(path: string): Promise<T> {
-  return request<T>(path);
+  try {
+    const data = await request<T>(path);
+    clearFetchFailure(path);
+    return data;
+  } catch (err) {
+    if (!(err instanceof Error && err.message === "unauthorized")) recordFetchFailure(path, err);
+    throw err;
+  }
 }
 
 export const api = {

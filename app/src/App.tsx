@@ -6,6 +6,7 @@ import { TagProvider } from "./lib/tagStore";
 import { CapabilityProvider, CapabilityBanner } from "./lib/capabilities";
 import { Sidebar, isCaseIndependent, VIEW_DATASET, type ViewKey } from "./components/Sidebar";
 import { GlobalSearch } from "./components/GlobalSearch";
+import { FetchErrorBanner } from "./components/FetchErrorBanner";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { LoginView } from "./views/Login";
 import { OnboardingView } from "./views/Onboarding";
@@ -139,6 +140,7 @@ export default function App() {
             absent when it is. Renders nothing when the dataset is populated, and
             nothing for views that aren't about a single dataset. */}
         {caseId && <CapabilityBanner dataset={VIEW_DATASET[view]} />}
+        <FetchErrorBanner />
         <div className="flex-1 overflow-auto">
           {view === "acquire" && <AcquisitionView onCaseReady={onCaseReady} onOpenCase={onCaseReady} />}
           {view === "cases" && <CasesView onOpenCase={onCaseReady} />}
