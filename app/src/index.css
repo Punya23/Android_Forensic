@@ -94,7 +94,7 @@
     @apply text-left text-[11px] uppercase tracking-wider text-muted font-medium px-3 py-2 sticky top-0 bg-panel-2 z-10;
   }
   .td {
-    @apply px-3 py-2 border-t border-line align-top;
+    @apply px-3 py-2 border-t border-line align-top [overflow-wrap:anywhere];
   }
   /* Leaflet map container — needs explicit height and z-index isolation */
   .leaflet-container {

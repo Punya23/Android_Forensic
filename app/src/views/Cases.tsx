@@ -113,8 +113,8 @@ export function CasesView({ onOpenCase }: { onOpenCase: (id: string) => void }) 
                 <th className="th">Device</th>
                 <th className="th">Crime type</th>
                 <th className="th">Created</th>
-                <th className="th">Artifacts</th>
-                <th className="th">Size</th>
+                <th className="th hidden xl:table-cell">Artifacts</th>
+                <th className="th hidden xl:table-cell">Size</th>
                 <th className="th">Reports</th>
                 <th className="th">Actions</th>
               </tr>
@@ -170,8 +170,8 @@ function CaseRow({
           )}
         </td>
         <td className="td whitespace-nowrap">{fmtTs(c.created_at)}</td>
-        <td className="td tabular-nums">{c.artifact_count}</td>
-        <td className="td tabular-nums">{bytes(c.total_bytes)}</td>
+        <td className="td tabular-nums hidden xl:table-cell">{c.artifact_count}</td>
+        <td className="td tabular-nums hidden xl:table-cell">{bytes(c.total_bytes)}</td>
         <td className="td">
           {c.report_count > 0 ? (
             <button className="text-accent hover:underline text-sm" onClick={onToggleExpand}>
