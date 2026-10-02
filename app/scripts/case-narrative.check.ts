@@ -42,4 +42,9 @@ assert.match(t, /Hash verification did not run/);
 t = text(make(), [{ kind: "k", term: "passport", context: "", location: "", severity: "critical" } as Flag]);
 assert.match(t, /1 critical keyword\/hash hit flagged, including “passport”/);
 
+t = text(make({ case: { ...make().case, pre_state: { note: "MOCK DEVICE — synthetic fixtures" } } } as Partial<CaseSummary>));
+assert.match(t, /DEMONSTRATION DATA/);
+assert.match(t, /was loaded by Sharma/);
+assert.doesNotMatch(text(make()), /DEMONSTRATION DATA/);
+
 console.log("case-narrative check ok");

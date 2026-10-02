@@ -6,7 +6,7 @@ import type { ViewKey } from "../components/Sidebar";
 import { StatCard, bytes } from "../components/common";
 import { SeverityBadge } from "../components/Badges";
 import { RiskCard } from "../components/RiskCard";
-import { caseNarrative } from "../lib/caseNarrative";
+import { caseNarrative, isDemoCase } from "../lib/caseNarrative";
 
 // Flagged-for-review panel is capped like Aleapp.tsx's table / Messages.tsx's list, with the
 // same "N of M — click to show all" control so the cap is disclosed rather than silently
@@ -62,6 +62,13 @@ export function OverviewView({ caseId, setView }: { caseId: string; setView: (v:
         <span className="text-accent font-semibold shrink-0">TRIAGE PREVIEW</span>
         <span className="text-muted">{summary.disclaimer}</span>
       </div>
+
+      {isDemoCase(summary) && (
+        <div className="card border-warn/50 bg-warn/10 p-3 mb-4 text-sm text-warn">
+          <span className="font-semibold">DEMONSTRATION DATA</span> — this case comes from a synthetic test corpus,
+          not a real device. Nothing here is real evidence.
+        </div>
+      )}
 
       {/* Plain-language summary, derived only from the numbers below */}
       <div className="card p-4 mb-4">

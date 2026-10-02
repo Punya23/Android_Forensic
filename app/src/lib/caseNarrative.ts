@@ -14,6 +14,12 @@ function list(items: string[]): string {
   return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
+/** The engine stamps mock acquisitions with a "MOCK DEVICE — synthetic fixtures…" pre-state note. */
+export function isDemoCase(s: CaseSummary): boolean {
+  const note = s.case.pre_state?.note;
+  return typeof note === "string" && /mock|synthetic/i.test(note);
+}
+
 export function caseNarrative(s: CaseSummary, flags: Flag[]): string[] {
   const c = s.case;
   const d = c.device;
@@ -22,9 +28,12 @@ export function caseNarrative(s: CaseSummary, flags: Flag[]): string[] {
 
   const device = [d.manufacturer, d.model].filter(Boolean).join(" ") || "an Android device";
   const authority = c.legal_authority ? `under ${c.legal_authority}` : "";
+  if (isDemoCase(s)) {
+    out.push("DEMONSTRATION DATA: this case was built from a synthetic test corpus, not a real device. Do not treat it as evidence.");
+  }
   out.push(
     `Case ${c.case_id}: ${device}${d.android_version ? ` (Android ${d.android_version})` : ""} ` +
-      `was acquired by ${c.examiner || "an unnamed examiner"}${authority ? ` ${authority}` : ""}.`
+      `was ${isDemoCase(s) ? "loaded" : "acquired"} by ${c.examiner || "an unnamed examiner"}${authority ? ` ${authority}` : ""}.`
   );
 
   const hv = s.hash_verification;
