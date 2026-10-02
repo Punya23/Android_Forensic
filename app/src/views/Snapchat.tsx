@@ -93,7 +93,7 @@ export function SnapchatView({ caseId }: { caseId: string }) {
             "Snapchat chats (arroyo.db / protobuf) live in app-private storage and require " +
             "root access, which is used automatically when the device proves a root shell. On an " +
             "unrooted phone it cannot be read; instead " +
-            "or load a 'Download My Data' export from Snapchat -> Settings -> Privacy -> Download My Data. " +
+            "load a 'Download My Data' export from Snapchat -> Settings -> Privacy -> Download My Data. " +
             "Ephemeral messages are carved from WAL/freelist where present."
           }
         />
