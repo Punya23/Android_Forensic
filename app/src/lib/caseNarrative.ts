@@ -61,6 +61,12 @@ export function caseNarrative(s: CaseSummary, flags: Flag[]): string[] {
       : "No messages, calls, contacts, media, locations or browser history were recorded."
   );
 
+  if ((k.message_placeholders ?? 0) > 0) {
+    out.push(
+      `${plural(k.message_placeholders, "encrypted backup")} could not be read (key required); listed as placeholders, not counted as messages.`
+    );
+  }
+
   if (k.recovered > 0) {
     out.push(`${plural(k.recovered, "deleted or carved item")} recovered.`);
   }

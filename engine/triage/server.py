@@ -38,6 +38,7 @@ except Exception:
     _HAVE_SOCKETIO = False
 
 
+from .demo import is_placeholder_message
 from . import TOOL_NAME, __version__
 from .acquire import MockDeviceSource, RealDeviceSource
 from .adb import Adb
@@ -1498,6 +1499,13 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
                 "url_locations",
             )
         }
+        # Metadata-only stand-ins (undecryptable backups) are not messages: count them apart
+        # so "N messages" never includes rows that carry no message content.
+        placeholders = sum(
+            1 for m in case.read_derived("messages") if is_placeholder_message(m)
+        )
+        summary["counts"]["messages"] -= placeholders
+        summary["counts"]["message_placeholders"] = placeholders
 
         discovered = case.read_derived("discovered_chats") or {}
 

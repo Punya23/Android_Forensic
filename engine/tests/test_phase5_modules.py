@@ -525,3 +525,12 @@ def test_full_collaboration_workflow():
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+def test_ncrb_export_never_names_contacts_as_accused(tmp_path):
+    (tmp_path / "meta.json").write_text(json.dumps({"case_id": "C1"}))
+    derived = tmp_path / "derived"
+    derived.mkdir()
+    (derived / "contacts.json").write_text(json.dumps([{"name": "Rahul", "phone": "+91 99300 55822"}]))
+    out = json.loads(export_to_ncrb(str(tmp_path)))
+    assert out["accused"] == []

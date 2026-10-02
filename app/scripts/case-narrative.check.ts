@@ -47,4 +47,8 @@ assert.match(t, /DEMONSTRATION DATA/);
 assert.match(t, /was loaded by Sharma/);
 assert.doesNotMatch(text(make()), /DEMONSTRATION DATA/);
 
+t = text(make({ counts: { ...make().counts, message_placeholders: 2 } }));
+assert.match(t, /2 encrypted backups could not be read/);
+assert.doesNotMatch(text(make()), /encrypted backup/);
+
 console.log("case-narrative check ok");

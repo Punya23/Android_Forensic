@@ -629,19 +629,10 @@ def _count_connection_types(links: List[Dict]) -> Dict[str, int]:
 
 
 def _load_accused_data(derived_dir: Path) -> List[Dict]:
-    """Load accused data from derived directory."""
-    accused = []
-    
-    # Check contacts and messages for accused information
-    contacts_file = derived_dir / 'contacts.json'
-    if contacts_file.exists():
-        with open(contacts_file, 'r') as f:
-            contacts = json.load(f)
-            # In production, would have better accused identification
-            for contact in contacts[:5]:  # Simplified
-                accused.append({
-                    'name': contact.get('name', 'Unknown'),
-                    'contact': contact.get('phone', ''),
-                })
-    
-    return accused
+    """Accused persons are not derivable from device data, so this is always empty.
+
+    A contact on the handset is not an accused person; labelling any of them as one in a
+    record that leaves the tool would be fabrication. The investigating officer supplies
+    accused details in the case record itself.
+    """
+    return []

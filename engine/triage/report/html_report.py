@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from ..demo import is_demo_case
 from .. import TOOL_NAME, __version__
 from ..config import ACQUISITION_DISCLAIMER, STANDARDS_REFS
 from ..models import now_iso
@@ -854,6 +855,11 @@ def generate_report(case_dir: str | Path) -> Path:
 
     # Triage disclaimer banner
     parts.append(f'<div class="banner">{_esc(ACQUISITION_DISCLAIMER)}</div>')
+    if is_demo_case(meta):
+        parts.append(
+            '<div class="banner"><strong>DEMONSTRATION DATA</strong> — built from a synthetic '
+            "test corpus, not a real device. Nothing in this report is real evidence.</div>"
+        )
 
     # Two ways to read this one document: the enriched narrative, or the complete
     # unfiltered dataset it is drawn from. Plain anchor links, not a JS/CSS

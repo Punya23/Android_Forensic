@@ -24,6 +24,8 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from .demo import is_demo_case
+
 REGISTRY_FILENAME = "registry.db"
 
 # Guards writes across threads (the Flask dev server and the SocketIO acquisition
@@ -131,7 +133,7 @@ def upsert_case(cases_root: Path, case: Any) -> None:
                 (
                     meta["case_id"],
                     meta.get("examiner", ""),
-                    device.get("model", ""),
+                    (device.get("model", "") or "") + (" [demo]" if is_demo_case(meta) else ""),
                     meta.get("legal_authority", ""),
                     meta.get("scope_note", ""),
                     case_profile.get("crime_type", ""),
