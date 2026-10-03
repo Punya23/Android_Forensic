@@ -312,10 +312,10 @@ export function AskTheCaseView({ caseId }: { caseId: string }) {
         )}
       </div>
 
-      <div className="border-t border-line p-3 shrink-0">
-        <div className="flex items-center gap-2">
+      <div className="shrink-0 px-4 pb-4 pt-2">
+        <div className="glass max-w-3xl mx-auto p-2 flex items-center gap-2">
           <input
-            className="input flex-1"
+            className="input flex-1 !bg-transparent !border-transparent focus:!border-transparent"
             placeholder="Ask about this case's evidence…"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
