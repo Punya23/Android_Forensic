@@ -719,11 +719,8 @@ export function AcquisitionView({
           — targeted, intelligent triage (optional)
         </div>
         <p className="text-xs text-muted mb-3">
-          Describe the case in plain language, naming each party and their role. The tool
-          extracts a case profile, searches prior case studies for what actually solved
-          similar cases, and recommends which artifacts matter most here. Cheap artifacts
-          are always collected; only expensive/root pulls are prioritised. Nothing is
-          skipped silently.
+          Describe the case and name each party with their role. Cheap artifacts are always
+          collected.
         </p>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-2">
@@ -763,15 +760,12 @@ export function AcquisitionView({
                 }
                 return (
                   <>
-                    <p>{chosen.note}</p>
                     {!chosen.available && (
                       <p className="text-warn mt-1">{chosen.reason} Runs deterministically instead.</p>
                     )}
                     {chosen.name === "ollama" && chosen.models && chosen.models.length > 0 && (
                       <p className="mt-1">
-                        Installed: <span className="font-mono text-ink/80">{chosen.models.join(", ")}</span>
-                        {" · using "}
-                        <span className="font-mono text-ink/80">{llmStatus?.chat_model}</span>
+                        Using <span className="font-mono text-ink/80">{llmStatus?.chat_model}</span>
                       </p>
                     )}
                   </>
@@ -781,26 +775,10 @@ export function AcquisitionView({
           </div>
         </div>
 
-        {/* Hardware this workstation can actually run a local model on, plus any
-            background provisioning already under way — surfaced next to the AI
-            back-end picker so "Ollama (local model)" is never a blind choice. */}
-        {llmStatus?.hardware && (
-          <div className="text-[11px] text-muted leading-relaxed mb-2 border-t border-line pt-2">
-            This machine: {llmStatus.hardware.ram_gb != null ? `${llmStatus.hardware.ram_gb} GB RAM` : "RAM unknown"},{" "}
-            {llmStatus.hardware.gpu} → recommended model:{" "}
-            <span className="font-mono text-ink/80">
-              {llmStatus.hardware.recommended_model.model ?? "none — heuristic only"}
-            </span>
-            {llmStatus.hardware.recommended_model.note && ` (${llmStatus.hardware.recommended_model.note})`}
-            {llmStatus.autodetect?.provisioning &&
-              llmStatus.autodetect.provisioning.action !== "none" && (
-                <span className="text-warn">
-                  {" "}
-                  Downloading {llmStatus.autodetect.provisioning.model} in the background based on this
-                  machine's hardware — will switch over automatically once it finishes.
-                </span>
-              )}
-          </div>
+        {llmStatus?.autodetect?.provisioning && llmStatus.autodetect.provisioning.action !== "none" && (
+          <p className="text-[11px] text-warn mb-2">
+            Downloading {llmStatus.autodetect.provisioning.model} — switches over when done.
+          </p>
         )}
 
         {/* Opt-in: AI Evidence Summary. Off by default and independent of the plan
@@ -814,18 +792,12 @@ export function AcquisitionView({
             onChange={(e) => setRunAiSummary(e.target.checked)}
           />
           <span className="text-[11px] text-muted leading-relaxed">
-            Generate an <b>AI Evidence Summary</b> after analysis — an entirely model-authored
-            narrative digest of the findings that matched this case's brief. Needs a reachable
-            local model (Ollama); otherwise this stays honestly empty rather than faking a
-            summary (see Case Intelligence).
+            Generate an <b>AI Evidence Summary</b> after analysis (needs a local model).
           </span>
         </label>
 
         <p className="text-[11px] text-muted leading-relaxed mb-2">
-          Use forensic nomenclature: <b>accused</b> / <b>suspect</b> for the person
-          under investigation, <b>victim</b> / <b>deceased</b> for the person harmed,
-          plus <b>complainant</b>, <b>witness</b>, <b>panch witness</b>. Avoid
-          “guilty” and “innocent” — those are trial outcomes, not investigative roles.
+          Roles: <b>accused</b>, <b>suspect</b>, <b>victim</b>, <b>complainant</b>, <b>witness</b>.
         </p>
 
         <textarea

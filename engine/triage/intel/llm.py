@@ -524,9 +524,23 @@ def provider_status(kind: Optional[str] = None) -> dict:
     configured = (kind or os.environ.get("SNAGR_LLM", "heuristic")).strip().lower()
     models = list_ollama_models()
     chat_models = [m for m in models if not m["embedding_only"]]
+    # Show the model that would actually be used now (best installed that fits free memory),
+    # not whatever was pinned at engine start.
+    chat_model = os.environ.get("SNAGR_LLM_MODEL", "")
+    try:
+        from .hardware import assess_models, detect_hardware, preferred_max_params_b, select_model
+
+        chat_model = select_model(
+            assess_models(detect_hardware(), models),
+            installed_only=True,
+            max_params_b=preferred_max_params_b(),
+            allow_tight=True,
+        ) or chat_model
+    except Exception:
+        pass
     return {
         "configured": configured,
-        "chat_model": os.environ.get("SNAGR_LLM_MODEL", "llama3.1"),
+        "chat_model": chat_model or "llama3.1",
         "providers": [
             {
                 "name": "heuristic",
