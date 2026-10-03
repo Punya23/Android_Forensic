@@ -377,14 +377,10 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
         </div>
       )}
 
-      {/* The distinction this whole screen exists to preserve. Stated before any map. */}
-      <div className="rounded-md border border-warn/40 bg-warn/10 px-4 py-3 text-sm leading-relaxed">
-        <strong>Read the category before the coordinate.</strong> Only{" "}
-        <strong>{presence}</strong> row(s) place this device at a coordinate. The other{" "}
-        {interest} record a place that was searched, viewed or saved — that evidences interest
-        in a location, not presence at it. An incoming location share records where the{" "}
-        <em>other party</em> said they were. Absence of a location is not evidence the device
-        was never somewhere; it means no artifact reachable at the tiers used recorded one.
+      {/* Presence vs interest stays visible as two counts; the category on each row carries the rest. */}
+      <div className="text-xs text-muted">
+        <strong className="text-ink">{presence}</strong> place the device at a coordinate ·{" "}
+        <strong className="text-ink">{interest}</strong> are places searched, viewed or saved
       </div>
 
       {anomalies.length > 0 && (
