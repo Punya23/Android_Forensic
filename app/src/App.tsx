@@ -169,7 +169,7 @@ export default function App() {
         <FetchErrorBanner />
         <div className="flex-1 overflow-auto">
           {view === "home" && (
-            <HomeView caseId={caseId} username={username} health={health} setView={setView} onOpenCase={onCaseReady} />
+            <HomeView caseId={caseId} onSelectCase={setCaseId} username={username} health={health} setView={setView} onOpenCase={onCaseReady} />
           )}
           {view === "acquire" && <AcquisitionView onCaseReady={onCaseReady} onOpenCase={onCaseReady} />}
           {view === "cases" && <CasesView onOpenCase={onCaseReady} />}

@@ -29,20 +29,22 @@ const bloom = (x: string, y: string) => ({ ["--bloom-x" as string]: x, ["--bloom
 /** Everything on this page describes one case: the one open in the app, or the one picked here. */
 export function HomeView({
   caseId,
+  onSelectCase,
   username,
   health,
   setView,
   onOpenCase,
 }: {
-  /** The case currently open in the app, if any — Home starts on it. */
+  /** The case currently open in the app, if any — Home shows it. */
   caseId: string | null;
+  /** Make a case the open one (enables the sidebar for it) without leaving Home. */
+  onSelectCase: (id: string) => void;
   username: string | null;
   health: Health | null;
   setView: (v: ViewKey) => void;
   onOpenCase: (id: string, view?: ViewKey) => void;
 }) {
   const [cases, setCases] = useState<RegistryCase[]>([]);
-  const [picked, setPicked] = useState<string | null>(null);
   const [summary, setSummary] = useState<CaseSummary | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -56,8 +58,15 @@ export function HomeView({
       .finally(() => setLoaded(true));
   }, []);
 
-  const current = cases.find((c) => c.case_id === (picked ?? caseId)) ?? cases[0];
+  const current = cases.find((c) => c.case_id === caseId) ?? cases[0];
   const id = current?.case_id;
+
+  // The case Home shows is the app's open case, so the sidebar is live for it: when none is
+  // open yet, the one Home falls back to (the newest) becomes the open case.
+  useEffect(() => {
+    if (!caseId && id) onSelectCase(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caseId, id]);
 
   useEffect(() => {
     setSummary(null);
@@ -137,7 +146,7 @@ export function HomeView({
             <Select
               className="input w-auto font-mono text-xs !py-1.5"
               value={id ?? ""}
-              onChange={setPicked}
+              onChange={onSelectCase}
               ariaLabel="Case shown on the dashboard"
               options={cases.map((k) => ({ value: k.case_id, label: `${k.case_id} · ${k.device_model || "—"}` }))}
             />
