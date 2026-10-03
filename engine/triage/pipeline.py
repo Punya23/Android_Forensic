@@ -6556,45 +6556,75 @@ def _wait_for_tier1_manifest(
     case: Case,
     *,
     oem_quirks: Optional[list[str]] = None,
-    poll_interval: float = 1.5,
+    poll_interval: float = 2.0,
+    hard_cap: Optional[float] = None,
+    stall: Optional[float] = None,
 ) -> bool:
-    """Poll for ``collector_manifest.json`` instead of guessing a fixed sleep.
+    """Wait for ``collector_manifest.json`` by following the helper's progress, not a fixed clock.
 
     The helper writes ``collector_manifest.json`` last, after every requested collector has
-    run (see ``MainActivity.writeManifest`` — this holds for a single ``dump_<x>`` action as
-    much as for ``dump_all``), so its presence on-device is proof the run actually finished,
-    including any OEM dialog the examiner had to clear first. A brand with a known
-    interactive quirk gets a much longer window and a logged heads-up telling the examiner
-    what to expect; a timeout is not an error — the caller pulls whatever exists either way,
-    so a slow OEM turns into delayed data, never silently dropped data.
+    run (see ``MainActivity.writeManifest``), so its presence is proof the run finished,
+    including any OEM dialog the examiner had to clear first. Until then the wait continues
+    while the helper app is still running and its output files are still changing, so a phone
+    with tens of thousands of media files is given the time it needs. It stops early when the
+    app has died (closed, crashed, killed by the OEM) or has written nothing new for the stall
+    window, and never waits past a hard ceiling. A timeout is not an error — the caller pulls
+    whatever exists either way — but the helper is only removed afterwards, so a premature give-up
+    used to uninstall the app mid-collection and lose every collector it had not reached.
     """
     matched = set(oem_quirks or []) & _TIER1_INTERACTIVE_QUIRKS
-    timeout = 90.0 if matched else 20.0
+    hard_cap = hard_cap if hard_cap is not None else (900.0 if matched else 300.0)
+    stall = stall if stall is not None else (240.0 if matched else 90.0)
     if matched:
         case.log(
             "tier1.helper.wait",
             "this device's OEM build needs an on-screen step to finish granting "
-            f"permissions (quirks: {', '.join(sorted(matched))}); waiting up to "
-            f"{timeout:.0f}s for the collector to finish — complete any dialog or PIN "
-            "prompt on the device now",
+            f"permissions (quirks: {', '.join(sorted(matched))}); keep the SNAGR Collector "
+            "screen open and complete any dialog or PIN prompt on the device now — waiting "
+            "while the app is working",
             tier=Tier.TIER1.value,
         )
-    deadline = time.monotonic() + timeout
-    check_cmd = "[ -f /sdcard/Download/collector_manifest.json ] && echo READY"
-    while time.monotonic() < deadline:
-        res = source.adb.shell(check_cmd, timeout=10)
-        if res.ok and "READY" in res.stdout:
+    start = time.monotonic()
+    probe = (
+        "[ -f /sdcard/Download/collector_manifest.json ] && echo READY; "
+        "pidof io.erakshak.collector >/dev/null 2>&1 && echo ALIVE; "
+        "echo STATE; stat -c '%s %Y %n' /sdcard/Download/*.json 2>/dev/null"
+    )
+    last_state: Optional[str] = None
+    last_change = start
+    ever_alive = False
+    dead_polls = 0
+    reason = ""
+    while True:
+        now = time.monotonic()
+        if now - start >= hard_cap:
+            reason = f"hard limit of {hard_cap:.0f}s reached"
+            break
+        res = source.adb.shell(probe, timeout=15)
+        out = res.stdout if res.ok else ""
+        if "READY" in out:
             case.log(
                 "tier1.helper.wait",
-                "collector_manifest.json present on device — collection finished",
+                f"collector_manifest.json present on device after {now - start:.0f}s — collection finished",
                 tier=Tier.TIER1.value,
             )
             return True
+        alive = "ALIVE" in out
+        ever_alive = ever_alive or alive
+        state = out.split("STATE", 1)[-1].strip()
+        if state != last_state:
+            last_state, last_change = state, now
+        dead_polls = 0 if alive else dead_polls + 1
+        if not alive and dead_polls >= 3 and (ever_alive or now - start > 30):
+            reason = "the collector app is no longer running (closed, crashed or stopped by the phone)"
+            break
+        if now - last_change >= stall:
+            reason = f"the collector wrote nothing new for {stall:.0f}s"
+            break
         time.sleep(poll_interval)
     case.log(
         "tier1.helper.wait",
-        f"collector_manifest.json not seen within {timeout:.0f}s; pulling whatever the "
-        "device has written so far",
+        f"collector_manifest.json not seen — {reason}; pulling whatever the device has written so far",
         result="partial",
         tier=Tier.TIER1.value,
     )
