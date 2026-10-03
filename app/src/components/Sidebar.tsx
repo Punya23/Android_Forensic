@@ -1,5 +1,6 @@
 import {
   Archive,
+  Home,
   LayoutDashboard,
   Sparkles,
   MessageSquareText,
@@ -51,6 +52,7 @@ import { useCapabilities } from "../lib/capabilities";
 import { ROOT_ACQUISITION } from "../lib/features";
 
 export type ViewKey =
+  | "home"
   | "acquire"
   | "cases"
   | "overview"
@@ -104,7 +106,8 @@ export type ViewKey =
  * The first item of each group carries `group`; groups are collapsible in the render.
  */
 const NAV: { key: ViewKey; label: string; icon: LucideIcon; group?: string; root?: true }[] = [
-  { key: "cases", label: "Case History", icon: Archive, group: "Case" },
+  { key: "home", label: "Home", icon: Home, group: "Case" },
+  { key: "cases", label: "Case History", icon: Archive },
   { key: "overview", label: "Overview", icon: LayoutDashboard },
   { key: "ask", label: "Ask This Case", icon: MessageSquareText },
   { key: "intel", label: "Case Intelligence", icon: Sparkles },
@@ -205,7 +208,7 @@ export const VIEW_DATASET: Partial<Record<ViewKey, string>> = {
 };
 
 /** Views that work without a case loaded — they read installation-wide state. */
-const CASE_INDEPENDENT: ReadonlySet<ViewKey> = new Set<ViewKey>(["acquire", "knowledge", "cases"]);
+const CASE_INDEPENDENT: ReadonlySet<ViewKey> = new Set<ViewKey>(["home", "acquire", "knowledge", "cases"]);
 
 export function isCaseIndependent(view: ViewKey): boolean {
   return CASE_INDEPENDENT.has(view);

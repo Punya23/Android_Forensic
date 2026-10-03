@@ -58,11 +58,12 @@ import { AleappView } from "./views/Aleapp";
 import { ValidationView } from "./views/Validation";
 import { NotificationsView } from "./views/Notifications";
 import { AdvancedAnalyticsView } from "./views/AdvancedAnalytics";
+import { HomeView } from "./views/Home";
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [caseId, setCaseId] = useState<string | null>(null);
-  const [view, setView] = useState<ViewKey>("acquire");
+  const [view, setView] = useState<ViewKey>("home");
   // Set by MediaView's "View on map" button; consumed by LocationsView to fly
   // the map to that exact photo's point on arrival, then cleared so revisiting
   // Locations later doesn't re-trigger the same fly-to.
@@ -97,23 +98,15 @@ export default function App() {
     if (authed) api.me().then((r) => setUsername(r.username)).catch(() => {});
   }, [authed]);
 
-  function onCaseReady(id: string) {
+  function onCaseReady(id: string, landOn: ViewKey = "overview") {
     setCaseId(id);
-    setView("overview");
+    setView(landOn);
   }
 
-  /** Land on the most recent case's Overview; with no cases yet, stay on New Acquisition.
-   * A failed lookup is not fatal — the failure banner shows it and the examiner can still
-   * open a case from Case History. */
-  async function enterDashboard() {
+  /** Sign-in lands on Home, which shows installation-wide stats and the way into a case. */
+  function enterDashboard() {
     setOnboarded(true);
-    try {
-      const cases = await api.cases();
-      const latest = [...cases].sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-      if (latest) onCaseReady(latest.case_id);
-    } catch {
-      /* recorded by api.get */
-    }
+    setView("home");
   }
 
   function onLogout() {
@@ -171,6 +164,9 @@ export default function App() {
         {caseId && <CapabilityBanner dataset={VIEW_DATASET[view]} />}
         <FetchErrorBanner />
         <div className="flex-1 overflow-auto">
+          {view === "home" && (
+            <HomeView username={username} health={health} setView={setView} onOpenCase={onCaseReady} />
+          )}
           {view === "acquire" && <AcquisitionView onCaseReady={onCaseReady} onOpenCase={onCaseReady} />}
           {view === "cases" && <CasesView onOpenCase={onCaseReady} />}
           {view === "knowledge" && <KnowledgeBaseView />}
