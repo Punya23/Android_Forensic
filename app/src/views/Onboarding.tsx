@@ -38,7 +38,7 @@ export function OnboardingView({ username, onContinue }: { username: string | nu
               Tier 2
             </span>
             <span className="text-sm text-ink">
-              Root-only — app-private databases (WhatsApp, Telegram, Instagram, Snapchat).
+              Root-only — app-private databases. Not offered unless the examiner has rooted the phone; chat apps can be loaded from their account-data export instead.
             </span>
           </li>
         </ul>
