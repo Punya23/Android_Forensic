@@ -133,7 +133,7 @@ export function DotGlobe({ points, className = "" }: { points: GlobePoint[]; cla
       }
       if (hit) {
         const text = hit.label.length > 48 ? `${hit.label.slice(0, 47)}…` : hit.label;
-        ctx.font = "11px Inter Variable, system-ui, sans-serif";
+        ctx.font = "11px Space Grotesk Variable, system-ui, sans-serif";
         const w = ctx.measureText(text).width + 14;
         const x = Math.min(Math.max(hit.x - w / 2, 4), width - w - 4);
         const y = Math.max(hit.y - 30, 4);

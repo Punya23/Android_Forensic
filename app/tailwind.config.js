@@ -37,8 +37,8 @@ export default {
       },
       fontFamily: {
         dot: ["Doto Variable", "ui-monospace", "monospace"],
-        sans: ["Inter Variable", "ui-sans-serif", "system-ui", "sans-serif"],
-        mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+        sans: ["Space Grotesk Variable", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ["JetBrains Mono Variable", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
     },
   },
