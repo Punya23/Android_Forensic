@@ -305,18 +305,6 @@ for (const item of NAV) {
   SECTIONS[SECTIONS.length - 1].items.push(item);
 }
 
-/** Colour band per section — a quick visual cue for where you are, not a status. */
-export const SECTION_DOT: Record<string, string> = {
-  Case: "bg-accent",
-  Communications: "bg-recovered",
-  Media: "bg-fuchsia-400",
-  "Location & Network": "bg-live",
-  "Activity & Accounts": "bg-carved",
-  Analysis: "bg-violet-400",
-  "Risk Flags": "bg-deletion",
-  "Integrity & Tools": "bg-muted",
-};
-
 export function viewLabel(view: ViewKey): string | undefined {
   return NAV.find((i) => i.key === view)?.label;
 }
@@ -400,7 +388,6 @@ export function Sidebar({
                   className={`h-3 w-3 transition-transform ${expanded ? "rotate-90" : ""}`}
                   aria-hidden
                 />
-                <span className={`h-1.5 w-1.5 rounded-full ${SECTION_DOT[sec.name] ?? "bg-muted"}`} aria-hidden />
                 {sec.name}
                 <span className="ml-auto font-mono normal-case tracking-normal text-muted/60">
                   {sec.items.length}
