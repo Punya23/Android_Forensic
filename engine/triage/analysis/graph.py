@@ -473,3 +473,47 @@ def build_communication_graph(
             },
         },
     }
+
+
+def shared_chat_links(graph: dict[str, Any], conversations: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Contact-to-contact edges from group chats the device holds.
+
+    ``conversations`` maps an app name to its ``{chat_id: {title, participants[{name}]}}``
+    dataset. A call log or SMS thread only ever records owner<->contact, so the base graph
+    is a star; two contacts are linked here only when one chat with three or more
+    participants lists both. A two-person chat is skipped — without knowing which side is
+    the owner it could be owner<->contact, and that is not a link between contacts.
+    Participants are matched to graph nodes by exact label (the graph keys names verbatim,
+    never case-folded); a name that matches no node, or several, is left out. The edge says
+    "were in the same group chat", never "messaged each other".
+    """
+    by_label: dict[str, str | None] = {}
+    for n in graph.get("nodes", []):
+        if n.get("type") == "owner":
+            continue
+        by_label[n["label"]] = None if n["label"] in by_label else n["id"]
+
+    pairs: dict[tuple[str, str], dict[str, Any]] = {}
+    for app, chats in conversations.items():
+        for chat in (chats or {}).values():
+            members = {p.get("name") for p in chat.get("participants") or [] if p.get("name")}
+            if len(members) < 3:
+                continue
+            ids = sorted({by_label[m] for m in members if by_label.get(m)})
+            for i, a in enumerate(ids):
+                for b in ids[i + 1 :]:
+                    e = pairs.setdefault((a, b), {"weight": 0, "channels": set(), "chats": []})
+                    e["weight"] += 1
+                    e["channels"].add(app)
+                    e["chats"].append(chat.get("title") or chat.get("chat_id") or "")
+    return [
+        {
+            "source": a,
+            "target": b,
+            "weight": e["weight"],
+            "channels": sorted(e["channels"]),
+            "kind": "shared_chat",
+            "chats": e["chats"][:5],
+        }
+        for (a, b), e in sorted(pairs.items(), key=lambda kv: -kv[1]["weight"])
+    ]

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { Minus, Plus, X } from "lucide-react";
 import { api } from "../lib/api";
-import type { CommunicationGraph, GraphNode } from "../lib/types";
+import type { CommunicationGraph, GraphEdge, GraphNode } from "../lib/types";
+import { Select } from "../components/fields";
 import { SectionHeader } from "../components/common";
 import { DatasetEmpty } from "../lib/capabilities";
 import {
@@ -38,6 +39,8 @@ function channelColor(ch: string): string {
   return `hsl(${h % 360}, 55%, 60%)`;
 }
 
+const TOP_N_OPTIONS = ["30", "60", "120", "250", "500"];
+
 const ZOOM_MIN = 0.15;
 const ZOOM_MAX = 4;
 
@@ -50,6 +53,12 @@ export function GraphView({ caseId }: { caseId: string }) {
   const [settled, setSettled] = useState(false);
   // Ids of nodes currently expanded to show their per-channel sub-nodes.
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  // Declutter controls: how many of the strongest participants to draw, whether the
+  // device-owner hub is drawn, and which nodes the examiner has taken off the canvas.
+  const [topN, setTopN] = useState("60");
+  const [showOwner, setShowOwner] = useState(true);
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  const [links, setLinks] = useState<GraphEdge[]>([]);
   const [, forceRender] = useState(0);
 
   const svgRef = useRef<SVGSVGElement>(null);
@@ -77,6 +86,15 @@ export function GraphView({ caseId }: { caseId: string }) {
       .finally(() => setLoading(false));
   }, [caseId, reloadKey]);
 
+  // Contact-to-contact edges (shared group chats). A failed fetch leaves the owner-only
+  // graph in place; the failure itself is shown by the fetch-error banner.
+  useEffect(() => {
+    api
+      .dataset<{ edges: GraphEdge[] }>(caseId, "graph/links")
+      .then((r) => setLinks(r?.edges ?? []))
+      .catch(() => setLinks([]));
+  }, [caseId, reloadKey]);
+
   // Re-derive graph / financial trail / risk from the case's stored messages, calls and
   // contacts — for a case built by older engine code, or after an import.
   const rebuild = useCallback(async () => {
@@ -94,7 +112,44 @@ export function GraphView({ caseId }: { caseId: string }) {
   }, [caseId]);
 
   // Only participants with recorded interaction are drawn (see lib/graphLayout).
-  const drawn = useMemo(() => (graph ? selectDrawn(graph.nodes, graph.edges) : null), [graph]);
+  const drawn = useMemo(() => {
+    if (!graph) return null;
+    const base = selectDrawn(graph.nodes, [...graph.edges, ...links], Number(topN));
+    let nodes = base.nodes.filter((n) => !hiddenIds.has(n.id));
+    let edges = base.edges;
+    if (!showOwner) {
+      nodes = nodes.filter((n) => n.type !== "owner");
+    }
+    const keep = new Set(nodes.map((n) => n.id));
+    edges = edges.filter((e) => keep.has(e.source) && keep.has(e.target));
+    if (!showOwner) {
+      // Without the hub, only participants that still have a link to another contact stay.
+      const linked = new Set(edges.flatMap((e) => [e.source, e.target]));
+      nodes = nodes.filter((n) => linked.has(n.id));
+    }
+    return { ...base, nodes, edges };
+  }, [graph, links, topN, showOwner, hiddenIds]);
+
+  // Neighbours of the selected node: everything else dims, so one person's links read
+  // clearly even in a dense graph.
+  const neighbours = useMemo(() => {
+    if (!selected || !drawn) return null;
+    const s = new Set<string>([selected.id.split("::")[0]]);
+    for (const e of drawn.edges) {
+      if (s.has(e.source) || s.has(e.target)) {
+        s.add(e.source);
+        s.add(e.target);
+      }
+    }
+    return s;
+  }, [selected, drawn]);
+
+  const zoomBy = useCallback((f: number) => {
+    const { x, y, k } = viewRef.current;
+    const nextK = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, k * f));
+    viewRef.current = { x: W / 2 - ((W / 2 - x) / k) * nextK, y: H / 2 - ((H / 2 - y) / k) * nextK, k: nextK };
+    forceRender((v) => v + 1);
+  }, []);
 
   // (Re)seed the layout whenever the case's graph data changes. Each frame runs as many
   // iterations as fit in ~8 ms, so the page stays responsive; the temperature reaches zero
@@ -122,6 +177,23 @@ export function GraphView({ caseId }: { caseId: string }) {
         setSettled(true);
         rafRef.current = null;
       }
+    };
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(step);
+  }, [drawn]);
+
+  // Short, gentle re-settle from where the nodes are now (no reseed): after a drag or an
+  // unpin the neighbours ease into place around the node that moved.
+  const relax = useCallback(() => {
+    if (!drawn) return;
+    const ids = drawn.nodes.map((n) => n.id);
+    const total = 80;
+    let iter = 0;
+    const step = () => {
+      layoutStep(positionsRef.current, drawn.edges, ids, 40 * (1 - iter / total));
+      iter += 1;
+      forceRender((v) => v + 1);
+      rafRef.current = iter < total ? requestAnimationFrame(step) : null;
     };
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(step);
@@ -195,6 +267,7 @@ export function GraphView({ caseId }: { caseId: string }) {
   );
 
   const onPointerUp = useCallback((e: React.PointerEvent) => {
+    const wasNodeDrag = dragRef.current?.kind === "node";
     if (dragRef.current) {
       try {
         (e.target as Element).releasePointerCapture(e.pointerId);
@@ -203,7 +276,8 @@ export function GraphView({ caseId }: { caseId: string }) {
       }
     }
     dragRef.current = null;
-  }, []);
+    if (wasNodeDrag) relax();
+  }, [relax]);
 
   // A plain JSX `onWheel` is attached by React as a passive listener (for scroll
   // performance), so `preventDefault()` inside it is silently ignored — the browser
@@ -347,7 +421,7 @@ export function GraphView({ caseId }: { caseId: string }) {
       </div>
     );
   }
-  if (!graph || !drawn || drawn.nodes.length <= 1) {
+  if (!graph || !drawn || (showOwner && drawn.nodes.length <= 1)) {
     return (
       <div className="p-6 h-full">
         <SectionHeader title="Communication Network" />
@@ -384,17 +458,46 @@ export function GraphView({ caseId }: { caseId: string }) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        <Select
+          className="input w-auto text-xs"
+          value={topN}
+          onChange={setTopN}
+          ariaLabel="Participants drawn"
+          options={TOP_N_OPTIONS.map((v) => ({ value: v, label: `Top ${v} people` }))}
+        />
+        <button className="btn-ghost text-xs" onClick={() => setShowOwner((v) => !v)}>
+          {showOwner ? "Hide device hub" : "Show device hub"}
+        </button>
+        <div className="flex items-center">
+          <button className="btn-ghost text-xs !px-2" aria-label="Zoom out" onClick={() => zoomBy(0.8)}>
+            <Minus className="h-3.5 w-3.5" aria-hidden />
+          </button>
+          <button className="btn-ghost text-xs !px-2 ml-1" aria-label="Zoom in" onClick={() => zoomBy(1.25)}>
+            <Plus className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </div>
         <button className="btn-ghost text-xs" onClick={fitToView}>
           Fit to view
         </button>
+        {hiddenIds.size > 0 && (
+          <button className="btn-ghost text-xs" onClick={() => setHiddenIds(new Set())}>
+            Restore {hiddenIds.size} hidden
+          </button>
+        )}
         <button className="btn-ghost text-xs" onClick={restart}>
           Reset layout
         </button>
         {rebuildButton}
         <span className="text-[11px] text-muted ml-auto">
-          Scroll to zoom · drag background to pan · drag a node to reposition it
+          Scroll or +/− to zoom · drag background to pan · drag a node to move it · click a node to focus its links
           {!settled && " · settling…"}
         </span>
+      </div>
+      <div className="text-[11px] text-muted mb-2" role="note">
+        {links.length > 0
+          ? `${links.length} link(s) between contacts, from group chats that list both — drawn bold. `
+          : "No links between contacts were found: calls and SMS only record the device owner with each contact, so contacts connect to each other only through group chats. "}
+        {!showOwner && drawn.nodes.length === 0 && "Nothing to draw without the device hub."}
       </div>
       {(drawn.dormant > 0 || drawn.truncated > 0 || rebuildNote) && (
         <div className="text-[11px] text-muted mb-2" role="status">
@@ -423,20 +526,24 @@ export function GraphView({ caseId }: { caseId: string }) {
                 const a = positionsRef.current[e.source];
                 const b = positionsRef.current[e.target];
                 if (!a || !b) return null;
-                const color = channelColor(e.channels[0] ?? "device");
+                const link = e.kind === "shared_chat";
+                const color = link ? "rgb(var(--color-accent))" : channelColor(e.channels[0] ?? "device");
                 const srcNode = nodeById.get(e.source);
                 const dstNode = nodeById.get(e.target);
                 const dim =
-                  !!query.trim() &&
-                  !(srcNode && matchesQuery(srcNode)) &&
-                  !(dstNode && matchesQuery(dstNode));
+                  (!!query.trim() &&
+                    !(srcNode && matchesQuery(srcNode)) &&
+                    !(dstNode && matchesQuery(dstNode))) ||
+                  (neighbours !== null && !(neighbours.has(e.source) && neighbours.has(e.target)));
+                // Owner spokes are context, so they stay faint; contact-to-contact links lead.
+                const base = link ? 0.85 : 0.22;
                 return (
                   <line
                     key={i}
                     x1={a.x} y1={a.y} x2={b.x} y2={b.y}
                     stroke={color}
-                    strokeOpacity={dim ? 0.12 : 0.45}
-                    strokeWidth={(1 + (e.weight / maxEdge) * 5) / k}
+                    strokeOpacity={dim ? 0.05 : base}
+                    strokeWidth={(link ? 1.5 + (e.weight / maxEdge) * 3 : 0.6 + (e.weight / maxEdge) * 3) / k}
                   />
                 );
               })}
@@ -463,7 +570,7 @@ export function GraphView({ caseId }: { caseId: string }) {
                         setSelected(n);
                       }}
                       className="cursor-pointer"
-                      opacity={query.trim() && !match ? 0.15 : 1}
+                      opacity={(query.trim() && !match) || (neighbours && !neighbours.has(n.id)) ? 0.15 : 1}
                     >
                       <circle
                         cx={p.x} cy={p.y} r={r}
@@ -575,6 +682,29 @@ export function GraphView({ caseId }: { caseId: string }) {
               <div className="text-muted mt-1">
                 {selected.weight} interaction{selected.weight === 1 ? "" : "s"}
               </div>
+              {selected.type !== "owner" && !selected.id.includes("::") && (
+                <div className="flex gap-1.5 mt-2">
+                  <button
+                    className="btn-ghost !px-2 !py-1 text-[11px]"
+                    onClick={() => {
+                      setHiddenIds((h) => new Set(h).add(selected.id));
+                      setSelected(null);
+                    }}
+                  >
+                    Hide
+                  </button>
+                  <button
+                    className="btn-ghost !px-2 !py-1 text-[11px]"
+                    onClick={() => {
+                      const n = positionsRef.current[selected.id];
+                      if (n) n.pinned = false;
+                      relax();
+                    }}
+                  >
+                    Unpin
+                  </button>
+                </div>
+              )}
               <div className="flex flex-wrap gap-1 mt-1.5">
                 {selected.channels.map((c) => (
                   <span

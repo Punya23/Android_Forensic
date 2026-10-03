@@ -571,6 +571,9 @@ export interface GraphEdge {
   target: string;
   weight: number;
   channels: string[];
+  /** "shared_chat": two contacts listed in the same group chat. Absent = owner<->contact. */
+  kind?: "shared_chat";
+  chats?: string[];
 }
 
 export interface CommunicationGraph {

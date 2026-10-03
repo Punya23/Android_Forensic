@@ -1856,6 +1856,22 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
     # TELEGRAM
     # ---------------------------------------------------------
 
+    @app.get("/api/case/<case_id>/graph/links")
+    def graph_shared_chat_links(case_id: str):
+        """Contact-to-contact edges from group chats (the base graph links only to the owner)."""
+        from .analysis.graph import shared_chat_links
+
+        case = _open(cases_root, case_id)
+        graph = case.read_derived("graph")
+        if not isinstance(graph, dict):
+            return jsonify({"edges": []})
+        convs = {
+            app: data
+            for app in ("telegram", "instagram", "snapchat", "whatsapp")
+            if isinstance(data := case.read_derived(f"{app}_conversations"), dict)
+        }
+        return jsonify({"edges": shared_chat_links(graph, convs)})
+
     @app.get("/api/case/<case_id>/telegram/conversations")
     def telegram_conversations(case_id: str):
 
