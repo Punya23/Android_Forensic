@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ShieldCheck, FolderOpen, Cpu, Usb, CircleUserRound, LogOut, Menu } from "lucide-react";
+import { ShieldCheck, Cpu, Usb, CircleUserRound, LogOut, Menu } from "lucide-react";
 import { api, hasAuthToken, setOnUnauthorized } from "./lib/api";
 import type { Health } from "./lib/types";
 import { TagProvider } from "./lib/tagStore";
@@ -59,6 +59,7 @@ import { ValidationView } from "./views/Validation";
 import { NotificationsView } from "./views/Notifications";
 import { AdvancedAnalyticsView } from "./views/AdvancedAnalytics";
 import { HomeView } from "./views/Home";
+import { Select, type SelectOption } from "./components/fields";
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
@@ -160,7 +161,7 @@ export default function App() {
         />
       </div>
       <main className="flex-1 overflow-hidden flex flex-col">
-        <TopBar crumb={crumb} health={health} caseId={caseId} setView={setView} username={username} onLogout={onLogout} onMenu={() => setNavOpen(true)} />
+        <TopBar onSwitchCase={setCaseId} crumb={crumb} health={health} caseId={caseId} setView={setView} username={username} onLogout={onLogout} onMenu={() => setNavOpen(true)} />
         {/* One strip, above whichever view is routed, saying why this view's data is
             absent when it is. Renders nothing when the dataset is populated, and
             nothing for views that aren't about a single dataset. */}
@@ -168,7 +169,7 @@ export default function App() {
         <FetchErrorBanner />
         <div className="flex-1 overflow-auto">
           {view === "home" && (
-            <HomeView username={username} health={health} setView={setView} onOpenCase={onCaseReady} />
+            <HomeView caseId={caseId} username={username} health={health} setView={setView} onOpenCase={onCaseReady} />
           )}
           {view === "acquire" && <AcquisitionView onCaseReady={onCaseReady} onOpenCase={onCaseReady} />}
           {view === "cases" && <CasesView onOpenCase={onCaseReady} />}
@@ -250,7 +251,30 @@ export default function App() {
   );
 }
 
+/** The open case, as a dropdown of every case on this installation — switch without leaving the page. */
+function CaseSwitcher({ caseId, onChange }: { caseId: string; onChange: (id: string) => void }) {
+  const [opts, setOpts] = useState<SelectOption[]>([]);
+  useEffect(() => {
+    api
+      .registryCases({ sort: "-updated_at", limit: 100 })
+      .then((r) =>
+        setOpts(r.cases.map((c) => ({ value: c.case_id, label: `${c.case_id} · ${c.device_model || "—"}` })))
+      )
+      .catch(() => setOpts([]));
+  }, [caseId]);
+  return (
+    <Select
+      className="input w-auto font-mono text-xs !py-1.5"
+      value={caseId}
+      onChange={onChange}
+      ariaLabel="Switch case"
+      options={opts.length ? opts : [{ value: caseId, label: caseId }]}
+    />
+  );
+}
+
 function TopBar({
+  onSwitchCase,
   crumb,
   health,
   caseId,
@@ -259,6 +283,7 @@ function TopBar({
   onLogout,
   onMenu,
 }: {
+  onSwitchCase: (id: string) => void;
   crumb: string;
   health: Health | null;
   caseId: string | null;
@@ -278,12 +303,7 @@ function TopBar({
           SNAGR
         </div>
         <span className="text-muted hidden md:inline">{crumb}</span>
-        {caseId && (
-          <span className="flex items-center gap-1.5 font-mono text-xs bg-panel px-2 py-1 rounded-md border border-line">
-            <FolderOpen className="h-3.5 w-3.5 text-muted" strokeWidth={1.75} aria-hidden />
-            {caseId}
-          </span>
-        )}
+        {caseId && <CaseSwitcher caseId={caseId} onChange={onSwitchCase} />}
       </div>
       {caseId && <GlobalSearch caseId={caseId} setView={setView} />}
       <div className="flex items-center gap-3 text-xs text-muted shrink-0">

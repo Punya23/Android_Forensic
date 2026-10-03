@@ -10,6 +10,7 @@ import {
   Clock,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { Select } from "../components/fields";
 import type { CaseSummary, Health, RegistryCase, RegistryStats } from "../lib/types";
 import type { ViewKey } from "../components/Sidebar";
 
@@ -57,11 +58,14 @@ const bloom = (x: string, y: string) => ({ ["--bloom-x" as string]: x, ["--bloom
 
 /** Landing page after sign-in: posture of the latest case, totals, and ways into the data. */
 export function HomeView({
+  caseId,
   username,
   health,
   setView,
   onOpenCase,
 }: {
+  /** The case currently open in the app, if any — Home starts on it. */
+  caseId: string | null;
   username: string | null;
   health: Health | null;
   setView: (v: ViewKey) => void;
@@ -70,6 +74,9 @@ export function HomeView({
   const [cases, setCases] = useState<RegistryCase[]>([]);
   const [stats, setStats] = useState<RegistryStats | null>(null);
   const [latest, setLatest] = useState<CaseSummary | null>(null);
+  // The case the posture card and the "explore" links point at: the one the examiner
+  // picked here, else the case open in the app, else the most recently updated.
+  const [picked, setPicked] = useState<string | null>(null);
 
   useEffect(() => {
     api
@@ -77,20 +84,25 @@ export function HomeView({
       .then((r) => {
         setCases(r.cases);
         setStats(r.stats);
-        if (r.cases[0]) {
-          api
-            .caseOverview(r.cases[0].case_id)
-            .then(setLatest)
-            .catch(() => setLatest(null));
-        }
       })
       .catch(() => {
         /* recorded by api.get — the banner shows it; tiles stay empty */
       });
   }, []);
 
+  const top = cases.find((c) => c.case_id === (picked ?? caseId)) ?? cases[0];
+  const topId = top?.case_id;
+
+  useEffect(() => {
+    setLatest(null);
+    if (!topId) return;
+    api
+      .caseOverview(topId)
+      .then(setLatest)
+      .catch(() => setLatest(null));
+  }, [topId]);
+
   const recent = cases.slice(0, 6);
-  const top = cases[0];
   const demoCount = cases.filter(isDemo).length;
   const maxArtifacts = Math.max(1, ...recent.map((c) => c.artifact_count));
   const trend = useMemo(() => [...cases.slice(0, 12)].reverse().map((c) => c.artifact_count), [cases]);
@@ -134,22 +146,28 @@ export function HomeView({
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* Hero: posture of the latest case */}
-        <button
-          className="glass glass-link text-left p-5 lg:col-span-7 disabled:cursor-default"
-          style={bloom("0%", "0%")}
-          disabled={!top}
-          onClick={() => top && onOpenCase(top.case_id)}
-        >
+        <div className="glass p-5 lg:col-span-7" style={bloom("0%", "0%")}>
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-base font-semibold">Case posture</div>
               <div className="text-xs text-muted mt-0.5">
-                {top ? `${top.case_id} · ${top.device_model || "device unknown"}` : "No case yet"}
+                {top ? top.device_model || "device unknown" : "No case yet"}
               </div>
             </div>
-            {level && (
-              <span className={`text-[11px] font-medium rounded-full border px-2.5 py-1 ${level.cls}`}>{level.label}</span>
-            )}
+            <div className="flex items-center gap-2">
+              {level && (
+                <span className={`text-[11px] font-medium rounded-full border px-2.5 py-1 ${level.cls}`}>{level.label}</span>
+              )}
+              {cases.length > 0 && (
+                <Select
+                  className="input w-auto font-mono text-xs !py-1.5"
+                  value={top?.case_id ?? ""}
+                  onChange={setPicked}
+                  ariaLabel="Case shown on the dashboard"
+                  options={cases.map((c) => ({ value: c.case_id, label: `${c.case_id} · ${c.device_model || "—"}` }))}
+                />
+              )}
+            </div>
           </div>
           {top && risk ? (
             <>
@@ -167,16 +185,19 @@ export function HomeView({
                 ))}
               </ul>
               <div className="mt-4">
-                <div className="text-[11px] uppercase tracking-wider text-muted mb-1">Artifacts per recent case</div>
+                <div className="text-[11px] uppercase tracking-wider text-muted mb-1">Artifacts per recent case (all cases)</div>
                 <Trend values={trend} />
               </div>
+              <button className="btn-ghost text-xs mt-3" onClick={() => top && onOpenCase(top.case_id)}>
+                Open {top?.case_id}
+              </button>
             </>
           ) : top ? (
             <p className="text-sm text-muted mt-6">Loading the latest case…</p>
           ) : (
             <p className="text-sm text-muted mt-6">Start a new acquisition to create the first case.</p>
           )}
-        </button>
+        </div>
 
         {/* Totals */}
         <div className="grid grid-cols-2 gap-4 lg:col-span-5">
@@ -233,7 +254,8 @@ export function HomeView({
 
         {/* Ways in */}
         <div className="glass p-5 lg:col-span-5" style={bloom("0%", "100%")}>
-          <div className="text-base font-semibold mb-3">Explore the forensic data</div>
+          <div className="text-base font-semibold">Explore the forensic data</div>
+          <div className="text-xs text-muted mb-3">{top ? `Opens in ${top.case_id} — change it with the case picker.` : "Open a case first."}</div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {quick.map((q) => {
               const Icon = q.icon;
