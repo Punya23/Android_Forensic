@@ -130,3 +130,17 @@ class TestAdbCancellation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_a_command_with_large_output_does_not_deadlock_the_pipe(tmp_path):
+    """adb output past the OS pipe buffer (~64 KB) used to block the child while run() polled
+    without reading, so a big `find` listing 'timed out' and came back empty."""
+    import sys
+
+    from triage.adb import Adb
+
+    fake = tmp_path / "adb"
+    fake.write_text("#!/bin/sh\nhead -c 3000000 /dev/zero | tr '\\0' x\n")
+    fake.chmod(0o755)
+    res = Adb(adb_path=str(fake)).run("shell", "anything", timeout=20)
+    assert res.ok and len(res.stdout) == 3_000_000

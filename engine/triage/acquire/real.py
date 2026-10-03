@@ -160,10 +160,15 @@ class RealDeviceSource(AcquisitionSource):
     def list_files(self, root: str) -> list[str]:
         return self.adb.list_files(root)
 
-    def list_files_detailed(self, root: str) -> list[tuple[str, int, int]]:
-        # A device whose `stat` lacks -c returns nothing here; fall back to sizes-unknown rather
-        # than silently pulling nothing.
-        return self.adb.list_files_detailed(root) or [(p, 0, 0) for p in self.adb.list_files(root)]
+    def list_indexed_files(self) -> list[tuple[str, int, int]] | None:
+        return self.adb.list_indexed_files() or None
+
+    def list_files_detailed(self, root: str, days: int | None = None) -> list[tuple[str, int, int]]:
+        found = self.adb.list_files_detailed(root, days)
+        # A device whose `stat` lacks -c returns nothing; fall back to sizes-unknown rather than
+        # silently pulling nothing. (Only for the unwindowed call: a recent-files window that is
+        # genuinely empty must stay empty.)
+        return found or ([(p, 0, 0) for p in self.adb.list_files(root)] if days is None else [])
 
     def pull_file(self, device_path: str, staging_dir: Path) -> Optional[PulledFile]:
         # Stage under a unique name to avoid collisions before the case ingests it.

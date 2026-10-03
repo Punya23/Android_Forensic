@@ -78,6 +78,25 @@ def apply_caps(
     return chosen, report
 
 
+#: A capped run looks at recently changed files first and only widens the window while there is
+#: still room to fill, so it never has to size every file on a large phone.
+WINDOWS: tuple[int | None, ...] = (7, 30, 90, 365, None)
+_MIN_STOP_DAYS = 30  # do not stop before this: a quiet week must not hide a category's recent files
+
+
+def _full(report: dict, bucket_bytes: int, total_bytes: int) -> bool:
+    if total_bytes and report["selected_bytes"] >= 0.98 * total_bytes:
+        return True
+    buckets = report["buckets"]
+    # A bucket is full once it has turned a file away (nothing more fits its budget) or is within
+    # 10% of the cap.
+    return bool(
+        bucket_bytes
+        and buckets
+        and all(b["skipped_files"] > 0 or b["selected_bytes"] >= 0.9 * bucket_bytes for b in buckets.values())
+    )
+
+
 def select_files(
     source,
     roots: Iterable[str],
@@ -86,24 +105,61 @@ def select_files(
     bucket_bytes: int = 0,
     total_bytes: int = 0,
     on_root: Callable[[str, int], None] | None = None,
+    now: float | None = None,  # unused here; kept so callers/tests can pin a clock if a source needs one
 ) -> tuple[list[str], dict | None]:
     """Enumerate ``roots`` on ``source`` and choose what to pull.
 
     Uncapped, this is the plain listing (de-duplicated, first ``max_files``) and the report is
-    ``None``. With a cap it lists sizes too, applies :func:`apply_caps`, and returns its report.
+    ``None``. Capped, it lists recently modified files with sizes, widening the window
+    (7, 30, 90, 365 days, then everything) until the caps are filled, applies :func:`apply_caps`,
+    and returns its report with ``window_days`` — how far back it had to look (``None`` = all) —
+    so the case states that "available" means "scanned", not "on the phone".
     """
     capped = bool(bucket_bytes or total_bytes)
     seen: set[str] = set()
     entries: list[Entry] = []
-    for root in roots:
-        found = source.list_files_detailed(root) if capped else [(p, 0, 0) for p in source.list_files(root)]
-        if found and on_root:
-            on_root(root, len(found))
-        for e in found:
-            if e[0] not in seen:
+    if not capped:
+        for root in roots:
+            found = [(p, 0, 0) for p in source.list_files(root)]
+            if found and on_root:
+                on_root(root, len(found))
+            for e in found:
+                if e[0] not in seen:
+                    seen.add(e[0])
+                    entries.append(e)
+        return [e[0] for e in entries][:max_files], None
+
+    roots = list(roots)
+    # Preferred: the device's own file index — seconds, not a walk of the whole storage.
+    indexed = getattr(source, "list_indexed_files", lambda: None)()
+    if indexed:
+        prefixes = tuple(r.rstrip("/") + "/" for r in roots)
+        for e in indexed:
+            if e[0].startswith(prefixes) and e[0] not in seen:
                 seen.add(e[0])
                 entries.append(e)
-    if not capped:
-        return [e[0] for e in entries][:max_files], None
-    chosen, report = apply_caps(entries, bucket_bytes, total_bytes)
+        if on_root:
+            on_root("media index", len(entries))
+        chosen, report = apply_caps(entries, bucket_bytes, total_bytes)
+        report["window_days"] = None
+        report["listing"] = "media index"
+        return chosen[:max_files], report
+
+    chosen: list[str] = []
+    report = {}
+    for days in WINDOWS:
+        for root in roots:
+            found = source.list_files_detailed(root, days)
+            if found and on_root:
+                on_root(root, len(found))
+            for e in found:
+                if e[0] not in seen:
+                    seen.add(e[0])
+                    entries.append(e)
+        chosen, report = apply_caps(entries, bucket_bytes, total_bytes)
+        if days is None or (_full(report, bucket_bytes, total_bytes) and days >= _MIN_STOP_DAYS) or (
+            total_bytes and report["selected_bytes"] >= 0.98 * total_bytes
+        ):
+            report["window_days"] = days
+            break
     return chosen[:max_files], report

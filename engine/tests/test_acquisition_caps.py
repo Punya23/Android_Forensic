@@ -70,14 +70,19 @@ def test_adb_detailed_listing_parses_size_mtime_and_paths_with_spaces():
 
 
 class _Src:
+    NOW = 1_800_000_000
+
     def __init__(self, files):
         self.files = files
+        self.asked = []  # the day windows requested, in order
 
     def list_files(self, root):
         return [p for p, _, _ in self.files if p.startswith(root)]
 
-    def list_files_detailed(self, root):
-        return [e for e in self.files if e[0].startswith(root)]
+    def list_files_detailed(self, root, days=None):
+        if root == "/sdcard/DCIM":
+            self.asked.append(days)
+        return [e for e in self.files if e[0].startswith(root) and (days is None or e[2] >= self.NOW - days * 86400)]
 
 
 def test_select_files_uncapped_keeps_plain_listing_order_and_dedupes():
@@ -111,3 +116,53 @@ def test_a_capped_run_records_what_it_selected(tmp_path):
     rep = json.loads((case_dir / "derived" / "acquisition_caps.json").read_text())
     assert rep["total_cap_bytes"] == 5 * 1024**3 and rep["bucket_cap_bytes"] == 100 * MB
     assert rep["selected_files"] == rep["available_files"] > 0  # the mock corpus is far under the caps
+
+
+def test_capped_listing_stops_at_the_recent_window_when_categories_are_full():
+    from triage.caps import select_files
+
+    recent = [(f"/sdcard/DCIM/r{i}.jpg", 40 * MB, _Src.NOW - i * 3600) for i in range(50)]  # 2 GB in the last 2 days
+    old = [(f"/sdcard/DCIM/o{i}.jpg", 40 * MB, _Src.NOW - 400 * 86400) for i in range(500)]  # 20 GB, a year old
+    src = _Src(recent + old)
+    files, rep = select_files(src, ["/sdcard/DCIM"], max_files=5000, bucket_bytes=100 * MB, total_bytes=0, now=_Src.NOW)
+    assert len(files) == 2 and all("/r" in f for f in files)
+    assert src.asked[-1] is not None and 365 not in src.asked  # never scanned the old 20 GB
+    assert rep["window_days"] == src.asked[-1]
+
+
+def test_capped_listing_widens_the_window_until_there_is_something_to_take():
+    from triage.caps import select_files
+
+    old = [(f"/sdcard/DCIM/o{i}.jpg", 10 * MB, _Src.NOW - 200 * 86400) for i in range(30)]
+    src = _Src(old)
+    files, rep = select_files(src, ["/sdcard/DCIM"], max_files=5000, bucket_bytes=100 * MB, total_bytes=0, now=_Src.NOW)
+    assert len(files) == 10 and 7 in src.asked and 365 in src.asked and rep["window_days"] == 365
+
+
+def test_adb_media_index_listing_parses_rows_and_normalises_the_prefix():
+    from triage.adb import Adb
+
+    out = (
+        "Row: 0 _data=/storage/emulated/0/Android/media/com.whatsapp/WhatsApp/.trash/x, _size=NULL, date_modified=1790973114\n"
+        "Row: 1 _data=/storage/emulated/0/DCIM/Camera/IMG 1.jpg, _size=488567, date_modified=1790886305\n"
+        "Row: 2 _data=/storage/emulated/0/Download/a, b.pdf, _size=12, date_modified=7\n"
+    )
+    adb = Adb.__new__(Adb)
+    adb.shell = lambda cmd, timeout=60: type("R", (), {"ok": True, "stdout": out})()
+    assert adb.list_indexed_files() == [
+        ("/sdcard/DCIM/Camera/IMG 1.jpg", 488567, 1790886305),
+        ("/sdcard/Download/a, b.pdf", 12, 7),
+    ]
+
+
+def test_capped_selection_prefers_the_media_index_and_never_walks_the_storage():
+    from triage.caps import select_files
+
+    class Indexed(_Src):
+        def list_indexed_files(self):
+            return [(f"/sdcard/DCIM/{i}.jpg", 40 * MB, i) for i in range(50)] + [("/sdcard/Android/data/x/y.bin", 1, 1)]
+
+    src = Indexed([])
+    files, rep = select_files(src, ["/sdcard/DCIM"], max_files=5000, bucket_bytes=100 * MB, total_bytes=0)
+    assert files == ["/sdcard/DCIM/49.jpg", "/sdcard/DCIM/48.jpg"]  # newest two; the file outside the roots is ignored
+    assert src.asked == [] and rep["listing"] == "media index"

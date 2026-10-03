@@ -66,9 +66,14 @@ class AcquisitionSource(ABC):
     def list_files(self, root: str) -> list[str]:
         """List regular files under a device path (empty if absent/denied)."""
 
-    def list_files_detailed(self, root: str) -> list[tuple[str, int, int]]:
-        """``(path, size, mtime)`` per file. Sources that cannot report sizes say 0, which a
-        size-capped run treats as 'unknown, keep'."""
+    def list_indexed_files(self) -> list[tuple[str, int, int]] | None:
+        """A fast, sized, newest-first listing from the device's own file index, or ``None`` when
+        this source has no such index (the run then walks the storage)."""
+        return None
+
+    def list_files_detailed(self, root: str, days: int | None = None) -> list[tuple[str, int, int]]:
+        """``(path, size, mtime)`` per file, optionally only those modified within ``days``.
+        Sources that cannot report sizes say 0, which a size-capped run treats as 'unknown, keep'."""
         return [(p, 0, 0) for p in self.list_files(root)]
 
     @abstractmethod

@@ -17,6 +17,8 @@ stateless subprocess path when the persistent process is unavailable.
 
 from __future__ import annotations
 
+import re
+import tempfile
 import os
 import shutil
 import subprocess
@@ -277,16 +279,16 @@ class Adb:
             # Already cancelled — don't even launch a new adb process.
             return AdbResult(printable, 130, "", "cancelled before dispatch")
 
+        # Output goes to temp files, not pipes: this loop polls without reading, so a pipe fills
+        # at ~64 KB and blocks the child for good — a big `find` listing used to "time out" and
+        # come back empty. A file has no such limit.
+        out_f = tempfile.TemporaryFile()
+        err_f = tempfile.TemporaryFile()
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=not binary,
-                encoding="utf-8" if not binary else None,
-                errors="replace" if not binary else None,
-            )
+            proc = subprocess.Popen(cmd, stdout=out_f, stderr=err_f)
         except Exception as exc:  # pragma: no cover - defensive
+            out_f.close()
+            err_f.close()
             return AdbResult(printable, 1, "", str(exc))
 
         if token is not None:
@@ -317,20 +319,17 @@ class Adb:
                     printable, 130, "", "cancelled — process terminated mid-transfer"
                 )
 
-            try:
-                out, err = proc.communicate(timeout=5)
-            except Exception:
-                out, err = "" if not binary else b"", ""
-            return AdbResult(
-                printable,
-                ret,
-                (out or "") if not binary else "",
-                err if isinstance(err, str) else (err or b"").decode("utf-8", "replace"),
-            )
+            out_f.seek(0)
+            err_f.seek(0)
+            out = out_f.read().decode("utf-8", "replace") if not binary else ""
+            err = err_f.read().decode("utf-8", "replace")
+            return AdbResult(printable, ret, out, err)
         except Exception as exc:  # pragma: no cover - defensive
             _kill_process(proc)
             return AdbResult(printable, 1, "", str(exc))
         finally:
+            out_f.close()
+            err_f.close()
             if token is not None:
                 token.unregister_process(proc)
 
@@ -404,11 +403,38 @@ class Adb:
             return []
         return [ln.strip() for ln in res.stdout.splitlines() if ln.strip()]
 
-    def list_files_detailed(self, root: str, timeout: int = 120) -> list[tuple[str, int, int]]:
+    _MEDIA_ROW = re.compile(r"^Row: \d+ _data=(.*), _size=(\d+), date_modified=(\d+)\s*$")
+
+    def list_indexed_files(self, timeout: int = 120) -> list[tuple[str, int, int]]:
+        """Every file Android's media index knows (photos, video, audio, downloads, documents,
+        WhatsApp backups...) as ``(path, size, mtime)``, newest first, with paths under ``/sdcard``.
+
+        Reading the index takes seconds where walking 100+ GB of shared storage file by file takes
+        minutes, because the index is a database query, not a storage walk. It lists what Android
+        has indexed, not necessarily every byte on the volume; the caller says so. Empty when the
+        provider cannot be queried (the caller then walks the storage instead)."""
+        res = self.shell(
+            'content query --uri content://media/external/file --projection _data:_size:date_modified --sort "date_modified DESC"',
+            timeout=timeout,
+        )
+        if not res.ok:
+            return []
+        out: list[tuple[str, int, int]] = []
+        for ln in res.stdout.splitlines():
+            m = self._MEDIA_ROW.match(ln)
+            if m:  # a NULL size is a directory or an unindexed stub: not a file to pull
+                path = m.group(1).replace("/storage/emulated/0/", "/sdcard/", 1)
+                out.append((path, int(m.group(2)), int(m.group(3))))
+        return out
+
+    def list_files_detailed(self, root: str, days: int | None = None, timeout: int = 120) -> list[tuple[str, int, int]]:
         """Like :meth:`list_files` but with each file's size in bytes and mtime (epoch seconds),
         which a size-capped run needs to choose what to pull. Empty if the device's ``stat`` does
-        not support ``-c`` (the caller then falls back to the plain listing)."""
-        res = self.shell(f"find '{root}' -type f -exec stat -c '%s %Y %n' {{}} + 2>/dev/null", timeout=timeout)
+        not support ``-c`` (the caller then falls back to the plain listing). ``days`` restricts
+        the walk to files modified within that many days, which is what keeps a size-capped run
+        from sizing every file on a large phone."""
+        recent = f"-mtime -{int(days)} " if days else ""
+        res = self.shell(f"find '{root}' -type f {recent}-exec stat -c '%s %Y %n' {{}} + 2>/dev/null", timeout=timeout)
         if not res.ok:
             return []
         out: list[tuple[str, int, int]] = []
