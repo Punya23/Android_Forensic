@@ -36,6 +36,7 @@ export default {
         info: "rgb(var(--color-info) / <alpha-value>)",
       },
       fontFamily: {
+        dot: ["Doto Variable", "ui-monospace", "monospace"],
         sans: ["Inter Variable", "ui-sans-serif", "system-ui", "sans-serif"],
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
