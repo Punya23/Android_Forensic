@@ -22,7 +22,7 @@ export function ContactsView({ caseId }: { caseId: string }) {
     );
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader title="Contacts" sub={`${data.length} contacts (Tier 1 · helper APK)`} />
       <Filters query={query} onQuery={setQuery} placeholder="Search name or number…" />
       <div className="card overflow-auto flex-1">

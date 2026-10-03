@@ -223,7 +223,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
 
   if (isEmpty) {
     return (
-      <div className="p-6 max-w-6xl mx-auto">
+      <div className="p-4">
         {header}
         <div className="card p-8 max-w-3xl">
           <div className="text-warn font-semibold mb-2">
@@ -253,7 +253,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
   const isDraft = report.approved === false || !report.tester;
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4">
       {header}
 
       {/* ---- Draft / unvalidated banner ---- */}

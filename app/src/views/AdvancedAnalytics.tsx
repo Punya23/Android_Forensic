@@ -349,7 +349,7 @@ export function AdvancedAnalyticsView({
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="p-4">
       {header}
 
       {/* Meta */}

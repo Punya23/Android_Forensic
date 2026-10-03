@@ -35,7 +35,7 @@ export function DeletedMediaView({ caseId }: { caseId: string }) {
   const s = data?.summary;
 
   return (
-    <div className="p-6 h-full overflow-auto">
+    <div className="p-4 h-full overflow-auto">
       <SectionHeader
         title="Deleted &amp; Trashed Media"
         sub="Deleted photos and videos recovered from Android's trash (11+); kept about 30 days."

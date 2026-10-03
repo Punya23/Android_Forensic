@@ -595,7 +595,7 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
 
   if (nothingCollected) {
     return (
-      <div className="p-6 max-w-5xl mx-auto">
+      <div className="p-4">
         {header}
         {standingNotice}
         <div className="card p-8 max-w-3xl">
@@ -631,7 +631,7 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4">
       {header}
       {standingNotice}
       {anyRandomised && <RandomisedMacExplainer />}

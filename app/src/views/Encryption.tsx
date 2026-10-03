@@ -250,7 +250,7 @@ export function EncryptionView({ caseId }: { caseId: string }) {
   // Honest empty state: an absent object means the determination was never made.
   if (!captured) {
     return (
-      <div className="p-6 max-w-5xl mx-auto">
+      <div className="p-4">
         {header}
         <div className="card p-6 max-w-3xl">
           <div className="text-warn font-semibold mb-2">
@@ -291,7 +291,7 @@ export function EncryptionView({ caseId }: { caseId: string }) {
   const perUser = s.per_user ?? [];
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4">
       {header}
 
       <Banner state={unlock} />

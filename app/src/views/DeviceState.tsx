@@ -266,7 +266,7 @@ export function DeviceStateView({ caseId }: { caseId: string }) {
   // Honest empty state: no snapshot means reversal is unverified, not successful.
   if (!captured) {
     return (
-      <div className="p-6 max-w-5xl mx-auto">
+      <div className="p-4">
         {header}
         <div className="card p-6 max-w-3xl">
           <div className="text-warn font-semibold mb-2">
@@ -311,7 +311,7 @@ export function DeviceStateView({ caseId }: { caseId: string }) {
   const returned = diff.returned_to_found_state ?? summary.returned_to_found_state;
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4">
       {header}
 
       <Banner verdict={verdict} />

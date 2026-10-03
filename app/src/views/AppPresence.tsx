@@ -277,7 +277,7 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
   if (loading) return <div className="p-8 text-muted text-sm animate-pulse">Loading app-presence reconstruction…</div>;
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="p-4">
       {/* Header */}
       <div className="mb-5">
         <h1 className="text-xl font-semibold tracking-tight mb-1 flex items-center gap-2">

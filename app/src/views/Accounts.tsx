@@ -25,7 +25,7 @@ export function AccountsView({ caseId }: { caseId: string }) {
     );
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader title="Device Accounts" sub={`${data.length} device account(s) — proves which app identities exist`} />
       <Filters query={query} onQuery={setQuery} placeholder="Search account, type, or app…" />
       <div className="card overflow-auto flex-1">

@@ -92,7 +92,7 @@ export function KnowledgeBaseView() {
   if (loading) return <div className="p-8 text-muted">Loading knowledge base…</div>;
 
   return (
-    <div className="p-6 h-full overflow-auto">
+    <div className="p-4 h-full overflow-auto">
       <SectionHeader
         title="Knowledge Base"
         sub="Prior-case studies and learned artifact priors that inform collection planning. Never evidence — planning input only."

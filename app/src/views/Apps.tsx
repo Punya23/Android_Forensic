@@ -78,7 +78,7 @@ export function AppsView({ caseId }: { caseId: string }) {
   const messaging = data.filter((a) => a.category === "messaging");
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader title="Installed Apps" sub={`${data.length} packages · ${notable.length} of interest`} />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">

@@ -40,7 +40,7 @@ export function TaggedView({ caseId, setView }: { caseId: string; setView: (v: V
     );
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader title="Tagged Items" sub={`${tags.length} bookmarked for follow-up`} />
       <input
         className="input max-w-xs mb-3"

@@ -223,7 +223,7 @@ export function RecentTasksView({ caseId }: { caseId: string }) {
   const abxCount = tasks.filter((t) => t.encoding === "abx").length;
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="p-4">
       <Header />
 
       {/* Volatility banner — governs every reading of this page. */}

@@ -56,7 +56,7 @@ export function OverviewView({ caseId, setView }: { caseId: string; setView: (v:
   const mediaSum = summary.media_inventory_summary;
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="p-4">
       {/* Disclaimer banner */}
       <div className="card border-accent/40 bg-accent/5 p-3 mb-4 text-sm flex flex-col sm:flex-row gap-1 sm:gap-2">
         <span className="text-accent font-semibold shrink-0">TRIAGE PREVIEW</span>

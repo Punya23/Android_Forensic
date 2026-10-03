@@ -301,7 +301,7 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
   const interest = summary?.interest_points ?? 0;
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-4 space-y-3">
       <div className="flex items-start justify-between gap-3">
         <SectionHeader
           title="Location Trace"

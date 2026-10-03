@@ -32,7 +32,7 @@ export function BrowserView({ caseId }: { caseId: string }) {
     );
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader title="Browser History" sub={`${data.length} URLs`} />
       <Filters query={query} onQuery={setQuery} placeholder="Search URL or title…" />
       <div className="card overflow-auto flex-1">

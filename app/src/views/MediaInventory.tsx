@@ -73,7 +73,7 @@ export function MediaInventoryView({ caseId }: { caseId: string }) {
   );
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader title="Media Inventory" sub={`${data.length} MediaStore entries (Tier 1 · metadata only)`} />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">

@@ -300,7 +300,7 @@ export function RecoveredView({ caseId }: { caseId: string }) {
     return (
       // Zero carved rows does NOT mean nothing was deleted — the structural findings
       // still render here, and this is the case where they matter most.
-      <div className="p-6">
+      <div className="p-4">
         <SectionHeader
           title="Recovered / Deleted Data"
           sub="Carved from SQLite freelist, freeblocks, unallocated space & WAL"
@@ -323,7 +323,7 @@ export function RecoveredView({ caseId }: { caseId: string }) {
   ];
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader
         title="Recovered / Deleted Data"
         sub="Carved from SQLite freelist, freeblocks, unallocated space & WAL — never shown with the same weight as live data"

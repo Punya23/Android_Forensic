@@ -133,7 +133,7 @@ export function NotificationsView({ caseId }: { caseId: string }) {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="p-4">
       {Header}
 
       {/* Honesty banner — governs every reading of this page. */}

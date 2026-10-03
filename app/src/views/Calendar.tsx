@@ -31,7 +31,7 @@ export function CalendarView({ caseId }: { caseId: string }) {
     );
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader title="Calendar" sub={`${data.length} event(s)`} />
       <Filters query={query} onQuery={setQuery} placeholder="Search title, location, or notes…" />
       <div className="card overflow-auto flex-1">

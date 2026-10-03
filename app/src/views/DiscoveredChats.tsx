@@ -61,7 +61,7 @@ export function DiscoveredChatsView({ caseId }: { caseId: string }) {
   const recovered = messages.length - live;
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader
         title="Other Chat Apps"
         sub="Generic Dynamic App Finder — chat tables auto-detected in unknown app databases"

@@ -437,7 +437,7 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
 
   if (apps.length === 0 && signalDbs.length === 0 && fcm.length === 0) {
     return (
-      <div className="p-6 max-w-5xl mx-auto">
+      <div className="p-4">
         {header}
         {thesis}
         <div className="card p-8 max-w-3xl">
@@ -462,7 +462,7 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4">
       {header}
       {thesis}
 

@@ -150,7 +150,7 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
   const hasProfile = !!profile;
 
   return (
-    <div className="p-6 h-full overflow-auto">
+    <div className="p-4 h-full overflow-auto">
       <SectionHeader
         title="Case Intelligence"
         sub="AI-surfaced investigative leads — every lead cites its source and must be verified by a human examiner."

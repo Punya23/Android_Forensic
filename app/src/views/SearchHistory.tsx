@@ -188,7 +188,7 @@ export function SearchHistoryView({ caseId }: { caseId: string }) {
   // Honest empty state.
   if (data.length === 0) {
     return (
-      <div className="p-6">
+      <div className="p-4">
         <SectionHeader
           title="Search History"
           sub="Browser history databases · Google app cache"
@@ -233,7 +233,7 @@ export function SearchHistoryView({ caseId }: { caseId: string }) {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="p-4">
       <SectionHeader
         title="Search History"
         sub={`${data.length} queries recovered`}

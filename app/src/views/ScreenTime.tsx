@@ -612,7 +612,7 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
   // Honest empty state — say which of "not acquired" / "not present" applies and why.
   if (events.length === 0 && usage.length === 0) {
     return (
-      <div className="p-6">
+      <div className="p-4">
         <SectionHeader
           title="Screen Time & App Usage"
           sub="dumpsys power · batterystats · usagestats"
@@ -652,7 +652,7 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
   const suspiciousCount = usage.filter((a) => a.is_suspicious).length;
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="p-4">
       <SectionHeader
         title="Screen Time & App Usage"
         sub={`${events.length} screen events · ${usage.length} apps with usage rows`}

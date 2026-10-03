@@ -59,7 +59,7 @@ export function CasesView({ onOpenCase }: { onOpenCase: (id: string) => void }) 
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="p-4">
       <SectionHeader
         title="Case History"
         sub="Every case ever acquired on this installation, indexed like a database — search, reopen, or pull up any past report."

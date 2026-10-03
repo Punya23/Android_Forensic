@@ -21,7 +21,7 @@ export function CallsView({ caseId }: { caseId: string }) {
   // uses (`pm grant`, not a Dialer role swap — see pipeline._run_tier1_calllog_helper).
   if (data.length === 0) {
     return (
-      <div className="p-6">
+      <div className="p-4">
         <SectionHeader title="Calls" />
         <div className="card p-6 max-w-2xl">
           <div className="text-warn font-semibold mb-2">Not acquired at this tier</div>
@@ -44,7 +44,7 @@ export function CallsView({ caseId }: { caseId: string }) {
   }
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader title="Calls" sub={`${data.length} call records`} />
       <input className="input max-w-xs mb-3" placeholder="Search number or name…" value={query} onChange={(e) => setQuery(e.target.value)} />
       <div className="card overflow-auto flex-1">

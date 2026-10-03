@@ -406,7 +406,7 @@ export function GraphView({ caseId }: { caseId: string }) {
   if (loading) return <div className="p-8 text-muted">Loading communication graph…</div>;
   if (error) {
     return (
-      <div className="p-6 h-full">
+      <div className="p-4 h-full">
         <SectionHeader title="Communication Network" />
         <div role="alert" className="card p-4 text-sm">
           <div className="text-red-500">Couldn't load the communication graph: {error}</div>
@@ -423,7 +423,7 @@ export function GraphView({ caseId }: { caseId: string }) {
   }
   if (!graph || !drawn || (showOwner && drawn.nodes.length <= 1)) {
     return (
-      <div className="p-6 h-full">
+      <div className="p-4 h-full">
         <SectionHeader title="Communication Network" />
         <DatasetEmpty
           dataset="graph"
@@ -446,7 +446,7 @@ export function GraphView({ caseId }: { caseId: string }) {
   const { x: vx, y: vy, k } = viewRef.current;
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader
         title="Communication Network"
         sub={`${graph.stats.participants} participants · ${graph.stats.interactions} interactions · ${graph.stats.channels.join(", ")}`}

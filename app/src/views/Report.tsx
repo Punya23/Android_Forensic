@@ -61,7 +61,7 @@ export function ReportView({ caseId }: { caseId: string }) {
   }
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader
         title="Report"
         sub={tab === "summary" ? "A short, plain report for readers who will give it two pages. The AI and raw tabs open the full NIST/SWGDE-aligned report with its BSA 2023 s.63 certificate block." : "The full report — NIST/SWGDE-aligned, with a BSA 2023 s.63 Schedule certificate block. Printable to PDF from the browser."}

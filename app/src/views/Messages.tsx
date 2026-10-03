@@ -51,14 +51,14 @@ export function MessagesView({ caseId }: { caseId: string }) {
   if (loading) return <div className="p-8 text-muted">Loading messages…</div>;
   if (data.length === 0)
     return (
-      <div className="p-6 h-full flex flex-col items-center justify-center gap-4">
+      <div className="p-4 h-full flex flex-col items-center justify-center gap-4">
         <EmptyState dataset="messages" title="No messages" detail="No chat exports were ingested and no chat databases yielded rows." />
         <ImportWhatsAppControl caseId={caseId} onImported={() => setReloadKey((k) => k + 1)} />
       </div>
     );
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader
         title="Messages"
         sub={`${data.length} total · ${deletedCount} recovered/deleted`}

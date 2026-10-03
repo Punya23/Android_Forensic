@@ -106,7 +106,7 @@ export function GoogleAccountsView({ caseId }: { caseId: string }) {
   // rather than assert "no accounts on the device".
   if (data.length === 0) {
     return (
-      <div className="p-6">
+      <div className="p-4">
         <SectionHeader title="Registered Accounts" sub="dumpsys account" right={tierBadge} />
         <div className="card p-6 max-w-2xl">
           <div className="text-warn font-semibold mb-2">Empty dataset — cause not determinable from this view</div>

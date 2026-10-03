@@ -408,7 +408,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
   );
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4">
       {/* Header */}
       <div className="mb-5">
         <h1 className="text-xl font-semibold tracking-tight mb-1 flex items-center gap-2">

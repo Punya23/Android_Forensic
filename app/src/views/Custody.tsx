@@ -79,7 +79,7 @@ export function CustodyView({ caseId }: { caseId: string }) {
   }, [caseId]);
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader
         title="Chain of Custody"
         sub="Append-only audit trail + per-artifact SHA-256 manifest (NIST SP 800-101r1 / SWGDE-aligned)"

@@ -150,7 +150,7 @@ export function HomeView({
   ];
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-4">
+    <div className="p-4 space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
@@ -182,7 +182,7 @@ export function HomeView({
           {loaded && <p className="text-sm text-muted mt-1">Start a new acquisition to create the first case.</p>}
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
           {/* Posture + what the case holds */}
           <div className="glass p-5 lg:col-span-7 lg:order-1" style={bloom("0%", "0%")}>
             <div className="flex items-start justify-between gap-3">
@@ -237,7 +237,7 @@ export function HomeView({
           </div>
 
           {/* Case numbers */}
-          <div className="grid grid-cols-2 gap-4 lg:col-span-5 lg:order-2">
+          <div className="grid grid-cols-2 gap-3 lg:col-span-5 lg:order-2">
             {tiles.map((t) => (
               <button
                 key={t.label}

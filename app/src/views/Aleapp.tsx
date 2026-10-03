@@ -249,7 +249,7 @@ export function AleappView({ caseId }: { caseId: string }) {
       )}
 
       {modules.length === 0 ? (
-        <div className="p-6">
+        <div className="p-4">
           <EmptyState
             dataset="aleapp"
         title="ALEAPP ran but parsed no artifact modules."

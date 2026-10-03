@@ -115,7 +115,7 @@ export function TimelineView({ caseId, setView }: { caseId: string; setView: (v:
   }
 
   return (
-    <div className="p-6 h-full flex flex-col">
+    <div className="p-4 h-full flex flex-col">
       <SectionHeader title="Timeline" sub={`${data.length} events across calls, messages, media & locations`} />
       <Filters query={query} onQuery={setQuery} from={from} to={to} onFrom={setFrom} onTo={setTo} placeholder="Search events…" />
       <div className="flex flex-wrap gap-2 mb-4">
