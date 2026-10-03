@@ -411,7 +411,7 @@ export function Sidebar({
                       onClick={() => setView(item.key)}
                       className={`group w-full text-left mb-0.5 px-3 py-2 rounded-xl text-[13px] font-medium flex items-center gap-3 transition-all duration-200 ease-out active:scale-[0.96] ${
                         active
-                          ? "bg-accent text-white shadow-[0_8px_20px_-8px_rgb(var(--color-accent)/0.85)]"
+                          ? "neon"
                           : "text-ink/70 hover:bg-panel-2 hover:text-ink hover:translate-x-1 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:translate-x-0"
                       }`}
                     >
