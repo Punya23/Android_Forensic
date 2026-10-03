@@ -152,7 +152,7 @@ function Breakdown({ title, map }: { title: string; map?: Record<string, number>
     .sort((a, b) => b[1] - a[1]);
   if (entries.length === 0) return null;
   return (
-    <div className="card p-3">
+    <div className="card p-4">
       <div className="text-[11px] uppercase tracking-wider text-muted mb-2">{title}</div>
       <div className="flex flex-wrap gap-2">
         {entries.map(([label, n]) => (
@@ -231,7 +231,7 @@ export function CellTowerView({ caseId }: { caseId: string }) {
       </div>
 
       {/* THE caveat. Cell identifiers are routinely over-read as locations. */}
-      <div className="card p-3 mb-3 border-deletion/50 bg-deletion/5 text-xs text-deletion leading-relaxed">
+      <div className="card p-4 mb-3 border-deletion/50 bg-deletion/5 text-xs text-deletion leading-relaxed">
         <span className="font-semibold">A cell ID is not a location. </span>
         A serving-cell identifier places the handset somewhere inside that cell's coverage area —
         which can span many square kilometres in rural deployments, overlaps neighbouring cells, and
@@ -243,7 +243,7 @@ export function CellTowerView({ caseId }: { caseId: string }) {
         if a geographic claim is needed.
       </div>
 
-      <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+      <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">This is volatile state, not a location history. </span>
         <code className="font-mono">dumpsys telephony.registry</code> reports the{" "}
         <em>current and recently observed</em> serving cell held in memory by the telephony

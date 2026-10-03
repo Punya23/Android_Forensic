@@ -258,7 +258,7 @@ export function KnowledgeBaseView() {
             ) : (
               <div className="space-y-2">
                 {results.map((r) => (
-                  <div key={r.case_number} className="card p-3 text-xs">
+                  <div key={r.case_number} className="card p-4 text-xs">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono text-[11px] text-accent">{r.case_number}</span>
                       <span className="text-ink">{r.title}</span>
@@ -337,7 +337,7 @@ function StudyCard({ s }: { s: CaseStudy }) {
   const [open, setOpen] = useState(false);
   const synthetic = s.source.toLowerCase().includes("synthetic");
   return (
-    <div className="card p-3">
+    <div className="card p-4">
       <button
         className="w-full text-left"
         onClick={() => setOpen((o) => !o)}

@@ -201,7 +201,7 @@ function Section({
  */
 function RandomisedMacExplainer() {
   return (
-    <div className="card p-3 mb-3 border-recovered/40 bg-recovered/5 text-xs text-recovered leading-relaxed">
+    <div className="card p-4 mb-3 border-recovered/40 bg-recovered/5 text-xs text-recovered leading-relaxed">
       <span className="font-semibold">MAC randomisation is in effect on one or more entries. </span>
       Android 10+ generates a <em>per-SSID randomised</em> MAC address. The address shown here is
       that randomised address — it is <strong>not</strong> the device's hardware (factory) MAC, and
@@ -299,7 +299,7 @@ function HotspotPostureSection({ hotspot }: { hotspot: WifiLiveHotspot | null | 
   return (
     <Section title="Hotspot Posture">
       {/* Standing forensic caveat — always visible */}
-      <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+      <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">Standing forensic caveats: </span>
         <ul className="list-disc pl-4 mt-1 space-y-1">
           <li>
@@ -561,7 +561,7 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
 
   // Standing caveats apply whether or not any rows came back.
   const standingNotice = (
-    <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+    <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
       <span className="font-semibold">Standing forensic caveats for this entire page: </span>
       <ul className="list-disc pl-4 mt-1 space-y-1">
         <li>
@@ -988,7 +988,7 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
           count={commands.length}
           note="Exact shell commands this dataset was derived from. All are read-only; none modify device state. The same list is recorded in the chain-of-custody audit trail."
         >
-          <div className="card p-3 space-y-1.5">
+          <div className="card p-4 space-y-1.5">
             {commands.map((c, i) => (
               <div key={i} className="flex items-start gap-2 font-mono text-[11px]">
                 <span

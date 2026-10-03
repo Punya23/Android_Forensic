@@ -222,7 +222,7 @@ function CollectorRunPanel({ loaded, manifest }: { loaded: boolean; manifest: Co
       </div>
 
       {manifest.denied.length > 0 && (
-        <div className="card p-3 border-deletion/40 bg-deletion/5">
+        <div className="card p-4 border-deletion/40 bg-deletion/5">
           <div className="text-sm font-semibold text-deletion mb-1">
             {manifest.denied.length} collector{manifest.denied.length === 1 ? "" : "s"} denied this run
           </div>

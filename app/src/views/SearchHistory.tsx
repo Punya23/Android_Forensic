@@ -245,7 +245,7 @@ export function SearchHistoryView({ caseId }: { caseId: string }) {
       />
 
       {/* Forensic caveat — attribution is the whole problem with this artifact. */}
-      <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+      <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">Forensic notice: </span>
         A query in browser history establishes that the query was{" "}
         <strong>issued from this browser profile on this device</strong> — nothing more. It does not identify

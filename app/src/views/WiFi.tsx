@@ -243,7 +243,7 @@ function CollectorWifiSection({ caseId }: { caseId: string }) {
         </p>
       </div>
 
-      <div className="card p-3 mb-4 border-recovered/40 bg-recovered/5 text-xs text-recovered leading-relaxed">
+      <div className="card p-4 mb-4 border-recovered/40 bg-recovered/5 text-xs text-recovered leading-relaxed">
         <span className="font-semibold">Different method, different fields. </span>
         Each row keeps the helper's own <code className="font-mono">type</code> discriminator —{" "}
         <em>current_connection</em>, <em>saved_network</em> or <em>scan_result</em> — and each type
@@ -454,7 +454,7 @@ export function WifiView({ caseId }: { caseId: string }) {
       </div>
 
       {/* Forensic disclaimer */}
-      <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+      <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">Forensic notice: </span>
         Credentials were pulled via{" "}
         <code className="font-mono">su&nbsp;-c&nbsp;cp</code> from{" "}

@@ -144,7 +144,7 @@ function Prop({
 }) {
   const missing = raw === "";
   return (
-    <div className="card p-3">
+    <div className="card p-4">
       <div className="text-[11px] uppercase tracking-wider text-muted mb-1">{label}</div>
       <div className={`font-mono text-sm mb-1.5 break-all ${missing ? "text-warn" : "text-ink"}`}>
         {missing ? "not captured" : raw}
@@ -329,7 +329,7 @@ export function EncryptionView({ caseId }: { caseId: string }) {
 
       {/* Reachability, stated plainly. */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
-        <div className="card p-3">
+        <div className="card p-4">
           <div className="text-[11px] uppercase tracking-wider text-muted mb-1">
             Credential-Encrypted storage
           </div>
@@ -338,7 +338,7 @@ export function EncryptionView({ caseId }: { caseId: string }) {
             /data/data and /data/user/0 — app databases, message stores, media caches.
           </div>
         </div>
-        <div className="card p-3">
+        <div className="card p-4">
           <div className="text-[11px] uppercase tracking-wider text-muted mb-1">
             Device-Encrypted storage
           </div>
@@ -347,7 +347,7 @@ export function EncryptionView({ caseId }: { caseId: string }) {
             /data/user_de/0 — available from boot; contains little of evidential substance.
           </div>
         </div>
-        <div className="card p-3">
+        <div className="card p-4">
           <div className="text-[11px] uppercase tracking-wider text-muted mb-1">
             Screen at capture time
           </div>

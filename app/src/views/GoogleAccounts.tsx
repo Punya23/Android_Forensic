@@ -153,7 +153,7 @@ export function GoogleAccountsView({ caseId }: { caseId: string }) {
       />
 
       {/* Forensic caveat — presence is not ownership. */}
-      <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+      <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">Forensic notice: </span>
         <code className="font-mono">dumpsys account</code> lists the accounts registered with Android's{" "}
         AccountManager <strong>at the moment of capture</strong>. It shows{" "}

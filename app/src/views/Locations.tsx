@@ -1091,7 +1091,7 @@ export function LocationsView({
               is performed, so no place name is ever asserted.
             </p>
             {!places ? (
-              <div className="card p-3 text-xs text-muted mb-6">
+              <div className="card p-4 text-xs text-muted mb-6">
                 Place identification did not run or produced no result for this case.
               </div>
             ) : (
@@ -1135,7 +1135,7 @@ export function LocationsView({
               explanations (a night shift, travel, a new phone, a photo forwarded from elsewhere).
             </p>
             {anomalies.length === 0 ? (
-              <div className="card p-3 text-xs text-muted mb-6">
+              <div className="card p-4 text-xs text-muted mb-6">
                 No anomalies were flagged. This means these specific checks found nothing in the
                 messaging-app media points collected — it is not a finding that movement was
                 unremarkable, and a different or larger media set could change the picture.

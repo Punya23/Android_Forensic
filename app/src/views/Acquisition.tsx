@@ -1442,7 +1442,7 @@ export function AcquisitionView({
           <div className="label">Open an existing case</div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {cases.map((c) => (
-              <button key={c.case_id} onClick={() => onOpenCase(c.case_id)} className="card p-3 text-left hover:border-accent/50 transition-colors">
+              <button key={c.case_id} onClick={() => onOpenCase(c.case_id)} className="card p-4 text-left hover:border-accent/50 transition-colors">
                 <div className="font-mono text-sm text-accent">{c.case_id}</div>
                 <div className="text-xs text-muted mt-1">{c.examiner} · {c.device}</div>
               </button>

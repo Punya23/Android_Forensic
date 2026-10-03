@@ -294,7 +294,7 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
       </div>
 
       {/* Forensic notice */}
-      <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+      <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">Forensic notice: </span>
         Records were read with root from <code className="font-mono">/data/system/packages.xml</code>,{" "}
         <code className="font-mono">/data/system/usagestats/</code> and the retained package-usage
@@ -422,7 +422,7 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
           </div>
 
           {/* Footnote the whole view depends on. */}
-          <div className="card p-3 mb-4 text-xs text-muted leading-relaxed">
+          <div className="card p-4 mb-4 text-xs text-muted leading-relaxed">
             <span className="font-semibold text-ink">Installation evidence is not execution evidence. </span>
             An <span className="text-recovered">install record</span> shows the package database once
             held an entry for the package — it can be produced by a silent install, a restore from
@@ -617,7 +617,7 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
 
           {/* Engine-authored summary text, rendered verbatim. */}
           {summary.note && (
-            <div className="card p-3 mt-3 text-xs text-muted leading-relaxed">
+            <div className="card p-4 mt-3 text-xs text-muted leading-relaxed">
               <div className="text-[10px] uppercase tracking-wider text-muted mb-1">
                 Engine summary (verbatim)
               </div>
@@ -625,7 +625,7 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
             </div>
           )}
           {summary.caveats && summary.caveats.length > 0 && (
-            <div className="card p-3 mt-3">
+            <div className="card p-4 mt-3">
               <div className="text-[10px] uppercase tracking-wider text-muted mb-1">
                 Dataset-level caveats
               </div>

@@ -431,7 +431,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
           right={<TierBadge label="Tier 0 — Read-only" />}
         />
 
-        <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+        <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
           <span className="font-semibold">MAC addresses here are redacted by Android. </span>
           From Android 8.0 onwards, the OS returns Bluetooth (and Wi-Fi) hardware addresses to
           non-privileged <code className="font-mono">dumpsys</code> callers with the first four
@@ -577,7 +577,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
         />
 
         {/* The single most over-claimed field in Bluetooth forensics. */}
-        <div className="card p-3 mb-4 border-deletion/50 bg-deletion/5 text-xs text-deletion leading-relaxed">
+        <div className="card p-4 mb-4 border-deletion/50 bg-deletion/5 text-xs text-deletion leading-relaxed">
           <span className="font-semibold">
             A bond timestamp is when the pairing record was written — nothing more.
           </span>{" "}
@@ -589,7 +589,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
         </div>
 
         {bondStoreEncrypted && (
-          <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+          <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
             <span className="font-semibold">Bond store was encrypted and could not be parsed. </span>
             <code className="font-mono">bt_config.conf</code> was present on the device but its
             contents were unreadable in the current encryption state (file-based encryption, device
@@ -600,7 +600,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
         )}
 
         {reportCaveats.length > 0 && (
-          <div className="card p-3 mb-4">
+          <div className="card p-4 mb-4">
             <div className="text-[11px] uppercase tracking-wider text-muted mb-1">
               Engine caveats — bond store acquisition
             </div>
@@ -609,7 +609,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
         )}
 
         {adapter.length > 0 && (
-          <div className="card p-3 mb-4">
+          <div className="card p-4 mb-4">
             <div className="text-[11px] uppercase tracking-wider text-muted mb-2">
               Local adapter (this handset)
             </div>
@@ -776,7 +776,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
         />
 
         {/* The counterpoint to the bond-timestamp warning above. */}
-        <div className="card p-3 mb-4 border-live/50 bg-live/5 text-xs text-live leading-relaxed">
+        <div className="card p-4 mb-4 border-live/50 bg-live/5 text-xs text-live leading-relaxed">
           <span className="font-semibold">
             A transfer row is evidence of an active link at that moment.
           </span>{" "}
@@ -810,7 +810,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
             </div>
 
             {(transferSummary.undated_rows ?? 0) > 0 && (
-              <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+              <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
                 {transferSummary.undated_rows} transfer row(s) carry no usable timestamp. They are
                 listed below without a time rather than being given a fabricated one.
               </div>
@@ -910,7 +910,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
             <div className="text-[11px] uppercase tracking-wider text-muted mb-2">
               Connection recency ranking (bluetooth_db)
             </div>
-            <div className="card p-3 mb-3 border-deletion/50 bg-deletion/5 text-xs text-deletion leading-relaxed">
+            <div className="card p-4 mb-3 border-deletion/50 bg-deletion/5 text-xs text-deletion leading-relaxed">
               <span className="font-semibold">
                 Android's <code className="font-mono">last_active_time</code> is not a time.
               </span>{" "}
@@ -963,7 +963,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
           }
         />
 
-        <div className="card p-3 mb-4 border-recovered/40 bg-recovered/5 text-xs text-recovered leading-relaxed">
+        <div className="card p-4 mb-4 border-recovered/40 bg-recovered/5 text-xs text-recovered leading-relaxed">
           <span className="font-semibold">A third, distinct source — not dumpsys, not bt_config.conf. </span>
           These rows come from the Collector helper APK's own Android Bluetooth APIs, read
           without root. Each row keeps the helper's own <code className="font-mono">type</code>{" "}

@@ -466,7 +466,7 @@ export function RecentTasksView({ caseId }: { caseId: string }) {
           </p>
 
           {summary.headline_caveats && summary.headline_caveats.length > 0 && (
-            <div className="card p-3 mt-3">
+            <div className="card p-4 mt-3">
               <div className="text-[10px] uppercase tracking-wider text-muted mb-1">
                 Dataset-level caveats
               </div>

@@ -422,7 +422,7 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
   );
 
   const thesis = (
-    <div className="card p-3 mb-4 border-live/40 bg-live/5 text-xs text-live leading-relaxed">
+    <div className="card p-4 mb-4 border-live/40 bg-live/5 text-xs text-live leading-relaxed">
       <span className="font-semibold">
         &ldquo;Encrypted and present&rdquo; is a finding, not a failure.{" "}
       </span>
@@ -599,7 +599,7 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
           </div>
         )}
 
-        <div className="card p-3 mt-3 border-line text-xs text-muted leading-relaxed">
+        <div className="card p-4 mt-3 border-line text-xs text-muted leading-relaxed">
           <span className="font-semibold text-ink">
             {signalMessageCount} record(s) present in the Signal message dataset.
           </span>{" "}
@@ -618,7 +618,7 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
           </h2>
           <span className="text-xs text-muted">({fcm.length})</span>
         </div>
-        <div className="card p-3 mb-3 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+        <div className="card p-4 mb-3 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
           <span className="font-semibold">These are raw push-notification fragments, not messages. </span>
           Firebase Cloud Messaging payloads are transport artefacts recovered from the push
           subsystem. For an end-to-end-encrypted messenger the payload body is{" "}

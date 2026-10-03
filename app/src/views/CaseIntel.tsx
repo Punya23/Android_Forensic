@@ -867,7 +867,7 @@ function OutcomePanel({
 
 function FindingCard({ f }: { f: Finding }) {
   return (
-    <div className="card p-3">
+    <div className="card p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2 flex-wrap">
           <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${SEV_CLS[f.severity] ?? SEV_CLS.info}`}>

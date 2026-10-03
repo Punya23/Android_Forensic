@@ -413,7 +413,7 @@ export function AntiForensicsView({ caseId }: { caseId: string }) {
                     <p className="text-[11px] text-muted mb-2 leading-relaxed">{meta.note}</p>
                     <div className="space-y-2">
                       {rows.map((f, i) => (
-                        <div key={i} className="card p-3">
+                        <div key={i} className="card p-4">
                           <div className="flex flex-wrap items-center gap-2 mb-1">
                             <span className={`text-[10px] px-1.5 py-0.5 rounded ${meta.pill}`}>
                               {meta.label}
@@ -444,7 +444,7 @@ export function AntiForensicsView({ caseId }: { caseId: string }) {
           )}
 
           {summary.note && (
-            <div className="card p-3 mt-5 text-xs leading-relaxed">
+            <div className="card p-4 mt-5 text-xs leading-relaxed">
               <div className="text-[10px] uppercase tracking-wider text-muted mb-1">
                 Engine summary (verbatim)
               </div>
@@ -452,7 +452,7 @@ export function AntiForensicsView({ caseId }: { caseId: string }) {
             </div>
           )}
           {summary.caveats && summary.caveats.length > 0 && (
-            <div className="card p-3 mt-3">
+            <div className="card p-4 mt-3">
               <div className="text-[10px] uppercase tracking-wider text-muted mb-1">
                 Dataset-level caveats
               </div>

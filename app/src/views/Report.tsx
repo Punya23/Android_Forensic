@@ -97,7 +97,7 @@ export function ReportView({ caseId }: { caseId: string }) {
         </div>
       )}
       {showHistory && (
-        <div className="card p-3 mb-4 text-sm">
+        <div className="card p-4 mb-4 text-sm">
           <div className="text-[11px] uppercase tracking-wider text-muted mb-2">
             Report history — every generation kept, never overwritten
           </div>

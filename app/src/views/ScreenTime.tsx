@@ -443,7 +443,7 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
         }
       />
 
-      <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+      <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">A different collection method from the section below. </span>
         These rows come from <code className="font-mono">usage.json</code>, written by the installed
         Collector helper (<code className="font-mono">io.erakshak.collector</code>) calling{" "}
@@ -662,7 +662,7 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
       />
 
       {/* Forensic caveat — the single most important thing about this dataset. */}
-      <div className="card p-3 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
+      <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">Forensic notice: </span>
         These figures come from <code className="font-mono">dumpsys power</code>,{" "}
         <code className="font-mono">batterystats</code> and <code className="font-mono">usagestats</code>, which are{" "}

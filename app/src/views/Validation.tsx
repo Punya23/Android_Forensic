@@ -552,7 +552,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
             </div>
 
             {(covCounts["not-met"] ?? 0) > 0 && (
-              <div className="card p-3 mb-3 border-deletion/50 bg-deletion/10 text-xs text-deletion leading-relaxed">
+              <div className="card p-4 mb-3 border-deletion/50 bg-deletion/10 text-xs text-deletion leading-relaxed">
                 <span className="font-semibold">
                   {covCounts["not-met"]} assertion(s) are NOT MET.{" "}
                 </span>

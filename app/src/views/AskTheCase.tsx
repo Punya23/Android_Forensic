@@ -276,7 +276,7 @@ export function AskTheCaseView({ caseId }: { caseId: string }) {
                 <div className="space-y-2">
                   {t.response.search && <SearchedTerms search={t.response.search} />}
                   {t.response.answer ? (
-                    <div className="card p-3 border-accent/30">
+                    <div className="card p-4 border-accent/30">
                       <p className="text-sm text-ink leading-relaxed whitespace-pre-wrap">{t.response.answer}</p>
                       <div className="text-[10px] text-muted mt-2">{t.response.method}</div>
                     </div>

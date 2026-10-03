@@ -97,7 +97,7 @@ export function DeletedMediaView({ caseId }: { caseId: string }) {
 
 function TrashCard({ it }: { it: MediaStoreTrashItem }) {
   return (
-    <div className="card p-3">
+    <div className="card p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2 flex-wrap">
           <ConfidenceBadge c={it.confidence} />
