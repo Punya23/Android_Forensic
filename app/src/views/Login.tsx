@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../lib/api";
+import { Logo } from "../components/Logo";
 import type { Health } from "../lib/types";
 
 /**
@@ -39,7 +40,7 @@ export function LoginView({
     <div className="h-screen flex items-center justify-center bg-panel px-4">
       <form onSubmit={submit} className="card w-full max-w-sm p-8">
         <div className="text-center mb-6">
-          <div className="text-2xl font-bold text-accent">SNAGR</div>
+          <div className="flex justify-center"><Logo size={44} /></div>
           <div className="text-sm text-muted mt-1">Android Rapid Evidence Triage</div>
         </div>
 

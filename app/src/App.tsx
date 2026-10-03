@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ShieldCheck, Cpu, Usb, CircleUserRound, LogOut, Menu } from "lucide-react";
+import { Cpu, Usb, CircleUserRound, LogOut, Menu } from "lucide-react";
 import { api, hasAuthToken, setOnUnauthorized } from "./lib/api";
 import type { Health } from "./lib/types";
 import { TagProvider } from "./lib/tagStore";
@@ -59,6 +59,7 @@ import { ValidationView } from "./views/Validation";
 import { NotificationsView } from "./views/Notifications";
 import { AdvancedAnalyticsView } from "./views/AdvancedAnalytics";
 import { HomeView } from "./views/Home";
+import { Logo } from "./components/Logo";
 import { Select, type SelectOption } from "./components/fields";
 
 export default function App() {
@@ -298,9 +299,8 @@ function TopBar({
         <button className="md:hidden btn-ghost !px-2 !py-1.5" aria-label="Open menu" onClick={onMenu}>
           <Menu className="h-4 w-4" aria-hidden />
         </button>
-        <div className="md:hidden flex items-center gap-1.5 text-accent font-semibold">
-          <ShieldCheck className="h-[18px] w-[18px]" strokeWidth={2.25} aria-hidden />
-          SNAGR
+        <div className="md:hidden">
+          <Logo size={24} />
         </div>
         <span className="text-muted hidden md:inline">{crumb}</span>
         {caseId && <CaseSwitcher caseId={caseId} onChange={onSwitchCase} />}

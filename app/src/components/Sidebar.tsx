@@ -47,6 +47,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { Logo } from "./Logo";
 import type { CapabilityState, Health } from "../lib/types";
 import { useCapabilities } from "../lib/capabilities";
 import { ROOT_ACQUISITION } from "../lib/features";
@@ -358,9 +359,8 @@ export function Sidebar({
   return (
     <aside className="w-64 shrink-0 border-r border-line bg-panel/80 backdrop-blur flex flex-col">
       {/* Same height and rule as the top bar, so the two line up across every page. */}
-      <div className="h-14 shrink-0 px-4 border-b border-line flex items-center gap-2.5 text-[15px] font-semibold tracking-wide">
-        <ShieldCheck className="h-5 w-5 text-accent" strokeWidth={2.25} aria-hidden />
-        SNAGR
+      <div className="h-14 shrink-0 px-4 border-b border-line flex items-center">
+        <Logo size={30} />
       </div>
       <div className="px-3 pt-3 pb-1">
         <button
