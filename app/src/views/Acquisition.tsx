@@ -72,7 +72,7 @@ export function AcquisitionView({
   const [runAiSummary, setRunAiSummary] = useState(true);
   // Whether the plan may switch on root-only pulls. Collection scope is the examiner's
   // decision: a case brief alone must not be able to widen it without them saying so.
-  const [planAllowTier2, setPlanAllowTier2] = useState(ROOT_ACQUISITION);
+  const [planAllowTier2, setPlanAllowTier2] = useState(false);
   const [caseNumber, setCaseNumber] = useState("");
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [planning, setPlanning] = useState(false);
@@ -124,6 +124,15 @@ export function AcquisitionView({
     saved_at?: string;
   } | null>(null);
   const [watchingDevice, setWatchingDevice] = useState(false);
+  // Root-only acquisition stays hidden by default (ROOT_ACQUISITION, lib/features.ts)
+  // because the engine never attempts to root a phone itself — see the explanation
+  // rendered below. An examiner who has rooted the device themselves, outside this
+  // tool, can reveal the Tier-2 options for this session only; it never flips the
+  // compile-time default, and the checkboxes still stay disabled until the device
+  // check actually proves `su -c id` (rootConfirmed), so this toggle alone changes
+  // nothing on the device.
+  const [rootToolsUnlocked, setRootToolsUnlocked] = useState(false);
+  const showRootTools = ROOT_ACQUISITION || rootToolsUnlocked;
   const devicePollRef = useRef<number | null>(null);
   const autoReassertedRef = useRef<string | null>(null);
 
@@ -135,7 +144,7 @@ export function AcquisitionView({
   // /api/devices/check as device.rooted) — never assumed, and never left enabled on
   // the strength of a *previous* device's check.
   const rootConfirmed =
-    ROOT_ACQUISITION &&
+    showRootTools &&
     target?.kind === "real" &&
     deviceCheck?.ready === true &&
     deviceCheck.device?.rooted === true;
@@ -912,7 +921,7 @@ export function AcquisitionView({
             </div>
 
             {/* Scope consent: shown beside the plan it constrains. */}
-            {ROOT_ACQUISITION && (
+            {showRootTools && (
             <label className="flex items-start gap-2 cursor-pointer rounded-md border border-line p-2 mb-3">
               <input
                 type="checkbox"
@@ -1125,7 +1134,47 @@ export function AcquisitionView({
         </div>
       </div>
 
-      {ROOT_ACQUISITION && (
+      {/* Explains why the engine never roots a phone itself, and gives the examiner a
+          session-only opt-in to reveal the Tier-2 UI if they rooted the device themselves
+          by some other means. The opt-in never bypasses the real `su -c id` device check
+          below (rootConfirmed) — it only decides whether that section is shown at all. */}
+      {!showRootTools && (
+        <div className="card p-4 mb-4">
+          <div className="label mb-1">Root (Tier-2) acquisition — not offered by default</div>
+          <p className="text-xs text-muted mb-2 leading-relaxed">
+            Instagram, Snapchat, Telegram chat databases, saved Wi-Fi keys and a few system
+            stores live in app-private storage. Since Android 12, there is no non-root way
+            to read them over USB — <code className="text-accent">adb backup</code> excludes
+            app data and <code className="text-accent">run-as</code> only works on a
+            debuggable build. The only way in is a root shell (<code className="text-accent">su</code>).
+          </p>
+          <p className="text-xs text-muted mb-2 leading-relaxed">
+            This tool does not root the phone for you. Rooting means unlocking the
+            bootloader and flashing root (e.g. Magisk) — on almost every phone sold since
+            about 2017 that unlock step <strong>wipes all user data first</strong>, which
+            destroys the evidence before you can read it. The handful of methods that root
+            without wiping (bootrom/EDL-mode exploits) are specific to one chipset or model
+            and are the core, constantly-updated product of commercial tools like
+            Cellebrite, GrayKey and Magnet — out of scope for this triage engine.
+          </p>
+          <p className="text-xs text-muted mb-3 leading-relaxed">
+            If an examiner judges it appropriate for this case — e.g. the phone is already
+            rooted, or data loss from an unlock is acceptable and authorized — root it with
+            the device's own standard procedure outside this tool, then come back here.
+            Once the device genuinely proves a root shell, use the toggle below to reveal
+            the Tier-2 options; the checkboxes stay disabled until{" "}
+            <code className="text-accent">su -c id</code> actually succeeds.
+          </p>
+          <button
+            className="btn-secondary text-xs"
+            onClick={() => setRootToolsUnlocked(true)}
+          >
+            Show Tier-2 (root) options — device was rooted by the examiner
+          </button>
+        </div>
+      )}
+
+      {showRootTools && (
         <>
       {/* Tier-2 options (root). Gated on rootConfirmed, not target.kind === "real" — a
           real device with no root shell is the ordinary case (any retail phone from any

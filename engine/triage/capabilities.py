@@ -142,6 +142,22 @@ _T0 = "Tier 0 — read-only, always attempted"
 _T1 = "Tier 1 — sideloaded Collector APK (opt-in)"
 _T2 = "Tier 2 — root shell on the device (opt-in)"
 
+# Why Tier 2 never roots the phone itself: since Android 12, app-private storage
+# (Instagram/Snapchat/Telegram DBs, saved Wi-Fi keys, several system stores) has no
+# non-root read path over USB — `adb backup` excludes app data and `run-as` needs a
+# debuggable build. The only way in is `su`. Rooting a stock phone means unlocking
+# the bootloader, which on almost every device sold since ~2017 wipes all user data
+# as a security measure — destroying the evidence to gain access to it. The handful
+# of root-without-wipe methods (bootrom/EDL-mode exploits) are chipset/model-specific
+# and are the core product of commercial tools (Cellebrite, GrayKey, Magnet) — out of
+# scope here. Tier 2 therefore only *detects* an existing root shell (`Adb.is_root_
+# available`, a read-only `su -c id` probe) and uses it if present; an examiner who
+# roots the device themselves, by whatever means they judge appropriate for the case,
+# gets the full Tier-2 catalogue the moment that probe succeeds — nothing here needs
+# to change for that. The dashboard mirrors this: Tier-2 UI is hidden by default
+# (app/src/lib/features.ts ROOT_ACQUISITION) with an explainer and an examiner-only
+# reveal, never an automatic root attempt.
+
 #: The catalogue. Keys match the dataset names the dashboard requests over
 #: ``/api/case/<id>/<dataset>``, so a view can look itself up by the name it fetches.
 CATALOGUE: dict[str, Capability] = {
