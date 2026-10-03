@@ -184,7 +184,12 @@ export function AskTheCaseView({ caseId }: { caseId: string }) {
         patch(turn, { response });
         return;
       }
-      await api.askCaseStream(caseId, opts.text, { llm_provider: provider }, (ev) => {
+      // Last few finished turns, so "what is he messaging" can be resolved to the person just discussed.
+      const history = turns
+        .filter((t) => t.response?.answer)
+        .slice(-4)
+        .map((t) => ({ q: t.question, a: t.response!.answer }));
+      await api.askCaseStream(caseId, opts.text, { llm_provider: provider, history }, (ev) => {
         if (ev.type === "search") {
           patch(turn, { response: ev.bundle, summarising: provider !== "heuristic" && ev.bundle.passages.length > 0 });
         } else if (ev.type === "token") {

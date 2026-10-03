@@ -364,7 +364,7 @@ export const api = {
   askCaseStream: async (
     id: string,
     question: string,
-    opts: { llm_provider?: string; top_k?: number; use_brief?: boolean },
+    opts: { llm_provider?: string; top_k?: number; use_brief?: boolean; history?: { q: string; a: string }[] },
     onEvent: (e: import("./types").AskStreamEvent) => void,
     signal?: AbortSignal
   ) => {

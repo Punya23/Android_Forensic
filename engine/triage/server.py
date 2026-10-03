@@ -1019,6 +1019,11 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             "brief": brief if scope == "brief" or body.get("use_brief", True) else None,
             "passages": passages,
             "top_k": min(max(int(body.get("top_k", 10)), 1), 50),
+            "history": [
+                {"q": str(h.get("q", ""))[:300], "a": str(h.get("a", ""))[:600]}
+                for h in (body.get("history") or [])[-4:]
+                if isinstance(h, dict) and h.get("q")
+            ],
         }, None
 
     @app.post("/api/case/<case_id>/ask")
@@ -1063,6 +1068,7 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             top_k=ctx["top_k"],
             brief=ctx["brief"],
             scope=ctx["scope"],
+            history=ctx["history"],
         )
 
         def generate():

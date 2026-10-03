@@ -53,7 +53,7 @@ BUSY_WAIT_S = 20.0
 #: on screen, so this only delays the start of the answer, never the first results.
 TERM_WAIT_S = 10.0
 
-SYNTH_TOP_N = 8
+SYNTH_TOP_N = 12
 SYNTH_SNIPPET_CHARS = 240
 
 #: Datasets flattened into passages. Every one names the field its timestamp / source file
@@ -205,6 +205,30 @@ def _synth_prompt(question: str, rows: list[dict]) -> str:
     return f"Question: {question}\n\nPassages:\n" + "\n".join(lines)
 
 
+_REWRITE_SYSTEM = (
+    "You rewrite a follow-up question from a police investigator into one standalone question. "
+    "Replace pronouns and vague references (he, she, they, it, that number, the same person) with "
+    "the concrete names, numbers and places from the earlier conversation. Keep the meaning; do "
+    "not answer it and do not add facts. Return ONLY the rewritten question on one line. If the "
+    "question already stands alone, return it unchanged."
+)
+
+
+def rewrite_question(question: str, history: list[dict], provider: LLMProvider, timeout: float) -> str:
+    """Make a follow-up ("what is he messaging") standalone ("what is Rahul messaging") using the
+    last few turns, so grep searches the real name instead of the pronoun. Bounded and
+    best-effort: any failure returns the question exactly as typed."""
+    turns = [h for h in history[-4:] if isinstance(h, dict) and h.get("q")]
+    if not turns or not provider.is_usable():
+        return question
+    convo = "\n".join(f"Q: {h['q']}\nA: {str(h.get('a') or '')[:400]}" for h in turns)
+    out, problem = call_bounded(
+        provider.generate, _REWRITE_SYSTEM, f"{convo}\n\nFollow-up: {question}\nStandalone question:", timeout=timeout
+    )
+    line = (out or "").strip().splitlines()[0].strip().strip('"') if out and out.strip() else ""
+    return line[:300] if line and not problem and len(line) >= 3 else question
+
+
 def _synthesize(
     provider: LLMProvider, question: str, passages: list[Passage], timeout: float
 ) -> tuple[Optional[str], str]:
@@ -325,6 +349,7 @@ def stream_answer(
     synth_timeout: float = SYNTH_TIMEOUT_S,
     busy_wait: float = BUSY_WAIT_S,
     term_wait: float = TERM_WAIT_S,
+    history: Optional[list[dict]] = None,
 ) -> Iterator[dict]:
     """Chat-style Q&A: yield the grep matches at once, then the model's answer as it is typed.
 
@@ -339,6 +364,20 @@ def stream_answer(
     )
     yield {"type": "search", "bundle": bundle}
 
+    understood = ""
+    # 1b. Follow-ups: resolve "he"/"that number" from the conversation, then search the real name.
+    if history and scope == "question" and question:
+        standalone = rewrite_question(question, history, provider, term_wait)
+        if standalone != question:
+            question = standalone
+            bundle = answer_question(
+                question, passages, provider, top_k, brief, scope, llm_timeout, synthesize=False, use_llm_terms=False
+            )
+            understood = f'understood as: "{question}"'
+            if bundle.get("search"):
+                bundle["search"]["notes"].append(understood)
+            yield {"type": "search", "bundle": bundle}
+
     # 2. Refine: let the model suggest extra terms (synonyms, Hinglish spellings). If it answers in
     # time the matches are re-ranked and sent again; if not, the literal matches stand.
     if scope == "question" and question and provider.is_usable():
@@ -347,6 +386,8 @@ def stream_answer(
             bundle = answer_question(
                 question, passages, provider, top_k, brief, scope, term_wait, synthesize=False
             )
+            if understood and bundle.get("search"):
+                bundle["search"]["notes"].append(understood)
             yield {"type": "search", "bundle": bundle}
 
     note = ""

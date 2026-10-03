@@ -215,3 +215,25 @@ def test_ask_disclaimer_does_not_claim_no_model_when_one_is_connected():
 
     assert "No model was configured" in _disclaimer(False, model_usable=False)
     assert "No model was configured" not in _disclaimer(False, model_usable=True)
+
+
+def test_followup_is_rewritten_with_the_person_from_history():
+    from triage.intel.case_qa import Passage, rewrite_question, stream_answer
+
+    class P(_FakeProvider):
+        def generate(self, system, prompt):
+            return "What is Rahul Verma messaging?\nextra"
+
+        def is_usable(self):
+            return True
+
+    hist = [{"q": "who is Rahul Verma", "a": "A contact."}]
+    assert rewrite_question("what is he messaging", hist, P(), 5) == "What is Rahul Verma messaging?"
+    # no history / unusable model -> question untouched
+    assert rewrite_question("what is he messaging", [], P(), 5) == "what is he messaging"
+
+    ps = [Passage(id="P-1", text="Rahul Verma: bring the package", source_type="messages")]
+    evs = list(stream_answer("what is he messaging", ps, provider=P(), history=hist))
+    searches = [e for e in evs if e["type"] == "search"]
+    assert any("Rahul Verma" in " ".join(e["bundle"]["search"]["notes"]) for e in searches)
+    assert searches[-1]["bundle"]["passages"], "the rewritten question must find Rahul's message"
