@@ -95,9 +95,24 @@ export function AcquisitionView({
   const [tier1CollectAll, setTier1CollectAll] = useState(true);
   // Presentation run: stop pulling shared-storage files at a total size and a per-category size,
   // so a 128 GB phone finishes in a demo. Off by default; the case records that it was capped.
-  const [capOn, setCapOn] = useState(false);
-  const [capTotalGb, setCapTotalGb] = useState(5);
-  const [capBucketMb, setCapBucketMb] = useState(100);
+  // Remembered between runs (this browser only), so the next acquisition starts as the last one did.
+  const savedCap = (() => {
+    try {
+      return JSON.parse(localStorage.getItem("snagr.acq.cap") ?? "null") as { on?: boolean; gb?: number; mb?: number } | null;
+    } catch {
+      return null;
+    }
+  })();
+  const [capOn, setCapOn] = useState(savedCap?.on ?? false);
+  const [capTotalGb, setCapTotalGb] = useState(savedCap?.gb ?? 5);
+  const [capBucketMb, setCapBucketMb] = useState(savedCap?.mb ?? 100);
+  useEffect(() => {
+    try {
+      localStorage.setItem("snagr.acq.cap", JSON.stringify({ on: capOn, gb: capTotalGb, mb: capBucketMb }));
+    } catch {
+      /* storage blocked — a per-viewer convenience only */
+    }
+  }, [capOn, capTotalGb, capBucketMb]);
   const [tier2Telegram, setTier2Telegram] = useState(false);
   const [tier2Instagram, setTier2Instagram] = useState(false);
   const [tier2Snapchat, setTier2Snapchat] = useState(false);
@@ -1141,6 +1156,11 @@ export function AcquisitionView({
         <label className="flex items-center gap-2 mt-3 text-sm cursor-pointer">
           <input type="checkbox" checked={capOn} onChange={(e) => setCapOn(e.target.checked)} /> Cap this acquisition
         </label>
+        {!capOn && (
+          <p className="text-xs text-warn mt-2">
+            Cap is off: every file in the pull folders will be copied. On a large phone that can take hours.
+          </p>
+        )}
         {capOn && (
           <div className="grid grid-cols-2 gap-3 mt-3 max-w-md">
             <label className="text-xs text-muted">

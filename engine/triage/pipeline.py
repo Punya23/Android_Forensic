@@ -908,13 +908,16 @@ def run_acquisition(
             )
 
     # -- Tier 1 (optional): expanded helper-APK collection (dump_all) ---------
+    tier1_got: set[str] = set()  # datasets the single full-collection session delivered
     if cfg.tier1_collect_all:
         progress("tier1", 0.045, "Running Tier-1 helper (full collection)")
         if isinstance(source, RealDeviceSource):
-            _run_tier1_collect_all(
+            tier1_got = _run_tier1_collect_all(
                 source,
                 case,
                 staging,
+                calls=calls,
+                app_messages=app_messages,
                 media_inventory=media_inventory,
                 installed_apps=installed_apps,
                 accounts=accounts,
@@ -941,7 +944,8 @@ def run_acquisition(
                            skip_reason="mock/synthetic source — no physical device attached")
 
     # -- Tier 1 (optional): helper APK contacts dump --------------------------
-    if cfg.tier1_contacts:
+    _separate = _helper_flows_still_needed(cfg, tier1_got)
+    if _separate["contacts"]:
         progress("tier1", 0.05, "Running Tier-1 helper (contacts)")
         if isinstance(source, RealDeviceSource):
             tier1_contacts, tier1_skip_paths = _run_tier1_contacts_helper(
@@ -960,7 +964,7 @@ def run_acquisition(
                                   "Collector helper on", status="skipped",
                            skip_reason="mock/synthetic source — no physical device attached")
             # -- Tier 1 (optional): helper APK call-log dump ---------------------------
-    if cfg.tier1_calllog:
+    if _separate["calllog"]:
         progress("tier1", 0.051, "Running Tier-1 helper (call-log)")
         if isinstance(source, RealDeviceSource):
             tier1_calls, tier1_calllog_skip_paths = _run_tier1_calllog_helper(
@@ -981,7 +985,7 @@ def run_acquisition(
                            skip_reason="mock/synthetic source — no physical device attached")
 
     # -- Tier 1 (optional): helper APK SMS dump --------------------------------
-    if cfg.tier1_sms:
+    if _separate["sms"]:
         progress("tier1", 0.052, "Running Tier-1 helper (SMS)")
         if isinstance(source, RealDeviceSource):
             tier1_sms_msgs, tier1_sms_skip_paths = _run_tier1_sms_helper(
@@ -6551,6 +6555,18 @@ def _emit_tier1_collector_events(case: Case, socketio: Any, collectors: list[dic
                            skip_reason=error or "unknown error")
 
 
+def _helper_flows_still_needed(cfg: Any, got: set[str]) -> dict[str, bool]:
+    """Which separate helper sessions (one install + permission round each) still have to run.
+
+    The full-collection pass delivers contacts, call log and SMS in one session; a separate session
+    is only worth the extra install and permission prompts for a dataset it did not deliver."""
+    return {
+        "contacts": bool(cfg.tier1_contacts) and "contacts" not in got,
+        "calllog": bool(cfg.tier1_calllog) and "calllog" not in got,
+        "sms": bool(cfg.tier1_sms) and "sms" not in got,
+    }
+
+
 def _wait_for_tier1_manifest(
     source: RealDeviceSource,
     case: Case,
@@ -6964,10 +6980,15 @@ def _run_tier1_collect_all(
     wifi_networks: list,
     bluetooth_devices: list,
     skip_paths: set[str],
+    calls: Optional[list] = None,
+    app_messages: Optional[list] = None,
     oem_quirks: Optional[list[str]] = None,
     socketio: Any = None,
-) -> None:
+) -> set[str]:
     """Drive the Collector helper's ``dump_all`` action and ingest every output.
+
+    Returns the labels of the datasets it delivered ("contacts", "calllog", "sms" matter to the
+    caller: a delivered one needs no separate helper session).
 
     Installs the helper, grants the non-hard-restricted runtime permissions via ``pm grant``,
     enables the usage-stats appop, triggers ``dump_all``, then pulls and parses each JSON the
@@ -6975,6 +6996,7 @@ def _run_tier1_collect_all(
     Individual grant/collector failures degrade gracefully — a denied permission just yields an
     empty dataset rather than aborting the run. Finally uninstalls the helper.
     """
+    got: set[str] = set()
     package = "io.erakshak.collector"
     activity = f"{package}/.MainActivity"
     apk = _find_helper_apk()
@@ -6985,7 +7007,7 @@ def _run_tier1_collect_all(
             result="skipped",
             tier=Tier.TIER1.value,
         )
-        return
+        return got
 
     install = source.adb.run("install", "-r", str(apk.resolve()))
     _log_tier1_step(
@@ -6997,7 +7019,7 @@ def _run_tier1_collect_all(
     )
     _tier1_ledger().record_install(install.ok)
     if not install.ok:
-        return
+        return got
 
     grants = [
         "android.permission.READ_CONTACTS",
@@ -7054,6 +7076,8 @@ def _run_tier1_collect_all(
             "calendar.json",
             "usage.json",
             "contacts.json",
+            "calllog.json",
+            "sms.json",
             "location.json",
             "wifi.json",
             "bluetooth.json",
@@ -7066,7 +7090,7 @@ def _run_tier1_collect_all(
                        action="Failed to launch Collector helper activity", status="failed",
                        skip_reason=dump.stderr or "am start failed")
         _best_effort_uninstall(source, case, package)
-        return
+        return got
     emit_acq_event(case, socketio, source="device", tier="tier1",
                    action="Collector helper running on device — full collection (14 collectors)",
                    status="accessing")
@@ -7087,6 +7111,14 @@ def _run_tier1_collect_all(
         ("calendar.json", parse_calendar, calendar_events, "calendar"),
         ("usage.json", parse_usage, app_usage, "usage"),
         ("contacts.json", parse_contacts_json, contacts, "contacts"),
+        # Call log and SMS come from the same pass: ingesting them here is what lets the engine
+        # skip a separate helper session (a reinstall that makes the phone ask for permissions again).
+        *(
+            [("calllog.json", parse_calllog_json, calls, "calllog")] if calls is not None else []
+        ),
+        *(
+            [("sms.json", parse_sms_json, app_messages, "sms")] if app_messages is not None else []
+        ),
         # Location-bearing outputs. The helper has written these since the dump_location /
         # dump_wifi / dump_bluetooth actions landed, but nothing pulled them, so the only
         # direct GPS fix the tool can obtain without root was being discarded on every run.
@@ -7118,6 +7150,7 @@ def _run_tier1_collect_all(
         rows = parser(case.root / rec.stored_path)
         target.extend(rows)
         skip_paths.add(remote)
+        got.add(label)
         case.log(
             f"parse.{label}",
             f"{len(rows)} {label} rows (Tier 1 dump_all)",
@@ -7188,6 +7221,7 @@ def _run_tier1_collect_all(
                        skip_reason="collector_manifest.json not produced within the wait window")
 
     _best_effort_uninstall(source, case, package)
+    return got
 
 
 def _tier1_teardown(source: RealDeviceSource, case: Case, package: str) -> dict:
