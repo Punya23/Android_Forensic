@@ -90,9 +90,11 @@ _BRAND_STEPS: dict[str, list[str]] = {
     "oppo": _OPPO_EXTRA,
     "realme": _OPPO_EXTRA,
     "oneplus": [
-        "No extra Developer Options step here, but expect `pm grant` to fail on this "
-        "OS — the engine falls back to on-screen permission dialogs during Tier-1 "
-        "collection; tap 'Allow' as each one appears",
+        "Settings → Developer options → turn ON 'Disable permission monitoring'. Without it "
+        "OxygenOS refuses `pm grant` from adb (SecurityException: GRANT_RUNTIME_PERMISSIONS) "
+        "and Usage access, so Tier-1 collection needs an on-screen 'Allow' for every permission "
+        "and runs much slower (verified on an OnePlus LE2121, Android 14). 'OEM unlocking' is "
+        "unrelated — leave it off",
     ],
     "vivo": _VIVO_EXTRA,
     "iqoo": _VIVO_EXTRA,
