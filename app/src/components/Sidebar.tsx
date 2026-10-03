@@ -429,14 +429,6 @@ export function Sidebar({
           );
         })}
       </nav>
-      <div className="p-3 border-t border-line text-[10px] text-muted leading-relaxed">
-        <div className="flex items-center gap-1.5 text-accent/90 font-semibold mb-1">
-          <ShieldAlert className="h-3 w-3" strokeWidth={2.25} />
-          Triage preview only
-        </div>
-        Minimally-invasive, fully-logged acquisition. Not a substitute for full lab
-        examination.
-      </div>
     </aside>
   );
 }
