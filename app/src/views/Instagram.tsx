@@ -40,7 +40,7 @@ function InstagramHeader({ convCount, msgCount }: { convCount: number; msgCount:
         </p>
       </div>
       <div className="ml-auto flex items-center gap-1.5">
-        <span className="text-[10px] font-mono bg-orange-500/15 text-orange-400 px-2 py-0.5 rounded-full border border-orange-400/30">
+        <span className="text-[10px] font-mono bg-accent/15 text-accent px-2 py-0.5 rounded-full border border-orange-400/30">
           Data Export
         </span>
       </div>

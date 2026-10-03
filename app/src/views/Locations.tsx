@@ -751,7 +751,7 @@ export function LocationsView({
                               href={`https://www.google.com/maps?q=${p.latitude},${p.longitude}`}
                               target="_blank"
                               rel="noreferrer"
-                              style={{ color: "#d8823c", fontSize: 11 }}
+                              style={{ color: "rgb(var(--color-accent))", fontSize: 11 }}
                             >
                               Open in Google Maps{" "}
                               <ArrowUpRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
@@ -813,7 +813,7 @@ export function LocationsView({
                                 href={gmapsUrl(lat, lon)}
                                 target="_blank"
                                 rel="noreferrer"
-                                style={{ color: "#d8823c", fontSize: 11 }}
+                                style={{ color: "rgb(var(--color-accent))", fontSize: 11 }}
                               >
                                 Open in Google Maps{" "}
                                 <ArrowUpRight className="inline h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
