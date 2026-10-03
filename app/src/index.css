@@ -71,14 +71,25 @@
     background-attachment: fixed;
     transition: background-color 0.15s ease, color 0.15s ease;
   }
+  /* Slim ember scrollbar: a 6px accent-tinted thumb on a clear track, brighter on hover —
+     it says "this scrolls" without a grey gutter. Firefox gets the same via scrollbar-color. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--color-accent) / 0.45) transparent;
+  }
   ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 6px;
+    height: 6px;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-line rounded;
+    background: rgb(var(--color-accent) / 0.4);
+    border-radius: 9999px;
   }
-  ::-webkit-scrollbar-track {
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--color-accent) / 0.8);
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
     background: transparent;
   }
 }
