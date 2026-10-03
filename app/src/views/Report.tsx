@@ -5,8 +5,20 @@ import { fmtTs } from "../lib/hooks";
 import { useEffect, useState } from "react";
 import type { ReportVersion } from "../lib/types";
 
+// Three ways to read one case: a 2-3 page summary (built on demand), the AI case report
+// and the complete raw evidence — the last two are sections of the full report document.
+const TABS = [
+  { key: "summary", label: "Summary", hint: "2–3 pages" },
+  { key: "ai", label: "AI case report", hint: "narrative" },
+  { key: "raw", label: "Raw evidence", hint: "everything" },
+] as const;
+type TabKey = (typeof TABS)[number]["key"];
+
 export function ReportView({ caseId }: { caseId: string }) {
-  const url = api.reportUrl(caseId);
+  const [tab, setTab] = useState<TabKey>("summary");
+  const fullUrl = api.reportUrl(caseId);
+  const url =
+    tab === "summary" ? api.reportSummaryUrl(caseId) : tab === "ai" ? `${fullUrl}#ai-case-report` : `${fullUrl}#raw-evidence-data`;
   const [history, setHistory] = useState<ReportVersion[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
@@ -22,8 +34,9 @@ export function ReportView({ caseId }: { caseId: string }) {
 
   async function handleDownloadPdf() {
     setExportError(null);
-    // Electron path — native PDF renderer via IPC
-    if (typeof window !== "undefined" && (window as any).snagr?.exportAndPreviewReport) {
+    // Electron path — native PDF renderer via IPC. It exports the full report, so the
+    // summary tab prints through the browser path below instead.
+    if (tab !== "summary" && typeof window !== "undefined" && (window as any).snagr?.exportAndPreviewReport) {
       try {
         await (window as any).snagr.exportAndPreviewReport(caseId);
       } catch (err) {
@@ -51,7 +64,7 @@ export function ReportView({ caseId }: { caseId: string }) {
     <div className="p-6 h-full flex flex-col">
       <SectionHeader
         title="Report"
-        sub="NIST/SWGDE-aligned, with a BSA 2023 s.63 Schedule certificate block (replaces the repealed IEA s.65B) — printable to PDF from the browser"
+        sub={tab === "summary" ? "A short, plain report for readers who will give it two pages. The AI and raw tabs open the full NIST/SWGDE-aligned report with its BSA 2023 s.63 certificate block." : "The full report — NIST/SWGDE-aligned, with a BSA 2023 s.63 Schedule certificate block. Printable to PDF from the browser."}
         right={
           <div className="flex gap-2">
             <button
@@ -90,6 +103,19 @@ export function ReportView({ caseId }: { caseId: string }) {
           </div>
         }
       />
+      <div className="flex gap-1.5 mb-3" role="tablist" aria-label="Report view">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={tab === t.key}
+            onClick={() => setTab(t.key)}
+            className={`pill ${tab === t.key ? "pill-active" : ""}`}
+          >
+            {t.label} <span className="opacity-60 text-xs ml-1">{t.hint}</span>
+          </button>
+        ))}
+      </div>
       {exportError && (
         <div className="card border-deletion/50 bg-deletion/10 p-3 mb-4 text-sm text-deletion flex items-center justify-between gap-2">
           <span>{exportError}</span>
@@ -134,7 +160,7 @@ export function ReportView({ caseId }: { caseId: string }) {
         </div>
       )}
       <div className="card overflow-hidden flex-1">
-        <iframe src={url} title="Triage report" className="w-full h-full bg-white" />
+        <iframe key={url} src={url} title="Triage report" className="w-full h-full bg-white" />
       </div>
     </div>
   );

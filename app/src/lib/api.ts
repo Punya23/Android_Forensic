@@ -173,6 +173,7 @@ export const api = {
   audit: (id: string) => get<AuditEvent[]>(`/api/case/${id}/audit`),
   tags: (id: string) => get<import("./types").Tag[]>(`/api/case/${id}/tags`),
   reportUrl: (id: string) => `${BASE}/api/case/${id}/report`,
+  reportSummaryUrl: (id: string) => `${BASE}/api/case/${id}/report/summary`,
   regenerateReport: (id: string) =>
     request<{ ok: boolean; error?: string }>(`/api/case/${id}/report/regenerate`, { method: "POST" }),
   mediaUrl: (id: string, artifactId: string) => `${BASE}/api/case/${id}/media/${artifactId}`,

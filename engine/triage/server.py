@@ -2286,6 +2286,13 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
 
         return send_file(path.resolve(), mimetype="text/html")
 
+    @app.get("/api/case/<case_id>/report/summary")
+    def case_report_summary(case_id: str):
+        """The 2-3 page summary, built on demand from the case's stored data."""
+        from .report.summary_report import build_summary_report
+
+        return Response(build_summary_report(_open(cases_root, case_id)), mimetype="text/html")
+
     @app.post("/api/case/<case_id>/report/regenerate")
     def regenerate_report(case_id: str):
         """(Re-)generate the HTML triage report for an existing case.
