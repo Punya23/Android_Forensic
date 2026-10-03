@@ -30,6 +30,7 @@ class FakeSource:
         self.script = script  # callable(t) -> (ready, alive, fingerprint)
         self.adb = self
         self.clock = None
+        self.cancel_token = None  # an Adb exposes the run's token under this name
 
     def shell(self, cmd, timeout=10):
         ready, alive, fp = self.script(self.clock[0])
@@ -68,3 +69,34 @@ def test_stops_when_nothing_has_changed_for_the_stall_window(monkeypatch):
 def test_never_waits_beyond_the_hard_ceiling(monkeypatch):
     ok, elapsed, _ = _run(monkeypatch, lambda t: (False, True, str(t)), hard_cap=120)
     assert not ok and 120 <= elapsed < 135
+
+
+def test_stop_during_the_wait_raises_at_once_and_cleans_the_phone(monkeypatch):
+    """Stop used to be ignored until the (now up to 15 min) wait ended, and a cancel left the helper
+    app and its output files on the phone."""
+    from triage.cancellation import AcquisitionCancelled, CancellationToken
+
+    token = CancellationToken()
+    t = [0.0]
+    monkeypatch.setattr(pipeline.time, "monotonic", lambda: t[0])
+
+    def sleep(s):
+        t[0] += s
+        if t[0] >= 10:
+            token.cancel()
+
+    monkeypatch.setattr(pipeline.time, "sleep", sleep)
+    src = FakeSource(lambda now: (False, True, str(now)))
+    src.clock = t
+    src.cancel_token = token
+    cleaned = []
+    # the cleanup must run with the token detached, or every adb call in it returns 'cancelled'
+    monkeypatch.setattr(pipeline, "_tier1_teardown", lambda s, c, pkg: cleaned.append((pkg, src.cancel_token)))
+    try:
+        pipeline._wait_for_tier1_manifest(src, FakeCase(), oem_quirks=["pm_grant_blocked"])
+        raised = False
+    except AcquisitionCancelled:
+        raised = True
+    assert raised and t[0] < 20
+    assert cleaned == [("io.erakshak.collector", None)]
+    assert src.cancel_token is token  # and it is re-attached afterwards

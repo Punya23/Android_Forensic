@@ -6567,6 +6567,22 @@ def _helper_flows_still_needed(cfg: Any, got: set[str]) -> dict[str, bool]:
     }
 
 
+def _stop_if_cancelled(source: RealDeviceSource, case: Case) -> None:
+    """Honour Stop inside a Tier-1 wait: take the helper app and its output files off the phone,
+    then unwind. The cleanup runs with the token detached — attached, every adb call in it would
+    return 'cancelled' at once and nothing would be removed."""
+    token = getattr(source.adb, "cancel_token", None)
+    if token is None or not token.is_cancelled:
+        return
+    case.log("tier1.helper.wait", "stopped by the examiner — removing the helper app and its output from the phone", tier=Tier.TIER1.value)
+    source.adb.cancel_token = None
+    try:
+        _tier1_teardown(source, case, "io.erakshak.collector")
+    finally:
+        source.adb.cancel_token = token
+    token.raise_if_cancelled()
+
+
 def _wait_for_tier1_manifest(
     source: RealDeviceSource,
     case: Case,
@@ -6613,6 +6629,7 @@ def _wait_for_tier1_manifest(
     reason = ""
     while True:
         now = time.monotonic()
+        _stop_if_cancelled(source, case)
         if now - start >= hard_cap:
             reason = f"hard limit of {hard_cap:.0f}s reached"
             break

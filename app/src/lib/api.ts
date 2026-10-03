@@ -127,6 +127,8 @@ export const api = {
   /** Start the local model and load it in the background; the answer does not matter. */
   warmLlm: () => request<{ warming: boolean }>("/api/llm/warm", { method: "POST" }),
   health: () => get<Health>("/api/health"),
+  /** Whether an acquisition is running right now — the fallback when a socket event is missed. */
+  acquisitionStatus: () => get<{ event: string; running: boolean }>("/api/hardware/status"),
   devices: () => get<DeviceListing>("/api/devices"),
   /** Connection state + Developer-Options/USB-debugging checklist for one device —
    * the dashboard's only entry point for this; there is no CLI step an examiner needs

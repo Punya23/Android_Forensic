@@ -491,12 +491,42 @@ export function AcquisitionView({
   // acquisition keeps showing as in progress) until the "cancelled" socket
   // event lands, because the engine may still be a poll-tick away from
   // actually killing an in-flight adb transfer.
+  // Stop must never leave the screen stuck on "Stopping…". The engine's "cancelled" socket event is the
+  // normal way out, but a missed event (reconnect, reload, engine restarted) would hang it forever, so
+  // while stopping we also ask the engine directly every 2 s and leave as soon as it says nothing runs.
+  useEffect(() => {
+    if (!cancelling) return;
+    const id = window.setInterval(() => {
+      api
+        .acquisitionStatus()
+        .then((s) => {
+          if (s.running) return;
+          stopTimer();
+          setRunning(false);
+          setCancelling(false);
+          setError("Acquisition was stopped. The case folder holds a consistent partial result.");
+        })
+        .catch(() => {
+          /* engine unreachable: keep trying; the failure banner shows it */
+        });
+    }, 2000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cancelling]);
+
   async function stopAcquisition() {
     if (cancelling || !running) return;
     setCancelling(true);
     try {
       await api.cancelAcquisition();
     } catch (e) {
+      // 409 = the engine says nothing is running (it finished, or was restarted): the screen is stale.
+      if (e instanceof Error && /no acquisition is currently running/i.test(e.message)) {
+        stopTimer();
+        setRunning(false);
+        setCancelling(false);
+        return;
+      }
       // Request itself failed (e.g. network hiccup) — nothing was cancelled,
       // so don't leave the UI stuck showing "Stopping…".
       setCancelling(false);
