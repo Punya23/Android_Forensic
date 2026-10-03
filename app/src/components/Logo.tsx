@@ -6,7 +6,7 @@
  */
 export function LogoMark({ size = 28 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden style={{ filter: "drop-shadow(0 0 6px rgb(var(--color-accent) / 0.55))" }}>
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden>
       <path
         d="M16 2.6 27.6 9.3a2.4 2.4 0 0 1 1.2 2.1v9.2a2.4 2.4 0 0 1-1.2 2.1L16 29.4 4.4 22.7a2.4 2.4 0 0 1-1.2-2.1v-9.2a2.4 2.4 0 0 1 1.2-2.1L16 2.6Z"
         fill="rgb(var(--color-accent) / 0.14)"

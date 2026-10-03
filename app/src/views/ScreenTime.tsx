@@ -110,15 +110,15 @@ export interface ScreenTimeSummary {
 // ---------------------------------------------------------------------------
 
 const EVENT_COLORS: Record<string, { bg: string; text: string }> = {
-  ON: { bg: "#e4f4ea", text: "#1c7d3f" },
-  UNLOCK: { bg: "#e2ecfa", text: "#2258a8" },
-  OFF: { bg: "#f6dedd", text: "#a5322f" },
-  DOZE: { bg: "#f6ecd4", text: "#a6741a" },
+  ON: { bg: "rgb(var(--color-live) / 0.14)", text: "rgb(var(--color-live))" },
+  UNLOCK: { bg: "rgb(var(--color-recovered) / 0.14)", text: "rgb(var(--color-recovered))" },
+  OFF: { bg: "rgb(var(--color-deletion) / 0.14)", text: "rgb(var(--color-deletion))" },
+  DOZE: { bg: "rgb(var(--color-carved) / 0.14)", text: "rgb(var(--color-carved))" },
 };
 
 function EventBadge({ value }: { value: string }) {
   const key = value.toUpperCase();
-  const c = EVENT_COLORS[key] ?? { bg: "#f6ecd4", text: "#a6741a" };
+  const c = EVENT_COLORS[key] ?? { bg: "rgb(var(--color-carved) / 0.14)", text: "rgb(var(--color-carved))" };
   return (
     <span
       style={{
@@ -152,8 +152,8 @@ function HeuristicFlag() {
         borderRadius: 4,
         fontSize: 11,
         fontWeight: 600,
-        color: "#a6741a",
-        background: "#f6ecd4",
+        color: "rgb(var(--color-carved))",
+        background: "rgb(var(--color-carved) / 0.14)",
         whiteSpace: "nowrap",
       }}
     >

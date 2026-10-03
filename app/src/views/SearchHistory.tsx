@@ -46,23 +46,23 @@ function sourceMeta(raw: string | undefined): SourceMeta {
   if (s.includes("cache")) {
     return {
       label: "GOOGLE CACHE",
-      bg: "#f6ecd4",
-      text: "#a6741a",
+      bg: "rgb(var(--color-carved) / 0.14)",
+      text: "rgb(var(--color-carved))",
       note: "Fragment recovered from the Google app's cache — a partial residue, not a complete history.",
     };
   }
   if (s.includes("browser") || s.includes("history") || s.includes("chrome")) {
     return {
       label: "BROWSER",
-      bg: "#e2ecfa",
-      text: "#2258a8",
+      bg: "rgb(var(--color-recovered) / 0.14)",
+      text: "rgb(var(--color-recovered))",
       note: "Extracted from a Chromium History database (urls table).",
     };
   }
   return {
     label: (raw || "UNKNOWN").toUpperCase(),
-    bg: "#f0f0f0",
-    text: "#555",
+    bg: "rgb(var(--color-muted) / 0.14)",
+    text: "rgb(var(--color-muted))",
     note: "Source not recorded by the parser.",
   };
 }
@@ -98,8 +98,8 @@ function HeuristicFlag() {
         borderRadius: 4,
         fontSize: 11,
         fontWeight: 600,
-        color: "#a6741a",
-        background: "#f6ecd4",
+        color: "rgb(var(--color-carved))",
+        background: "rgb(var(--color-carved) / 0.14)",
         whiteSpace: "nowrap",
       }}
     >

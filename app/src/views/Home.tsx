@@ -11,16 +11,15 @@ const fmtBytes = (n: number) =>
   n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
 
 const LEVEL: Record<string, { label: string; cls: string }> = {
-  red: { label: "High priority", cls: "bg-deletion/25 text-deletion border-deletion/70 shadow-[0_0_14px_-4px_rgb(var(--color-deletion)/0.7)]" },
-  amber: { label: "Medium priority", cls: "bg-warn/25 text-warn border-warn/70 shadow-[0_0_14px_-4px_rgb(var(--color-warn)/0.7)]" },
-  green: { label: "Low priority", cls: "bg-live/25 text-live border-live/70 shadow-[0_0_14px_-4px_rgb(var(--color-live)/0.7)]" },
+  red: { label: "High priority", cls: "bg-deletion/25 text-deletion border-deletion/70" },
+  amber: { label: "Medium priority", cls: "bg-warn/25 text-warn border-warn/70" },
+  green: { label: "Low priority", cls: "bg-live/25 text-live border-live/70" },
 };
 const SEVERITY_CHIP: Record<string, string> = {
   critical: "text-deletion border-deletion/60",
   warn: "text-warn border-warn/60",
 };
 
-const bloom = (x: string, y: string) => ({ ["--bloom-x" as string]: x, ["--bloom-y" as string]: y });
 const two = (n: number) => String(n).padStart(2, "0");
 
 /** Everything on this page describes one case: the one open in the app (or the newest, which then opens). */
@@ -189,7 +188,7 @@ export function HomeView({
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
         {/* Posture: score over the activity terrain */}
-        <div className="glass p-5 lg:col-span-4 flex flex-col" style={bloom("0%", "0%")}>
+        <div className="glass p-5 lg:col-span-4 flex flex-col">
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-base font-semibold">Case posture</div>
@@ -219,7 +218,7 @@ export function HomeView({
           {stat.map((s) => {
             const Icon = s.icon;
             return (
-              <button key={s.label} onClick={() => go(s.view)} className="glass glass-link text-left p-4 flex flex-col justify-between" style={bloom(s.x, s.y)}>
+              <button key={s.label} onClick={() => go(s.view)} className="glass glass-link text-left p-4 flex flex-col justify-between">
                 <div className="flex items-center justify-between">
                   <Icon className="h-4 w-4 text-ink/80" strokeWidth={1.75} aria-hidden />
                   <ArrowUpRight className="h-4 w-4 text-muted" strokeWidth={1.75} aria-hidden />
@@ -243,7 +242,7 @@ export function HomeView({
         </div>
 
         {/* Communication flow */}
-        <div className="glass p-5 lg:col-span-5" style={bloom("100%", "0%")}>
+        <div className="glass p-5 lg:col-span-5">
           <div className="flex items-center justify-between mb-1">
             <div className="text-base font-semibold">Communication flow</div>
             <button className="text-xs text-accent hover:underline" onClick={() => go("graph")}>
@@ -255,7 +254,7 @@ export function HomeView({
         </div>
 
         {/* Findings */}
-        <div className="glass p-5 lg:col-span-4" style={bloom("0%", "100%")}>
+        <div className="glass p-5 lg:col-span-4">
           <div className="flex items-center justify-between mb-2">
             <div className="text-base font-semibold">Key findings</div>
             <button className="text-xs text-accent hover:underline" onClick={() => go("overview")}>
@@ -280,7 +279,7 @@ export function HomeView({
         </div>
 
         {/* What was collected */}
-        <div className="glass p-5 lg:col-span-8" style={bloom("100%", "100%")}>
+        <div className="glass p-5 lg:col-span-8">
           <div className="text-base font-semibold">What was collected</div>
           <div className="text-xs text-muted mb-3">
             {summary ? `${summary.artifact_count} files · ${fmtBytes(summary.total_bytes)}` : ""}
@@ -304,7 +303,7 @@ export function HomeView({
         </div>
 
         {/* Where it was + case file */}
-        <div className="glass p-5 lg:col-span-5 min-h-[18rem] flex flex-col" style={bloom("100%", "100%")}>
+        <div className="glass p-5 lg:col-span-5 min-h-[18rem] flex flex-col">
           <div className="flex items-center justify-between mb-1">
             <div className="text-base font-semibold">Where it was</div>
             <button className="text-xs text-accent hover:underline" onClick={() => go("loctrace")}>
@@ -318,7 +317,7 @@ export function HomeView({
             <DotGlobe points={places} />
           </div>
         </div>
-        <div className="glass p-5 lg:col-span-7" style={bloom("0%", "0%")}>
+        <div className="glass p-5 lg:col-span-7">
           <div className="text-base font-semibold mb-3">Case file</div>
           {facts.length === 0 ? (
             <p className="text-sm text-muted">Loading this case…</p>

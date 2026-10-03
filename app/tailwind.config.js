@@ -5,8 +5,8 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Forensic "case file" palette — light paper neutrals + a signal-amber accent,
-        // plus a full-black dark counterpart. Every value here is a CSS custom property
+        // Forensic "case file" palette — neutral greys + one steel-blue accent,
+        // plus a neutral dark counterpart. Every value here is a CSS custom property
         // (index.css :root / .dark) rather than a literal hex, so toggling the `dark`
         // class on <html> (see lib/theme.ts) repaints every view that uses these token
         // classes with no per-component changes. The `<alpha-value>` placeholder keeps

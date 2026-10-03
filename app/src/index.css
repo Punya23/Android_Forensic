@@ -12,45 +12,39 @@
      keep working) — see tailwind.config.js for how these map to color names, and
      lib/theme.ts for how the `dark` class gets on/off <html>. */
   :root {
-    /* Light: warm paper, same orange signal accent as the dark theme. */
-    --color-ink: 22 26 36;
-    --color-panel: 243 244 248;
+    /* Light: neutral paper, one steel-blue accent used sparingly. */
+    --color-ink: 24 26 29;
+    --color-panel: 244 245 246;
     --color-panel-2: 255 255 255;
-    --color-line: 218 224 236;
-    --color-muted: 98 108 128;
-    --color-accent: 28 92 232;
-    --color-live: 22 128 61;
-    --color-recovered: 37 99 235;
-    --color-carved: 180 118 14;
-    --color-deletion: 200 38 38;
-    --color-critical: 200 38 38;
-    --color-warn: 180 118 14;
-    --color-info: 37 99 235;
-    --glow: 28 92 232;
+    --color-line: 222 225 229;
+    --color-muted: 100 106 114;
+    --color-accent: 44 107 176;
+    --color-live: 28 125 63;
+    --color-recovered: 34 88 168;
+    --color-carved: 166 116 26;
+    --color-deletion: 165 50 47;
+    --color-critical: 165 50 47;
+    --color-warn: 166 116 26;
+    --color-info: 34 88 168;
   }
 
-  /* Full-black surface, not just a dim gray — panel-2 sits one notch above pure
-     black so cards/tables stay visible as distinct surfaces. Status colors are
-     brightened for AA contrast on black; deletion/critical stays a saturated red
-     distinct from every other tone so red (destructive/anti-forensic) areas keep
-     reading as red rather than blending into the rest of the white-on-black text. */
+  /* True-neutral dark: no blue cast in surfaces, borders or text. The steel-blue accent marks
+     only the active nav item, primary button, links and focus; status colours (muted red /
+     amber / green) are the only other colour on screen. */
   .dark {
-    /* Near-black with a neon-blue accent: cards sit one step above the page,
-       hairline borders do the separation, red stays reserved for destructive findings. */
-    --color-ink: 238 242 255;
-    --color-panel: 5 7 12;
-    --color-panel-2: 14 20 36;
-    --color-line: 30 46 88;
-    --color-muted: 142 152 178;
-    --color-accent: 40 112 255;
-    --color-live: 52 196 113;
-    --color-recovered: 96 154 255;
-    --color-carved: 245 176 65;
-    --color-deletion: 244 82 82;
-    --color-critical: 244 82 82;
-    --color-warn: 245 176 65;
-    --color-info: 96 154 255;
-    --glow: 40 112 255;
+    --color-ink: 230 232 235;
+    --color-panel: 15 17 19;
+    --color-panel-2: 22 24 27;
+    --color-line: 38 41 45;
+    --color-muted: 139 144 151;
+    --color-accent: 76 141 214;
+    --color-live: 74 170 110;
+    --color-recovered: 120 165 210;
+    --color-carved: 210 160 72;
+    --color-deletion: 214 92 86;
+    --color-critical: 214 92 86;
+    --color-warn: 210 160 72;
+    --color-info: 120 165 210;
   }
 
   html,
@@ -62,18 +56,12 @@
     @apply bg-panel text-ink font-sans antialiased;
     margin: 0;
     font-family: "Space Grotesk Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    /* Soft ember glow in the corner, as in the reference — decorative only. */
-    background-image:
-      radial-gradient(1100px 520px at 12% -8%, rgb(var(--glow) / 0.10), transparent 60%),
-      radial-gradient(900px 480px at 100% 100%, rgb(var(--glow) / 0.05), transparent 60%);
-    background-attachment: fixed;
     transition: background-color 0.15s ease, color 0.15s ease;
   }
-  /* Slim ember scrollbar: a 6px accent-tinted thumb on a clear track, brighter on hover —
-     it says "this scrolls" without a grey gutter. Firefox gets the same via scrollbar-color. */
+  /* Slim neutral scrollbar on a clear track. Firefox gets the same via scrollbar-color. */
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgb(var(--color-accent) / 0.45) transparent;
+    scrollbar-color: rgb(var(--color-muted) / 0.35) transparent;
   }
   ::-webkit-scrollbar {
     width: 6px;
@@ -84,7 +72,7 @@
     border-radius: 9999px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgb(var(--color-accent) / 0.8);
+    background: rgb(var(--color-muted) / 0.6);
   }
   ::-webkit-scrollbar-track,
   ::-webkit-scrollbar-corner {
@@ -93,45 +81,15 @@
 }
 
 @layer components {
-  /* Neon-edge glass panel: near-transparent fill, a hairline accent border, a soft outer and
-     inner glow, and bright streaks along the top and bottom edges. Shared by every card. */
+  /* Flat card: panel-2 fill, 1px neutral border. Shared by every card. */
   .card,
   .glass {
-    @apply relative rounded-2xl backdrop-blur-xl;
-    background-color: rgb(var(--color-panel-2) / 0.42);
-    border: 1px solid rgb(var(--color-accent) / 0.4);
-    box-shadow:
-      inset 0 0 26px -14px rgb(var(--color-accent) / 0.45),
-      0 0 22px -12px rgb(var(--color-accent) / 0.4);
+    @apply rounded-2xl bg-panel-2 border border-line;
   }
-  .glass {
-    @apply overflow-hidden;
-  }
-  .card::after,
-  .glass::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    pointer-events: none;
-    background:
-      linear-gradient(90deg, transparent 18%, rgb(var(--color-accent) / 0.95) 50%, transparent 82%) top / 100% 1px no-repeat,
-      radial-gradient(ellipse 42% 100% at 50% 0%, rgb(var(--color-accent) / 0.45), transparent 75%) top / 100% 16px no-repeat,
-      linear-gradient(90deg, transparent 18%, rgb(var(--color-accent) / 0.95) 50%, transparent 82%) bottom / 100% 1px no-repeat,
-      radial-gradient(ellipse 42% 100% at 50% 100%, rgb(var(--color-accent) / 0.45), transparent 75%) bottom / 100% 16px no-repeat;
-  }
-  .glass::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: radial-gradient(520px 260px at var(--bloom-x, 0%) var(--bloom-y, 0%), rgb(var(--color-accent) / 0.10), transparent 70%);
-  }
-  .glass > * { position: relative; }
   .glass-link {
-    @apply transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-accent/70 active:scale-[0.985];
+    @apply transition-colors duration-150 hover:border-accent/60;
   }
-  /* Pill tabs: white-on-dark active pill like the reference's Overview/Vectors row. */
+  /* Pill tabs: inverted active pill. */
   .pill {
     @apply px-3.5 py-1.5 rounded-full text-sm text-muted hover:text-ink transition-colors;
   }
@@ -141,37 +99,18 @@
   .btn {
     @apply px-4 py-2 rounded-lg font-medium text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed;
   }
-  /* Accent controls (primary button, active sidebar item) use the same neon-edge glass as the
-     cards: a translucent accent fill, a bright hairline border and streaks on the top and
-     bottom edges, instead of a solid block of colour. */
+  /* Accent controls (primary button, active sidebar item): the one place the accent fills. */
   .btn-accent,
   .neon {
-    @apply relative overflow-hidden text-ink;
-    background-color: rgb(var(--color-accent) / 0.16);
-    /* The edge is an inset ring, not a border, so an active item is the same size as the rest. */
-    box-shadow:
-      inset 0 0 0 1px rgb(var(--color-accent) / 0.7),
-      inset 0 0 20px -8px rgb(var(--color-accent) / 0.65),
-      0 0 18px -8px rgb(var(--color-accent) / 0.6);
+    @apply text-ink;
+    background-color: rgb(var(--color-accent) / 0.14);
+    box-shadow: inset 0 0 0 1px rgb(var(--color-accent) / 0.55);
   }
   .btn-accent {
     @apply btn;
   }
   .btn-accent:hover:not(:disabled) {
-    background-color: rgb(var(--color-accent) / 0.26);
-  }
-  .btn-accent::after,
-  .neon::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    pointer-events: none;
-    background:
-      linear-gradient(90deg, transparent 15%, rgb(var(--color-accent)) 50%, transparent 85%) top / 100% 1px no-repeat,
-      radial-gradient(ellipse 45% 100% at 50% 0%, rgb(var(--color-accent) / 0.5), transparent 75%) top / 100% 10px no-repeat,
-      linear-gradient(90deg, transparent 15%, rgb(var(--color-accent)) 50%, transparent 85%) bottom / 100% 1px no-repeat,
-      radial-gradient(ellipse 45% 100% at 50% 100%, rgb(var(--color-accent) / 0.5), transparent 75%) bottom / 100% 10px no-repeat;
+    background-color: rgb(var(--color-accent) / 0.24);
   }
   .btn-ghost {
     @apply btn border border-line text-ink hover:bg-panel;

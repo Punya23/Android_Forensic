@@ -5,17 +5,17 @@ import type { WifiNetwork, WifiReport } from "../lib/types";
 import { SortTh, useSort, Collapsed } from "../components/common";
 
 const CONF_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  live:      { bg: "#e4f4ea", text: "#1c7d3f", border: "#1c7d3f" },
-  recovered: { bg: "#e2ecfa", text: "#2258a8", border: "#2258a8" },
-  carved:    { bg: "#f6ecd4", text: "#a6741a", border: "#a6741a" },
-  deletion:  { bg: "#f6dedd", text: "#a5322f", border: "#a5322f" },
+  live:      { bg: "rgb(var(--color-live) / 0.14)", text: "rgb(var(--color-live))", border: "rgb(var(--color-live))" },
+  recovered: { bg: "rgb(var(--color-recovered) / 0.14)", text: "rgb(var(--color-recovered))", border: "rgb(var(--color-recovered))" },
+  carved:    { bg: "rgb(var(--color-carved) / 0.14)", text: "rgb(var(--color-carved))", border: "rgb(var(--color-carved))" },
+  deletion:  { bg: "rgb(var(--color-deletion) / 0.14)", text: "rgb(var(--color-deletion))", border: "rgb(var(--color-deletion))" },
 };
 
 const SEC_COLORS: Record<string, { bg: string; text: string }> = {
-  "WPA/WPA2": { bg: "#e2ecfa", text: "#2258a8" },
-  "WPA3":     { bg: "#e4f4ea", text: "#1c7d3f" },
-  "WEP":      { bg: "#f6ecd4", text: "#a6741a" },
-  "OPEN":     { bg: "#f6dedd", text: "#a5322f" },
+  "WPA/WPA2": { bg: "rgb(var(--color-recovered) / 0.14)", text: "rgb(var(--color-recovered))" },
+  "WPA3":     { bg: "rgb(var(--color-live) / 0.14)", text: "rgb(var(--color-live))" },
+  "WEP":      { bg: "rgb(var(--color-carved) / 0.14)", text: "rgb(var(--color-carved))" },
+  "OPEN":     { bg: "rgb(var(--color-deletion) / 0.14)", text: "rgb(var(--color-deletion))" },
 };
 
 function ConfidenceBadge({ value }: { value: string }) {
@@ -40,7 +40,7 @@ function ConfidenceBadge({ value }: { value: string }) {
 }
 
 function SecurityBadge({ value }: { value: string }) {
-  const c = SEC_COLORS[value] ?? { bg: "#f0f0f0", text: "#555" };
+  const c = SEC_COLORS[value] ?? { bg: "rgb(var(--color-muted) / 0.14)", text: "rgb(var(--color-muted))" };
   return (
     <span
       style={{
@@ -65,8 +65,8 @@ function WifiTypeBadge({ isSoftap }: { isSoftap?: boolean }) {
       className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold whitespace-nowrap"
       style={
         isSoftap
-          ? { background: "#f6ecd4", color: "#a6741a" }
-          : { background: "#f0f0f0", color: "#555" }
+          ? { background: "rgb(var(--color-carved) / 0.14)", color: "rgb(var(--color-carved))" }
+          : { background: "rgb(var(--color-muted) / 0.14)", color: "rgb(var(--color-muted))" }
       }
       title={
         isSoftap
@@ -163,10 +163,10 @@ interface CollectorWifiItem {
 }
 
 const ROW_TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  current_connection: { bg: "#e4f4ea", text: "#1c7d3f", border: "#1c7d3f" },
-  saved_network:       { bg: "#e2ecfa", text: "#2258a8", border: "#2258a8" },
-  scan_result:          { bg: "#f6ecd4", text: "#a6741a", border: "#a6741a" },
-  unknown:               { bg: "#f0f0f0", text: "#555555", border: "#999999" },
+  current_connection: { bg: "rgb(var(--color-live) / 0.14)", text: "rgb(var(--color-live))", border: "rgb(var(--color-live))" },
+  saved_network:       { bg: "rgb(var(--color-recovered) / 0.14)", text: "rgb(var(--color-recovered))", border: "rgb(var(--color-recovered))" },
+  scan_result:          { bg: "rgb(var(--color-carved) / 0.14)", text: "rgb(var(--color-carved))", border: "rgb(var(--color-carved))" },
+  unknown:               { bg: "rgb(var(--color-muted) / 0.14)", text: "rgb(var(--color-muted))", border: "rgb(var(--color-muted))" },
 };
 
 function RowTypeBadge({ value }: { value: string }) {

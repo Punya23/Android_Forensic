@@ -49,8 +49,8 @@ function TypeBadge({ value }: { value: string }) {
         fontSize: 11,
         fontWeight: 600,
         fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-        color: isGoogle ? "#2258a8" : "#555",
-        background: isGoogle ? "#e2ecfa" : "#f0f0f0",
+        color: isGoogle ? "rgb(var(--color-recovered))" : "rgb(var(--color-muted))",
+        background: isGoogle ? "rgb(var(--color-recovered) / 0.14)" : "rgb(var(--color-muted) / 0.14)",
         whiteSpace: "nowrap",
       }}
     >

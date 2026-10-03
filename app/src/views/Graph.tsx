@@ -26,7 +26,7 @@ const CHANNEL_COLOR: Record<string, string> = {
   instagram: "#c25ec9",
   snapchat: "#e0c53c",
   "app-db": "#8a939d",
-  device: "#2870ff",
+  device: "#4c8dd6",
 };
 function channelColor(ch: string): string {
   if (CHANNEL_COLOR[ch]) return CHANNEL_COLOR[ch];
@@ -552,7 +552,7 @@ export function GraphView({ caseId }: { caseId: string }) {
                 if (!p) return null;
                 const isOwner = n.type === "owner";
                 const r = nodeRadius(n);
-                const color = isOwner ? "#2870ff" : channelColor(n.channels[0] ?? "app-db");
+                const color = isOwner ? "#4c8dd6" : channelColor(n.channels[0] ?? "app-db");
                 const match = matchesQuery(n);
                 const isSelected = selected?.id === n.id;
                 const isHover = hoverId === n.id;

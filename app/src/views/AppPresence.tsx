@@ -88,10 +88,10 @@ export interface UsageEventEntry {
 }
 
 const CONF_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  live: { bg: "#e4f4ea", text: "#1c7d3f", border: "#1c7d3f" },
-  recovered: { bg: "#e2ecfa", text: "#2258a8", border: "#2258a8" },
-  carved: { bg: "#f6ecd4", text: "#a6741a", border: "#a6741a" },
-  deletion: { bg: "#f6dedd", text: "#a5322f", border: "#a5322f" },
+  live: { bg: "rgb(var(--color-live) / 0.14)", text: "rgb(var(--color-live))", border: "rgb(var(--color-live))" },
+  recovered: { bg: "rgb(var(--color-recovered) / 0.14)", text: "rgb(var(--color-recovered))", border: "rgb(var(--color-recovered))" },
+  carved: { bg: "rgb(var(--color-carved) / 0.14)", text: "rgb(var(--color-carved))", border: "rgb(var(--color-carved))" },
+  deletion: { bg: "rgb(var(--color-deletion) / 0.14)", text: "rgb(var(--color-deletion))", border: "rgb(var(--color-deletion))" },
 };
 
 function ConfidenceBadge({ value }: { value: string }) {
@@ -351,7 +351,7 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
           {/* Headline section: present, since uninstalled. */}
           <div
             className="card p-4 mb-5"
-            style={{ borderColor: "#a5322f", background: "rgba(211,98,95,0.06)" }}
+            style={{ borderColor: "rgb(var(--color-deletion))", background: "rgb(var(--color-deletion) / 0.08)" }}
           >
             <div className="flex items-baseline justify-between gap-3 mb-1">
               <h2 className="text-sm font-semibold text-deletion">
