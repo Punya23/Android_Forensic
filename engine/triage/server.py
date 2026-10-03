@@ -297,6 +297,7 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         # makes every download silently save a 401 JSON body instead of the file.
         if path.startswith("/api/case/") and (
             path.endswith("/report")
+            or path.endswith("/report/summary")
             or "/reports/" in path
             or "/media/" in path
             or path.endswith("/export/download")

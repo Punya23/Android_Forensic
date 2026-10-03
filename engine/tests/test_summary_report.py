@@ -59,3 +59,11 @@ def test_summary_route_serves_html(tmp_path):
     c.environ_base["HTTP_AUTHORIZATION"] = f"Bearer {t['token']}"
     r = c.get("/api/case/SUM-1/report/summary")
     assert r.status_code == 200 and r.mimetype == "text/html" and b"SUM-1" in r.data
+
+
+def test_summary_loads_in_an_iframe_without_an_auth_header(tmp_path):
+    # The report view embeds it as <iframe src>, which cannot send Authorization — like /report.
+    app, _ = _make_server_app(tmp_path)
+    _case(tmp_path)
+    r = app.test_client().get("/api/case/SUM-1/report/summary")
+    assert r.status_code == 200 and r.mimetype == "text/html"
