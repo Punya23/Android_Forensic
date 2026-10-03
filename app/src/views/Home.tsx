@@ -19,9 +19,9 @@ const fmtBytes = (n: number) =>
   n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
 
 const LEVEL: Record<string, { label: string; cls: string }> = {
-  red: { label: "High priority", cls: "bg-deletion/15 text-deletion border-deletion/30" },
-  amber: { label: "Medium priority", cls: "bg-warn/15 text-warn border-warn/30" },
-  green: { label: "Low priority", cls: "bg-live/15 text-live border-live/30" },
+  red: { label: "High priority", cls: "bg-deletion/25 text-deletion border-deletion/70 shadow-[0_0_14px_-4px_rgb(var(--color-deletion)/0.7)]" },
+  amber: { label: "Medium priority", cls: "bg-warn/25 text-warn border-warn/70 shadow-[0_0_14px_-4px_rgb(var(--color-warn)/0.7)]" },
+  green: { label: "Low priority", cls: "bg-live/25 text-live border-live/70 shadow-[0_0_14px_-4px_rgb(var(--color-live)/0.7)]" },
 };
 
 const bloom = (x: string, y: string) => ({ ["--bloom-x" as string]: x, ["--bloom-y" as string]: y });
