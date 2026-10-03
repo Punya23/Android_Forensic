@@ -48,6 +48,7 @@ import {
 import { useState } from "react";
 import type { CapabilityState, Health } from "../lib/types";
 import { useCapabilities } from "../lib/capabilities";
+import { ROOT_ACQUISITION } from "../lib/features";
 
 export type ViewKey =
   | "acquire"
@@ -102,7 +103,7 @@ export type ViewKey =
  * work the evidence by kind → analyse → check risk flags → verify integrity & report.
  * The first item of each group carries `group`; groups are collapsible in the render.
  */
-const NAV: { key: ViewKey; label: string; icon: LucideIcon; group?: string }[] = [
+const NAV: { key: ViewKey; label: string; icon: LucideIcon; group?: string; root?: true }[] = [
   { key: "cases", label: "Case History", icon: Archive, group: "Case" },
   { key: "overview", label: "Overview", icon: LayoutDashboard },
   { key: "ask", label: "Ask This Case", icon: MessageSquareText },
@@ -116,8 +117,8 @@ const NAV: { key: ViewKey; label: string; icon: LucideIcon; group?: string }[] =
   { key: "telegram", label: "Telegram", icon: Send },
   { key: "instagram", label: "Instagram", icon: Camera },
   { key: "snapchat", label: "Snapchat", icon: Ghost },
-  { key: "whatsapp_backup", label: "WhatsApp Backup", icon: Unlock },
-  { key: "discovered", label: "Other Chat Apps", icon: ScanSearch },
+  { key: "whatsapp_backup", label: "WhatsApp Backup", icon: Unlock, root: true },
+  { key: "discovered", label: "Other Chat Apps", icon: ScanSearch, root: true },
 
   { key: "media", label: "Photos & Videos", icon: Image, group: "Media" },
   { key: "mediainv", label: "Media Inventory", icon: FolderOpen },
@@ -127,15 +128,15 @@ const NAV: { key: ViewKey; label: string; icon: LucideIcon; group?: string }[] =
   { key: "locations", label: "Photo Locations", icon: Globe2 },
   { key: "celltower", label: "Cell Towers", icon: RadioTower },
   { key: "wifi_live", label: "Wi-Fi Networks (live)", icon: RadioTower },
-  { key: "wifi", label: "Saved Wi-Fi", icon: Wifi },
+  { key: "wifi", label: "Saved Wi-Fi", icon: Wifi, root: true },
   { key: "bluetooth", label: "Bluetooth", icon: Bluetooth },
 
   { key: "browser", label: "Browser History", icon: Globe2, group: "Activity & Accounts" },
   { key: "search", label: "Search History", icon: Search },
   { key: "apps", label: "Installed Apps", icon: Package },
-  { key: "apppresence", label: "App Presence", icon: Puzzle },
+  { key: "apppresence", label: "App Presence", icon: Puzzle, root: true },
   { key: "screentime", label: "Screen & App Usage", icon: Hourglass },
-  { key: "recenttasks", label: "Recent Tasks", icon: AppWindow },
+  { key: "recenttasks", label: "Recent Tasks", icon: AppWindow, root: true },
   { key: "accounts", label: "Device Accounts", icon: KeyRound },
   { key: "gaccounts", label: "Registered Accounts", icon: Users },
   { key: "calendar", label: "Calendar", icon: Calendar },
@@ -146,8 +147,8 @@ const NAV: { key: ViewKey; label: string; icon: LucideIcon; group?: string }[] =
   { key: "advanced", label: "Advanced Analytics", icon: Brain },
   { key: "tagged", label: "Tagged Items", icon: Star },
 
-  { key: "antiforensics", label: "Anti-Forensics", icon: ShieldAlert, group: "Risk Flags" },
-  { key: "encryptedapps", label: "Encrypted Apps", icon: Lock },
+  { key: "antiforensics", label: "Anti-Forensics", icon: ShieldAlert, group: "Risk Flags", root: true },
+  { key: "encryptedapps", label: "Encrypted Apps", icon: Lock, root: true },
   { key: "encryption", label: "Encryption Posture", icon: ShieldCheck },
 
   { key: "custody", label: "Chain of Custody", icon: ShieldCheck, group: "Integrity & Tools" },
@@ -296,6 +297,8 @@ type NavItem = (typeof NAV)[number];
 const SECTIONS: { name: string; items: NavItem[] }[] = [];
 for (const item of NAV) {
   if (item.group) SECTIONS.push({ name: item.group, items: [] });
+  // Root-only views stay hidden while root acquisition is unvalidated (see lib/features.ts).
+  if (item.root && !ROOT_ACQUISITION) continue;
   SECTIONS[SECTIONS.length - 1].items.push(item);
 }
 

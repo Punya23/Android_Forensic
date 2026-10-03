@@ -269,12 +269,12 @@ export function TelegramView({ caseId }: { caseId: string }) {
 
   if (!convs || Object.keys(convs).length === 0) {
     const detail = presence
-      ? `Tier-2 root acquisition did not recover any Telegram content. Reason: ${
+      ? `No Telegram content was recovered. Reason: ${
           presence.reason || "unknown"
         }. This does not mean Telegram is absent from the device.`
-      : "Telegram full chat history requires Tier-2 (root) access and " +
-        "tier2_telegram=true in PipelineConfig. " +
-        "If acquisition was Tier-0 only, only gallery media is available.";
+      : "Telegram keeps chats in app-private storage, which Android does not expose over " +
+        "USB, so this tool does not read them from the phone. Import a Telegram Desktop " +
+        "'Export Telegram data' file to see them here.";
     return (
       <div className="flex flex-col items-center justify-center h-full text-center py-16 px-6">
         <EmptyState dataset="telegram_conversations" title="No Telegram conversations" detail={detail} />

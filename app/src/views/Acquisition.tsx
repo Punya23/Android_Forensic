@@ -11,6 +11,7 @@ import type {
 } from "../lib/types";
 import { AcquisitionActivityPanel } from "../components/AcquisitionActivityPanel";
 import { Select } from "../components/fields";
+import { ROOT_ACQUISITION } from "../lib/features";
 
 // Brands with known extra Developer-Options friction (see triage/preflight.py) — the
 // dashboard's only source for this list is the engine itself, but a fixed set here lets
@@ -71,7 +72,7 @@ export function AcquisitionView({
   const [runAiSummary, setRunAiSummary] = useState(true);
   // Whether the plan may switch on root-only pulls. Collection scope is the examiner's
   // decision: a case brief alone must not be able to widen it without them saying so.
-  const [planAllowTier2, setPlanAllowTier2] = useState(true);
+  const [planAllowTier2, setPlanAllowTier2] = useState(ROOT_ACQUISITION);
   const [caseNumber, setCaseNumber] = useState("");
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [planning, setPlanning] = useState(false);
@@ -134,7 +135,10 @@ export function AcquisitionView({
   // /api/devices/check as device.rooted) — never assumed, and never left enabled on
   // the strength of a *previous* device's check.
   const rootConfirmed =
-    target?.kind === "real" && deviceCheck?.ready === true && deviceCheck.device?.rooted === true;
+    ROOT_ACQUISITION &&
+    target?.kind === "real" &&
+    deviceCheck?.ready === true &&
+    deviceCheck.device?.rooted === true;
 
   // Tier-2 follows the proof of root, both ways. The moment `su -c id` succeeds every
   // root-only stage is switched on (the examiner can still untick one); if the check flips
@@ -625,10 +629,10 @@ export function AcquisitionView({
                       }`}
                       title={
                         deviceCheck.device.rooted
-                          ? "su -c id succeeded — Tier-2 (root) options are offered below."
+                          ? "su -c id succeeded. Root-only pulls are not offered yet (not validated on a real device)."
                           : "No administrator shell on this handset — the expected state for a " +
-                            "retail phone straight from any manufacturer. Tier-2 options stay " +
-                            "disabled; Tier-1 is the full acquisition for this device."
+                            "retail phone straight from any manufacturer. Tier-1 is the full " +
+                            "acquisition for this device."
                       }
                     >
                       {deviceCheck.device.rooted ? "ROOTED" : "NOT ROOTED"}
@@ -908,6 +912,7 @@ export function AcquisitionView({
             </div>
 
             {/* Scope consent: shown beside the plan it constrains. */}
+            {ROOT_ACQUISITION && (
             <label className="flex items-start gap-2 cursor-pointer rounded-md border border-line p-2 mb-3">
               <input
                 type="checkbox"
@@ -922,6 +927,7 @@ export function AcquisitionView({
                 so nothing is hidden.
               </span>
             </label>
+            )}
 
             {/* Priority plan */}
             <div className="rounded-md border border-line p-3">
@@ -1119,6 +1125,8 @@ export function AcquisitionView({
         </div>
       </div>
 
+      {ROOT_ACQUISITION && (
+        <>
       {/* Tier-2 options (root). Gated on rootConfirmed, not target.kind === "real" — a
           real device with no root shell is the ordinary case (any retail phone from any
           manufacturer ships without one), not a lesser one, so these stay disabled until
@@ -1369,6 +1377,8 @@ export function AcquisitionView({
           })}
         </div>
       </div>
+        </>
+      )}
 
       <div className="flex items-center gap-3">
         <button className="btn-accent" disabled={!target || !examiner} onClick={start}>

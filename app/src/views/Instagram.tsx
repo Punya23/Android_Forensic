@@ -6,9 +6,8 @@
  * with carved/recovered row indicators.
  *
  * Acquisition paths:
- *   Tier 0/1 : NOT available — direct.db is in app-private storage.
- *   Tier 2   : Enable "Tier-2 Instagram" on a rooted device (su pull of
- *              /data/data/com.instagram.android/databases/direct.db).
+ *   Device   : NOT offered — direct.db is app-private and a root pull is unvalidated
+ *              (see lib/features.ts ROOT_ACQUISITION).
  *   Import   : "Download Your Data" ZIP from Instagram Settings > Privacy.
  *
  * The component delegates the full conversation + message UI to the shared
@@ -42,7 +41,7 @@ function InstagramHeader({ convCount, msgCount }: { convCount: number; msgCount:
       </div>
       <div className="ml-auto flex items-center gap-1.5">
         <span className="text-[10px] font-mono bg-orange-500/15 text-orange-400 px-2 py-0.5 rounded-full border border-orange-400/30">
-          Tier-2 / Data Export
+          Data Export
         </span>
       </div>
     </div>
@@ -76,10 +75,9 @@ export function InstagramView({ caseId }: { caseId: string }) {
           importApp="instagram"
           emptyTitle="No Instagram messages found"
           emptyDetail={
-            "Instagram Direct (direct.db) lives in app-private storage and requires " +
-            "root access, which is used automatically when the device proves a root shell. On an " +
-            "unrooted phone it cannot be read; instead " +
-            "load a 'Download Your Data' export from Instagram > Settings > Privacy."
+            "Instagram keeps Direct messages in app-private storage, which Android does not " +
+            "expose over USB, so this tool does not read them from the phone. Load a " +
+            "'Download Your Data' export (Instagram > Settings > Privacy) to see them here."
           }
         />
       </div>

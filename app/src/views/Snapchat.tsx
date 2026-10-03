@@ -51,7 +51,7 @@ function SnapchatHeader({ convCount, msgCount, carvedCount }: {
           </span>
         )}
         <span className="text-[10px] font-mono bg-orange-500/15 text-orange-400 px-2 py-0.5 rounded-full border border-orange-400/30">
-          Tier-2 / Data Export
+          Data Export
         </span>
       </div>
     </div>
@@ -90,11 +90,9 @@ export function SnapchatView({ caseId }: { caseId: string }) {
           importApp="snapchat"
           emptyTitle="No Snapchat messages found"
           emptyDetail={
-            "Snapchat chats (arroyo.db / protobuf) live in app-private storage and require " +
-            "root access, which is used automatically when the device proves a root shell. On an " +
-            "unrooted phone it cannot be read; instead " +
-            "load a 'Download My Data' export from Snapchat -> Settings -> Privacy -> Download My Data. " +
-            "Ephemeral messages are carved from WAL/freelist where present."
+            "Snapchat keeps chats in app-private storage, which Android does not expose over " +
+            "USB, so this tool does not read them from the phone. Load a 'My Data' export " +
+            "(Snapchat > Settings > Privacy > My Data) to see them here."
           }
         />
       </div>
