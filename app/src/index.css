@@ -18,7 +18,7 @@
     --color-panel-2: 255 255 255;
     --color-line: 228 222 217;
     --color-muted: 112 104 98;
-    --color-accent: 234 88 12;
+    --color-accent: 196 92 40;
     --color-live: 22 128 61;
     --color-recovered: 37 99 235;
     --color-carved: 180 118 14;
@@ -26,7 +26,7 @@
     --color-critical: 200 38 38;
     --color-warn: 180 118 14;
     --color-info: 37 99 235;
-    --glow: 234 88 12;
+    --glow: 196 92 40;
   }
 
   /* Full-black surface, not just a dim gray — panel-2 sits one notch above pure
@@ -42,7 +42,7 @@
     --color-panel-2: 31 27 26;
     --color-line: 56 50 47;
     --color-muted: 156 148 142;
-    --color-accent: 255 98 32;
+    --color-accent: 217 109 62;
     --color-live: 52 196 113;
     --color-recovered: 96 154 255;
     --color-carved: 245 176 65;
@@ -50,7 +50,7 @@
     --color-critical: 244 82 82;
     --color-warn: 245 176 65;
     --color-info: 96 154 255;
-    --glow: 255 98 32;
+    --glow: 217 109 62;
   }
 
   html,
@@ -111,7 +111,7 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
-    background: radial-gradient(520px 260px at var(--bloom-x, 0%) var(--bloom-y, 0%), rgb(var(--color-accent) / 0.16), transparent 70%);
+    background: radial-gradient(520px 260px at var(--bloom-x, 0%) var(--bloom-y, 0%), rgb(var(--color-accent) / 0.10), transparent 70%);
   }
   .glass > * { position: relative; }
   .glass-link {
@@ -128,7 +128,7 @@
     @apply px-4 py-2 rounded-lg font-medium text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed;
   }
   .btn-accent {
-    @apply btn bg-accent text-white shadow-[0_6px_18px_-6px_rgb(var(--color-accent)/0.7)] hover:brightness-110;
+    @apply btn bg-accent text-white shadow-[0_4px_12px_-6px_rgb(var(--color-accent)/0.45)] hover:brightness-110;
   }
   .btn-ghost {
     @apply btn border border-line text-ink hover:bg-panel;

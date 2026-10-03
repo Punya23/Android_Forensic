@@ -10,10 +10,9 @@ import {
   Recycle,
 } from "lucide-react";
 import { api } from "../lib/api";
-import { Select } from "../components/fields";
 import { isDemoCase } from "../lib/caseNarrative";
 import { DotGlobe, type GlobePoint } from "../components/DotGlobe";
-import type { CaseSummary, Health, RegistryCase } from "../lib/types";
+import type { CaseSummary, RegistryCase } from "../lib/types";
 import type { ViewKey } from "../components/Sidebar";
 
 const fmtBytes = (n: number) =>
@@ -32,7 +31,6 @@ export function HomeView({
   caseId,
   onSelectCase,
   username,
-  health,
   setView,
   onOpenCase,
 }: {
@@ -41,7 +39,6 @@ export function HomeView({
   /** Make a case the open one (enables the sidebar for it) without leaving Home. */
   onSelectCase: (id: string) => void;
   username: string | null;
-  health: Health | null;
   setView: (v: ViewKey) => void;
   onOpenCase: (id: string, view?: ViewKey) => void;
 }) {
@@ -156,23 +153,8 @@ export function HomeView({
           <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted mt-1">
             {username ? `Welcome, ${username}. ` : ""}
-            {id ? "Everything below is about the selected case." : "Field triage for Android phones — every step hashed and logged."}
+            {id ? "Everything below is about the case selected in the top bar." : "Field triage for Android phones — every step hashed and logged."}
           </p>
-        </div>
-        <div className="flex items-center gap-2 text-xs">
-          {cases.length > 0 && (
-            <Select
-              className="input w-auto font-mono text-xs !py-1.5"
-              value={id ?? ""}
-              onChange={onSelectCase}
-              ariaLabel="Case shown on the dashboard"
-              options={cases.map((k) => ({ value: k.case_id, label: `${k.case_id} · ${k.device_model || "—"}` }))}
-            />
-          )}
-          <span className="glass !rounded-full px-3 py-1.5">ADB {health?.adb ? "ready" : "not found"}</span>
-          <button className="btn-accent text-xs flex items-center gap-1.5" onClick={() => setView("acquire")}>
-            <Plus className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden /> New acquisition
-          </button>
         </div>
       </div>
 
