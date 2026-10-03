@@ -1,18 +1,10 @@
-import { useEffect, useState } from "react";
-import {
-  ArrowUpRight,
-  BookOpen,
-  Clock,
-  FileText,
-  MessageSquareText,
-  Network,
-  Plus,
-  Recycle,
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowUpRight, Flag, MessageSquareText, FileText, LayoutDashboard, ShieldCheck, Users } from "lucide-react";
 import { api } from "../lib/api";
 import { isDemoCase } from "../lib/caseNarrative";
 import { DotGlobe, type GlobePoint } from "../components/DotGlobe";
-import type { CaseSummary, RegistryCase } from "../lib/types";
+import { ActivityTerrain, FlowFeed, TickMeter, plausibleTime } from "../components/HomeCharts";
+import type { CaseSummary, Flag as FlagRow, RegistryCase, TimelineEvent } from "../lib/types";
 import type { ViewKey } from "../components/Sidebar";
 
 const fmtBytes = (n: number) =>
@@ -23,10 +15,15 @@ const LEVEL: Record<string, { label: string; cls: string }> = {
   amber: { label: "Medium priority", cls: "bg-warn/25 text-warn border-warn/70 shadow-[0_0_14px_-4px_rgb(var(--color-warn)/0.7)]" },
   green: { label: "Low priority", cls: "bg-live/25 text-live border-live/70 shadow-[0_0_14px_-4px_rgb(var(--color-live)/0.7)]" },
 };
+const SEVERITY_CHIP: Record<string, string> = {
+  critical: "text-deletion border-deletion/60",
+  warn: "text-warn border-warn/60",
+};
 
 const bloom = (x: string, y: string) => ({ ["--bloom-x" as string]: x, ["--bloom-y" as string]: y });
+const two = (n: number) => String(n).padStart(2, "0");
 
-/** Everything on this page describes one case: the one open in the app, or the one picked here. */
+/** Everything on this page describes one case: the one open in the app (or the newest, which then opens). */
 export function HomeView({
   caseId,
   onSelectCase,
@@ -46,6 +43,8 @@ export function HomeView({
   const [summary, setSummary] = useState<CaseSummary | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [places, setPlaces] = useState<GlobePoint[]>([]);
+  const [flags, setFlags] = useState<FlagRow[]>([]);
+  const [stamps, setStamps] = useState<string[]>([]);
 
   useEffect(() => {
     api
@@ -70,13 +69,17 @@ export function HomeView({
   useEffect(() => {
     setSummary(null);
     setPlaces([]);
+    setFlags([]);
+    setStamps([]);
     if (!id) return;
+    api.caseOverview(id).then(setSummary).catch(() => setSummary(null));
+    api.dataset<FlagRow[]>(id, "flags").then((f) => setFlags(f ?? [])).catch(() => setFlags([]));
     api
-      .caseOverview(id)
-      .then(setSummary)
-      .catch(() => setSummary(null));
-    // Every recorded coordinate for this case: the unified trace when it has rows, else the
-    // photo/EXIF locations. Points at 0,0 are a missing fix, not a place, and are dropped.
+      .dataset<TimelineEvent[]>(id, "timeline")
+      .then((t) => setStamps((t ?? []).map((e) => e.timestamp).filter(Boolean)))
+      .catch(() => setStamps([]));
+    // Every recorded coordinate: the unified trace when it has rows, else photo/EXIF locations.
+    // 0,0 is a missing fix, not a place.
     type Row = { latitude?: number | null; longitude?: number | null; label?: string };
     const toPoints = (rows: Row[]): GlobePoint[] =>
       (rows ?? [])
@@ -100,51 +103,56 @@ export function HomeView({
   const c = summary?.counts ?? {};
   const hv = summary?.hash_verification;
   const device = summary?.case.device;
+  const critical = flags.filter((f) => f.severity === "critical").length;
+  const undated = useMemo(() => stamps.filter((s) => plausibleTime(s) === null).length, [stamps]);
+  const people = (summary?.graph_stats.top_contacts ?? []).slice(0, 12);
+
+  const stat: { icon: typeof Flag; value: string | number; label: string; lines: [string, string | number][]; view: ViewKey; x: string; y: string }[] = [
+    { icon: Flag, value: flags.length, label: "Flagged items", lines: [["Critical", critical], ["Watch-list", flags.length - critical]], view: "overview", x: "100%", y: "0%" },
+    { icon: Users, value: summary?.graph_stats.participants ?? "—", label: "People", lines: [["Interactions", summary?.graph_stats.interactions ?? 0], ["Channels", summary?.graph_stats.channels.length ?? 0]], view: "graph", x: "0%", y: "0%" },
+    {
+      icon: ShieldCheck,
+      value: hv ? (hv.verified ?? 0) : "—",
+      label: "Files verified",
+      lines: [["Failed", hv ? (hv.failed ?? 0) : "—"], ["Device-altering", summary?.device_altering_actions ?? 0]],
+      view: "custody",
+      x: "100%",
+      y: "100%",
+    },
+  ];
 
   const bars: { label: string; n: number; view: ViewKey }[] = [
     { label: "Messages", n: c.messages ?? 0, view: "messages" },
-    { label: "Calls", n: c.calls ?? 0, view: "calls" },
-    { label: "Contacts", n: c.contacts ?? 0, view: "contacts" },
-    { label: "Photos & videos", n: c.media ?? 0, view: "media" },
-    { label: "Locations", n: c.locations ?? 0, view: "locations" },
-    { label: "Browser", n: c.browser ?? 0, view: "browser" },
     { label: "Recovered / deleted", n: c.recovered ?? 0, view: "recovered" },
+    { label: "Browser entries", n: c.browser ?? 0, view: "browser" },
+    { label: "Locations", n: c.locations ?? 0, view: "locations" },
+    { label: "Photos & videos", n: c.media ?? 0, view: "media" },
+    { label: "Contacts", n: c.contacts ?? 0, view: "contacts" },
+    { label: "Calls", n: c.calls ?? 0, view: "calls" },
   ];
   const maxBar = Math.max(1, ...bars.map((b) => b.n));
 
-  const integrity =
-    !hv ? { value: "—", note: "verification did not run" }
-    : hv.failed ? { value: `${hv.failed}`, note: `of ${(hv.verified ?? 0) + hv.failed} files FAILED hash check` }
-    : { value: `${hv.verified ?? 0}`, note: "files match recorded hashes" };
-
-  const tiles: { label: string; value: string | number; note: string; view: ViewKey; x: string; y: string }[] = [
-    { label: "Messages", value: c.messages ?? "—", note: c.message_placeholders ? `${c.message_placeholders} encrypted backup(s) unreadable` : "recovered from the phone", view: "messages", x: "100%", y: "0%" },
-    { label: "Recovered", value: c.recovered ?? "—", note: "deleted or carved items", view: "recovered", x: "0%", y: "0%" },
-    { label: "People", value: summary?.graph_stats.participants ?? "—", note: `${summary?.graph_stats.interactions ?? 0} recorded interactions`, view: "graph", x: "100%", y: "100%" },
-    { label: "Integrity", value: integrity.value, note: integrity.note, view: "custody", x: "0%", y: "100%" },
-  ];
-
   const facts: [string, string][] = summary
     ? [
-        ["Case", summary.case.case_id],
         ["Device", [device?.manufacturer, device?.model].filter(Boolean).join(" ") || "unknown"],
         ["Android", device?.android_version ? `${device.android_version} (SDK ${device.sdk})` : "unknown"],
         ["Examiner", summary.case.examiner || "—"],
         ["Opened", summary.case.created_at ? summary.case.created_at.slice(0, 10) : "—"],
         ["Collected", `${summary.artifact_count} files · ${fmtBytes(summary.total_bytes)}`],
-        ["Device-altering actions", String(summary.device_altering_actions)],
         ["Audit events", String(summary.audit_event_count)],
       ]
     : [];
 
-  const quick: { icon: typeof Plus; title: string; text: string; view: ViewKey }[] = [
-    { icon: MessageSquareText, title: "Ask this case", text: "Plain-words questions over the evidence", view: "ask" },
-    { icon: Network, title: "Communication network", text: "Who is linked to whom", view: "graph" },
-    { icon: Clock, title: "Timeline", text: "Everything in time order", view: "timeline" },
-    { icon: Recycle, title: "Recovered / deleted", text: "What was deleted and brought back", view: "recovered" },
-    { icon: FileText, title: "Report", text: "Generate or review the case report", view: "report" },
-    { icon: BookOpen, title: "Overview", text: "Plain-language summary and findings", view: "overview" },
-  ];
+  if (!id) {
+    return (
+      <div className="p-4">
+        <div className="glass p-8 text-center">
+          <div className="text-base font-semibold">{loaded ? "No case yet" : "Loading…"}</div>
+          {loaded && <p className="text-sm text-muted mt-1">Start a new acquisition to create the first case.</p>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 space-y-3">
@@ -152,150 +160,171 @@ export function HomeView({
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted mt-1">
-            {username ? `Welcome, ${username}. ` : ""}
-            {id ? "Everything below is about the case selected in the top bar." : "Field triage for Android phones — every step hashed and logged."}
+            {username ? `${username} · ` : ""}
+            {id}
+            {summary && isDemoCase(summary) && " · demonstration data, not a real device"}
           </p>
+        </div>
+        <div className="flex gap-2">
+          <button className="btn-ghost text-xs flex items-center gap-1.5" onClick={() => go("overview")}>
+            <LayoutDashboard className="h-3.5 w-3.5" aria-hidden /> Overview
+          </button>
+          <button className="btn-ghost text-xs flex items-center gap-1.5" onClick={() => go("ask")}>
+            <MessageSquareText className="h-3.5 w-3.5" aria-hidden /> Ask this case
+          </button>
+          <button className="btn-accent text-xs flex items-center gap-1.5" onClick={() => go("report")}>
+            <FileText className="h-3.5 w-3.5" aria-hidden /> Report
+          </button>
         </div>
       </div>
 
-      {!id ? (
-        <div className="glass p-8 text-center">
-          <div className="text-base font-semibold">{loaded ? "No case yet" : "Loading…"}</div>
-          {loaded && <p className="text-sm text-muted mt-1">Start a new acquisition to create the first case.</p>}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-          {/* Posture + what the case holds */}
-          <div className="glass p-5 lg:col-span-7 lg:order-1" style={bloom("0%", "0%")}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-base font-semibold">Case posture</div>
-                <div className="text-xs text-muted mt-0.5">
-                  {id}
-                  {summary && isDemoCase(summary) && " · demonstration data, not a real device"}
-                </div>
-              </div>
-              {level && (
-                <span className={`text-[11px] font-medium rounded-full border px-2.5 py-1 ${level.cls}`}>{level.label}</span>
-              )}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+        {/* Posture: score over the activity terrain */}
+        <div className="glass p-5 lg:col-span-4 flex flex-col" style={bloom("0%", "0%")}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-base font-semibold">Case posture</div>
+              <div className="text-xs text-muted mt-0.5">Triage priority from the evidence</div>
             </div>
-            {risk ? (
-              <>
-                <div className="flex items-baseline gap-2 mt-5">
-                  <span className="font-dot text-7xl font-bold leading-none tracking-tight">{risk.score}</span>
-                  <span className="font-dot text-2xl text-muted">/100</span>
-                </div>
-                <p className="text-sm text-ink/80 mt-3 max-w-xl">{risk.headline}</p>
-                <ul className="mt-3 space-y-1 text-xs text-muted">
-                  {risk.reasons.slice(0, 3).map((r, i) => (
-                    <li key={i} className="flex gap-2">
-                      <span className="font-mono text-accent shrink-0">+{r.points}</span>
-                      <span className="truncate">{r.label} — {r.detail}</span>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <p className="text-sm text-muted mt-6">Loading this case…</p>
-            )}
-            <div className="mt-5">
-              <div className="text-[11px] uppercase tracking-wider text-muted mb-2">What was collected</div>
-              <div className="space-y-1">
-                {bars.map((b) => (
-                  <button
-                    key={b.label}
-                    onClick={() => go(b.view)}
-                    className="w-full flex items-center gap-3 text-left rounded-lg px-2 py-1 text-xs transition-colors hover:bg-ink/5"
-                  >
-                    <span className="w-36 shrink-0 text-muted">{b.label}</span>
-                    <span className="flex-1 h-1.5 rounded-full bg-ink/10 overflow-hidden">
-                      <span className="block h-full rounded-full bg-accent/80" style={{ width: `${Math.round((b.n / maxBar) * 100)}%` }} />
-                    </span>
-                    <span className="font-mono w-14 text-right">{b.n.toLocaleString()}</span>
-                  </button>
-                ))}
-              </div>
+            {level && <span className={`text-[11px] font-medium rounded-full border px-2.5 py-1 ${level.cls}`}>{level.label}</span>}
+          </div>
+          {risk ? (
+            <div className="flex items-baseline gap-2 mt-3">
+              <span className="font-dot text-6xl font-bold leading-none tracking-tight">{risk.score}</span>
+              <span className="font-dot text-xl text-muted">/100</span>
+            </div>
+          ) : (
+            <div className="text-sm text-muted mt-6">Loading this case…</div>
+          )}
+          <div className="mt-2">
+            <ActivityTerrain stamps={stamps} />
+            <div className="text-[11px] text-muted">
+              Events per hour, one ridge per day{undated > 0 ? ` · ${undated} event${undated === 1 ? "" : "s"} with no usable date left out` : ""}
             </div>
           </div>
+          {risk && <p className="text-sm text-ink/80 mt-3">{risk.headline}</p>}
+        </div>
 
-          {/* Case numbers */}
-          <div className="grid grid-cols-2 gap-3 lg:col-span-5 lg:order-2">
-            {tiles.map((t) => (
-              <button
-                key={t.label}
-                onClick={() => go(t.view)}
-                className="glass glass-link text-left p-4 flex flex-col justify-between min-h-[8.5rem]"
-                style={bloom(t.x, t.y)}
-              >
-                <div className="flex items-center justify-between text-xs text-muted">
-                  {t.label}
-                  <ArrowUpRight className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+        {/* Three numbers */}
+        <div className="grid gap-3 lg:col-span-3 lg:grid-rows-3">
+          {stat.map((s) => {
+            const Icon = s.icon;
+            return (
+              <button key={s.label} onClick={() => go(s.view)} className="glass glass-link text-left p-4 flex flex-col justify-between" style={bloom(s.x, s.y)}>
+                <div className="flex items-center justify-between">
+                  <Icon className="h-4 w-4 text-ink/80" strokeWidth={1.75} aria-hidden />
+                  <ArrowUpRight className="h-4 w-4 text-muted" strokeWidth={1.75} aria-hidden />
                 </div>
-                <div>
-                  <div className="font-dot text-4xl font-bold leading-none tracking-tight">
-                    {typeof t.value === "number" ? t.value.toLocaleString() : t.value}
+                <div className="flex items-end justify-between gap-3 mt-3">
+                  <div>
+                    <div className="font-dot text-4xl font-bold leading-none tracking-tight">{typeof s.value === "number" ? two(s.value) : s.value}</div>
+                    <div className="text-sm mt-1.5">{s.label}</div>
                   </div>
-                  <div className="text-[11px] text-muted mt-2">{t.note}</div>
+                  <div className="text-right text-xs text-muted space-y-0.5">
+                    {s.lines.map(([k, v]) => (
+                      <div key={k}>
+                        {k} <span className="text-ink font-mono">{typeof v === "number" ? two(v) : v}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Communication flow */}
+        <div className="glass p-5 lg:col-span-5" style={bloom("100%", "0%")}>
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-base font-semibold">Communication flow</div>
+            <button className="text-xs text-accent hover:underline" onClick={() => go("graph")}>
+              Open network
+            </button>
+          </div>
+          <div className="text-xs text-muted">Top participants by recorded interactions — hover a lane</div>
+          <FlowFeed people={people} total={summary?.graph_stats.interactions ?? 0} />
+        </div>
+
+        {/* Findings */}
+        <div className="glass p-5 lg:col-span-4" style={bloom("0%", "100%")}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-base font-semibold">Key findings</div>
+            <button className="text-xs text-accent hover:underline" onClick={() => go("overview")}>
+              All findings
+            </button>
+          </div>
+          {risk && risk.reasons.length ? (
+            <div className="divide-y divide-ink/10">
+              {risk.reasons.slice(0, 5).map((r, i) => (
+                <div key={i} className="py-2.5 first:pt-0 last:pb-0">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="text-sm font-medium">{r.label}</div>
+                    <span className={`shrink-0 text-[10px] rounded border px-1.5 py-0.5 font-mono ${SEVERITY_CHIP[r.severity] ?? "text-muted border-ink/20"}`}>+{r.points}</span>
+                  </div>
+                  <div className="text-xs text-muted mt-0.5">{r.detail}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted">{risk ? "No findings contributed to the score." : "Loading this case…"}</p>
+          )}
+        </div>
+
+        {/* What was collected */}
+        <div className="glass p-5 lg:col-span-8" style={bloom("100%", "100%")}>
+          <div className="text-base font-semibold">What was collected</div>
+          <div className="text-xs text-muted mb-3">
+            {summary ? `${summary.artifact_count} files · ${fmtBytes(summary.total_bytes)}` : ""}
+            {c.message_placeholders ? ` · ${c.message_placeholders} encrypted backup(s) could not be read` : ""}
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {bars.map((b) => (
+              <button
+                key={b.label}
+                onClick={() => go(b.view)}
+                className="text-left rounded-xl border border-ink/10 bg-ink/[0.03] p-3 transition-all duration-200 hover:-translate-y-0.5 hover:border-accent/50 active:scale-[0.97]"
+              >
+                <div className="font-dot text-3xl font-bold leading-none">{b.n.toLocaleString()}</div>
+                <div className="text-sm mt-1.5">{b.label}</div>
+                <div className="mt-2">
+                  <TickMeter value={b.n} max={maxBar} />
                 </div>
               </button>
             ))}
           </div>
+        </div>
 
-          {/* Where the phone was */}
-          <div className="glass p-5 lg:col-span-5 lg:order-4 min-h-[18rem] flex flex-col" style={bloom("100%", "100%")}>
-            <div className="flex items-center justify-between mb-1">
-              <div className="text-base font-semibold">Where it was</div>
-              <button className="text-xs text-accent hover:underline" onClick={() => go("loctrace")}>
-                Open trace
-              </button>
-            </div>
-            <div className="text-xs text-muted mb-2">
-              {places.length ? `${places.length} recorded location${places.length === 1 ? "" : "s"} — drag to turn, scroll to zoom` : "No coordinates were recorded for this case."}
-            </div>
-            <div className="flex-1 min-h-[14rem]">
-              <DotGlobe points={places} />
-            </div>
+        {/* Where it was + case file */}
+        <div className="glass p-5 lg:col-span-5 min-h-[18rem] flex flex-col" style={bloom("100%", "100%")}>
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-base font-semibold">Where it was</div>
+            <button className="text-xs text-accent hover:underline" onClick={() => go("loctrace")}>
+              Open trace
+            </button>
           </div>
-
-          {/* The case file */}
-          <div className="glass p-5 lg:col-span-7 lg:order-3" style={bloom("100%", "0%")}>
-            <div className="text-base font-semibold mb-3">Case file</div>
-            {facts.length === 0 ? (
-              <p className="text-sm text-muted">Loading this case…</p>
-            ) : (
-              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 text-sm">
-                {facts.map(([k, v]) => (
-                  <div key={k} className="flex justify-between gap-3 border-b border-ink/10 pb-1.5">
-                    <dt className="text-muted">{k}</dt>
-                    <dd className="text-right font-medium truncate">{v}</dd>
-                  </div>
-                ))}
-              </dl>
-            )}
+          <div className="text-xs text-muted mb-2">
+            {places.length ? `${places.length} recorded location${places.length === 1 ? "" : "s"} — drag to turn, scroll to zoom` : "No coordinates were recorded for this case."}
           </div>
-
-          {/* Ways in */}
-          <div className="glass p-5 lg:col-span-12 lg:order-5" style={bloom("0%", "100%")}>
-            <div className="text-base font-semibold mb-3">Explore this case</div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-              {quick.map((q) => {
-                const Icon = q.icon;
-                return (
-                  <button
-                    key={q.title}
-                    onClick={() => go(q.view)}
-                    className="text-left rounded-xl border border-ink/10 bg-ink/[0.03] p-3 transition-all duration-200 hover:-translate-y-0.5 hover:border-accent/40 hover:bg-ink/[0.06] active:scale-[0.97]"
-                  >
-                    <Icon className="h-4 w-4 text-accent" strokeWidth={1.75} aria-hidden />
-                    <div className="text-sm font-medium mt-1.5">{q.title}</div>
-                    <div className="text-[11px] text-muted mt-0.5 leading-snug">{q.text}</div>
-                  </button>
-                );
-              })}
-            </div>
+          <div className="flex-1 min-h-[14rem]">
+            <DotGlobe points={places} />
           </div>
         </div>
-      )}
+        <div className="glass p-5 lg:col-span-7" style={bloom("0%", "0%")}>
+          <div className="text-base font-semibold mb-3">Case file</div>
+          {facts.length === 0 ? (
+            <p className="text-sm text-muted">Loading this case…</p>
+          ) : (
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+              {facts.map(([k, v]) => (
+                <div key={k} className="flex justify-between gap-3 border-b border-ink/10 pb-1.5">
+                  <dt className="text-muted">{k}</dt>
+                  <dd className="text-right font-medium truncate">{v}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
