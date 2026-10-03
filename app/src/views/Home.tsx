@@ -42,10 +42,10 @@ export function HomeView({
   const maxArtifacts = Math.max(1, ...recent.map((c) => c.artifact_count));
 
   const tiles = [
-    { label: "Cases", value: stats ? stats.cases : "—", note: stats ? `${demoCount} demo · ${stats.cases - demoCount} real` : "" },
-    { label: "Artifacts", value: stats ? stats.artifacts.toLocaleString() : "—", note: "files collected and hashed" },
-    { label: "Evidence size", value: stats ? fmtBytes(stats.bytes) : "—", note: "across all cases" },
-    { label: "Reports", value: stats ? stats.reports : "—", note: "generated snapshots" },
+    { label: "Cases", value: stats ? stats.cases : "—", note: stats ? `${demoCount} demo · ${stats.cases - demoCount} real` : "", band: "bg-accent" },
+    { label: "Artifacts", value: stats ? stats.artifacts.toLocaleString() : "—", note: "files collected and hashed", band: "bg-recovered" },
+    { label: "Evidence size", value: stats ? fmtBytes(stats.bytes) : "—", note: "across all cases", band: "bg-live" },
+    { label: "Reports", value: stats ? stats.reports : "—", note: "generated snapshots", band: "bg-carved" },
   ];
 
   const actions: { icon: typeof Plus; title: string; text: string; onClick: () => void; disabled?: boolean }[] = [
@@ -85,9 +85,10 @@ export function HomeView({
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {tiles.map((t) => (
-          <div key={t.label} className="card p-4">
+          <div key={t.label} className="card p-4 relative overflow-hidden">
+            <span className={`absolute inset-x-0 top-0 h-0.5 ${t.band}`} aria-hidden />
             <div className="label">{t.label}</div>
-            <div className="text-2xl font-semibold mt-1">{t.value}</div>
+            <div className="text-3xl font-semibold tracking-tight mt-1">{t.value}</div>
             <div className="text-[11px] text-muted mt-0.5">{t.note}</div>
           </div>
         ))}

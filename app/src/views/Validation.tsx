@@ -529,7 +529,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
               <button
                 className={`px-3 py-1.5 rounded-md text-xs border transition-colors ${
                   covStatus === "all"
-                    ? "bg-accent text-black border-accent"
+                    ? "bg-accent text-white border-accent"
                     : "border-line text-muted hover:bg-panel"
                 }`}
                 onClick={() => setCovStatus("all")}
@@ -541,7 +541,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
                   key={s}
                   className={`px-3 py-1.5 rounded-md text-xs border transition-colors ${
                     covStatus === s
-                      ? "bg-accent text-black border-accent"
+                      ? "bg-accent text-white border-accent"
                       : `${STATUS_TONE[s]} hover:brightness-125`
                   }`}
                   onClick={() => setCovStatus(s)}

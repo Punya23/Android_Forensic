@@ -305,6 +305,27 @@ for (const item of NAV) {
   SECTIONS[SECTIONS.length - 1].items.push(item);
 }
 
+/** Colour band per section — a quick visual cue for where you are, not a status. */
+export const SECTION_DOT: Record<string, string> = {
+  Case: "bg-accent",
+  Communications: "bg-recovered",
+  Media: "bg-fuchsia-400",
+  "Location & Network": "bg-live",
+  "Activity & Accounts": "bg-carved",
+  Analysis: "bg-violet-400",
+  "Risk Flags": "bg-deletion",
+  "Integrity & Tools": "bg-muted",
+};
+
+export function viewLabel(view: ViewKey): string | undefined {
+  return NAV.find((i) => i.key === view)?.label;
+}
+
+/** Which section a view belongs to (for the page's colour band). */
+export function sectionOf(view: ViewKey): string | undefined {
+  return SECTIONS.find((s) => s.items.some((i) => i.key === view))?.name;
+}
+
 /** Sections open on first visit; the rest start collapsed so the rail stays short. */
 const DEFAULT_OPEN = new Set(["Case", "Communications"]);
 const OPEN_KEY = "snagr.sidebar.open";
@@ -347,8 +368,12 @@ export function Sidebar({
   }
 
   return (
-    <aside className="w-64 shrink-0 border-r border-line bg-panel-2 flex flex-col">
-      <div className="p-3 border-b border-line">
+    <aside className="w-64 shrink-0 border-r border-line bg-panel/80 backdrop-blur flex flex-col">
+      <div className="px-4 pt-4 pb-1 flex items-center gap-2 text-sm font-semibold tracking-wide">
+        <span className="h-2 w-2 rounded-full bg-accent shadow-[0_0_10px_rgb(var(--color-accent))]" aria-hidden />
+        SNAGR
+      </div>
+      <div className="p-3">
         <button
           className="btn-accent w-full flex items-center justify-center gap-1.5"
           onClick={onNewAcquisition}
@@ -374,6 +399,7 @@ export function Sidebar({
                   className={`h-3 w-3 transition-transform ${expanded ? "rotate-90" : ""}`}
                   aria-hidden
                 />
+                <span className={`h-1.5 w-1.5 rounded-full ${SECTION_DOT[sec.name] ?? "bg-muted"}`} aria-hidden />
                 {sec.name}
                 <span className="ml-auto font-mono normal-case tracking-normal text-muted/60">
                   {sec.items.length}
@@ -397,8 +423,8 @@ export function Sidebar({
                       onClick={() => setView(item.key)}
                       className={`w-full text-left mb-0.5 px-2.5 py-[7px] rounded-md text-[13px] font-medium flex items-center gap-2.5 transition-colors ${
                         active
-                          ? "bg-accent/12 text-accent"
-                          : "text-ink/75 hover:bg-panel disabled:opacity-30 disabled:hover:bg-transparent"
+                          ? "bg-panel-2 text-ink shadow-[inset_2px_0_0_rgb(var(--color-accent))]"
+                          : "text-ink/70 hover:bg-panel-2/70 hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
                       }`}
                     >
                       <Icon

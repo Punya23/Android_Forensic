@@ -107,10 +107,10 @@ export function MessagesView({ caseId }: { caseId: string }) {
               <tr key={i} className={m.confidence !== "live" ? "bg-carved/5" : ""}>
                 <td className="td"><TagButton refId={`message:${i}`} kind="message" label={`${m.sender}: ${m.body.slice(0, 40)}`} /></td>
                 <td className="td font-mono text-xs text-muted whitespace-nowrap">{fmtTs(m.timestamp)}</td>
-                <td className="td">
+                <td className="td whitespace-nowrap">
                   <span className={APP_COLORS[m.app] ?? "text-ink"}>{m.app}</span>
                 </td>
-                <td className="td">{m.sender}</td>
+                <td className="td min-w-[7rem]">{m.sender}</td>
                 <td className="td">
                   <div className="whitespace-pre-wrap [overflow-wrap:anywhere] min-w-[10rem]">{highlight(m.body, query)}</div>
                   {m.provenance && (

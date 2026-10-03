@@ -4,7 +4,7 @@ import { api, hasAuthToken, setOnUnauthorized } from "./lib/api";
 import type { Health } from "./lib/types";
 import { TagProvider } from "./lib/tagStore";
 import { CapabilityProvider, CapabilityBanner } from "./lib/capabilities";
-import { Sidebar, isCaseIndependent, VIEW_DATASET, type ViewKey } from "./components/Sidebar";
+import { Sidebar, isCaseIndependent, VIEW_DATASET, SECTION_DOT, sectionOf, viewLabel, type ViewKey } from "./components/Sidebar";
 import { GlobalSearch } from "./components/GlobalSearch";
 import { FetchErrorBanner } from "./components/FetchErrorBanner";
 import { ThemeToggle } from "./components/ThemeToggle";
@@ -134,6 +134,9 @@ export default function App() {
     return <OnboardingView username={username} onContinue={enterDashboard} />;
   }
 
+  const sec = sectionOf(view);
+  const crumb = [sec, viewLabel(view)].filter((x, i, arr) => x && arr.indexOf(x) === i).join("  /  ");
+
   const body = (
     <div className="flex h-screen overflow-hidden">
       <div className={`${navOpen ? "fixed inset-0 z-40 flex" : "hidden"} md:static md:z-auto md:flex`}>
@@ -157,7 +160,8 @@ export default function App() {
         />
       </div>
       <main className="flex-1 overflow-hidden flex flex-col">
-        <TopBar health={health} caseId={caseId} setView={setView} username={username} onLogout={onLogout} onMenu={() => setNavOpen(true)} />
+        <TopBar crumb={crumb} health={health} caseId={caseId} setView={setView} username={username} onLogout={onLogout} onMenu={() => setNavOpen(true)} />
+        <div className={`h-0.5 shrink-0 opacity-70 ${SECTION_DOT[sectionOf(view) ?? ""] ?? "bg-line"}`} aria-hidden />
         {/* One strip, above whichever view is routed, saying why this view's data is
             absent when it is. Renders nothing when the dataset is populated, and
             nothing for views that aren't about a single dataset. */}
@@ -248,6 +252,7 @@ export default function App() {
 }
 
 function TopBar({
+  crumb,
   health,
   caseId,
   setView,
@@ -255,6 +260,7 @@ function TopBar({
   onLogout,
   onMenu,
 }: {
+  crumb: string;
   health: Health | null;
   caseId: string | null;
   setView: (v: ViewKey) => void;
@@ -263,16 +269,16 @@ function TopBar({
   onMenu: () => void;
 }) {
   return (
-    <header className="h-14 border-b border-line flex items-center justify-between px-3 md:px-5 bg-panel-2 shrink-0 gap-3 md:gap-4">
+    <header className="h-14 border-b border-line flex items-center justify-between px-3 md:px-5 bg-panel/70 backdrop-blur shrink-0 gap-3 md:gap-4">
       <div className="flex items-center gap-3 text-sm shrink-0">
         <button className="md:hidden btn-ghost !px-2 !py-1.5" aria-label="Open menu" onClick={onMenu}>
           <Menu className="h-4 w-4" aria-hidden />
         </button>
-        <div className="flex items-center gap-1.5 text-accent font-semibold">
+        <div className="md:hidden flex items-center gap-1.5 text-accent font-semibold">
           <ShieldCheck className="h-[18px] w-[18px]" strokeWidth={2.25} aria-hidden />
           SNAGR
         </div>
-        <span className="text-muted hidden xl:inline">Android Rapid Evidence Triage</span>
+        <span className="text-muted hidden md:inline">{crumb}</span>
         {caseId && (
           <span className="flex items-center gap-1.5 font-mono text-xs bg-panel px-2 py-1 rounded-md border border-line">
             <FolderOpen className="h-3.5 w-3.5 text-muted" strokeWidth={1.75} aria-hidden />

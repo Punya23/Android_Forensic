@@ -11,19 +11,15 @@ export type Theme = "light" | "dark";
 
 const STORAGE_KEY = "snagr-theme";
 
-function systemPrefersDark(): boolean {
-  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
-}
-
-/** Stored choice if the user has picked one; otherwise the OS preference. */
+/** Stored choice if the user has picked one; otherwise dark (the design's native look). */
 export function getInitialTheme(): Theme {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored === "light" || stored === "dark") return stored;
   } catch {
-    // localStorage unavailable (e.g. private mode) — fall through to system pref.
+    // localStorage unavailable (e.g. private mode) — fall through to the dark default.
   }
-  return systemPrefersDark() ? "dark" : "light";
+  return "dark";
 }
 
 export function applyTheme(theme: Theme): void {

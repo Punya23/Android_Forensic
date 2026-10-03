@@ -601,7 +601,7 @@ export function LocationsView({
               onClick={() => setSourceFilter(s)}
               className={`px-3 py-1 text-xs rounded border transition-colors ${
                 sourceFilter === s
-                  ? "bg-accent text-black border-accent"
+                  ? "bg-accent text-white border-accent"
                   : "border-line text-muted hover:bg-panel"
               }`}
             >
