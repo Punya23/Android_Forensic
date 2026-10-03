@@ -369,11 +369,12 @@ export function Sidebar({
 
   return (
     <aside className="w-64 shrink-0 border-r border-line bg-panel/80 backdrop-blur flex flex-col">
-      <div className="px-4 pt-4 pb-1 flex items-center gap-2 text-sm font-semibold tracking-wide">
-        <span className="h-2 w-2 rounded-full bg-accent shadow-[0_0_10px_rgb(var(--color-accent))]" aria-hidden />
+      {/* Same height and rule as the top bar, so the two line up across every page. */}
+      <div className="h-14 shrink-0 px-4 border-b border-line flex items-center gap-2.5 text-[15px] font-semibold tracking-wide">
+        <ShieldCheck className="h-5 w-5 text-accent" strokeWidth={2.25} aria-hidden />
         SNAGR
       </div>
-      <div className="p-3">
+      <div className="px-3 pt-3 pb-1">
         <button
           className="btn-accent w-full flex items-center justify-center gap-1.5"
           onClick={onNewAcquisition}
@@ -421,14 +422,14 @@ export function Sidebar({
                       disabled={disabled}
                       title={navTitle(cap)}
                       onClick={() => setView(item.key)}
-                      className={`w-full text-left mb-0.5 px-2.5 py-[7px] rounded-md text-[13px] font-medium flex items-center gap-2.5 transition-colors ${
+                      className={`group w-full text-left mb-0.5 px-3 py-2 rounded-xl text-[13px] font-medium flex items-center gap-3 transition-all duration-200 ease-out active:scale-[0.96] ${
                         active
-                          ? "bg-panel-2 text-ink shadow-[inset_2px_0_0_rgb(var(--color-accent))]"
-                          : "text-ink/70 hover:bg-panel-2/70 hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
+                          ? "bg-accent text-white shadow-[0_8px_20px_-8px_rgb(var(--color-accent)/0.85)]"
+                          : "text-ink/70 hover:bg-panel-2 hover:text-ink hover:translate-x-1 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:translate-x-0"
                       }`}
                     >
                       <Icon
-                        className="h-[15px] w-[15px] shrink-0"
+                        className="h-[16px] w-[16px] shrink-0 transition-transform duration-200 ease-out group-hover:scale-125 group-hover:-rotate-6 group-active:scale-90"
                         strokeWidth={active ? 2.25 : 1.75}
                         aria-hidden
                       />

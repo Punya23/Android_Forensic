@@ -160,8 +160,7 @@ export default function App() {
         />
       </div>
       <main className="flex-1 overflow-hidden flex flex-col">
-        <TopBar crumb={crumb} health={health} caseId={caseId} setView={setView} username={username} onLogout={onLogout} onMenu={() => setNavOpen(true)} />
-        <div className={`h-0.5 shrink-0 opacity-70 ${SECTION_DOT[sectionOf(view) ?? ""] ?? "bg-line"}`} aria-hidden />
+        <TopBar crumb={crumb} crumbDot={SECTION_DOT[sec ?? ""] ?? "bg-muted"} health={health} caseId={caseId} setView={setView} username={username} onLogout={onLogout} onMenu={() => setNavOpen(true)} />
         {/* One strip, above whichever view is routed, saying why this view's data is
             absent when it is. Renders nothing when the dataset is populated, and
             nothing for views that aren't about a single dataset. */}
@@ -253,6 +252,7 @@ export default function App() {
 
 function TopBar({
   crumb,
+  crumbDot,
   health,
   caseId,
   setView,
@@ -261,6 +261,7 @@ function TopBar({
   onMenu,
 }: {
   crumb: string;
+  crumbDot: string;
   health: Health | null;
   caseId: string | null;
   setView: (v: ViewKey) => void;
@@ -278,7 +279,7 @@ function TopBar({
           <ShieldCheck className="h-[18px] w-[18px]" strokeWidth={2.25} aria-hidden />
           SNAGR
         </div>
-        <span className="text-muted hidden md:inline">{crumb}</span>
+        <span className="text-muted hidden md:flex items-center gap-2"><span className={`h-1.5 w-1.5 rounded-full ${crumbDot}`} aria-hidden />{crumb}</span>
         {caseId && (
           <span className="flex items-center gap-1.5 font-mono text-xs bg-panel px-2 py-1 rounded-md border border-line">
             <FolderOpen className="h-3.5 w-3.5 text-muted" strokeWidth={1.75} aria-hidden />
