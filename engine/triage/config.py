@@ -56,6 +56,7 @@ TIER0_PULL_ROOTS: list[str] = [
     "/sdcard/Movies",
     "/sdcard/Music",
     "/sdcard/Documents",
+    "/sdcard/Recordings",  # voice / call recordings (OnePlus, Samsung and others)
     "/sdcard/WhatsApp",  # legacy pre-scoped-storage layout, still present on upgraded devices
     "/sdcard/Android/media/com.whatsapp/WhatsApp",  # Media + Databases + Backups
     "/sdcard/Android/media/org.telegram.messenger/Telegram",

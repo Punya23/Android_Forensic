@@ -399,7 +399,8 @@ class Adb:
         """Recursively list regular files under a device path (may be empty/denied)."""
         # -type f keeps directories out; 2>/dev/null suppresses permission-denied noise.
         res = self.shell(f"find '{root}' -type f 2>/dev/null", timeout=timeout)
-        if not res.ok:
+        # find exits non-zero when any one folder is unreadable although it printed the rest.
+        if not res.ok and not res.stdout.strip():
             return []
         return [ln.strip() for ln in res.stdout.splitlines() if ln.strip()]
 
@@ -427,6 +428,22 @@ class Adb:
                 out.append((path, int(m.group(2)), int(m.group(3))))
         return out
 
+    def list_trashed_files(self, timeout: int = 180) -> list[tuple[str, int, int]]:
+        """Deleted-but-recoverable media (``.trashed-*``, Android 11+) and in-flight ``.pending-*``
+        files, as ``(path, size, mtime)``. Android's media index hides these, so they are found
+        by name; the trailing slash matters because ``/sdcard`` is a symlink that ``find`` will
+        not descend without it."""
+        res = self.shell(
+            "find /sdcard/ -type f \\( -name '.trashed-*' -o -name '.pending-*' \\) -exec stat -c '%s %Y %n' {} + 2>/dev/null",
+            timeout=timeout,
+        )
+        out: list[tuple[str, int, int]] = []
+        for ln in res.stdout.splitlines():  # non-zero alone means one unreadable folder
+            parts = ln.strip().split(" ", 2)
+            if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+                out.append((parts[2], int(parts[0]), int(parts[1])))
+        return out
+
     def list_files_detailed(self, root: str, days: int | None = None, timeout: int = 120) -> list[tuple[str, int, int]]:
         """Like :meth:`list_files` but with each file's size in bytes and mtime (epoch seconds),
         which a size-capped run needs to choose what to pull. Empty if the device's ``stat`` does
@@ -435,7 +452,7 @@ class Adb:
         from sizing every file on a large phone."""
         recent = f"-mtime -{int(days)} " if days else ""
         res = self.shell(f"find '{root}' -type f {recent}-exec stat -c '%s %Y %n' {{}} + 2>/dev/null", timeout=timeout)
-        if not res.ok:
+        if not res.ok and not res.stdout.strip():  # non-zero alone means one unreadable folder
             return []
         out: list[tuple[str, int, int]] = []
         for ln in res.stdout.splitlines():

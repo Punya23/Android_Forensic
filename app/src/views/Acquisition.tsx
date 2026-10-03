@@ -1180,8 +1180,10 @@ export function AcquisitionView({
               <input type="number" min={1} step={10} className="input mt-1" value={capBucketMb} onChange={(e) => setCapBucketMb(Math.max(0, Number(e.target.value)))} />
             </label>
             <p className="col-span-2 text-[11px] text-muted">
-              Categories: WhatsApp, Telegram, photos, videos, audio, documents, databases, other. Contacts, calls and SMS come
-              from the helper app and are small.
+              Categories: WhatsApp, Telegram, photos, videos, documents, voice recordings, screen recordings, other. Music is
+              skipped. Deleted (trash) items, voice and screen recordings, chat databases and the newest WhatsApp backup are
+              always taken whole, even above the cap; the case records by how much. Contacts, calls and SMS come from the
+              helper app and are small.
             </p>
           </div>
         )}

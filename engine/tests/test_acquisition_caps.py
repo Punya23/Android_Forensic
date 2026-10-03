@@ -166,3 +166,98 @@ def test_capped_selection_prefers_the_media_index_and_never_walks_the_storage():
     files, rep = select_files(src, ["/sdcard/DCIM"], max_files=5000, bucket_bytes=100 * MB, total_bytes=0)
     assert files == ["/sdcard/DCIM/49.jpg", "/sdcard/DCIM/48.jpg"]  # newest two; the file outside the roots is ignored
     assert src.asked == [] and rep["listing"] == "media index"
+
+
+# --- protected files, exclusions and the extra categories --------------------------------------
+
+WA_DB = "/sdcard/Android/media/com.whatsapp/WhatsApp/Databases/msgstore-2026-10-03.1.db.crypt14"
+
+
+def test_protected_files_are_taken_whole_even_above_the_cap():
+    # A 593 MB WhatsApp backup cannot be split; the 100 MB category cap must not drop it.
+    entries = [(WA_DB, 593 * MB, 100)] + [(f"/sdcard/Android/media/com.whatsapp/WhatsApp/Media/{i}.jpg", 30 * MB, i) for i in range(10)]
+    chosen, rep = apply_caps(entries, bucket_bytes=100 * MB, total_bytes=0)
+    assert WA_DB in chosen
+    wa = rep["buckets"]["whatsapp"]
+    assert wa["protected_files"] == 1 and wa["selected_bytes"] >= 593 * MB
+    assert rep["overcap_bytes"] >= 493 * MB  # the report says by how much the cap was exceeded
+
+
+def test_trashed_and_pending_files_are_protected_and_get_their_own_bucket():
+    from triage.caps import bucket_of, is_protected
+
+    t = "/sdcard/Pictures/Screenshots/.trashed-1791800589-Screenshot_1.jpg"
+    assert bucket_of(t) == "trashed" and is_protected(t)
+    assert is_protected("/sdcard/DCIM/.pending-1-a.jpg")
+    assert is_protected("/sdcard/Download/chat.db") and not is_protected("/sdcard/DCIM/Camera/a.jpg")
+
+
+def test_music_is_excluded_but_recordings_and_screen_recordings_are_kept():
+    from triage.caps import bucket_of
+
+    assert bucket_of("/sdcard/Music/Album/song.mp3") == "music"
+    assert bucket_of("/sdcard/Music/Recordings/Standard Recordings/Standard recording 3.mp3") == "recording"
+    assert bucket_of("/sdcard/Recordings/Call/call.m4a") == "recording"
+    assert bucket_of("/sdcard/Pictures/Screenshots/Record_2025-11-16.mp4") == "screen-recording"
+    assert bucket_of("/sdcard/DCIM/Camera/v.mp4") == "video"
+    entries = [("/sdcard/Music/Album/song.mp3", MB, 1), ("/sdcard/Music/Recordings/r.mp3", MB, 1)]
+    chosen, rep = apply_caps(entries, bucket_bytes=100 * MB, total_bytes=0)
+    assert chosen == ["/sdcard/Music/Recordings/r.mp3"]
+    assert rep["buckets"]["music"]["excluded"] is True and rep["buckets"]["music"]["selected_files"] == 0
+
+
+def test_an_absurdly_large_protected_file_is_still_refused():
+    chosen, rep = apply_caps([(WA_DB, 3 * 1024 * MB, 1)], bucket_bytes=100 * MB, total_bytes=0)
+    assert chosen == [] and rep["buckets"]["whatsapp"]["skipped_files"] == 1
+
+
+def test_select_files_adds_the_trash_the_media_index_hides():
+    from triage.caps import select_files
+
+    class Indexed(_Src):
+        def list_indexed_files(self):
+            return [("/sdcard/DCIM/a.jpg", MB, 5)]
+
+        def list_trashed_files(self):
+            return [("/sdcard/DCIM/.trashed-9-b.jpg", MB, 9)]
+
+    files, rep = select_files(Indexed([]), ["/sdcard/DCIM"], max_files=100, bucket_bytes=100 * MB)
+    assert set(files) == {"/sdcard/DCIM/a.jpg", "/sdcard/DCIM/.trashed-9-b.jpg"}
+    assert rep["buckets"]["trashed"]["protected_files"] == 1
+
+
+def test_only_the_newest_chat_backup_is_protected_and_sticker_backups_are_not():
+    from triage.caps import is_protected
+
+    d = "/sdcard/Android/media/com.whatsapp/WhatsApp/Databases/"
+    old, new = d + "msgstore-2026-09-26.1.db.crypt14", d + "msgstore-2026-10-03.1.db.crypt14"
+    sticker = "/sdcard/Android/media/com.whatsapp/WhatsApp/Backups/Stickers/abc.webp.crypt14"
+    assert not is_protected(sticker)
+    chosen, rep = apply_caps([(old, 590 * MB, 1), (new, 593 * MB, 9)], bucket_bytes=100 * MB, total_bytes=0)
+    assert chosen == [new]  # the older daily copy is a near-duplicate: it is not protected, so the cap drops it
+    assert rep["buckets"]["whatsapp"]["protected_files"] == 1
+
+
+def test_voice_recordings_are_taken_whole_even_when_bigger_than_the_category_cap():
+    rec = "/sdcard/Music/Recordings/Standard Recordings/Standard recording 3.mp3"
+    chosen, rep = apply_caps([(rec, 193 * MB, 5)], bucket_bytes=100 * MB, total_bytes=0)
+    assert chosen == [rec] and rep["buckets"]["recording"]["protected_files"] == 1
+
+
+def test_listings_survive_find_exiting_nonzero_for_one_unreadable_folder():
+    # find exits 1 when any folder is unreadable but has still printed everything it could read.
+    from triage.adb import Adb
+
+    out = "925 1789137228 /sdcard/Pictures/Screenshots/.trashed-1-a.jpg\n"
+    adb = Adb.__new__(Adb)
+    adb.shell = lambda cmd, timeout=60: type("R", (), {"ok": False, "stdout": out})()
+    assert adb.list_trashed_files() == [("/sdcard/Pictures/Screenshots/.trashed-1-a.jpg", 925, 1789137228)]
+    assert adb.list_files_detailed("/sdcard/DCIM") == [("/sdcard/Pictures/Screenshots/.trashed-1-a.jpg", 925, 1789137228)]
+    adb.shell = lambda cmd, timeout=60: type("R", (), {"ok": False, "stdout": "/sdcard/DCIM/a.jpg\n"})()
+    assert adb.list_files("/sdcard/DCIM") == ["/sdcard/DCIM/a.jpg"]
+
+
+def test_protected_files_do_not_use_up_the_ordinary_budget_of_their_category():
+    media = [(f"/sdcard/Android/media/com.whatsapp/WhatsApp/Media/{i}.jpg", 30 * MB, i) for i in range(10)]
+    chosen, rep = apply_caps([(WA_DB, 593 * MB, 100)] + media, bucket_bytes=100 * MB, total_bytes=0)
+    assert WA_DB in chosen and sum(1 for p in chosen if p != WA_DB) == 3  # the usual 100 MB of ordinary files as well

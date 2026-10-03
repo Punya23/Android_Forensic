@@ -66,6 +66,10 @@ class AcquisitionSource(ABC):
     def list_files(self, root: str) -> list[str]:
         """List regular files under a device path (empty if absent/denied)."""
 
+    def list_trashed_files(self) -> list[tuple[str, int, int]]:
+        """Trashed/pending media that a file index may hide; empty for sources without one."""
+        return []
+
     def list_indexed_files(self) -> list[tuple[str, int, int]] | None:
         """A fast, sized, newest-first listing from the device's own file index, or ``None`` when
         this source has no such index (the run then walks the storage)."""

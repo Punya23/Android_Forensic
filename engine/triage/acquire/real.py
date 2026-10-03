@@ -160,6 +160,9 @@ class RealDeviceSource(AcquisitionSource):
     def list_files(self, root: str) -> list[str]:
         return self.adb.list_files(root)
 
+    def list_trashed_files(self) -> list[tuple[str, int, int]]:
+        return self.adb.list_trashed_files()
+
     def list_indexed_files(self) -> list[tuple[str, int, int]] | None:
         return self.adb.list_indexed_files() or None
 
