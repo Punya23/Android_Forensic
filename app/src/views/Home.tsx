@@ -12,6 +12,7 @@ import {
 import { api } from "../lib/api";
 import { Select } from "../components/fields";
 import { isDemoCase } from "../lib/caseNarrative";
+import { DotGlobe, type GlobePoint } from "../components/DotGlobe";
 import type { CaseSummary, Health, RegistryCase } from "../lib/types";
 import type { ViewKey } from "../components/Sidebar";
 
@@ -47,6 +48,7 @@ export function HomeView({
   const [cases, setCases] = useState<RegistryCase[]>([]);
   const [summary, setSummary] = useState<CaseSummary | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [places, setPlaces] = useState<GlobePoint[]>([]);
 
   useEffect(() => {
     api
@@ -70,11 +72,27 @@ export function HomeView({
 
   useEffect(() => {
     setSummary(null);
+    setPlaces([]);
     if (!id) return;
     api
       .caseOverview(id)
       .then(setSummary)
       .catch(() => setSummary(null));
+    // Every recorded coordinate for this case: the unified trace when it has rows, else the
+    // photo/EXIF locations. Points at 0,0 are a missing fix, not a place, and are dropped.
+    type Row = { latitude?: number | null; longitude?: number | null; label?: string };
+    const toPoints = (rows: Row[]): GlobePoint[] =>
+      (rows ?? [])
+        .filter((r) => typeof r.latitude === "number" && typeof r.longitude === "number" && !(r.latitude === 0 && r.longitude === 0))
+        .map((r) => ({ lat: r.latitude as number, lon: r.longitude as number, label: r.label }));
+    api
+      .dataset<Row[]>(id, "location_traces")
+      .then((t) => {
+        const pts = toPoints(t);
+        if (pts.length) return setPlaces(pts);
+        return api.dataset<Row[]>(id, "locations").then((l) => setPlaces(toPoints(l)));
+      })
+      .catch(() => setPlaces([]));
   }, [id]);
 
   // Opening one of this case's pages makes it the app's open case.
@@ -166,7 +184,7 @@ export function HomeView({
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
           {/* Posture + what the case holds */}
-          <div className="glass p-5 lg:col-span-7" style={bloom("0%", "0%")}>
+          <div className="glass p-5 lg:col-span-7 lg:order-1" style={bloom("0%", "0%")}>
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-base font-semibold">Case posture</div>
@@ -219,7 +237,7 @@ export function HomeView({
           </div>
 
           {/* Case numbers */}
-          <div className="grid grid-cols-2 gap-4 lg:col-span-5">
+          <div className="grid grid-cols-2 gap-4 lg:col-span-5 lg:order-2">
             {tiles.map((t) => (
               <button
                 key={t.label}
@@ -241,8 +259,24 @@ export function HomeView({
             ))}
           </div>
 
+          {/* Where the phone was */}
+          <div className="glass p-5 lg:col-span-5 lg:order-4 min-h-[18rem] flex flex-col" style={bloom("100%", "100%")}>
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-base font-semibold">Where it was</div>
+              <button className="text-xs text-accent hover:underline" onClick={() => go("loctrace")}>
+                Open trace
+              </button>
+            </div>
+            <div className="text-xs text-muted mb-2">
+              {places.length ? `${places.length} recorded location${places.length === 1 ? "" : "s"} — drag to turn, scroll to zoom` : "No coordinates were recorded for this case."}
+            </div>
+            <div className="flex-1 min-h-[14rem]">
+              <DotGlobe points={places} />
+            </div>
+          </div>
+
           {/* The case file */}
-          <div className="glass p-5 lg:col-span-7" style={bloom("100%", "0%")}>
+          <div className="glass p-5 lg:col-span-7 lg:order-3" style={bloom("100%", "0%")}>
             <div className="text-base font-semibold mb-3">Case file</div>
             {facts.length === 0 ? (
               <p className="text-sm text-muted">Loading this case…</p>
@@ -259,9 +293,9 @@ export function HomeView({
           </div>
 
           {/* Ways in */}
-          <div className="glass p-5 lg:col-span-5" style={bloom("0%", "100%")}>
+          <div className="glass p-5 lg:col-span-12 lg:order-5" style={bloom("0%", "100%")}>
             <div className="text-base font-semibold mb-3">Explore this case</div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
               {quick.map((q) => {
                 const Icon = q.icon;
                 return (

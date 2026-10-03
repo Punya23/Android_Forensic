@@ -20,6 +20,7 @@
  * Data: derived/location_traces.json, location_trace_summary.json, location_impossible_travel.json
  */
 import { useEffect, useMemo, useState } from "react";
+import { DotGlobe } from "../components/DotGlobe";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
 import { ArrowRight } from "lucide-react";
@@ -196,6 +197,7 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
   );
   const [presenceOnly, setPresenceOnly] = useState(false);
   const [showPath, setShowPath] = useState(true);
+  const [globe, setGlobe] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [flyTarget, setFlyTarget] = useState<LocationTraceRow | null>(null);
 
@@ -248,6 +250,11 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
    * points would draw a journey through places the user merely searched for — a route the
    * device never took, rendered as if it had.
    */
+  const globePoints = useMemo(
+    () => mappable.map((r) => ({ lat: r.latitude as number, lon: r.longitude as number, label: r.label })),
+    [mappable]
+  );
+
   const path = useMemo(() => {
     if (!showPath) return [];
     return mappable
@@ -434,6 +441,22 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
             </button>
           );
         })}
+        <div className="ml-2 flex gap-1" role="tablist" aria-label="Map style">
+          {[
+            ["Map", false],
+            ["Globe", true],
+          ].map(([label, on]) => (
+            <button
+              key={String(label)}
+              role="tab"
+              aria-selected={globe === on}
+              onClick={() => setGlobe(on as boolean)}
+              className={`pill !py-1 text-xs ${globe === on ? "pill-active" : ""}`}
+            >
+              {label as string}
+            </button>
+          ))}
+        </div>
         <label className="ml-2 flex items-center gap-1.5 text-xs">
           <input
             type="checkbox"
@@ -452,6 +475,11 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
         </label>
       </div>
 
+      {globe ? (
+        <div className="glass h-[420px] p-2">
+          <DotGlobe points={globePoints} />
+        </div>
+      ) : (
       <div className="h-[420px] rounded-md overflow-hidden border border-line">
         <MapContainer center={[20, 78]} zoom={4} style={{ height: "100%", width: "100%" }}>
           <TileLayer url={MAP_TILE_URL} attribution={MAP_TILE_ATTRIBUTION} />
@@ -491,6 +519,7 @@ export function LocationTraceView({ caseId }: { caseId: string }) {
           ))}
         </MapContainer>
       </div>
+      )}
 
       {unplottable.length > 0 && (
         <div className="rounded-md border border-line px-4 py-3 text-sm">
