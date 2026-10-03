@@ -39,7 +39,7 @@ _STOP = frozenset(
     """a an and are as at be been but by can could did do does for from had has have how if in
     is it its me my of on or our so than that the their them then there these they this those
     to was we were what when where which who whom why will with would you your about tell say
-    said saying show find any anything mention mentioned mentions case evidence message
+    said saying show find any anything mention mentioned mentions case evidence most more less many much message
     messages kya hai ka ki ko se mein aur ne hain tha thi""".split()
 )
 

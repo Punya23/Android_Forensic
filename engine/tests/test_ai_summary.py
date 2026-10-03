@@ -208,3 +208,10 @@ def test_generate_summary_never_raises_on_malformed_findings(case: Case):
         generate_ai_evidence_summary(
             case, profile, {"findings": [{"unexpected_field": 1}]}, provider=HeuristicProvider()
         )
+
+
+def test_ask_disclaimer_does_not_claim_no_model_when_one_is_connected():
+    from triage.intel.case_qa import _disclaimer
+
+    assert "No model was configured" in _disclaimer(False, model_usable=False)
+    assert "No model was configured" not in _disclaimer(False, model_usable=True)

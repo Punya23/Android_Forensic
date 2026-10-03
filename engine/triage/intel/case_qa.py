@@ -228,7 +228,13 @@ def _bundle(question: str, answer: str, method: str, passages: list[dict], searc
     }
 
 
-def _disclaimer(answered: bool) -> str:
+def _disclaimer(answered: bool, model_usable: bool = False) -> str:
+    if not answered and model_usable:
+        return (
+            "A local model is connected, but there was nothing to summarise or it gave no "
+            "summary, so this shows the passages that literally matched the search terms. "
+            "No matches means nothing in what was collected, not that nothing happened."
+        )
     if answered:
         return (
             "AI-surfaced answer over this case's own already-collected evidence. "
@@ -299,7 +305,7 @@ def answer_question(
         f"llm:{provider.name}" if answer else "grep",
         found,
         search,
-        _disclaimer(bool(answer)),
+        _disclaimer(bool(answer), provider.is_usable()),
     )
 
 
@@ -362,5 +368,5 @@ def stream_answer(
         "type": "done",
         "method": f"llm:{provider.name}" if got else "grep",
         "note": note,
-        "disclaimer": _disclaimer(got),
+        "disclaimer": _disclaimer(got, provider.is_usable()),
     }
