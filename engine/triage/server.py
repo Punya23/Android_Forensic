@@ -1642,14 +1642,32 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         dashboard's provider picker offers what exists rather than what is theoretically
         supported. ``refresh=1`` also re-probes the embedding model.
         """
-        from .intel.llm import provider_status
+        from .intel.llm import ensure_ollama_running, provider_status
 
+        ensure_ollama_running(wait=10)  # a stopped Ollama is started, not reported as missing
         status = provider_status()
         embedder = _embedder(refresh=request.args.get("refresh") in ("1", "true"))
         status["embedding"] = (
             embedder.status() if embedder else {"available": False, "mode": "disabled"}
         )
         return jsonify(status)
+
+    @app.post("/api/llm/warm")
+    def llm_warm():
+        """Start Ollama if it is stopped and load the chosen model in the background, so the
+        first question after opening Ask This Case is not a cold start. Fire-and-forget."""
+        import threading
+
+        from .intel.llm import OllamaProvider
+
+        def _warm() -> None:
+            try:
+                OllamaProvider().warm()  # constructing it also starts a stopped daemon
+            except Exception as exc:  # warming is an optimisation; never surface it
+                print(f"[llm] warm-up skipped: {exc}", flush=True)
+
+        threading.Thread(target=_warm, daemon=True).start()
+        return jsonify({"warming": True}), 202
 
     @app.get("/api/llm/fit")
     def llm_fit():
@@ -2494,6 +2512,14 @@ def main():
                 "loopback is refused so the service can never silently listen on an "
                 "unintended interface (a stray Wi-Fi AP, a phone hotspot, ...)."
             )
+
+    # Bring the local model's daemon up with the engine, off the main thread so startup
+    # never waits on it. (A no-op when it is already running or not installed.)
+    import threading
+
+    from .intel.llm import ensure_ollama_running
+
+    threading.Thread(target=ensure_ollama_running, daemon=True).start()
 
     app, socketio = create_app(Path(args.cases), network_mode=args.network_mode)
 

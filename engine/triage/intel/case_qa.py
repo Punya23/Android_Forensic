@@ -363,7 +363,12 @@ def stream_answer(
             finally:
                 lock.release()
             if not got and not note:
-                note = "the model returned no summary — the matched passages below are the result"
+                err = getattr(provider, "last_error", "")
+                note = (
+                    f"the model could not answer ({err}) — the matched passages below are the result"
+                    if err
+                    else "the model returned no summary — the matched passages below are the result"
+                )
     yield {
         "type": "done",
         "method": f"llm:{provider.name}" if got else "grep",

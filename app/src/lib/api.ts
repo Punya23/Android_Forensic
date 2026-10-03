@@ -124,6 +124,8 @@ export const api = {
   /** Which case-intelligence back-ends this workstation can actually use, live. */
   llmStatus: (refresh = false) =>
     get<import("./types").LlmStatus>(`/api/llm/status${refresh ? "?refresh=1" : ""}`),
+  /** Start the local model and load it in the background; the answer does not matter. */
+  warmLlm: () => request<{ warming: boolean }>("/api/llm/warm", { method: "POST" }),
   health: () => get<Health>("/api/health"),
   devices: () => get<DeviceListing>("/api/devices"),
   /** Connection state + Developer-Options/USB-debugging checklist for one device —

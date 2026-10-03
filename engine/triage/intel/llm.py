@@ -25,6 +25,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
+import time
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
@@ -117,6 +120,45 @@ def _num_ctx() -> int:
 
 
 
+_OLLAMA_APP_BIN = "/Applications/Ollama.app/Contents/Resources/ollama"
+
+
+def _ollama_up(host: str, timeout: float = 1.0) -> bool:
+    try:
+        with urllib.request.urlopen(f"{host.rstrip('/')}/api/tags", timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def ensure_ollama_running(host: Optional[str] = None, wait: float = 15.0) -> bool:
+    """True when the Ollama daemon answers, starting it if it is installed here but stopped.
+
+    Only ever spawns for a loopback host (a remote daemon is not ours to start) and can be
+    turned off with ``SNAGR_OLLAMA_AUTOSTART=0``. The daemon is detached, so it outlives the
+    engine, as the Ollama app itself would."""
+    host = (host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")).rstrip("/")
+    if _ollama_up(host):
+        return True
+    if os.environ.get("SNAGR_OLLAMA_AUTOSTART", "1") == "0":
+        return False
+    if not any(h in host for h in ("//127.0.0.1", "//localhost", "//[::1]")):
+        return False
+    binary = shutil.which("ollama") or (_OLLAMA_APP_BIN if os.path.exists(_OLLAMA_APP_BIN) else None)
+    if not binary:
+        return False
+    try:
+        subprocess.Popen([binary, "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        return False
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        if _ollama_up(host):
+            return True
+        time.sleep(0.3)
+    return False
+
+
 class OllamaProvider(LLMProvider):
     """Local model via Ollama's HTTP API. Keeps all case data on-device."""
 
@@ -132,7 +174,10 @@ class OllamaProvider(LLMProvider):
             host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
         ).rstrip("/")
         self.timeout = timeout
-        self.available = self._ping()
+        # A stopped daemon is started rather than reported as "no model".
+        self.available = self._ping() or ensure_ollama_running(self.host)
+        #: Why the last stream() produced nothing — the daemon's own words, shown to the examiner.
+        self.last_error = ""
         self.model = self._resolve_model(model or os.environ.get("SNAGR_LLM_MODEL", ""))
 
     def _resolve_model(self, wanted: str) -> str:
@@ -203,11 +248,12 @@ class OllamaProvider(LLMProvider):
         except Exception:
             return None
 
-    def stream(self, system, prompt):
-        """Yield content chunks from Ollama as they are generated (``stream: true``).
+    def _smaller_model(self) -> Optional[str]:
+        """The smallest other installed chat model — the retry target when the pick will not load."""
+        chat = [m for m in list_ollama_models(self.host) if not m.get("embedding_only") and m["name"] != self.model]
+        return min(chat, key=lambda m: m["size_bytes"])["name"] if chat else None
 
-        Stops quietly on any failure — the caller already holds the grep matches, so a model
-        that dies mid-answer costs the summary, never the result."""
+    def _stream_once(self, system, prompt):
         body = {
             "model": self.model,
             "stream": True,
@@ -230,18 +276,57 @@ class OllamaProvider(LLMProvider):
                 data=json.dumps(body).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            # A cold model is read from disk before the first byte, so the first read can
+            # take far longer than the gap between tokens.
+            with urllib.request.urlopen(req, timeout=max(self.timeout, 120.0)) as resp:
                 for line in resp:  # newline-delimited JSON, one object per chunk
                     if not line.strip():
                         continue
                     part = json.loads(line.decode("utf-8"))
+                    if part.get("error"):
+                        self.last_error = str(part["error"])
+                        return
                     chunk = (part.get("message", {}) or {}).get("content")
                     if chunk:
                         yield chunk
                     if part.get("done"):
                         return
-        except Exception:
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = json.loads(exc.read().decode("utf-8")).get("error", "")
+            except Exception:
+                detail = ""
+            self.last_error = detail or f"HTTP {exc.code}"
+        except Exception as exc:
+            self.last_error = f"{type(exc).__name__}: {exc}"
+
+    def stream(self, system, prompt):
+        """Yield content chunks from Ollama as they are generated (``stream: true``).
+
+        Never raises: the caller already holds the grep matches, so a model that cannot answer
+        costs the summary, not the result. What went wrong is kept in ``last_error``. If the
+        chosen model fails to start (typically not enough free memory for it), the request is
+        retried once on the smallest other installed chat model."""
+        self.last_error = ""
+        got = False
+        for chunk in self._stream_once(system, prompt):
+            got = True
+            yield chunk
+        if got or not self.last_error:
             return
+        alt = self._smaller_model()
+        if alt:
+            first = self.last_error
+            self.last_error = ""
+            self.model = alt
+            for chunk in self._stream_once(system, prompt):
+                yield chunk
+            if self.last_error:
+                self.last_error = f"{first}; retry on {alt}: {self.last_error}"
+
+    def warm(self) -> bool:
+        """Load the model now (one token), so the first real question is not a cold start."""
+        return bool("".join(self._stream_once("Reply with one word.", "ok")))
 
     def extract_json(self, system, prompt, schema_hint=None):
         raw = self._chat(system, prompt, force_json=True, max_tokens=JSON_MAX_TOKENS)

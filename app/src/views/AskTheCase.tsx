@@ -153,6 +153,8 @@ export function AskTheCaseView({ caseId }: { caseId: string }) {
         // Start on the back-end the engine actually has connected, not always "offline".
         if (s.configured === "ollama" && s.providers.some((p) => p.name === "ollama" && p.available)) {
           setProvider("ollama");
+          // Load the model while the examiner is typing their first question.
+          api.warmLlm().catch(() => {});
         }
       })
       .catch(() => setLlmStatus(null));

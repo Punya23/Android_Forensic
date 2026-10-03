@@ -29,6 +29,7 @@ def _hermetic_llm_env(monkeypatch):
     """
     monkeypatch.setenv("SNAGR_LLM", "heuristic")
     monkeypatch.setenv("SNAGR_LLM_AUTOINSTALL", "0")
+    monkeypatch.setenv("SNAGR_OLLAMA_AUTOSTART", "0")  # tests must never spawn a real daemon
     # A test that abandons a slow fake model must not leave the next test seeing "busy".
     from triage.intel import search
 
