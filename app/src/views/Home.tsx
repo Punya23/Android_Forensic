@@ -1,24 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowUpRight,
-  Archive,
   BookOpen,
+  Clock,
   FileText,
   MessageSquareText,
   Network,
   Plus,
-  Clock,
+  Recycle,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { Select } from "../components/fields";
-import type { CaseSummary, Health, RegistryCase, RegistryStats } from "../lib/types";
+import { isDemoCase } from "../lib/caseNarrative";
+import type { CaseSummary, Health, RegistryCase } from "../lib/types";
 import type { ViewKey } from "../components/Sidebar";
 
 const fmtBytes = (n: number) =>
   n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
-
-const isDemo = (c: RegistryCase) => c.device_model.endsWith("[demo]");
-const dateOnly = (iso: string) => (iso ? iso.slice(0, 10) : "—");
 
 const LEVEL: Record<string, { label: string; cls: string }> = {
   red: { label: "High priority", cls: "bg-deletion/15 text-deletion border-deletion/30" },
@@ -26,37 +24,9 @@ const LEVEL: Record<string, { label: string; cls: string }> = {
   green: { label: "Low priority", cls: "bg-live/15 text-live border-live/30" },
 };
 
-/** Artifacts collected per recent case, oldest to newest, as a soft area line. */
-function Trend({ values }: { values: number[] }) {
-  if (values.length < 2) return null;
-  const W = 600;
-  const H = 120;
-  const max = Math.max(...values, 1);
-  const pts = values.map((v, i) => [(i / (values.length - 1)) * W, H - 12 - (v / max) * (H - 28)] as const);
-  const line = pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-28" preserveAspectRatio="none" aria-hidden>
-      <defs>
-        <linearGradient id="home-trend" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="rgb(var(--color-accent))" stopOpacity="0.35" />
-          <stop offset="1" stopColor="rgb(var(--color-accent))" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      {[0.25, 0.5, 0.75].map((f) => (
-        <line key={f} x1="0" x2={W} y1={H * f} y2={H * f} stroke="rgb(var(--color-ink))" strokeOpacity="0.06" strokeDasharray="3 5" />
-      ))}
-      <path d={`${line} L${W},${H} L0,${H} Z`} fill="url(#home-trend)" />
-      <path d={line} fill="none" stroke="rgb(var(--color-accent))" strokeWidth="2" vectorEffect="non-scaling-stroke" />
-      {pts.map(([x, y], i) => (
-        <circle key={i} cx={x} cy={y} r="2.5" fill="rgb(var(--color-accent))" />
-      ))}
-    </svg>
-  );
-}
-
 const bloom = (x: string, y: string) => ({ ["--bloom-x" as string]: x, ["--bloom-y" as string]: y });
 
-/** Landing page after sign-in: posture of the latest case, totals, and ways into the data. */
+/** Everything on this page describes one case: the one open in the app, or the one picked here. */
 export function HomeView({
   caseId,
   username,
@@ -72,57 +42,84 @@ export function HomeView({
   onOpenCase: (id: string, view?: ViewKey) => void;
 }) {
   const [cases, setCases] = useState<RegistryCase[]>([]);
-  const [stats, setStats] = useState<RegistryStats | null>(null);
-  const [latest, setLatest] = useState<CaseSummary | null>(null);
-  // The case the posture card and the "explore" links point at: the one the examiner
-  // picked here, else the case open in the app, else the most recently updated.
   const [picked, setPicked] = useState<string | null>(null);
+  const [summary, setSummary] = useState<CaseSummary | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     api
       .registryCases({ sort: "-updated_at" })
-      .then((r) => {
-        setCases(r.cases);
-        setStats(r.stats);
-      })
+      .then((r) => setCases(r.cases))
       .catch(() => {
-        /* recorded by api.get — the banner shows it; tiles stay empty */
-      });
+        /* recorded by api.get — the banner shows it */
+      })
+      .finally(() => setLoaded(true));
   }, []);
 
-  const top = cases.find((c) => c.case_id === (picked ?? caseId)) ?? cases[0];
-  const topId = top?.case_id;
+  const current = cases.find((c) => c.case_id === (picked ?? caseId)) ?? cases[0];
+  const id = current?.case_id;
 
   useEffect(() => {
-    setLatest(null);
-    if (!topId) return;
+    setSummary(null);
+    if (!id) return;
     api
-      .caseOverview(topId)
-      .then(setLatest)
-      .catch(() => setLatest(null));
-  }, [topId]);
+      .caseOverview(id)
+      .then(setSummary)
+      .catch(() => setSummary(null));
+  }, [id]);
 
-  const recent = cases.slice(0, 6);
-  const demoCount = cases.filter(isDemo).length;
-  const maxArtifacts = Math.max(1, ...recent.map((c) => c.artifact_count));
-  const trend = useMemo(() => [...cases.slice(0, 12)].reverse().map((c) => c.artifact_count), [cases]);
-  const risk = latest?.risk;
+  // Opening one of this case's pages makes it the app's open case.
+  const go = (v: ViewKey) => id && onOpenCase(id, v);
+
+  const risk = summary?.risk;
   const level = risk ? LEVEL[risk.level] : undefined;
+  const c = summary?.counts ?? {};
+  const hv = summary?.hash_verification;
+  const device = summary?.case.device;
 
-  const tiles: { label: string; value: string | number; note: string; go: () => void; x: string; y: string }[] = [
-    { label: "Cases", value: stats ? stats.cases : "—", note: stats ? `${demoCount} demo · ${stats.cases - demoCount} real` : "", go: () => setView("cases"), x: "100%", y: "0%" },
-    { label: "Artifacts", value: stats ? stats.artifacts.toLocaleString() : "—", note: "collected and hashed", go: () => top && onOpenCase(top.case_id), x: "0%", y: "0%" },
-    { label: "Evidence", value: stats ? fmtBytes(stats.bytes) : "—", note: "across all cases", go: () => setView("cases"), x: "100%", y: "100%" },
-    { label: "Reports", value: stats ? stats.reports : "—", note: "generated snapshots", go: () => top && onOpenCase(top.case_id, "report"), x: "0%", y: "100%" },
+  const bars: { label: string; n: number; view: ViewKey }[] = [
+    { label: "Messages", n: c.messages ?? 0, view: "messages" },
+    { label: "Calls", n: c.calls ?? 0, view: "calls" },
+    { label: "Contacts", n: c.contacts ?? 0, view: "contacts" },
+    { label: "Photos & videos", n: c.media ?? 0, view: "media" },
+    { label: "Locations", n: c.locations ?? 0, view: "locations" },
+    { label: "Browser", n: c.browser ?? 0, view: "browser" },
+    { label: "Recovered / deleted", n: c.recovered ?? 0, view: "recovered" },
+  ];
+  const maxBar = Math.max(1, ...bars.map((b) => b.n));
+
+  const integrity =
+    !hv ? { value: "—", note: "verification did not run" }
+    : hv.failed ? { value: `${hv.failed}`, note: `of ${(hv.verified ?? 0) + hv.failed} files FAILED hash check` }
+    : { value: `${hv.verified ?? 0}`, note: "files match recorded hashes" };
+
+  const tiles: { label: string; value: string | number; note: string; view: ViewKey; x: string; y: string }[] = [
+    { label: "Messages", value: c.messages ?? "—", note: c.message_placeholders ? `${c.message_placeholders} encrypted backup(s) unreadable` : "recovered from the phone", view: "messages", x: "100%", y: "0%" },
+    { label: "Recovered", value: c.recovered ?? "—", note: "deleted or carved items", view: "recovered", x: "0%", y: "0%" },
+    { label: "People", value: summary?.graph_stats.participants ?? "—", note: `${summary?.graph_stats.interactions ?? 0} recorded interactions`, view: "graph", x: "100%", y: "100%" },
+    { label: "Integrity", value: integrity.value, note: integrity.note, view: "custody", x: "0%", y: "100%" },
   ];
 
-  const quick: { icon: typeof Plus; title: string; text: string; go: () => void; needsCase?: boolean }[] = [
-    { icon: MessageSquareText, title: "Ask this case", text: "Plain-words questions over the evidence", go: () => top && onOpenCase(top.case_id, "ask"), needsCase: true },
-    { icon: Network, title: "Communication network", text: "Who is linked to whom", go: () => top && onOpenCase(top.case_id, "graph"), needsCase: true },
-    { icon: Clock, title: "Timeline", text: "Everything in time order", go: () => top && onOpenCase(top.case_id, "timeline"), needsCase: true },
-    { icon: FileText, title: "Report", text: "Generate or review the case report", go: () => top && onOpenCase(top.case_id, "report"), needsCase: true },
-    { icon: Archive, title: "Case history", text: "Search and reopen earlier cases", go: () => setView("cases") },
-    { icon: BookOpen, title: "Knowledge base", text: "Reference notes and precedent", go: () => setView("knowledge") },
+  const facts: [string, string][] = summary
+    ? [
+        ["Case", summary.case.case_id],
+        ["Device", [device?.manufacturer, device?.model].filter(Boolean).join(" ") || "unknown"],
+        ["Android", device?.android_version ? `${device.android_version} (SDK ${device.sdk})` : "unknown"],
+        ["Examiner", summary.case.examiner || "—"],
+        ["Opened", summary.case.created_at ? summary.case.created_at.slice(0, 10) : "—"],
+        ["Collected", `${summary.artifact_count} files · ${fmtBytes(summary.total_bytes)}`],
+        ["Device-altering actions", String(summary.device_altering_actions)],
+        ["Audit events", String(summary.audit_event_count)],
+      ]
+    : [];
+
+  const quick: { icon: typeof Plus; title: string; text: string; view: ViewKey }[] = [
+    { icon: MessageSquareText, title: "Ask this case", text: "Plain-words questions over the evidence", view: "ask" },
+    { icon: Network, title: "Communication network", text: "Who is linked to whom", view: "graph" },
+    { icon: Clock, title: "Timeline", text: "Everything in time order", view: "timeline" },
+    { icon: Recycle, title: "Recovered / deleted", text: "What was deleted and brought back", view: "recovered" },
+    { icon: FileText, title: "Report", text: "Generate or review the case report", view: "report" },
+    { icon: BookOpen, title: "Overview", text: "Plain-language summary and findings", view: "overview" },
   ];
 
   return (
@@ -132,11 +129,19 @@ export function HomeView({
           <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted mt-1">
             {username ? `Welcome, ${username}. ` : ""}
-            Field triage for Android phones — every step hashed and logged. A preview, not a lab examination.
+            {id ? "Everything below is about the selected case." : "Field triage for Android phones — every step hashed and logged."}
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs">
-          <span className="glass !rounded-full px-3 py-1.5">Engine {health ? `v${health.version}` : "offline"}</span>
+          {cases.length > 0 && (
+            <Select
+              className="input w-auto font-mono text-xs !py-1.5"
+              value={id ?? ""}
+              onChange={setPicked}
+              ariaLabel="Case shown on the dashboard"
+              options={cases.map((k) => ({ value: k.case_id, label: `${k.case_id} · ${k.device_model || "—"}` }))}
+            />
+          )}
           <span className="glass !rounded-full px-3 py-1.5">ADB {health?.adb ? "ready" : "not found"}</span>
           <button className="btn-accent text-xs flex items-center gap-1.5" onClick={() => setView("acquire")}>
             <Plus className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden /> New acquisition
@@ -144,137 +149,128 @@ export function HomeView({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Hero: posture of the latest case */}
-        <div className="glass p-5 lg:col-span-7" style={bloom("0%", "0%")}>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-base font-semibold">Case posture</div>
-              <div className="text-xs text-muted mt-0.5">
-                {top ? top.device_model || "device unknown" : "No case yet"}
+      {!id ? (
+        <div className="glass p-8 text-center">
+          <div className="text-base font-semibold">{loaded ? "No case yet" : "Loading…"}</div>
+          {loaded && <p className="text-sm text-muted mt-1">Start a new acquisition to create the first case.</p>}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          {/* Posture + what the case holds */}
+          <div className="glass p-5 lg:col-span-7" style={bloom("0%", "0%")}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-base font-semibold">Case posture</div>
+                <div className="text-xs text-muted mt-0.5">
+                  {id}
+                  {summary && isDemoCase(summary) && " · demonstration data, not a real device"}
+                </div>
               </div>
-            </div>
-            <div className="flex items-center gap-2">
               {level && (
                 <span className={`text-[11px] font-medium rounded-full border px-2.5 py-1 ${level.cls}`}>{level.label}</span>
               )}
-              {cases.length > 0 && (
-                <Select
-                  className="input w-auto font-mono text-xs !py-1.5"
-                  value={top?.case_id ?? ""}
-                  onChange={setPicked}
-                  ariaLabel="Case shown on the dashboard"
-                  options={cases.map((c) => ({ value: c.case_id, label: `${c.case_id} · ${c.device_model || "—"}` }))}
-                />
-              )}
             </div>
-          </div>
-          {top && risk ? (
-            <>
-              <div className="flex items-baseline gap-2 mt-5">
-                <span className="font-dot text-7xl font-bold leading-none tracking-tight">{risk.score}</span>
-                <span className="font-dot text-2xl text-muted">/100</span>
-              </div>
-              <p className="text-sm text-ink/80 mt-3 max-w-xl">{risk.headline}</p>
-              <ul className="mt-3 space-y-1 text-xs text-muted">
-                {risk.reasons.slice(0, 3).map((r, i) => (
-                  <li key={i} className="flex gap-2">
-                    <span className="font-mono text-accent shrink-0">+{r.points}</span>
-                    <span className="truncate">{r.label} — {r.detail}</span>
-                  </li>
+            {risk ? (
+              <>
+                <div className="flex items-baseline gap-2 mt-5">
+                  <span className="font-dot text-7xl font-bold leading-none tracking-tight">{risk.score}</span>
+                  <span className="font-dot text-2xl text-muted">/100</span>
+                </div>
+                <p className="text-sm text-ink/80 mt-3 max-w-xl">{risk.headline}</p>
+                <ul className="mt-3 space-y-1 text-xs text-muted">
+                  {risk.reasons.slice(0, 3).map((r, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span className="font-mono text-accent shrink-0">+{r.points}</span>
+                      <span className="truncate">{r.label} — {r.detail}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p className="text-sm text-muted mt-6">Loading this case…</p>
+            )}
+            <div className="mt-5">
+              <div className="text-[11px] uppercase tracking-wider text-muted mb-2">What was collected</div>
+              <div className="space-y-1">
+                {bars.map((b) => (
+                  <button
+                    key={b.label}
+                    onClick={() => go(b.view)}
+                    className="w-full flex items-center gap-3 text-left rounded-lg px-2 py-1 text-xs transition-colors hover:bg-ink/5"
+                  >
+                    <span className="w-36 shrink-0 text-muted">{b.label}</span>
+                    <span className="flex-1 h-1.5 rounded-full bg-ink/10 overflow-hidden">
+                      <span className="block h-full rounded-full bg-accent/80" style={{ width: `${Math.round((b.n / maxBar) * 100)}%` }} />
+                    </span>
+                    <span className="font-mono w-14 text-right">{b.n.toLocaleString()}</span>
+                  </button>
                 ))}
-              </ul>
-              <div className="mt-4">
-                <div className="text-[11px] uppercase tracking-wider text-muted mb-1">Artifacts per recent case (all cases)</div>
-                <Trend values={trend} />
               </div>
-              <button className="btn-ghost text-xs mt-3" onClick={() => top && onOpenCase(top.case_id)}>
-                Open {top?.case_id}
-              </button>
-            </>
-          ) : top ? (
-            <p className="text-sm text-muted mt-6">Loading the latest case…</p>
-          ) : (
-            <p className="text-sm text-muted mt-6">Start a new acquisition to create the first case.</p>
-          )}
-        </div>
-
-        {/* Totals */}
-        <div className="grid grid-cols-2 gap-4 lg:col-span-5">
-          {tiles.map((t) => (
-            <button
-              key={t.label}
-              onClick={t.go}
-              disabled={!stats}
-              className="glass glass-link text-left p-4 flex flex-col justify-between min-h-[8.5rem]"
-              style={bloom(t.x, t.y)}
-            >
-              <div className="flex items-center justify-between text-xs text-muted">
-                {t.label}
-                <ArrowUpRight className="h-4 w-4" strokeWidth={1.75} aria-hidden />
-              </div>
-              <div>
-                <div className="font-dot text-4xl font-bold leading-none tracking-tight">{t.value}</div>
-                <div className="text-[11px] text-muted mt-2">{t.note}</div>
-              </div>
-            </button>
-          ))}
-        </div>
-
-        {/* Recent cases */}
-        <div className="glass p-5 lg:col-span-7" style={bloom("100%", "0%")}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-base font-semibold">Recent cases</div>
-            <button className="text-xs text-accent hover:underline" onClick={() => setView("cases")}>
-              Show all
-            </button>
-          </div>
-          {recent.length === 0 ? (
-            <p className="text-sm text-muted">No cases yet.</p>
-          ) : (
-            <div className="space-y-1">
-              {recent.map((c) => (
-                <button
-                  key={c.case_id}
-                  onClick={() => onOpenCase(c.case_id)}
-                  className="w-full flex items-center gap-3 text-left rounded-xl px-2.5 py-2 transition-colors hover:bg-ink/5"
-                >
-                  <span className="font-mono text-xs text-accent w-28 shrink-0 truncate">{c.case_id}</span>
-                  <span className="text-xs text-muted w-44 shrink-0 truncate hidden md:block">{c.device_model || "—"}</span>
-                  <span className="text-[11px] text-muted w-20 shrink-0 hidden lg:block">{dateOnly(c.updated_at)}</span>
-                  <span className="flex-1 h-1.5 rounded-full bg-ink/10 overflow-hidden">
-                    <span className="block h-full rounded-full bg-accent/80" style={{ width: `${Math.round((c.artifact_count / maxArtifacts) * 100)}%` }} />
-                  </span>
-                  <span className="font-mono text-xs w-10 text-right">{c.artifact_count}</span>
-                </button>
-              ))}
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Ways in */}
-        <div className="glass p-5 lg:col-span-5" style={bloom("0%", "100%")}>
-          <div className="text-base font-semibold">Explore the forensic data</div>
-          <div className="text-xs text-muted mb-3">{top ? `Opens in ${top.case_id} — change it with the case picker.` : "Open a case first."}</div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {quick.map((q) => {
-              const Icon = q.icon;
-              return (
-                <button
-                  key={q.title}
-                  onClick={q.go}
-                  disabled={q.needsCase && !top}
-                  className="text-left rounded-xl border border-ink/10 bg-ink/[0.03] p-3 transition-all duration-200 hover:-translate-y-0.5 hover:border-accent/40 hover:bg-ink/[0.06] active:scale-[0.97] disabled:opacity-40"
-                >
-                  <Icon className="h-4 w-4 text-accent" strokeWidth={1.75} aria-hidden />
-                  <div className="text-sm font-medium mt-1.5">{q.title}</div>
-                  <div className="text-[11px] text-muted mt-0.5 leading-snug">{q.text}</div>
-                </button>
-              );
-            })}
+          {/* Case numbers */}
+          <div className="grid grid-cols-2 gap-4 lg:col-span-5">
+            {tiles.map((t) => (
+              <button
+                key={t.label}
+                onClick={() => go(t.view)}
+                className="glass glass-link text-left p-4 flex flex-col justify-between min-h-[8.5rem]"
+                style={bloom(t.x, t.y)}
+              >
+                <div className="flex items-center justify-between text-xs text-muted">
+                  {t.label}
+                  <ArrowUpRight className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+                </div>
+                <div>
+                  <div className="font-dot text-4xl font-bold leading-none tracking-tight">
+                    {typeof t.value === "number" ? t.value.toLocaleString() : t.value}
+                  </div>
+                  <div className="text-[11px] text-muted mt-2">{t.note}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {/* The case file */}
+          <div className="glass p-5 lg:col-span-7" style={bloom("100%", "0%")}>
+            <div className="text-base font-semibold mb-3">Case file</div>
+            {facts.length === 0 ? (
+              <p className="text-sm text-muted">Loading this case…</p>
+            ) : (
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+                {facts.map(([k, v]) => (
+                  <div key={k} className="flex justify-between gap-3 border-b border-ink/10 pb-1.5">
+                    <dt className="text-muted">{k}</dt>
+                    <dd className="text-right font-medium truncate">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </div>
+
+          {/* Ways in */}
+          <div className="glass p-5 lg:col-span-5" style={bloom("0%", "100%")}>
+            <div className="text-base font-semibold mb-3">Explore this case</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {quick.map((q) => {
+                const Icon = q.icon;
+                return (
+                  <button
+                    key={q.title}
+                    onClick={() => go(q.view)}
+                    className="text-left rounded-xl border border-ink/10 bg-ink/[0.03] p-3 transition-all duration-200 hover:-translate-y-0.5 hover:border-accent/40 hover:bg-ink/[0.06] active:scale-[0.97]"
+                  >
+                    <Icon className="h-4 w-4 text-accent" strokeWidth={1.75} aria-hidden />
+                    <div className="text-sm font-medium mt-1.5">{q.title}</div>
+                    <div className="text-[11px] text-muted mt-0.5 leading-snug">{q.text}</div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
