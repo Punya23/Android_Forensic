@@ -185,7 +185,7 @@ function Section({
   return (
     <section className="mb-6">
       <div className="flex items-baseline gap-2 mb-2">
-        <h2 className="text-sm font-semibold text-ink uppercase tracking-wider">{title}</h2>
+        <h2 className="text-sm font-semibold text-ink">{title}</h2>
         {count !== undefined && <span className="text-xs text-muted">({count})</span>}
       </div>
       {note && <p className="text-xs text-muted leading-relaxed mb-2">{note}</p>}
@@ -387,7 +387,7 @@ function HotspotPostureSection({ hotspot }: { hotspot: WifiLiveHotspot | null | 
           ) : (
             <>
               <div className="flex items-baseline gap-3 mb-2">
-                <span className="text-2xl font-bold text-accent">{distinctHotspotCount}</span>
+                <span className="text-2xl font-semibold tracking-tight text-accent">{distinctHotspotCount}</span>
                 <span className="text-xs text-muted">
                   distinct probable hotspot network{distinctHotspotCount !== 1 ? "s" : ""} connected to
                 </span>
@@ -541,7 +541,7 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
 
   const header = (
     <div className="mb-5">
-      <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
+      <h1 className="text-xl font-semibold tracking-tight mb-1 flex items-center gap-2">
         <RadioTower className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Wi-Fi — Live State
         <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
           Tier 0 — Read-only, volatile
@@ -639,7 +639,7 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
           { label: "Associated now", value: current?.is_connected ? "yes" : "no" },
         ].map(({ label, value }) => (
           <div key={label} className="card px-4 py-2 flex flex-col items-center min-w-[110px]">
-            <span className="text-xl font-bold text-accent">{value}</span>
+            <span className="text-2xl font-semibold tracking-tight text-accent">{value}</span>
             <span className="text-xs text-muted mt-0.5">{label}</span>
           </div>
         ))}

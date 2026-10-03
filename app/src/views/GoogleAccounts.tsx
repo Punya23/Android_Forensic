@@ -167,15 +167,15 @@ export function GoogleAccountsView({ caseId }: { caseId: string }) {
       {/* Summary tiles */}
       <div className="flex flex-wrap gap-3 mb-4">
         <div className="card px-4 py-3 min-w-[140px] flex-1">
-          <div className="text-2xl font-bold text-ink">{data.length}</div>
+          <div className="text-2xl font-semibold tracking-tight text-ink">{data.length}</div>
           <div className="text-[11px] uppercase tracking-wider text-muted mt-0.5">Accounts listed</div>
         </div>
         <div className="card px-4 py-3 min-w-[140px] flex-1">
-          <div className="text-2xl font-bold text-accent">{googleCount}</div>
+          <div className="text-2xl font-semibold tracking-tight text-accent">{googleCount}</div>
           <div className="text-[11px] uppercase tracking-wider text-muted mt-0.5">Google accounts</div>
         </div>
         <div className="card px-4 py-3 min-w-[140px] flex-1">
-          <div className="text-2xl font-bold text-ink">{withSync}</div>
+          <div className="text-2xl font-semibold tracking-tight text-ink">{withSync}</div>
           <div className="text-[11px] uppercase tracking-wider text-muted mt-0.5">With a sync time</div>
           {withSync < data.length && (
             <div className="text-[10px] text-muted mt-1 leading-snug">

@@ -191,7 +191,7 @@ function StatBlock({
       tabIndex={clickable ? 0 : undefined}
       onKeyDown={clickable ? (e) => (e.key === "Enter" || e.key === " ") && onClick!() : undefined}
     >
-      <div className={`text-2xl font-bold ${tone}`}>{n}</div>
+      <div className={`text-2xl font-semibold tracking-tight ${tone}`}>{n}</div>
       <div className="text-[11px] uppercase tracking-wider text-muted mt-0.5">{label}</div>
       <p className="text-[11px] text-muted leading-relaxed mt-1.5">{detail}</p>
       <div className="text-[10px] text-muted mt-1 italic">
@@ -407,7 +407,7 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
 
   const header = (
     <div className="mb-5">
-      <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
+      <h1 className="text-xl font-semibold tracking-tight mb-1 flex items-center gap-2">
         <Lock className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Encrypted Apps
         <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
           Tier 2 — Root
@@ -516,7 +516,7 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
       {/* ------- Per-database records ------- */}
       <section className="mb-6">
         <div className="flex items-baseline gap-2 mb-2">
-          <h2 className="text-sm font-semibold text-ink uppercase tracking-wider">
+          <h2 className="text-sm font-semibold text-ink">
             Message stores
           </h2>
           <span className="text-xs text-muted">({apps.length})</span>
@@ -544,7 +544,7 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
       {/* ------- Signal ------- */}
       <section className="mb-6">
         <div className="flex items-baseline gap-2 mb-2">
-          <h2 className="text-sm font-semibold text-ink uppercase tracking-wider">
+          <h2 className="text-sm font-semibold text-ink">
             Signal databases
           </h2>
           <span className="text-xs text-muted">({signalDbs.length})</span>
@@ -613,7 +613,7 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
       {/* ------- FCM ------- */}
       <section className="mb-6">
         <div className="flex items-baseline gap-2 mb-2">
-          <h2 className="text-sm font-semibold text-ink uppercase tracking-wider">
+          <h2 className="text-sm font-semibold text-ink">
             FCM push-payload fragments
           </h2>
           <span className="text-xs text-muted">({fcm.length})</span>

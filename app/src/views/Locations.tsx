@@ -561,7 +561,7 @@ export function LocationsView({
   const filteredCount = sorted.length;
 
   return (
-    <div className="p-4 h-full flex flex-col gap-3 overflow-y-auto">
+    <div className="p-6 h-full flex flex-col gap-3 overflow-y-auto">
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <SectionHeader
         title="Photo Locations"

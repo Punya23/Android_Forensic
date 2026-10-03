@@ -71,7 +71,7 @@ export function HomeView({
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Welcome{username ? `, ${username}` : ""}</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Welcome{username ? `, ${username}` : ""}</h1>
         <p className="text-sm text-muted mt-1 max-w-2xl">
           SNAGR is a field triage tool for Android phones. It collects what the phone allows, hashes and logs every
           step, and turns it into a case you can search, question and report on. It is a triage preview, not a

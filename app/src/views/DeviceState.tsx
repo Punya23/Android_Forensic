@@ -250,7 +250,7 @@ export function DeviceStateView({ caseId }: { caseId: string }) {
 
   const header = (
     <div className="mb-5">
-      <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
+      <h1 className="text-xl font-semibold tracking-tight mb-1 flex items-center gap-2">
         <Stethoscope className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Device State &amp; Reversal
         <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
           Tier 0 — Read-only probes

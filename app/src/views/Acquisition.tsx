@@ -502,8 +502,8 @@ export function AcquisitionView({
 
 
   return (
-    <div className="max-w-4xl mx-auto p-8">
-      <h1 className="text-2xl font-bold mb-1">New Acquisition</h1>
+    <div className="max-w-5xl mx-auto p-6">
+      <h1 className="text-xl font-semibold tracking-tight mb-1">New Acquisition</h1>
       <p className="text-muted text-sm mb-6">
         Connect a seized device or select a mock corpus, record the legal authority, and
         begin a minimally-invasive Tier-0 triage.

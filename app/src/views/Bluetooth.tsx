@@ -411,7 +411,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
     <div className="p-6 max-w-5xl mx-auto">
       {/* Header */}
       <div className="mb-5">
-        <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
+        <h1 className="text-xl font-semibold tracking-tight mb-1 flex items-center gap-2">
           <Bluetooth className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Bluetooth
         </h1>
         <p className="text-sm text-muted">
@@ -999,7 +999,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
                 { label: "Bonded-device rows", value: collectorBtByType.bonded_device ?? 0 },
               ].map(({ label, value }) => (
                 <div key={label} className="card px-4 py-2 flex flex-col items-center min-w-[110px]">
-                  <span className="text-xl font-bold text-recovered">{value}</span>
+                  <span className="text-2xl font-semibold tracking-tight text-recovered">{value}</span>
                   <span className="text-xs text-muted mt-0.5">{label}</span>
                 </div>
               ))}

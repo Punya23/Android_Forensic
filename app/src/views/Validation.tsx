@@ -207,7 +207,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
 
   const header = (
     <div className="mb-5">
-      <h1 className="text-xl font-bold mb-1 flex items-center gap-2">
+      <h1 className="text-xl font-semibold tracking-tight mb-1 flex items-center gap-2">
         <FlaskConical className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Tool Validation
         <span className="text-xs font-normal text-muted bg-panel-2 border border-line rounded px-2 py-0.5 ml-1">
           Tier 0 — Read-only
@@ -223,7 +223,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
 
   if (isEmpty) {
     return (
-      <div className="p-6 max-w-5xl mx-auto">
+      <div className="p-6 max-w-6xl mx-auto">
         {header}
         <div className="card p-8 max-w-3xl">
           <div className="text-warn font-semibold mb-2">
@@ -277,7 +277,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
 
       {/* ---- SWGDE header block ---- */}
       <section className="card p-4 mb-4">
-        <h2 className="text-sm font-semibold text-ink uppercase tracking-wider mb-3">
+        <h2 className="text-sm font-semibold text-ink mb-3">
           Report identification
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -375,7 +375,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
 
       {/* ---- Limitations: above the pass counts, deliberately ---- */}
       <section className="card p-4 mb-4 border-warn/40 bg-warn/5">
-        <h2 className="text-sm font-semibold text-warn uppercase tracking-wider mb-2">
+        <h2 className="text-sm font-semibold text-warn mb-2">
           Identified limitations ({limitations.length})
         </h2>
         <p className="text-xs text-warn leading-relaxed mb-2">
@@ -403,7 +403,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
       {/* ---- Case results ---- */}
       <section className="mb-6">
         <div className="flex items-baseline gap-2 mb-2">
-          <h2 className="text-sm font-semibold text-ink uppercase tracking-wider">
+          <h2 className="text-sm font-semibold text-ink">
             Known-answer test cases
           </h2>
           <span className="text-xs text-muted">({cases.length})</span>
@@ -423,7 +423,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
               }`}
               onClick={() => setCaseStatus(status)}
             >
-              <span className={`text-xl font-bold ${tone}`}>{value}</span>
+              <span className={`text-2xl font-semibold tracking-tight ${tone}`}>{value}</span>
               <span className="text-xs text-muted mt-0.5">{label}</span>
             </div>
           ))}
@@ -495,7 +495,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
       {/* ---- Report-level anomalies ---- */}
       {anomalies.length > 0 && (
         <section className="card p-4 mb-6 border-deletion/40 bg-deletion/5">
-          <h2 className="text-sm font-semibold text-deletion uppercase tracking-wider mb-2">
+          <h2 className="text-sm font-semibold text-deletion mb-2">
             Anomalies observed ({anomalies.length})
           </h2>
           <ul className="list-disc pl-5 space-y-1">
@@ -511,7 +511,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
       {/* ---- CFTT coverage matrix ---- */}
       <section className="mb-6">
         <div className="flex items-baseline gap-2 mb-2">
-          <h2 className="text-sm font-semibold text-ink uppercase tracking-wider">
+          <h2 className="text-sm font-semibold text-ink">
             CFTT assertion coverage
           </h2>
           <span className="text-xs text-muted">({coverage.length})</span>
@@ -642,7 +642,7 @@ export function ValidationView({ caseId }: { caseId: string }) {
 
       {/* ---- Conclusion ---- */}
       <section className="card p-4 mb-4">
-        <h2 className="text-sm font-semibold text-ink uppercase tracking-wider mb-2">Conclusion</h2>
+        <h2 className="text-sm font-semibold text-ink mb-2">Conclusion</h2>
         {report.conclusion ? (
           <p className="text-sm text-muted leading-relaxed whitespace-pre-wrap">
             {report.conclusion}

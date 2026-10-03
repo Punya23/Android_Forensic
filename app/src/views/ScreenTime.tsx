@@ -181,7 +181,7 @@ function CaveatList({ items }: { items: string[] }) {
 function StatTile({ value, label, note, tone }: { value: string; label: string; note?: ReactNode; tone?: string }) {
   return (
     <div className="card px-4 py-3 min-w-[140px] flex-1">
-      <div className={`text-2xl font-bold ${tone ?? "text-ink"}`}>{value}</div>
+      <div className={`text-2xl font-semibold tracking-tight ${tone ?? "text-ink"}`}>{value}</div>
       <div className="text-[11px] uppercase tracking-wider text-muted mt-0.5">{label}</div>
       {note && <div className="text-[10px] text-muted mt-1 leading-snug">{note}</div>}
     </div>
