@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Lock, Bluetooth, Upload, ArrowRight, ArrowLeft, RadioTower } from "lucide-react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
-import { SectionHeader, StatCard } from "../components/common";
+import { SectionHeader, StatCard, Collapsed } from "../components/common";
 
 // ---------------------------------------------------------------------------
 // Types — declared locally on purpose (the orchestrator owns lib/types.ts).
@@ -431,6 +431,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
           right={<TierBadge label="Tier 0 — Read-only" />}
         />
 
+        <Collapsed>
         <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
           <span className="font-semibold">MAC addresses here are redacted by Android. </span>
           From Android 8.0 onwards, the OS returns Bluetooth (and Wi-Fi) hardware addresses to
@@ -441,6 +442,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
           flagged <span className="font-semibold">partial</span>. A full address is only available
           from the root-tier bond store below.
         </div>
+        </Collapsed>
 
         {!dumpsysRan && devices.length === 0 ? (
           <div className="card p-8 text-center text-muted">
@@ -577,6 +579,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
         />
 
         {/* The single most over-claimed field in Bluetooth forensics. */}
+        <Collapsed>
         <div className="card p-4 mb-4 border-deletion/50 bg-deletion/5 text-xs text-deletion leading-relaxed">
           <span className="font-semibold">
             A bond timestamp is when the pairing record was written — nothing more.
@@ -587,6 +590,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
           old, and the paired device may never have been near this handset again. Do not present a
           bond timestamp as a meeting, a proximity event, or a co-location.
         </div>
+        </Collapsed>
 
         {bondStoreEncrypted && (
           <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
@@ -910,6 +914,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
             <div className="text-[11px] uppercase tracking-wider text-muted mb-2">
               Connection recency ranking (bluetooth_db)
             </div>
+            <Collapsed>
             <div className="card p-4 mb-3 border-deletion/50 bg-deletion/5 text-xs text-deletion leading-relaxed">
               <span className="font-semibold">
                 Android's <code className="font-mono">last_active_time</code> is not a time.
@@ -918,6 +923,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
               carries <strong>no date whatsoever</strong>. Rank 1 was the most recently connected
               device as of the last write. Any tool that renders this field as a timestamp is wrong.
             </div>
+            </Collapsed>
             <div className="card overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -963,6 +969,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
           }
         />
 
+        <Collapsed>
         <div className="card p-4 mb-4 border-recovered/40 bg-recovered/5 text-xs text-recovered leading-relaxed">
           <span className="font-semibold">A third, distinct source — not dumpsys, not bt_config.conf. </span>
           These rows come from the Collector helper APK's own Android Bluetooth APIs, read
@@ -974,6 +981,7 @@ export function BluetoothView({ caseId }: { caseId: string }) {
           string <code className="font-mono">[permission_denied]</code> into the name/address
           fields rather than omitting the row — such rows are flagged below, not silently dropped.
         </div>
+        </Collapsed>
 
         {collectorBt.length === 0 ? (
           <div className="card p-8 text-center text-muted">

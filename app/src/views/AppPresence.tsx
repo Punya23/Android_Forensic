@@ -13,7 +13,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Package, FolderOpen } from "lucide-react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
-import { SortTh, StatCard, useSort } from "../components/common";
+import { SortTh, StatCard, useSort, Collapsed } from "../components/common";
 
 /** One reconstructed package-presence record. */
 export interface AppPresenceRecord {
@@ -294,6 +294,7 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
       </div>
 
       {/* Forensic notice */}
+      <Collapsed>
       <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">Forensic notice: </span>
         Records were read with root from <code className="font-mono">/data/system/packages.xml</code>,{" "}
@@ -302,6 +303,7 @@ export function AppPresenceView({ caseId }: { caseId: string }) {
         approximate where they derive from usagestats buckets. On a multi-user device these stores
         are per-user, so a record does not by itself identify which human used the device.
       </div>
+      </Collapsed>
 
       {presence.length === 0 ? (
         /* Honest empty state — say WHICH of "not acquired" / "not present", and why. */

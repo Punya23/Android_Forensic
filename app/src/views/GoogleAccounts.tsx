@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { useDataset, fmtTs } from "../lib/hooks";
-import { SectionHeader, SortTh, useSort } from "../components/common";
+import { SectionHeader, SortTh, useSort, Collapsed } from "../components/common";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -153,6 +153,7 @@ export function GoogleAccountsView({ caseId }: { caseId: string }) {
       />
 
       {/* Forensic caveat — presence is not ownership. */}
+      <Collapsed>
       <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">Forensic notice: </span>
         <code className="font-mono">dumpsys account</code> lists the accounts registered with Android's{" "}
@@ -163,6 +164,7 @@ export function GoogleAccountsView({ caseId }: { caseId: string }) {
         stopped using the phone. Nothing here evidences activity; corroborate with artifacts that carry
         timestamps and content.
       </div>
+      </Collapsed>
 
       {/* Summary tiles */}
       <div className="flex flex-wrap gap-3 mb-4">

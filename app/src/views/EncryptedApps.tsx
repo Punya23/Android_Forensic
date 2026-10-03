@@ -20,7 +20,7 @@ import type { ReactNode } from "react";
 import { Lock } from "lucide-react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
-import { bytes } from "../components/common";
+import { bytes, Collapsed } from "../components/common";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -618,6 +618,7 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
           </h2>
           <span className="text-xs text-muted">({fcm.length})</span>
         </div>
+        <Collapsed>
         <div className="card p-4 mb-3 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
           <span className="font-semibold">These are raw push-notification fragments, not messages. </span>
           Firebase Cloud Messaging payloads are transport artefacts recovered from the push
@@ -628,6 +629,7 @@ export function EncryptedAppsView({ caseId }: { caseId: string }) {
           <em>that a message arrived</em>, not what it said. Per-record readability is stated in the{" "}
           <em>Content readable</em> column and is never inferred.
         </div>
+        </Collapsed>
         {fcm.length === 0 ? (
           <div className="card p-6 text-sm text-muted leading-relaxed">
             No FCM records. The push datastore was either not collected or held nothing at

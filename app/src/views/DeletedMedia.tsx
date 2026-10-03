@@ -38,7 +38,7 @@ export function DeletedMediaView({ caseId }: { caseId: string }) {
     <div className="p-6 h-full overflow-auto">
       <SectionHeader
         title="Deleted &amp; Trashed Media"
-        sub="MediaStore trash — non-root recovery on Android 11+. Deleted media stays intact for ~30 days; each item's deletion time is derived from its auto-purge date. Verify every item."
+        sub="Deleted photos and videos recovered from Android's trash (11+); kept about 30 days."
       />
 
       {s && s.total > 0 && (

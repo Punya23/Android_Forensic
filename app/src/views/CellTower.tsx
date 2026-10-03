@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { RadioTower } from "lucide-react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
-import { SectionHeader, StatCard, SortTh, useSort } from "../components/common";
+import { SectionHeader, StatCard, SortTh, useSort, Collapsed } from "../components/common";
 
 // ---------------------------------------------------------------------------
 // Types — declared locally (the orchestrator owns lib/types.ts).
@@ -231,6 +231,7 @@ export function CellTowerView({ caseId }: { caseId: string }) {
       </div>
 
       {/* THE caveat. Cell identifiers are routinely over-read as locations. */}
+      <Collapsed>
       <div className="card p-4 mb-3 border-deletion/50 bg-deletion/5 text-xs text-deletion leading-relaxed">
         <span className="font-semibold">A cell ID is not a location. </span>
         A serving-cell identifier places the handset somewhere inside that cell's coverage area —
@@ -242,7 +243,9 @@ export function CellTowerView({ caseId }: { caseId: string }) {
         Report these as network identifiers, and seek subscriber/cell-site records from the operator
         if a geographic claim is needed.
       </div>
+      </Collapsed>
 
+      <Collapsed>
       <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">This is volatile state, not a location history. </span>
         <code className="font-mono">dumpsys telephony.registry</code> reports the{" "}
@@ -251,6 +254,7 @@ export function CellTowerView({ caseId }: { caseId: string }) {
         where the device was before the acquisition window. Any timestamp below is the moment the
         registry recorded that cell — treat the set as a snapshot, not as a movement trail.
       </div>
+      </Collapsed>
 
       {!collected && towers.length === 0 ? (
         <div className="card p-10 text-center text-muted">

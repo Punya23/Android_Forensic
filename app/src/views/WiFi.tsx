@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Lock, RadioTower, Wifi } from "lucide-react";
 import { api } from "../lib/api";
 import type { WifiNetwork, WifiReport } from "../lib/types";
-import { SortTh, useSort } from "../components/common";
+import { SortTh, useSort, Collapsed } from "../components/common";
 
 const CONF_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   live:      { bg: "#e4f4ea", text: "#1c7d3f", border: "#1c7d3f" },
@@ -231,9 +231,11 @@ function CollectorWifiSection({ caseId }: { caseId: string }) {
       <div className="mb-4">
         <h2 className="text-lg font-semibold text-ink flex items-center gap-2">
           <RadioTower className="h-4 w-4" strokeWidth={1.75} aria-hidden /> Non-root helper capture (association/saved/scan)
+          <Collapsed>
           <span className="text-xs font-normal text-recovered bg-recovered/10 border border-recovered/30 rounded px-2 py-0.5 ml-1">
             Tier 1 — Non-root helper
           </span>
+          </Collapsed>
         </h2>
         <p className="text-sm text-muted mt-1 leading-relaxed">
           A separate acquisition, by a separate mechanism, from the root credential pull above.
@@ -243,6 +245,7 @@ function CollectorWifiSection({ caseId }: { caseId: string }) {
         </p>
       </div>
 
+      <Collapsed>
       <div className="card p-4 mb-4 border-recovered/40 bg-recovered/5 text-xs text-recovered leading-relaxed">
         <span className="font-semibold">Different method, different fields. </span>
         Each row keeps the helper's own <code className="font-mono">type</code> discriminator —{" "}
@@ -254,6 +257,7 @@ function CollectorWifiSection({ caseId }: { caseId: string }) {
         to the helper, Android 8.1+ hands back these networks with blank SSIDs — an OS
         restriction on the acquisition, not evidence of an empty network history.
       </div>
+      </Collapsed>
 
       {error && (
         <div className="p-4 text-sm text-deletion">
@@ -454,6 +458,7 @@ export function WifiView({ caseId }: { caseId: string }) {
       </div>
 
       {/* Forensic disclaimer */}
+      <Collapsed>
       <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">Forensic notice: </span>
         Credentials were pulled via{" "}
@@ -462,6 +467,7 @@ export function WifiView({ caseId }: { caseId: string }) {
         original file was not modified. Every step is recorded in the chain-of-custody
         audit trail under <em>tier2.wifi.*</em> events.
       </div>
+      </Collapsed>
 
       {networks.length === 0 ? (
         /* Empty state — three distinct causes, never collapsed into one guess. */

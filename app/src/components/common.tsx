@@ -195,3 +195,13 @@ export function Filters({
     </div>
   );
 }
+
+/** Standing explanation that is useful on demand but should not crowd the page: closed by default. */
+export function Collapsed({ label = "About this data", children }: { label?: string; children: ReactNode }) {
+  return (
+    <details className="text-xs text-muted">
+      <summary className="cursor-pointer select-none hover:text-ink w-fit">{label}</summary>
+      <div className="mt-2">{children}</div>
+    </details>
+  );
+}

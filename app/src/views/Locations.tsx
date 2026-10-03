@@ -1028,7 +1028,7 @@ export function LocationsView({
       <div className="shrink-0 pb-4">
         <SectionHeader
           title="Messaging-App Media, Places & Anomalies"
-          sub="A second, narrower GPS extraction restricted to WhatsApp / Telegram / SMS / Instagram media — every point below is attributed to the app it came through, which the EXIF trace above cannot do."
+          sub="GPS from WhatsApp, Telegram, SMS and Instagram media."
         />
 
         {mediaLoading || anomaliesLoading ? (

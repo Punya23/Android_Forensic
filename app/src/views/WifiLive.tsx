@@ -18,7 +18,7 @@ import type { ReactNode } from "react";
 import { ArrowRight, RadioTower } from "lucide-react";
 import { api } from "../lib/api";
 import { fmtTs } from "../lib/hooks";
-import { bytes, SortTh, useSort } from "../components/common";
+import { bytes, SortTh, useSort, Collapsed } from "../components/common";
 
 // ---------------------------------------------------------------------------
 // Types (declared locally — this view owns its own contract)
@@ -201,6 +201,7 @@ function Section({
  */
 function RandomisedMacExplainer() {
   return (
+    <Collapsed>
     <div className="card p-4 mb-3 border-recovered/40 bg-recovered/5 text-xs text-recovered leading-relaxed">
       <span className="font-semibold">MAC randomisation is in effect on one or more entries. </span>
       Android 10+ generates a <em>per-SSID randomised</em> MAC address. The address shown here is
@@ -210,6 +211,7 @@ function RandomisedMacExplainer() {
       or ISP association logs <em>for that SSID only</em>. Do not present it as a device-unique
       identifier, and do not expect it to correlate across networks.
     </div>
+    </Collapsed>
   );
 }
 
@@ -299,6 +301,7 @@ function HotspotPostureSection({ hotspot }: { hotspot: WifiLiveHotspot | null | 
   return (
     <Section title="Hotspot Posture">
       {/* Standing forensic caveat — always visible */}
+      <Collapsed>
       <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">Standing forensic caveats: </span>
         <ul className="list-disc pl-4 mt-1 space-y-1">
@@ -316,6 +319,7 @@ function HotspotPostureSection({ hotspot }: { hotspot: WifiLiveHotspot | null | 
           </li>
         </ul>
       </div>
+      </Collapsed>
 
       {/* Sub-section grid */}
       <div className="space-y-4">
@@ -561,6 +565,7 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
 
   // Standing caveats apply whether or not any rows came back.
   const standingNotice = (
+    <Collapsed>
     <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
       <span className="font-semibold">Standing forensic caveats for this entire page: </span>
       <ul className="list-disc pl-4 mt-1 space-y-1">
@@ -585,6 +590,7 @@ export function WifiLiveView({ caseId }: { caseId: string }) {
       </ul>
       <CaveatList items={caveats} title="Caveats reported by the collector" />
     </div>
+    </Collapsed>
   );
 
   if (nothingCollected) {

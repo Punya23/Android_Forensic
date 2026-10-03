@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
-import { SectionHeader } from "../components/common";
+import { SectionHeader, Collapsed } from "../components/common";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -245,6 +245,7 @@ export function SearchHistoryView({ caseId }: { caseId: string }) {
       />
 
       {/* Forensic caveat — attribution is the whole problem with this artifact. */}
+      <Collapsed>
       <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">Forensic notice: </span>
         A query in browser history establishes that the query was{" "}
@@ -255,6 +256,7 @@ export function SearchHistoryView({ caseId }: { caseId: string }) {
         so this list is a floor, never a complete record of activity. Rows sourced from the Google app{" "}
         <strong>cache are fragments</strong> — residue that happened to survive, not a history.
       </div>
+      </Collapsed>
 
       {/* Summary tiles */}
       <div className="flex flex-wrap gap-3 mb-4">

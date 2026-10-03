@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, Smartphone, ArrowRight } from "lucide-react";
 import { api } from "../lib/api";
 import { useDataset, fmtTs } from "../lib/hooks";
-import { SectionHeader } from "../components/common";
+import { SectionHeader, Collapsed } from "../components/common";
 
 // ---------------------------------------------------------------------------
 // Types — declared locally (this view owns its contract with the engine).
@@ -443,6 +443,7 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
         }
       />
 
+      <Collapsed>
       <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">A different collection method from the section below. </span>
         These rows come from <code className="font-mono">usage.json</code>, written by the installed
@@ -456,6 +457,7 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
         <strong>never be summed together</strong>; treat disagreement between them as expected, not
         contradictory.
       </div>
+      </Collapsed>
 
       {helperUsage.length === 0 ? (
         <div className="card p-8 text-center text-muted">
@@ -662,6 +664,7 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
       />
 
       {/* Forensic caveat — the single most important thing about this dataset. */}
+      <Collapsed>
       <div className="card p-4 mb-4 border-warn/40 bg-warn/5 text-xs text-warn leading-relaxed">
         <span className="font-semibold">Forensic notice: </span>
         These figures come from <code className="font-mono">dumpsys power</code>,{" "}
@@ -672,6 +675,7 @@ export function ScreenTimeView({ caseId }: { caseId: string }) {
         durations are <strong>approximate</strong>, reconstructed by pairing ON/OFF transitions; unpaired
         transitions are dropped.
       </div>
+      </Collapsed>
 
       {/* Summary tiles */}
       <div className="flex flex-wrap gap-3 mb-4">
