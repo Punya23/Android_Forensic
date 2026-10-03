@@ -228,7 +228,12 @@ def _bundle(question: str, answer: str, method: str, passages: list[dict], searc
     }
 
 
-def _disclaimer(answered: bool, model_usable: bool = False) -> str:
+def _disclaimer(answered: bool, model_usable: bool = False, matched: bool = True) -> str:
+    if not matched:
+        return (
+            "No match in what was collected for this case. That does not prove it never "
+            "happened — only that no reachable artifact recorded it."
+        )
     if not answered and model_usable:
         return (
             "A local model is connected, but there was nothing to summarise or it gave no "
@@ -305,7 +310,7 @@ def answer_question(
         f"llm:{provider.name}" if answer else "grep",
         found,
         search,
-        _disclaimer(bool(answer), provider.is_usable()),
+        _disclaimer(bool(answer), provider.is_usable(), bool(found)),
     )
 
 
@@ -373,5 +378,5 @@ def stream_answer(
         "type": "done",
         "method": f"llm:{provider.name}" if got else "grep",
         "note": note,
-        "disclaimer": _disclaimer(got, provider.is_usable()),
+        "disclaimer": _disclaimer(got, provider.is_usable(), bool(hits)),
     }

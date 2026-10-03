@@ -208,3 +208,12 @@ def test_json_calls_are_short_and_do_not_loop(monkeypatch):
 
     assert llm.JSON_MAX_TOKENS <= 160
     assert llm._options(llm.JSON_MAX_TOKENS)["repeat_penalty"] > 1.0
+
+
+def test_no_matches_gets_one_plain_line_not_model_talk():
+    # With nothing matched there is nothing for a model to summarise; saying "a local model is
+    # connected but gave no summary" there only confuses.
+    ev = _events(FakeModel(), question="zzzqqq nonexistent")
+    done = ev[-1]
+    assert "model" not in done["disclaimer"].lower()
+    assert "No match" in done["disclaimer"] and "does not prove" in done["disclaimer"]
