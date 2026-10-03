@@ -322,3 +322,12 @@ def test_near_identical_blobs_collapse_to_one_hit_but_short_repeats_stay():
     hits = grep(deterministic_spec("cash"), ps, top_k=10).hits
     assert sum(1 for h in hits if h.passage.confidence == "carved") == 1
     assert sum(1 for h in hits if h.passage.text.endswith("send the cash")) == 2
+
+
+def test_instruction_verbs_are_not_search_terms():
+    # "search for shubham call" once searched for the word "search" and matched 37 Google URLs.
+    from triage.intel.search import deterministic_spec
+
+    texts = [t.text.lower() for t in deterministic_spec("search for shubham call").terms]
+    assert texts == ["shubham", "call"]
+    assert [t.text.lower() for t in deterministic_spec("please look up and list anything related to Rahul").terms] == ["rahul"]

@@ -40,7 +40,8 @@ _STOP = frozenset(
     is it its me my of on or our so than that the their them then there these they this those
     to was we were what when where which who whom why will with would you your about tell say
     said saying show find any anything mention mentioned mentions case evidence most more less many much message
-    messages kya hai ka ki ko se mein aur ne hain tha thi""".split()
+    messages search searches searching look looking give list display check get fetch related regarding please
+    kya hai ka ki ko se mein aur ne hain tha thi""".split()
 )
 
 _SYSTEM = (
