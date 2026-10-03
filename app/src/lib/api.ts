@@ -468,6 +468,9 @@ export const api = {
     wifi_live?: boolean;
     scan_encrypted_apps?: boolean;
     run_self_validation?: boolean;
+    /** Size caps for a presentation run; 0 / absent = no cap. */
+    cap_total_gb?: number;
+    cap_bucket_mb?: number;
   }) =>
     request<{ case_id: string; started: boolean }>("/api/acquire", {
       method: "POST",

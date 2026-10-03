@@ -67,3 +67,12 @@ def test_summary_loads_in_an_iframe_without_an_auth_header(tmp_path):
     _case(tmp_path)
     r = app.test_client().get("/api/case/SUM-1/report/summary")
     assert r.status_code == 200 and r.mimetype == "text/html"
+
+
+def test_summary_discloses_a_capped_run(tmp_path):
+    case = _case(tmp_path)
+    assert "PARTIAL COLLECTION" not in build_summary_report(case)
+    case.write_derived("acquisition_caps", {"selected_files": 3, "available_files": 40, "selected_bytes": 3_000_000,
+        "available_bytes": 90_000_000, "skipped_files": 37, "total_cap_bytes": 5 * 1024**3, "bucket_cap_bytes": 100 * 1024**2})
+    html = build_summary_report(case)
+    assert "PARTIAL COLLECTION" in html and "3 of 40" in html and "37 files were left" in html

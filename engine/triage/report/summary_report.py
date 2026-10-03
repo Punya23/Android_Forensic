@@ -104,6 +104,16 @@ def build_summary_report(case: Case) -> str:
 
     out.append("<h2>Evidence integrity and collection</h2>")
     out.append(f"<p>{_e(audit['artifact_count'])} files collected. {_e(_integrity(case))}</p>")
+    caps = case.read_derived("acquisition_caps")
+    if isinstance(caps, dict) and caps.get("available_files"):
+        out.append(
+            "<div class='box demo'>PARTIAL COLLECTION — a size-capped run: "
+            f"{_e(caps['selected_files'])} of {_e(caps['available_files'])} shared-storage files "
+            f"({_e(round(caps['selected_bytes'] / 1e6))} of {_e(round(caps['available_bytes'] / 1e6))} MB) were pulled "
+            f"(cap {_e(round(caps['total_cap_bytes'] / 1e9, 1))} GB total, {_e(round(caps['bucket_cap_bytes'] / 1e6))} MB per category, "
+            f"newest first); {_e(caps['skipped_files'])} files were left on the device. "
+            "Absence here is not evidence of absence.</div>"
+        )
     chain = audit.get("audit_chain") or {}
     out.append(_rows([
         ("Messages", counts["messages"] if not placeholders else f"{counts['messages']} (+{placeholders} unreadable encrypted backup placeholder(s))"),

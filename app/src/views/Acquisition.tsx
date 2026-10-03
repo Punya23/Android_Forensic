@@ -93,6 +93,11 @@ export function AcquisitionView({
   const [tier1Calllog, setTier1Calllog] = useState(true);
   const [tier1Sms, setTier1Sms] = useState(true);
   const [tier1CollectAll, setTier1CollectAll] = useState(true);
+  // Presentation run: stop pulling shared-storage files at a total size and a per-category size,
+  // so a 128 GB phone finishes in a demo. Off by default; the case records that it was capped.
+  const [capOn, setCapOn] = useState(false);
+  const [capTotalGb, setCapTotalGb] = useState(5);
+  const [capBucketMb, setCapBucketMb] = useState(100);
   const [tier2Telegram, setTier2Telegram] = useState(false);
   const [tier2Instagram, setTier2Instagram] = useState(false);
   const [tier2Snapchat, setTier2Snapchat] = useState(false);
@@ -440,6 +445,8 @@ export function AcquisitionView({
         tier1_calllog: target.kind === "real" ? tier1Calllog : false,
         tier1_sms: target.kind === "real" ? tier1Sms : false,
         tier1_collect_all: target.kind === "real" ? tier1CollectAll : false,
+        cap_total_gb: capOn ? capTotalGb : 0,
+        cap_bucket_mb: capOn ? capBucketMb : 0,
         // Tier-2 re-guards on rootConfirmed, not just target.kind: the reset effect
         // above clears these the moment root drops, but that effect fires a render
         // after the device-check response lands, so a submit racing that window would
@@ -1132,6 +1139,52 @@ export function AcquisitionView({
             </div>
           </label>
         </div>
+      </div>
+
+      <div className="card p-4 mb-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="label mb-1">Presentation run (size-capped)</div>
+            <p className="text-xs text-muted">
+              Pull only part of the phone so a large one finishes in minutes. The newest files of each category are
+              taken first, and the case records that it is a partial collection.
+            </p>
+          </div>
+          <button
+            className="btn-ghost text-xs shrink-0"
+            onClick={() => {
+              setCapOn(true);
+              setCapTotalGb(5);
+              setCapBucketMb(100);
+              setTier1Contacts(true);
+              setTier1Calllog(true);
+              setTier1Sms(true);
+              setTier1CollectAll(true);
+              setRunAiSummary(true);
+            }}
+          >
+            Demo preset
+          </button>
+        </div>
+        <label className="flex items-center gap-2 mt-3 text-sm cursor-pointer">
+          <input type="checkbox" checked={capOn} onChange={(e) => setCapOn(e.target.checked)} /> Cap this acquisition
+        </label>
+        {capOn && (
+          <div className="grid grid-cols-2 gap-3 mt-3 max-w-md">
+            <label className="text-xs text-muted">
+              Total (GB)
+              <input type="number" min={0.1} step={0.5} className="input mt-1" value={capTotalGb} onChange={(e) => setCapTotalGb(Math.max(0, Number(e.target.value)))} />
+            </label>
+            <label className="text-xs text-muted">
+              Per category (MB)
+              <input type="number" min={1} step={10} className="input mt-1" value={capBucketMb} onChange={(e) => setCapBucketMb(Math.max(0, Number(e.target.value)))} />
+            </label>
+            <p className="col-span-2 text-[11px] text-muted">
+              Categories: WhatsApp, Telegram, photos, videos, audio, documents, databases, other. Contacts, calls and SMS come
+              from the helper app and are small.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Explains why the engine never roots a phone itself, and gives the examiner a

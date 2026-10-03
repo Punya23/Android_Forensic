@@ -45,6 +45,7 @@ export function HomeView({
   const [places, setPlaces] = useState<GlobePoint[]>([]);
   const [flags, setFlags] = useState<FlagRow[]>([]);
   const [stamps, setStamps] = useState<string[]>([]);
+  const [caps, setCaps] = useState<{ selected_files: number; available_files: number; total_cap_bytes: number; bucket_cap_bytes: number } | null>(null);
 
   useEffect(() => {
     api
@@ -71,7 +72,12 @@ export function HomeView({
     setPlaces([]);
     setFlags([]);
     setStamps([]);
+    setCaps(null);
     if (!id) return;
+    api
+      .dataset<{ selected_files?: number }>(id, "acquisition_caps")
+      .then((c) => setCaps(c && typeof c.selected_files === "number" ? (c as never) : null))
+      .catch(() => setCaps(null));
     api.caseOverview(id).then(setSummary).catch(() => setSummary(null));
     api.dataset<FlagRow[]>(id, "flags").then((f) => setFlags(f ?? [])).catch(() => setFlags([]));
     api
@@ -139,6 +145,9 @@ export function HomeView({
         ["Examiner", summary.case.examiner || "—"],
         ["Opened", summary.case.created_at ? summary.case.created_at.slice(0, 10) : "—"],
         ["Collected", `${summary.artifact_count} files · ${fmtBytes(summary.total_bytes)}`],
+        ...(caps
+          ? ([["Scope", `Capped run: ${caps.selected_files.toLocaleString()} of ${caps.available_files.toLocaleString()} files`]] as [string, string][])
+          : []),
         ["Audit events", String(summary.audit_event_count)],
       ]
     : [];

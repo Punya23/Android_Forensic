@@ -372,7 +372,15 @@ export function Sidebar({
         </button>
       </div>
       <nav className="flex-1 overflow-y-auto py-2 px-2">
-        {SECTIONS.map((sec) => {
+        {SECTIONS.map((section) => {
+          // A module this phone cannot give (marked "n/a") or that is not built ("soon") is not
+          // offered at all; the page you are on always stays.
+          const items = section.items.filter((i) => {
+            const st = caps?.by_dataset[VIEW_DATASET[i.key] ?? ""]?.state;
+            return i.key === view || !(st === "inaccessible" || st === "planned");
+          });
+          if (!items.length) return null;
+          const sec = { ...section, items };
           const hasActive = sec.items.some((i) => i.key === view);
           // The section holding the current view is always open, so the examiner can
           // see where they are even if they collapsed it earlier.
