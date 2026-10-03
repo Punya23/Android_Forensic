@@ -1171,9 +1171,19 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         # Pipeline configuration
         # -------------------------------
 
+        try:
+            cap_total_gb = float(body.get("cap_total_gb") or 0)
+            cap_bucket_mb = float(body.get("cap_bucket_mb") or 0)
+        except (TypeError, ValueError):
+            return jsonify({"error": "cap_total_gb and cap_bucket_mb must be numbers"}), 400
+        if not (0 <= cap_total_gb <= 4096 and 0 <= cap_bucket_mb <= 4_194_304):
+            return jsonify({"error": "size caps must be between 0 (no cap) and 4 TB"}), 400
+
         cfg = PipelineConfig(
             case_id=case_id,
             examiner=examiner,
+            cap_total_bytes=int(cap_total_gb * 1024**3),
+            cap_bucket_bytes=int(cap_bucket_mb * 1024**2),
             legal_authority=authority,
             scope_note=scope,
             cases_root=cases_root,
@@ -1861,6 +1871,8 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             "telegram_group_stats",
             # Own-hotspot client leases (Tier 2) — {"leases": [...], "caveats": [...]}.
             "hotspot_leases",
+            # Demo-sized run: what the size caps left on the device ({} when the run was not capped).
+            "acquisition_caps",
         }
 
         if dataset not in (list_sets | obj_sets):

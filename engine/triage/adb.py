@@ -404,6 +404,20 @@ class Adb:
             return []
         return [ln.strip() for ln in res.stdout.splitlines() if ln.strip()]
 
+    def list_files_detailed(self, root: str, timeout: int = 120) -> list[tuple[str, int, int]]:
+        """Like :meth:`list_files` but with each file's size in bytes and mtime (epoch seconds),
+        which a size-capped run needs to choose what to pull. Empty if the device's ``stat`` does
+        not support ``-c`` (the caller then falls back to the plain listing)."""
+        res = self.shell(f"find '{root}' -type f -exec stat -c '%s %Y %n' {{}} + 2>/dev/null", timeout=timeout)
+        if not res.ok:
+            return []
+        out: list[tuple[str, int, int]] = []
+        for ln in res.stdout.splitlines():
+            parts = ln.strip().split(" ", 2)  # path last, so spaces in names survive
+            if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+                out.append((parts[2], int(parts[0]), int(parts[1])))
+        return out
+
     def pull(self, remote: str, local: Path, timeout: int = 300) -> AdbResult:
         local.parent.mkdir(parents=True, exist_ok=True)
         return self.run("pull", remote, str(local), timeout=timeout)

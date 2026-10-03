@@ -160,6 +160,11 @@ class RealDeviceSource(AcquisitionSource):
     def list_files(self, root: str) -> list[str]:
         return self.adb.list_files(root)
 
+    def list_files_detailed(self, root: str) -> list[tuple[str, int, int]]:
+        # A device whose `stat` lacks -c returns nothing here; fall back to sizes-unknown rather
+        # than silently pulling nothing.
+        return self.adb.list_files_detailed(root) or [(p, 0, 0) for p in self.adb.list_files(root)]
+
     def pull_file(self, device_path: str, staging_dir: Path) -> Optional[PulledFile]:
         # Stage under a unique name to avoid collisions before the case ingests it.
         local = staging_dir / uuid.uuid4().hex

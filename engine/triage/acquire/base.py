@@ -66,6 +66,11 @@ class AcquisitionSource(ABC):
     def list_files(self, root: str) -> list[str]:
         """List regular files under a device path (empty if absent/denied)."""
 
+    def list_files_detailed(self, root: str) -> list[tuple[str, int, int]]:
+        """``(path, size, mtime)`` per file. Sources that cannot report sizes say 0, which a
+        size-capped run treats as 'unknown, keep'."""
+        return [(p, 0, 0) for p in self.list_files(root)]
+
     @abstractmethod
     def pull_file(self, device_path: str, staging_dir: Path) -> Optional[PulledFile]:
         """Pull a single file into `staging_dir`; return None on failure."""

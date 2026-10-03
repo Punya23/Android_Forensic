@@ -113,6 +113,7 @@ from .forensics.battery_priority import should_pull_category
 from .forensics.batch_transfer import DEFAULT_CHUNK_SIZE, chunk_files, pull_chunk
 
 from .acquire import AcquisitionSource, PulledFile, RealDeviceSource
+from .caps import select_files
 from .analysis import assess_risk, build_communication_graph
 from .config import (
     APP_MEDIA_ROOTS,
@@ -292,6 +293,12 @@ class PipelineConfig:
     keywords: list[KeywordRule] = field(default_factory=lambda: list(DEFAULT_KEYWORDS))
     known_hashes: dict[str, str] = field(default_factory=dict)
     max_files: int = 5000  # safety cap for a field triage run
+    # Demo-sized run: stop pulling shared-storage files at these sizes (0 = no cap). The total is
+    # shared between categories (WhatsApp, Telegram, photos, videos, ...) and each category also
+    # has its own ceiling; the newest files of a category are taken first. A capped run is a
+    # partial acquisition and is recorded and reported as one (derived/acquisition_caps.json).
+    cap_total_bytes: int = 0
+    cap_bucket_bytes: int = 0
     capture_screenshot: bool = True  # manual-capture the current screen (read-only)
     tier1_contacts: bool = False  # run helper APK flow to collect contacts.json
     # NOTE (P2-5): these two flags used to be labelled "role-swap". That was wrong and
@@ -998,20 +1005,30 @@ def run_acquisition(
     progress("enumerate", 0.06, "Enumerating shared storage")
     emit_acq_event(case, socketio, source="filesystem", tier="tier0",
                    action="Enumerating shared storage", status="accessing")
-    all_files: list[str] = []
-    for root in TIER0_PULL_ROOTS:
-        found = source.list_files(root)
-        if found:
-            case.log(
-                "fs.enumerate",
-                f"{len(found)} files under {root}",
-                command=f"find '{root}' -type f",
-                tier=Tier.TIER0.value,
-            )
-        all_files.extend(found)
-    # De-dupe while preserving order, and cap.
-    seen = set()
-    files = [f for f in all_files if not (f in seen or seen.add(f))][: cfg.max_files]
+    files, caps_report = select_files(
+        source,
+        TIER0_PULL_ROOTS,
+        max_files=cfg.max_files,
+        bucket_bytes=cfg.cap_bucket_bytes,
+        total_bytes=cfg.cap_total_bytes,
+        on_root=lambda root, n: case.log(
+            "fs.enumerate",
+            f"{n} files under {root}",
+            command=f"find '{root}' -type f",
+            tier=Tier.TIER0.value,
+        ),
+    )
+    if caps_report is not None:
+        case.write_derived("acquisition_caps", caps_report)
+        case.log(
+            "fs.cap",
+            f"capped run: {caps_report['selected_files']} of {caps_report['available_files']} files "
+            f"({caps_report['selected_bytes'] / 1e6:.0f} of {caps_report['available_bytes'] / 1e6:.0f} MB) "
+            f"selected; total cap {caps_report['total_cap_bytes'] / 1e6:.0f} MB, "
+            f"per-category cap {caps_report['bucket_cap_bytes'] / 1e6:.0f} MB — "
+            f"{caps_report['skipped_files']} files left on the device",
+            tier=Tier.TIER0.value,
+        )
 
     # Single declaration for the run's throughput accounting — the screenshot capture
     # below and the parallel pull further down both add to the same counter. A second
