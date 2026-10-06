@@ -24,17 +24,21 @@ trail — so the report is something you can actually stand behind.
 
 ## Highlights
 
-- 🔓 **Tiered acquisition** — Tier 0 (zero touch) → Tier 1 (sideloaded helper) → Tier 2 (root), every tier opt-in and logged
+- 🔓 **Tiered acquisition** — Tier 0 (zero touch) → Tier 1 (sideloaded helper) → Tier 2 (root), every tier opt-in and logged. The dashboard is **non-root by default**: root-only tools and modules the phone can't provide are hidden, and an examiner can opt in to reveal them (the engine never roots a phone)
+- 📏 **Size-capped presentation run** — cap a pull at 5 GB total and 100 MB per category (newest first, round-robin so photos can't starve WhatsApp); music is skipped; the newest WhatsApp backup, trashed media, chat databases and recordings are taken whole even over the cap. A capped run is marked **partial** in the case and in the report
 - 🧬 **Deleted-record recovery** — WAL / freelist / freeblock / rollback-journal carving, confidence-badged (Live / Recovered / Carved / Deletion-Detected)
 - 💬 **Multi-app coverage** — WhatsApp, Telegram, Instagram, Snapchat, SMS, browser history — including their deleted messages
 - 🗺️ **Location & social graph** — EXIF/GPS trace, cell-tower history, cross-channel comms graph
 - 📡 **Radio artifacts** — Wi-Fi credentials & saved-vs-joined networks, Bluetooth pairings *and* file-transfer history, hotspot posture
 - 🚦 **Traffic-light verdict** — RED/AMBER/GREEN scorecard built for a five-minute field decision
+- 🏠 **Case home dashboard** — per-case posture score, communication flow, key findings, collected counters, an offline dot-globe of locations and a case switcher; blue-on-black glass theme, fonts bundled so it works air-gapped
+- 🕸️ **Cross-linked graph** — people linked by the chats they share, with top-N, hub hiding, focus and zoom to keep it readable
 - 📜 **Court-shaped report** — NIST/SWGDE-aligned, BSA 2023 §63 certificate, sealed SHA-256 export
+- 📄 **Two-to-three page summary report** — verdict, what was collected, strongest findings, people and limits, built deterministically with no model; the full report remains one tab away (Summary · AI · Raw)
 - 🧠 **Case intelligence** — plain-language brief → ontology-ranked collection plan, offline by default
 - 🔎 **Local RAG, on your machine** — precedent retrieval blends BM25 with a local embedding model under Ollama; case text never leaves the workstation, and the plan records which of the two actually ran
 - 🕵️ **Deep investigation** — a bounded, deterministic pass cross-links findings a flat scoring pass can't correlate on its own (a location anomaly co-occurring with a message; a known contact with no communication surfaced)
-- 💬 **Ask this case** — free-text Q&A over a case's own already-collected evidence, cited to the exact artifact, grounded so a model can only answer from what's retrieved
+- 💬 **Ask this case** — free-text Q&A over a case's own already-collected evidence, cited to the exact artifact, grounded so a model can only answer from what's retrieved. The engine starts Ollama itself, shows model errors instead of hanging, and says so when nothing matches
 - 🔗 **Cross-case linking** — the same phone number, UPI ID, or email surfacing in another case on this installation, indexed and cited from both sides
 - 🚧 **Per-dataset capability states** — every view says whether its data was collected, checked-and-empty, gated off, unreachable, or not built yet
 - 📴 **Works with zero phone** — full pipeline demoable against a synthetic mock corpus
@@ -95,7 +99,17 @@ python -m triage.cli acquire --serial <SERIAL> --case CASE01 --examiner "Your Na
 ```
 
 `python -m triage.cli acquire --help` lists every tier flag. The dashboard drives the same
-pipeline with live progress if you'd rather click.
+pipeline with live progress if you'd rather click, and is where the size cap lives: tick
+**Presentation run (size-capped)** (the *Demo preset* is 5 GB total / 100 MB per category)
+before you begin. The setting is remembered, and the card warns when the cap is off.
+
+**OnePlus / OxygenOS:** `adb` permission grants for the Collector are blocked unless
+Developer options → **Disable permission monitoring** is on, otherwise the phone re-prompts
+for every permission. Notification access and Usage access must be enabled by hand on the
+phone. The pre-flight check in the dashboard walks through these.
+
+**Stopping:** Stop cancels the run and kills any in-flight `adb` process; the helper app is
+uninstalled and its outputs removed by the teardown ledger either way.
 
 ## Repo layout
 
@@ -112,7 +126,7 @@ pipeline with live progress if you'd rather click.
 Building and testing each half:
 
 ```bash
-cd engine && python -m pytest tests/ -q      # 1469 tests, no device needed
+cd engine && python -m pytest tests/ -q      # 1746 tests, no device needed
 cd apk && ./gradlew assembleDebug            # needs the Android SDK
 cd app && npx tsc --noEmit                   # dashboard typecheck
 ```
@@ -144,6 +158,6 @@ deliberately not wired up.
 
 <div align="center">
 
-**1469 tests passing** · Runs fully offline · No account, no cloud, no telemetry
+**1746 tests passing** · Runs fully offline · No account, no cloud, no telemetry
 
 </div>
