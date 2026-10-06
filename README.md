@@ -158,6 +158,6 @@ deliberately not wired up.
 
 <div align="center">
 
-**1746 tests passing** · Runs fully offline · No account, no cloud, no telemetry
+**1746 tests** · Runs fully offline · No account, no cloud, no telemetry
 
 </div>
