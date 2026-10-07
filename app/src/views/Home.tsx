@@ -114,7 +114,7 @@ export function HomeView({
 
   const stat: { icon: typeof Flag; value: string | number; label: string; lines: [string, string | number][]; view: ViewKey; x: string; y: string }[] = [
     { icon: Flag, value: flags.length, label: "Flagged items", lines: [["Critical", critical], ["Watch-list", flags.length - critical]], view: "overview", x: "100%", y: "0%" },
-    { icon: Users, value: summary?.graph_stats.participants ?? "—", label: "People", lines: [["Interactions", summary?.graph_stats.interactions ?? 0], ["Channels", summary?.graph_stats.channels.length ?? 0]], view: "graph", x: "0%", y: "0%" },
+    { icon: Users, value: summary?.graph_stats.participants ?? "—", label: "People", lines: [["Interactions", summary?.graph_stats.interactions ?? 0], ["Channels", summary?.graph_stats.channels?.length ?? 0]], view: "graph", x: "0%", y: "0%" },
     {
       icon: ShieldCheck,
       value: hv ? (hv.verified ?? 0) : "—",
