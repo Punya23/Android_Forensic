@@ -1575,7 +1575,8 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
 
         summary["discovered_chat_count"] = len(discovered.get("messages", []))
 
-        summary["risk"] = case.read_derived("risk")
+        # read_derived gives [] for a file that was never written; no verdict is null, not a list.
+        summary["risk"] = case.read_derived("risk") or None
 
         summary["throughput"] = case.read_derived("throughput")
 
