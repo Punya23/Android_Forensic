@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Cpu, Usb, CircleUserRound, LogOut, Menu } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowLeft, Cpu, Usb, CircleUserRound, LogOut, Menu } from "lucide-react";
 import { api, hasAuthToken, setOnUnauthorized } from "./lib/api";
 import type { Health } from "./lib/types";
 import { TagProvider } from "./lib/tagStore";
@@ -65,7 +65,30 @@ import { Select, type SelectOption } from "./components/fields";
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [caseId, setCaseId] = useState<string | null>(null);
-  const [view, setView] = useState<ViewKey>("home");
+  const [view, showView] = useState<ViewKey>("home");
+  // Pages visited before this one, newest last: Back pops it. The ref lets a callback held by a
+  // hidden (kept-alive) page still read the page that is current now, not the one it rendered under.
+  const [trail, setTrail] = useState<ViewKey[]>([]);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  // Visited pages stay mounted but hidden, so their state (filters, scroll, a running acquisition)
+  // is still there on return. `epoch` changes when fresh data arrives, which drops them all.
+  const alive = useRef(new Map<string, ReactNode>());
+  const [epoch, setEpoch] = useState(0);
+
+  function setView(v: ViewKey) {
+    const from = viewRef.current;
+    if (v === from) return;
+    setTrail((t) => [...t.slice(-29), from]);
+    showView(v);
+  }
+
+  function goBack() {
+    const prev = trail[trail.length - 1];
+    if (!prev) return;
+    setTrail(trail.slice(0, -1));
+    showView(prev);
+  }
   // Set by MediaView's "View on map" button; consumed by LocationsView to fly
   // the map to that exact photo's point on arrival, then cleared so revisiting
   // Locations later doesn't re-trigger the same fly-to.
@@ -101,6 +124,7 @@ export default function App() {
   }, [authed]);
 
   function onCaseReady(id: string, landOn: ViewKey = "overview") {
+    setEpoch((e) => e + 1);
     setCaseId(id);
     setView(landOn);
   }
@@ -162,13 +186,14 @@ export default function App() {
         />
       </div>
       <main className="flex-1 overflow-hidden flex flex-col">
-        <TopBar onSwitchCase={setCaseId} crumb={crumb} health={health} caseId={caseId} setView={setView} username={username} onLogout={onLogout} onMenu={() => setNavOpen(true)} />
+        <TopBar onBack={trail.length ? goBack : undefined} onSwitchCase={setCaseId} crumb={crumb} health={health} caseId={caseId} setView={setView} username={username} onLogout={onLogout} onMenu={() => setNavOpen(true)} />
         {/* One strip, above whichever view is routed, saying why this view's data is
             absent when it is. Renders nothing when the dataset is populated, and
             nothing for views that aren't about a single dataset. */}
         {caseId && <CapabilityBanner dataset={VIEW_DATASET[view]} />}
         <FetchErrorBanner />
         <div className="flex-1 overflow-auto">
+          <KeepAlive scope={`${epoch}:${caseId ?? ""}`} id={view} cache={alive.current}>
           {view === "home" && (
             <HomeView caseId={caseId} onSelectCase={setCaseId} username={username} setView={setView} onOpenCase={onCaseReady} />
           )}
@@ -235,6 +260,7 @@ export default function App() {
           {caseId && view === "encryptedapps" && <EncryptedAppsView caseId={caseId} />}
           {caseId && view === "aleapp" && <AleappView caseId={caseId} />}
           {caseId && view === "validation" && <ValidationView caseId={caseId} />}
+          </KeepAlive>
         </div>
       </main>
     </div>
@@ -249,6 +275,34 @@ export default function App() {
     </CapabilityProvider>
   ) : (
     body
+  );
+}
+
+const MAX_ALIVE = 8;
+
+/**
+ * Renders the current page and keeps recently visited ones mounted but hidden. Each page's element
+ * is cached, so a hidden page is not re-rendered by App (its own state and timers carry on); the
+ * current page's entry is refreshed every render so it always gets the latest props. `scope`
+ * changes (new case, fresh data) drop every cached page.
+ */
+function KeepAlive({ scope, id, cache, children }: { scope: string; id: string; cache: Map<string, ReactNode>; children: ReactNode }) {
+  const current = `${scope}|${id}`;
+  cache.set(current, children); // set keeps a key's position, so mounted pages are never reordered
+  for (const k of [...cache.keys()]) if (!k.startsWith(`${scope}|`)) cache.delete(k);
+  while (cache.size > MAX_ALIVE) {
+    const oldest = [...cache.keys()].find((k) => k !== current);
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+  return (
+    <>
+      {[...cache].map(([k, el]) => (
+        <div key={k} hidden={k !== current} className="h-full">
+          {el}
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -275,6 +329,7 @@ function CaseSwitcher({ caseId, onChange }: { caseId: string; onChange: (id: str
 }
 
 function TopBar({
+  onBack,
   onSwitchCase,
   crumb,
   health,
@@ -284,6 +339,7 @@ function TopBar({
   onLogout,
   onMenu,
 }: {
+  onBack?: () => void;
   onSwitchCase: (id: string) => void;
   crumb: string;
   health: Health | null;
@@ -302,6 +358,10 @@ function TopBar({
         <div className="md:hidden">
           <Logo size={24} />
         </div>
+        <button className="btn-ghost !px-2 !py-1.5 flex items-center gap-1.5 text-xs disabled:opacity-40" aria-label="Back to the previous page" title="Back" disabled={!onBack} onClick={onBack}>
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          <span className="hidden sm:inline">Back</span>
+        </button>
         <span className="text-muted hidden md:inline">{crumb}</span>
         {caseId && <CaseSwitcher caseId={caseId} onChange={onSwitchCase} />}
       </div>
