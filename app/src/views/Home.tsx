@@ -60,11 +60,12 @@ export function HomeView({
   const id = current?.case_id;
 
   // The case Home shows is the app's open case, so the sidebar is live for it: when none is
-  // open yet, the one Home falls back to (the newest) becomes the open case.
+  // open yet — or the open one is gone from the registry (deleted, or the engine was reset) —
+  // the one Home falls back to (the newest) becomes the open case, so no panel 404s on a dead id.
   useEffect(() => {
-    if (!caseId && id) onSelectCase(id);
+    if (id && (!caseId || (loaded && caseId !== id))) onSelectCase(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [caseId, id]);
+  }, [caseId, id, loaded]);
 
   useEffect(() => {
     setSummary(null);
