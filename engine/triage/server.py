@@ -45,6 +45,7 @@ from .adb import Adb
 from .cancellation import AcquisitionCancelled, CancellationToken
 from .checkpoint import checkpoint_exists, load_checkpoint
 from .config import ACQUISITION_DISCLAIMER, Tier
+from . import custody_record
 from .custody import Case
 from .pipeline import PipelineConfig, run_acquisition
 from .validation_utils import (
@@ -2322,6 +2323,22 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
     def audit(case_id: str):
 
         return jsonify(_open(cases_root, case_id).read_audit())
+
+    @app.get("/api/case/<case_id>/custody")
+    def custody_record_endpoint(case_id: str):
+        """The chain-of-custody record: case/authority, device intake, integrity checks, the
+        phase timeline and the handover log."""
+        return jsonify(custody_record.build_record(_open(cases_root, case_id)))
+
+    @app.post("/api/case/<case_id>/custody/transfer")
+    def custody_transfer(case_id: str):
+        """Record a handover (received / released / transferred / examined / returned / sealed)."""
+        case = _open(cases_root, case_id)
+        try:
+            entry = custody_record.add_transfer(case, request.get_json(silent=True) or {}, AUTH_USER)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(entry), 201
 
     # ---------------------------------------------------------
     # REPORT ENDPOINT

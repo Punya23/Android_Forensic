@@ -1427,3 +1427,58 @@ export interface LinkedCasesResponse {
   linked_cases: LinkedCase[];
   disclaimer: string;
 }
+
+
+/** One handover in the chain of custody (`/api/case/<id>/custody`). */
+export interface Handover {
+  id: string;
+  at: string;
+  action: string;
+  from_person: string;
+  to_person: string;
+  purpose: string;
+  location: string;
+  notes: string;
+  recorded_by: string;
+  audit_entry_hash: string;
+}
+
+export type HandoverInput = Partial<Omit<Handover, "id" | "at" | "recorded_by" | "audit_entry_hash">> & { action: string };
+
+export interface CustodyEvent {
+  timestamp: string;
+  action: string;
+  detail: string;
+  actor: string;
+  alters_device: boolean;
+  result: string;
+  command: string;
+}
+
+export interface CustodyPhase {
+  key: string;
+  title: string;
+  started: string;
+  ended: string;
+  actors: string[];
+  event_count: number;
+  device_altering: number;
+  errors: number;
+  summary?: string;
+  events: CustodyEvent[];
+}
+
+export interface CustodyRecord {
+  case: { case_id: string; examiner: string; legal_authority: string; scope_note: string; opened_at: string; tool: string };
+  device: { manufacturer: string; model: string; serial: string; imei: string; android_version: string; os_skin: string; rooted: boolean; carrier: string };
+  condition_on_receipt: { screen_locked: boolean | null; battery_level: number | null; device_time: string | null; root_available: boolean | null; note: string; synthetic: boolean };
+  integrity: {
+    audit_chain: { valid: boolean | null; total: number; verified: number; first_bad_line: number | null; reason: string; head: string; checked_at: string };
+    evidence: { files: number; bytes: number; set_sha256: string; by_tier: Record<string, { files: number; bytes: number }> };
+    seal_note: string;
+  };
+  device_state: { verdict: string; statement: string; returned_to_found_state: boolean; device_altering_actions: number };
+  timeline: CustodyPhase[];
+  transfers: Handover[];
+  transfer_actions: string[];
+}

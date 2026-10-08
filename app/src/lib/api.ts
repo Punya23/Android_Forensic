@@ -175,6 +175,14 @@ export const api = {
     get<import("./types").CaseCapabilities>(`/api/case/${id}/capabilities`),
   manifest: (id: string) => get<ManifestRecord[]>(`/api/case/${id}/manifest`),
   audit: (id: string) => get<AuditEvent[]>(`/api/case/${id}/audit`),
+  /** The chain-of-custody record: authority, device intake, integrity checks, phases, handovers. */
+  custody: (id: string) => get<import("./types").CustodyRecord>(`/api/case/${id}/custody`),
+  addHandover: (id: string, body: import("./types").HandoverInput) =>
+    request<import("./types").Handover>(`/api/case/${id}/custody/transfer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
   tags: (id: string) => get<import("./types").Tag[]>(`/api/case/${id}/tags`),
   reportUrl: (id: string) => `${BASE}/api/case/${id}/report`,
   reportSummaryUrl: (id: string) => `${BASE}/api/case/${id}/report/summary`,

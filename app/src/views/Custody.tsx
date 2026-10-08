@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import type { AuditEvent, ManifestRecord } from "../lib/types";
 import { SectionHeader } from "../components/common";
 import { TierBadge } from "../components/Badges";
+import { CustodyRecordPanel } from "./CustodyRecord";
 import { bytes } from "../components/common";
 
 /** One collector's outcome for a single Tier-1 helper-APK run (`CollectionResult.summary()`). */
@@ -47,7 +48,7 @@ function shortPerm(p: string): string {
 }
 
 export function CustodyView({ caseId }: { caseId: string }) {
-  const [tab, setTab] = useState<"audit" | "manifest" | "collector">("audit");
+  const [tab, setTab] = useState<"record" | "audit" | "manifest" | "collector">("record");
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [manifest, setManifest] = useState<ManifestRecord[]>([]);
   // `read_derived` on the engine defaults a *missing* dataset to `[]` regardless of its usual
@@ -82,9 +83,10 @@ export function CustodyView({ caseId }: { caseId: string }) {
     <div className="p-4 h-full flex flex-col">
       <SectionHeader
         title="Chain of Custody"
-        sub="Append-only audit trail + per-artifact SHA-256 manifest (NIST SP 800-101r1 / SWGDE-aligned)"
+        sub="Who held the evidence, what was done to the device and the data, and whether this record can still be trusted (NIST SP 800-101r1 / SWGDE-aligned)"
         right={
           <div className="flex gap-1 bg-panel rounded-md p-1">
+            <TabBtn active={tab === "record"} onClick={() => setTab("record")}>Custody record</TabBtn>
             <TabBtn active={tab === "audit"} onClick={() => setTab("audit")}>Audit trail ({audit.length})</TabBtn>
             <TabBtn active={tab === "manifest"} onClick={() => setTab("manifest")}>Manifest ({manifest.length})</TabBtn>
             <TabBtn active={tab === "collector"} onClick={() => setTab("collector")}>
@@ -94,7 +96,9 @@ export function CustodyView({ caseId }: { caseId: string }) {
         }
       />
 
-      {tab === "collector" ? (
+      {tab === "record" ? (
+        <CustodyRecordPanel caseId={caseId} />
+      ) : tab === "collector" ? (
         <CollectorRunPanel loaded={collectorLoaded} manifest={collectorManifest} />
       ) : tab === "audit" ? (
         <div className="card overflow-auto flex-1">

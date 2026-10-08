@@ -229,6 +229,17 @@ class Case:
                 fh.flush()
             self._chain_head = chained[CHAIN_SELF_FIELD]
 
+    @property
+    def audit_head(self) -> str:
+        """Hash of the newest audit line — what a record written just now is pinned to."""
+        return self._chain_head
+
+    def add_custody_transfer(self, entry: dict[str, Any]) -> None:
+        """Append one handover to the case (the matching audit line is written by the caller)."""
+        with self._lock:
+            self.meta.custody_transfers.append(entry)
+            self._save_meta()
+
     def verify_audit_chain(self) -> dict[str, Any]:
         """Re-verify the audit log's hash chain. See :func:`audit_chain.verify_chain`."""
         return verify_chain(self._audit_path)
