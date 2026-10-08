@@ -14,6 +14,7 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import logging
+import shlex
 import shutil
 import tempfile
 import threading
@@ -7030,6 +7031,17 @@ def _run_tier1_collect_all(
         )
         return got
 
+    src_dir = apk.resolve().parents[4] / "src"
+    if src_dir.is_dir():
+        newest = max((f.stat().st_mtime for f in src_dir.rglob("*") if f.is_file()), default=0)
+        if newest > apk.stat().st_mtime:
+            case.log(
+                "tier1.helper.stale_apk",
+                "Collector APK is older than its source; installing it anyway. Rebuild with "
+                "`cd apk && ./gradlew assembleDebug` to ship the latest app.",
+                result="warning",
+                tier=Tier.TIER1.value,
+            )
     install = source.adb.run("install", "-r", str(apk.resolve()))
     _log_tier1_step(
         case,
@@ -7098,7 +7110,12 @@ def _run_tier1_collect_all(
     )
     _tier1_ledger().record_appop("GET_USAGE_STATS", appop.ok)
 
-    dump = source.adb.shell(f"am start -n {activity} --es action dump_all")
+    # Case and examiner are shown on the phone's screen; they are display-only extras.
+    dump = source.adb.shell(
+        f"am start -n {activity} --es action dump_all "
+        f"--es case_id {shlex.quote(str(case.meta.case_id))} "
+        f"--es examiner {shlex.quote(str(case.meta.examiner or ''))}"
+    )
     _log_tier1_step(
         case,
         "tier1.helper.dump_all",

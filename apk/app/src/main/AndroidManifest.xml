@@ -79,6 +79,7 @@
     <application
         android:allowBackup="false"
         android:label="SNAGR Collector"
+        android:icon="@drawable/ic_launcher"
         android:requestLegacyExternalStorage="true"
         android:theme="@android:style/Theme.Material.Light">
         <activity

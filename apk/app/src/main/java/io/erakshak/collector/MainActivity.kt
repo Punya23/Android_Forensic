@@ -3,19 +3,16 @@ package io.erakshak.collector
 import android.Manifest
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.ColorStateList
-import android.graphics.Color
-import android.graphics.Typeface
+import android.location.LocationManager
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.Gravity
-import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.ScrollView
-import android.widget.TextView
+import android.provider.Settings
+import android.view.WindowManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONArray
@@ -58,9 +55,13 @@ import org.json.JSONObject
 class MainActivity : Activity() {
 
     private var pendingAction: String? = null
+    private lateinit var screen: ProgressScreen
+    private var started = false
+    private var finishedAll = false
 
     companion object {
         private const val REQ_CODE = 1001
+        private const val PREFLIGHT_SECONDS = 30
 
         private val ALL_PERMISSIONS = buildList {
             add(Manifest.permission.READ_CONTACTS)
@@ -102,7 +103,11 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A screen that dims mid-collection stops the foreground-only readers (location, Wi-Fi).
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         pendingAction = intent.getStringExtra("action")
+        screen = buildScreen(pendingAction)
+        setContentView(screen.root)
 
         val missing = ALL_PERMISSIONS.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
@@ -116,7 +121,10 @@ class MainActivity : Activity() {
         if (missing.isNotEmpty() && !prefs.getBoolean("permissions_requested", false)) {
             // The flag is saved when the examiner has answered (onRequestPermissionsResult), not
             // here: a relaunch while dialogs are still open must not skip them and collect early.
-            showPermissionScreen(missing)
+            screen.setStage(
+                "Permissions needed",
+                oemGuidanceText() ?: "Tap Allow on each prompt so every category can be collected.",
+            )
             ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQ_CODE)
         } else {
             executeAction(pendingAction)
@@ -177,46 +185,136 @@ class MainActivity : Activity() {
 
     // ── Action dispatcher ─────────────────────────────────────────────────
 
-    private fun executeAction(action: String?) {
-        if (action == null) { showStatusScreen(); return }
+    private fun wantedFor(action: String?): List<String> = when {
+        action == "dump_all" -> registry.keys.toList()
+        action != null && action.startsWith("dump_") -> listOf(action.removePrefix("dump_"))
+        else -> emptyList()
+    }
 
-        val wanted: List<String> = when {
-            action == "dump_all" -> registry.keys.toList()
-            action.startsWith("dump_") -> listOf(action.removePrefix("dump_"))
-            else -> emptyList()
+    private fun buildScreen(action: String?): ProgressScreen {
+        val version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }
+            .getOrNull() ?: "?"
+        val facts = listOf(
+            "Case" to (intent.getStringExtra("case_id") ?: ""),
+            "Examiner" to (intent.getStringExtra("examiner") ?: ""),
+            "Device" to "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
+            "Android" to "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
+            "Task" to (action ?: "none"),
+        )
+        // With no task (launched by hand) show every category, all pending, rather than an empty list.
+        val shown = wantedFor(action).ifEmpty { registry.keys.toList() }
+        return ProgressScreen(this, shown, displayNames, facts, version)
+    }
+
+    /** What the examiner can switch on now so Location and Wi-Fi evidence is not empty. */
+    private fun preflightIssues(wanted: List<String>): List<ProgressScreen.Issue> {
+        val issues = mutableListOf<ProgressScreen.Issue>()
+        if ("location" in wanted || "wifi" in wanted) {
+            val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            val on = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) lm?.isLocationEnabled ?: true else true
+            if (!on) issues += ProgressScreen.Issue(
+                "Location is off",
+                "Needed for the last known location fix and nearby Wi-Fi networks.",
+                Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS),
+            )
         }
-        if (wanted.isEmpty() || wanted.any { it !in registry }) {
-            showResultScreen(
-                action,
-                "✗ Unknown action: $action\n\nKnown: dump_all, " +
-                    registry.keys.joinToString(", ") { "dump_$it" },
-                hasError = true,
+        if ("wifi" in wanted) {
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            if (wm != null && !wm.isWifiEnabled) issues += ProgressScreen.Issue(
+                "Wi-Fi is off",
+                "Needed to record the connected and nearby Wi-Fi networks.",
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY)
+                else Intent(Settings.ACTION_WIFI_SETTINGS),
+            )
+        }
+        return issues
+    }
+
+    private fun executeAction(action: String?) {
+        if (action == null) {
+            screen.setStage(
+                "Ready",
+                "No task was requested. The SNAGR engine starts collection from the dashboard.",
             )
             return
         }
+        val wanted = wantedFor(action)
+        if (wanted.isEmpty() || wanted.any { it !in registry }) {
+            screen.setStage(
+                "Unknown action",
+                "$action — known: dump_all, " + registry.keys.joinToString(", ") { "dump_$it" },
+                Palette.of(this).deletion,
+            )
+            return
+        }
+        val issues = preflightIssues(wanted)
+        if (issues.isEmpty()) beginCollection(action, wanted) else awaitPreflight(action, wanted)
+    }
 
+    /**
+     * Location or Wi-Fi is off: ask the examiner to switch it on, but never wait forever — the
+     * engine is waiting on this run, so after [PREFLIGHT_SECONDS] it proceeds and the collectors
+     * report the gap themselves.
+     */
+    private fun awaitPreflight(action: String, wanted: List<String>) {
+        val handler = Handler(Looper.getMainLooper())
+        var left = PREFLIGHT_SECONDS
+        var shownFor: List<String>? = null
+        val step = object : Runnable {
+            override fun run() {
+                if (started) return
+                val issues = preflightIssues(wanted)
+                if (issues.isEmpty() || left <= 0) { beginCollection(action, wanted); return }
+                val keys = issues.map { it.title }
+                if (keys != shownFor) {
+                    shownFor = keys
+                    screen.showPreflight(issues, left) { beginCollection(action, wanted) }
+                } else {
+                    screen.setCountdown(left)
+                }
+                left--
+                handler.postDelayed(this, 1000)
+            }
+        }
+        step.run()
+    }
+
+    private fun beginCollection(action: String, wanted: List<String>) {
+        if (started) return
+        started = true
+        screen.hidePreflight()
+        val main = Handler(Looper.getMainLooper())
         val done = mutableListOf<CollectionResult>()
-        showLiveProgressScreen(wanted, emptyList())
+        screen.update(emptyList(), wanted.first(), false)
+
+        // Clocks only; the rest of the screen is touched when a collector starts or finishes.
+        val clock = object : Runnable {
+            override fun run() {
+                if (finishedAll) return
+                screen.tick()
+                main.postDelayed(this, 1000)
+            }
+        }
+        main.postDelayed(clock, 1000)
+
         // MediaStore enumeration plus per-file EXIF/MP4 GPS reads can run for tens of seconds.
         // Running that on the main thread risks an ANR kill mid-collection, which would leave a
-        // half-written evidence set, so collection happens on a worker. Unlike a single
-        // fire-and-forget batch, each collector's result is posted back to the UI the moment it
-        // finishes — the examiner sees a live checklist tick off with real record counts instead
-        // of a static spinner for the whole run.
+        // half-written evidence set, so collection happens on a worker; each collector's start
+        // and result are posted back so the examiner sees what is running right now.
         Thread {
-            for (name in wanted) {
-                val result = runCollector(name)
-                done.add(result)
-                val snapshot = done.toList()
-                Handler(Looper.getMainLooper()).post { showLiveProgressScreen(wanted, snapshot) }
-            }
-            val manifest = writeManifest(action, done)
-            Handler(Looper.getMainLooper()).post {
-                val hasError = done.any {
-                    it.status == CollectionResult.ERROR || it.status == CollectionResult.DENIED
+            for ((i, name) in wanted.withIndex()) {
+                if (i > 0) {
+                    val snapshot = done.toList()
+                    main.post { screen.update(snapshot, name, false) }
                 }
-                showResultScreen(action, renderSummary(done, manifest), hasError)
-                Handler(Looper.getMainLooper()).postDelayed({ finish() }, 3000)
+                done.add(runCollector(name))
+            }
+            writeManifest(action, done)
+            val snapshot = done.toList()
+            main.post {
+                finishedAll = true
+                screen.update(snapshot, null, true)
+                main.postDelayed({ finish() }, 8000)
             }
         }.apply { name = "snagr-collect"; isDaemon = false }.start()
     }
@@ -288,25 +386,6 @@ class MainActivity : Activity() {
         }.getOrNull()
     }
 
-    private fun renderSummary(results: List<CollectionResult>, manifest: String?): String {
-        val body = results.joinToString("\n") { r ->
-            val mark = when (r.status) {
-                CollectionResult.OK -> "✓"
-                CollectionResult.EMPTY -> "○"
-                CollectionResult.DENIED -> "✗"
-                CollectionResult.UNSUPPORTED -> "–"
-                else -> "!"
-            }
-            val detail = when (r.status) {
-                CollectionResult.OK -> "${r.count} records"
-                CollectionResult.EMPTY -> "empty"
-                else -> "${r.status}: ${r.error ?: "no detail"}"
-            }
-            "$mark ${r.fileName} — $detail"
-        }
-        return if (manifest == null) body else "$body\n\n→ $manifest"
-    }
-
     // ── UI screens ────────────────────────────────────────────────────────
 
     /**
@@ -361,147 +440,6 @@ class MainActivity : Activity() {
             else -> null  // Google, Motorola, Nothing — stock-like, no special guidance
         }
     }
-
-    private fun showPermissionScreen(missing: List<String>) {
-        val layout = buildLayout()
-        layout.addView(makeText("🔐 Permissions Required", 22f, Color.parseColor("#1A237E"), bold = true))
-
-        // Show OEM-specific guidance first if applicable
-        val guidance = oemGuidanceText()
-        if (guidance != null) {
-            val guidanceBox = TextView(this).apply {
-                text = guidance
-                textSize = 12f
-                setTextColor(Color.parseColor("#5D4037"))
-                setBackgroundColor(Color.parseColor("#FFF8E1"))
-                setPadding(32, 20, 32, 20)
-                setTypeface(null, Typeface.ITALIC)
-            }
-            layout.addView(guidanceBox)
-        }
-
-        layout.addView(makeText("Grant each permission when the dialog appears:", 14f, Color.DKGRAY))
-        val box = TextView(this).apply {
-            text = missing.joinToString("\n") { "  • " + it.substringAfterLast(".") }
-            textSize = 13f; setTextColor(Color.DKGRAY)
-            setBackgroundColor(Color.parseColor("#F5F5F5"))
-            setPadding(32, 24, 32, 24); typeface = Typeface.MONOSPACE
-        }
-        layout.addView(box)
-        setContentView(ScrollView(this).apply { setBackgroundColor(Color.WHITE); addView(layout) })
-    }
-
-    private fun showStatusScreen() {
-        val layout = buildLayout()
-        layout.addView(makeText("SNAGR Collector", 22f, Color.parseColor("#1A237E"), bold = true))
-        layout.addView(makeText("✓ All permissions granted — ready", 14f, Color.parseColor("#2E7D32")))
-        val info = TextView(this).apply {
-            text = "Actions:\n  dump_all\n" +
-                registry.keys.joinToString("\n") { "  dump_$it" }
-            textSize = 12f; setTextColor(Color.DKGRAY)
-            setBackgroundColor(Color.parseColor("#F5F5F5"))
-            setPadding(32, 28, 32, 28); typeface = Typeface.MONOSPACE
-        }
-        layout.addView(info)
-        setContentView(ScrollView(this).apply { setBackgroundColor(Color.WHITE); addView(layout) })
-    }
-
-    /**
-     * Live checklist screen — re-rendered after every collector finishes so the examiner sees
-     * real progress (which artifact, how many records, or why it was denied) instead of a
-     * static spinner for the whole run. [done] holds every completed result so far, in the
-     * order they finished; [wanted] is the full requested list, used to render pending rows.
-     */
-    private fun showLiveProgressScreen(wanted: List<String>, done: List<CollectionResult>) {
-        val total = wanted.size
-        val finishedCount = done.size
-        val allDone = finishedCount == total
-        val layout = buildLayout()
-
-        layout.addView(
-            makeText(
-                if (allDone) "✓ Finishing up…" else "⏳ Collecting evidence",
-                24f,
-                Color.parseColor("#1A237E"),
-                bold = true,
-            )
-        )
-        layout.addView(makeText("$finishedCount / $total complete", 14f, Color.DKGRAY))
-
-        layout.addView(
-            ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-                max = total
-                progress = finishedCount
-                progressTintList = ColorStateList.valueOf(Color.parseColor("#3F51B5"))
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                ).apply { setMargins(0, 20, 0, 24) }
-            }
-        )
-
-        val byName = done.associateBy { it.name }
-        val rows = TextView(this).apply {
-            text = wanted.joinToString("\n") { name ->
-                val label = displayNames[name] ?: name
-                val r = byName[name]
-                if (r == null) {
-                    "  ⋯  $label"
-                } else {
-                    val mark = when (r.status) {
-                        CollectionResult.OK -> "✓"
-                        CollectionResult.EMPTY -> "○"
-                        CollectionResult.DENIED -> "✗"
-                        CollectionResult.UNSUPPORTED -> "–"
-                        else -> "!"
-                    }
-                    val detail = when (r.status) {
-                        CollectionResult.OK -> "${r.count} records"
-                        CollectionResult.EMPTY -> "empty"
-                        else -> r.status
-                    }
-                    "  $mark  $label — $detail"
-                }
-            }
-            textSize = 13f
-            setTextColor(Color.DKGRAY)
-            setBackgroundColor(Color.parseColor("#F5F5F5"))
-            setPadding(28, 24, 28, 24)
-            typeface = Typeface.MONOSPACE
-        }
-        layout.addView(rows)
-
-        if (!allDone) {
-            layout.addView(makeText("Keep this screen in the foreground.", 12f, Color.GRAY))
-        }
-        setContentView(ScrollView(this).apply { setBackgroundColor(Color.WHITE); addView(layout) })
-    }
-
-    private fun showResultScreen(action: String, status: String, hasError: Boolean = false) {
-        val layout = buildLayout()
-        val color = if (hasError) Color.parseColor("#C62828") else Color.parseColor("#2E7D32")
-        layout.addView(makeText(if (hasError) "⚠ Partial" else "✓ Done", 28f, color, bold = true))
-        layout.addView(makeText("Action: $action", 13f, Color.GRAY))
-        layout.addView(TextView(this).apply {
-            text = status
-            textSize = 12f; setTextColor(Color.DKGRAY)
-            setBackgroundColor(Color.parseColor("#F5F5F5"))
-            setPadding(24, 24, 24, 24); typeface = Typeface.MONOSPACE
-        })
-        setContentView(ScrollView(this).apply { setBackgroundColor(Color.WHITE); addView(layout) })
-    }
-
-    private fun buildLayout() = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-        setPadding(64, 64, 64, 64); setBackgroundColor(Color.WHITE)
-    }
-
-    private fun makeText(text: String, size: Float, color: Int, bold: Boolean = false) =
-        TextView(this).apply {
-            this.text = text; textSize = size; setTextColor(color); gravity = Gravity.CENTER
-            setPadding(0, 8, 0, 8)
-            if (bold) setTypeface(typeface, Typeface.BOLD)
-        }
 
     // File output is handled by StorageWriter, which inserts via MediaStore on Android 10+.
     // A plain File write to public Downloads is blocked by scoped storage there, so the engine
