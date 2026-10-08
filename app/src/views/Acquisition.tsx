@@ -768,7 +768,7 @@ export function AcquisitionView({
           collected.
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-2">
           <div>
             <label className="label">FIR / case number</label>
             <input
@@ -795,9 +795,7 @@ export function AcquisitionView({
                   : [{ value: "heuristic", label: "Heuristic (offline, default)" }]
               }
             />
-          </div>
-          <div className="flex items-end">
-            <div className="text-[11px] text-muted leading-relaxed">
+            <div className="text-[11px] text-muted leading-relaxed mt-1">
               {(() => {
                 const chosen = llmStatus?.providers.find((p) => p.name === llmProvider);
                 if (!chosen) {
@@ -818,6 +816,7 @@ export function AcquisitionView({
               })()}
             </div>
           </div>
+
         </div>
 
         {llmStatus?.autodetect?.provisioning && llmStatus.autodetect.provisioning.action !== "none" && (
