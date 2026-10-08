@@ -96,7 +96,14 @@ object LocationCollector {
             CollectionResult(
                 "location", "location.json", out, fixes,
                 if (fixes == 0) CollectionResult.EMPTY else CollectionResult.OK,
-                if (fixes == 0) "providers queried but no cached fix present" else null
+                if (fixes == 0) {
+                    // Android only releases a last-known fix to an app that is in the foreground,
+                    // and nothing is cached when Location is switched off — say which applies.
+                    val locationOn = runCatching { lm.isLocationEnabled }.getOrDefault(true)
+                    if (!locationOn) "Location is switched off on the device, so no fix is cached"
+                    else "no fix released — Android only gives location to a foreground app, so " +
+                        "keep the phone unlocked on this screen; otherwise no cached fix exists"
+                } else null
             )
         } catch (e: SecurityException) {
             CollectionResult("location", "location.json", JSONArray(), 0, CollectionResult.DENIED, e.message)

@@ -21,10 +21,25 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 class NotificationWatcher : NotificationListenerService() {
 
+    // Notifications already on screen when access is granted are never "posted" to us, so
+    // without this the buffer is empty for the whole run on a freshly-enabled listener.
+    override fun onListenerConnected() {
+        runCatching { activeNotifications?.forEach { record(it)?.let(buffer::add) } }
+        connected = true
+    }
+
+    override fun onListenerDisconnected() {
+        connected = false
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        sbn ?: return
-        val extras = sbn.notification?.extras ?: return
-        val record = JSONObject()
+        record(sbn)?.let(buffer::add)
+    }
+
+    private fun record(sbn: StatusBarNotification?): JSONObject? {
+        sbn ?: return null
+        val extras = sbn.notification?.extras ?: return null
+        return JSONObject()
             .put("package",     sbn.packageName ?: "")
             .put("post_time",   sbn.postTime)
             .put("is_ongoing",  sbn.isOngoing)
@@ -34,11 +49,13 @@ class NotificationWatcher : NotificationListenerService() {
             .put("sub_text",    extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString() ?: "")
             .put("channel_id",  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                                     sbn.notification?.channelId ?: "" else "")
-        buffer.add(record)
     }
 
     companion object {
         val buffer: MutableList<JSONObject> = CopyOnWriteArrayList()
+
+        /** True once the system has bound the listener and its active notifications are buffered. */
+        @Volatile var connected = false
     }
 }
 
@@ -96,6 +113,14 @@ object NotificationCollector {
         }
 
         // ── Source 2: live watcher buffer ─────────────────────────────────
+        // Access granted a moment ago means the system may still be binding the listener; give
+        // it a few seconds so the buffer isn't read before it has been filled.
+        if (isNotificationListenerEnabled(ctx)) {
+            val deadline = System.currentTimeMillis() + 5_000
+            while (!NotificationWatcher.connected && System.currentTimeMillis() < deadline) {
+                Thread.sleep(200)
+            }
+        }
         for (record in NotificationWatcher.buffer) {
             val pkg = record.optString("package")
             val appLabel = runCatching {

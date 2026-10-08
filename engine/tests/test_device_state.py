@@ -430,3 +430,26 @@ def test_capture_records_its_own_read_only_caveat(phase):
     joined = " ".join(state["caveats"])
     assert "Read-only" in joined
     assert "unavailable" in joined
+
+
+def test_notification_access_is_reversed_and_verified():
+    """Enabling notification access is a device change: it must be ledgered, and a teardown
+    that leaves it enabled must be reported as residue rather than 'clean'."""
+    comp = "io.erakshak.collector/io.erakshak.collector.NotificationWatcher"
+    ledger = TeardownLedger()
+    ledger.record_listener(comp, ok=False)  # a failed enable is never "reversed"
+    assert ledger.listeners_allowed == [] and not ledger.anything_to_reverse
+    ledger.record_listener(comp, ok=True)
+    assert ledger.anything_to_reverse
+
+    from triage.device_state import _SENTINEL
+
+    def shell(value):
+        return lambda cmd: f"{value}\n{_SENTINEL}"
+
+    left_on = verify_teardown(shell(f"x:{comp}:y"), ledger)
+    assert left_on["verdict"] == "residual"
+    assert left_on["residue"][0]["kind"] == "notification-listener"
+
+    off = verify_teardown(shell("com.other/Svc"), ledger)
+    assert off["verdict"] == "clean"

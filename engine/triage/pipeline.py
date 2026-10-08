@@ -7074,6 +7074,19 @@ def _run_tier1_collect_all(
             alters_device=True,
         )
         _tier1_ledger().record_grant(perm, res.ok)
+    # Notification access is another special access: without it the notification collector
+    # reports `denied`. `cmd notification allow_listener` enables it from adb (reversed in
+    # teardown); it is not needed for the dumpsys history Tier 0 already reads.
+    listener = f"{package}/{package}.NotificationWatcher"
+    allow = source.adb.shell(f"cmd notification allow_listener {listener}")
+    _log_tier1_step(
+        case,
+        "tier1.helper.notification_access",
+        "enable notification access for collector helper",
+        allow,
+        alters_device=True,
+    )
+    _tier1_ledger().record_listener(listener, allow.ok)
     # Usage-stats is a special access, enabled via appops rather than pm grant.
     appop = source.adb.shell(f"appops set {package} GET_USAGE_STATS allow")
     _log_tier1_step(
@@ -7287,6 +7300,17 @@ def _tier1_teardown(source: RealDeviceSource, case: Case, package: str) -> dict:
             case,
             "tier1.helper.appops_reset",
             f"reset {op} appop to default (reversal)",
+            res,
+            alters_device=True,
+        )
+
+    # 2b. Switch notification access back off.
+    for comp in list(ledger.listeners_allowed):
+        res = source.adb.shell(f"cmd notification disallow_listener {comp}")
+        _log_tier1_step(
+            case,
+            "tier1.helper.notification_access_reset",
+            f"disable notification access for {comp.split('/')[0]} (reversal)",
             res,
             alters_device=True,
         )

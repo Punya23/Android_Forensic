@@ -200,6 +200,7 @@ class TeardownLedger:
     installed: bool = False
     granted_permissions: list[str] = field(default_factory=list)
     appops_set: list[str] = field(default_factory=list)
+    listeners_allowed: list[str] = field(default_factory=list)  # notification-access components
     activities_launched: list[str] = field(default_factory=list)
     files_written_to_device: list[str] = field(default_factory=list)
 
@@ -215,6 +216,10 @@ class TeardownLedger:
         if ok and op not in self.appops_set:
             self.appops_set.append(op)
 
+    def record_listener(self, component: str, ok: bool) -> None:
+        if ok and component not in self.listeners_allowed:
+            self.listeners_allowed.append(component)
+
     def record_activity(self, activity: str) -> None:
         if activity not in self.activities_launched:
             self.activities_launched.append(activity)
@@ -229,6 +234,7 @@ class TeardownLedger:
             self.installed
             or self.granted_permissions
             or self.appops_set
+            or self.listeners_allowed
             or self.files_written_to_device
         )
 
@@ -238,6 +244,7 @@ class TeardownLedger:
             "installed": self.installed,
             "granted_permissions": list(self.granted_permissions),
             "appops_set": list(self.appops_set),
+            "listeners_allowed": list(self.listeners_allowed),
             "activities_launched": list(self.activities_launched),
             "files_written_to_device": list(self.files_written_to_device),
         }
@@ -323,6 +330,22 @@ def verify_teardown(
                                 f"appop {op} is still set to allow for "
                                 f"{ledger.package} after teardown."
                             ),
+                        }
+                    )
+
+    # 3b. Is notification access still enabled for the helper?
+    if ledger.listeners_allowed:
+        enabled = _run_probe(shell, "settings get secure enabled_notification_listeners")
+        if enabled.startswith("unavailable:"):
+            unverified.append("notification access (could not read enabled_notification_listeners)")
+        else:
+            for comp in ledger.listeners_allowed:
+                if comp in enabled:
+                    residue.append(
+                        {
+                            "kind": "notification-listener",
+                            "subject": comp,
+                            "detail": f"Notification access is still enabled for {comp} after teardown.",
                         }
                     )
 
