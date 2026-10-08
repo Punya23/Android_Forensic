@@ -198,6 +198,7 @@ class TeardownLedger:
 
     package: str = COLLECTOR_PACKAGE
     installed: bool = False
+    keep_helper: bool = False  # examiner chose to leave the helper installed after the run
     granted_permissions: list[str] = field(default_factory=list)
     appops_set: list[str] = field(default_factory=list)
     listeners_allowed: list[str] = field(default_factory=list)  # notification-access components
@@ -242,12 +243,74 @@ class TeardownLedger:
         return {
             "package": self.package,
             "installed": self.installed,
+            "keep_helper": self.keep_helper,
             "granted_permissions": list(self.granted_permissions),
             "appops_set": list(self.appops_set),
             "listeners_allowed": list(self.listeners_allowed),
             "activities_launched": list(self.activities_launched),
             "files_written_to_device": list(self.files_written_to_device),
         }
+
+
+def _verify_retained(shell: ShellFn, ledger: TeardownLedger) -> dict[str, Any]:
+    """Verdict for a run where the examiner chose to leave the helper installed.
+
+    The device is deliberately NOT returned to its found state, so this is neither ``clean``
+    nor an accident (``residual``): it is ``retained``, listing exactly what stays on the
+    phone. Output files the acquisition wrote are still expected to be gone — one left
+    behind is residue as usual.
+    """
+    retained: list[dict[str, str]] = []
+    residue: list[dict[str, str]] = []
+    unverified: list[str] = []
+
+    listing = _run_probe(shell, f"pm list packages {ledger.package}")
+    present = _package_present(listing, ledger.package)
+    if present is None:
+        unverified.append(f"package {ledger.package} (could not query pm)")
+    elif present:
+        retained.append({"kind": "package", "subject": ledger.package,
+                         "detail": "Collector helper app left installed at the examiner's choice."})
+        retained += [{"kind": "permission", "subject": p,
+                      "detail": f"{p} remains granted to the helper."} for p in ledger.granted_permissions]
+        retained += [{"kind": "appop", "subject": o,
+                      "detail": f"appop {o} remains allowed for the helper."} for o in ledger.appops_set]
+        retained += [{"kind": "notification-listener", "subject": c,
+                      "detail": "Notification access remains enabled for the helper."}
+                     for c in ledger.listeners_allowed]
+
+    for path in ledger.files_written_to_device:
+        out = _run_probe(shell, f"ls -l '{path}' 2>/dev/null")
+        if out.startswith("unavailable:"):
+            unverified.append(f"device file {path} (could not stat)")
+        elif out:
+            residue.append({"kind": "device-file", "subject": path,
+                            "detail": "Helper output file still present in shared storage."})
+
+    if residue:
+        verdict = "residual"
+        detail = (f"{len(residue)} helper output file(s) were still present after teardown; "
+                  "they are itemised below and must be disclosed.")
+    elif unverified:
+        verdict = "unverified"
+        detail = "The device did not answer one or more verification queries; treat its state as unknown."
+    else:
+        verdict = "retained"
+        detail = (
+            "The Collector helper was deliberately left installed, with the access listed "
+            f"below. The device is NOT in its found state. Remove it with "
+            f"`adb uninstall {ledger.package}` when it is no longer needed."
+            if retained else "The helper was not present on the device after the run."
+        )
+    return {
+        "verdict": verdict,
+        "residue": residue,
+        "retained": retained,
+        "unverified": unverified,
+        "detail": detail,
+        "ledger": ledger.to_dict(),
+        "checked_at": now_iso(),
+    }
 
 
 def verify_teardown(
@@ -274,6 +337,9 @@ def verify_teardown(
             "detail": "No device-altering Tier-1 action was performed in this run.",
             "checked_at": now_iso(),
         }
+
+    if ledger.keep_helper:
+        return _verify_retained(shell, ledger)
 
     # 1. Is the helper package gone?
     if ledger.installed:
@@ -500,7 +566,13 @@ def device_state_summary(record: dict[str, Any]) -> dict[str, Any]:
             ),
         }
 
-    if verdict == "clean" and unexpected == 0:
+    if verdict == "retained":
+        sentence = (
+            "The Collector helper app was deliberately left installed on the device at the "
+            "examiner's choice, with the access itemised below. The device was NOT returned "
+            "to its found state."
+        )
+    elif verdict == "clean" and unexpected == 0:
         sentence = (
             "The device was re-queried after acquisition. Every state-changing action "
             "was confirmed reversed and no unexpected difference was observed between "
@@ -530,6 +602,7 @@ def device_state_summary(record: dict[str, Any]) -> dict[str, Any]:
         "unexpected_differences": unexpected,
         "expected_drift": len(diff.get("expected_drift", []) or []),
         "unavailable_probes": len(diff.get("unavailable_probes", []) or []),
-        "returned_to_found_state": bool(diff.get("returned_to_found_state")),
+        "returned_to_found_state": bool(diff.get("returned_to_found_state"))
+        and verdict != "retained",
         "statement": sentence,
     }

@@ -349,6 +349,7 @@ class PipelineConfig:
         True  # Tier 0: report SQLCipher app DBs as present-but-not-recoverable
     )
     tier2_bt_config: bool = False  # root: /data/misc/bluedroid/bt_config.conf bond store
+    keep_helper: bool = False  # leave the Collector app (and its access) installed after the run
     tier2_app_presence: bool = (
         False  # root: packages.xml + usagestats + gass.db (survives uninstall)
     )
@@ -458,6 +459,7 @@ def run_acquisition(
     _metrics_reset()  # reset per-run metrics
     global _TIER1_LEDGER
     _TIER1_LEDGER = TeardownLedger()  # fresh teardown ledger for this run (P2-3)
+    _TIER1_LEDGER.keep_helper = cfg.keep_helper
     _run_t0 = start_timer()  # wall-clock start for the whole run
     _autosave_thread = None
 
@@ -3025,7 +3027,7 @@ def run_acquisition(
         tier=Tier.TIER0.value,
         result=(
             "ok"
-            if device_state_record["summary"]["teardown_verdict"] == "clean"
+            if device_state_record["summary"]["teardown_verdict"] in ("clean", "retained")
             else "error"
         ),
         teardown_verdict=device_state_record["summary"]["teardown_verdict"],
@@ -7298,6 +7300,33 @@ def _tier1_teardown(source: RealDeviceSource, case: Case, package: str) -> dict:
     ledger = _tier1_ledger()
     ledger.package = package
 
+    # Examiner chose to keep the helper installed (dashboard runs): leave the app, its grants,
+    # appop and notification access in place so the next run needs no prompts, but still remove
+    # the output files this run wrote — and verify, reporting what stays as "retained".
+    if ledger.keep_helper:
+        for path in list(ledger.files_written_to_device):
+            res = source.adb.shell(f"rm -f '{path}'")
+            _log_tier1_step(
+                case,
+                "tier1.helper.rm_output",
+                f"remove helper output {path} written during acquisition (reversal)",
+                res,
+                alters_device=True,
+            )
+        case.log(
+            "tier1.helper.retained",
+            f"collector helper left installed at the examiner's request ({package}); "
+            "its permissions and access remain on the device and are disclosed in the report",
+            tier=Tier.TIER1.value,
+        )
+    else:
+        _tier1_reverse(source, case, ledger, package)
+
+    return _tier1_verify_and_log(source, case, ledger)
+
+
+def _tier1_reverse(source: RealDeviceSource, case: Case, ledger: Any, package: str) -> None:
+    """Revoke, reset, remove outputs and uninstall — everything the ledger recorded."""
     # 1. Revoke exactly the permissions this run actually obtained.
     for perm in list(ledger.granted_permissions):
         res = source.adb.shell(f"pm revoke {package} {perm}")
@@ -7353,7 +7382,10 @@ def _tier1_teardown(source: RealDeviceSource, case: Case, package: str) -> dict:
         alters_device=True,
     )
 
-    # 5. Verify — re-query the device rather than trusting the exit codes above.
+
+
+def _tier1_verify_and_log(source: RealDeviceSource, case: Case, ledger: Any) -> dict:
+    """Verify — re-query the device rather than trusting the exit codes of the reversal."""
     try:
         verdict = verify_teardown(source.shell_readonly, ledger)
     except Exception as exc:  # pragma: no cover - defensive
@@ -7372,7 +7404,7 @@ def _tier1_teardown(source: RealDeviceSource, case: Case, package: str) -> dict:
         "tier1.teardown.verify",
         f"Tier-1 reversal verification: {verdict['verdict'].upper()} — "
         f"{verdict.get('detail', '')}",
-        result="ok" if verdict["verdict"] == "clean" else "error",
+        result="ok" if verdict["verdict"] in ("clean", "retained") else "error",
         alters_device=False,
         tier=Tier.TIER1.value,
         residue=verdict.get("residue", []),

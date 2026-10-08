@@ -1198,6 +1198,9 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             tier1_calllog=bool(body.get("tier1_calllog", False)),
             tier1_sms=bool(body.get("tier1_sms", False)),
             tier1_collect_all=bool(body.get("tier1_collect_all", False)),
+            # Dashboard runs leave the Collector installed (no permission prompts next time); the
+            # report discloses it. The CLI keeps the restore-the-phone default.
+            keep_helper=bool(body.get("keep_helper", True)),
             tier2_telegram=bool(body.get("tier2_telegram", False)),
             tier2_instagram=bool(body.get("tier2_instagram", False)),
             tier2_snapchat=bool(body.get("tier2_snapchat", False)),

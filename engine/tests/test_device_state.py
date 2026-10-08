@@ -453,3 +453,35 @@ def test_notification_access_is_reversed_and_verified():
 
     off = verify_teardown(shell("com.other/Svc"), ledger)
     assert off["verdict"] == "clean"
+
+
+def test_retained_helper_is_a_distinct_verdict_and_files_must_still_go():
+    """keep_helper: leaving the app installed is disclosed as 'retained' (never 'clean'),
+    while a helper output file left behind is still residue."""
+    from triage.device_state import _SENTINEL
+
+    pkg = "io.erakshak.collector"
+    ledger = TeardownLedger()
+    ledger.keep_helper = True
+    ledger.record_install(True)
+    ledger.record_grant("android.permission.READ_SMS", True)
+    ledger.record_device_file("/sdcard/Download/sms.json")
+
+    def shell(cmd):
+        if "pm list packages" in cmd:
+            return f"package:{pkg}\n{_SENTINEL}"
+        return f"\n{_SENTINEL}"  # ls finds no output file
+
+    v = verify_teardown(shell, ledger)
+    assert v["verdict"] == "retained"
+    kinds = {r["kind"] for r in v["retained"]}
+    assert {"package", "permission"} <= kinds
+    assert v["residue"] == []
+
+    def shell_with_file(cmd):
+        if "pm list packages" in cmd:
+            return f"package:{pkg}\n{_SENTINEL}"
+        return f"-rw 1 sms.json\n{_SENTINEL}"
+
+    left = verify_teardown(shell_with_file, ledger)
+    assert left["verdict"] == "residual"

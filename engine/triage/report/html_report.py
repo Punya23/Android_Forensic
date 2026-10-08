@@ -2094,6 +2094,7 @@ def _device_state_section(record: dict) -> str:
     styles = {
         "clean": ("RETURNED TO FOUND STATE", ("#1c7d3f", "#e4f4ea")),
         "residual": ("DEVICE MODIFICATIONS REMAIN", ("#a5322f", "#f6dedd")),
+        "retained": ("HELPER RETAINED BY EXAMINER", ("#2258a8", "#e1ebf7")),
         # 'unverified' is amber, deliberately NOT green: "we could not check" must never
         # be presented with the same weight as "we checked and it was clean".
         "unverified": ("REVERSAL UNVERIFIED", ("#a6741a", "#f6ecd4")),
@@ -2110,6 +2111,20 @@ def _device_state_section(record: dict) -> str:
             "<table><tr><th>Kind</th><th>Subject</th><th>Detail</th></tr>"
         )
         for r in residue[:100]:
+            parts.append(
+                f"<tr><td>{_esc(r.get('kind'))}</td>"
+                f"<td class='mono'>{_esc(r.get('subject'))}</td>"
+                f"<td>{_esc(r.get('detail'))}</td></tr>"
+            )
+        parts.append("</table>")
+
+    retained = teardown.get("retained") or []
+    if retained:
+        parts.append(
+            "<h3>Left on the device by examiner choice</h3>"
+            "<table><tr><th>Kind</th><th>Subject</th><th>Detail</th></tr>"
+        )
+        for r in retained[:100]:
             parts.append(
                 f"<tr><td>{_esc(r.get('kind'))}</td>"
                 f"<td class='mono'>{_esc(r.get('subject'))}</td>"
