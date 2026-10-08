@@ -165,7 +165,7 @@ export function CaseIntelView({ caseId }: { caseId: string }) {
               {profile!.extraction_method}
             </span>
             <span className="text-xs text-muted">
-              confidence {Math.round((profile!.confidence || 0) * 100)}%
+              keyword match {Math.round((profile!.confidence || 0) * 100)}%
             </span>
           </div>
           {profile!.summary && <p className="text-sm text-muted mb-3">{profile!.summary}</p>}

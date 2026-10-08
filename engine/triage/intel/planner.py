@@ -1252,7 +1252,7 @@ def _build_notes(
         notes.append(f"Case number {profile.case_number}.")
     notes.append(
         f"Crime type detected as '{crime.label}' "
-        f"({profile.extraction_method}, confidence {profile.confidence:.0%})."
+        f"({profile.extraction_method}, keyword match {profile.confidence:.0%})."
     )
     if profile.llm_degraded_from:
         notes.append(
