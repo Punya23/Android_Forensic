@@ -1185,9 +1185,21 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         if not (0 <= cap_total_gb <= 4096 and 0 <= cap_bucket_mb <= 4_194_304):
             return jsonify({"error": "size caps must be between 0 (no cap) and 4 TB"}), 400
 
+        media_mode = str(body.get("media_mode") or "all")
+        if media_mode not in ("all", "camera", "none"):
+            return jsonify({"error": "media_mode must be all, camera or none"}), 400
+        try:
+            media_cap_mb = float(body.get("media_cap_mb") or 0)
+        except (TypeError, ValueError):
+            return jsonify({"error": "media_cap_mb must be a number"}), 400
+        if not 0 <= media_cap_mb <= 4_194_304:
+            return jsonify({"error": "media_cap_mb must be between 0 (no limit) and 4 TB"}), 400
+
         cfg = PipelineConfig(
             case_id=case_id,
             examiner=examiner,
+            media_mode=media_mode,
+            media_cap_bytes=int(media_cap_mb * 1024**2),
             cap_total_bytes=int(cap_total_gb * 1024**3),
             cap_bucket_bytes=int(cap_bucket_mb * 1024**2),
             legal_authority=authority,

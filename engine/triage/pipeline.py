@@ -300,6 +300,9 @@ class PipelineConfig:
     # partial acquisition and is recorded and reported as one (derived/acquisition_caps.json).
     cap_total_bytes: int = 0
     cap_bucket_bytes: int = 0
+    # Photos/videos: "all", "camera" (DCIM/Camera only, newest first up to media_cap_bytes) or "none".
+    media_mode: str = "all"
+    media_cap_bytes: int = 0
     capture_screenshot: bool = True  # manual-capture the current screen (read-only)
     tier1_contacts: bool = False  # run helper APK flow to collect contacts.json
     # NOTE (P2-5): these two flags used to be labelled "role-swap". That was wrong and
@@ -1168,6 +1171,8 @@ def run_acquisition(
         max_files=cfg.max_files,
         bucket_bytes=cfg.cap_bucket_bytes,
         total_bytes=cfg.cap_total_bytes,
+        media_mode=cfg.media_mode,
+        media_cap_bytes=cfg.media_cap_bytes,
         on_root=lambda root, n: case.log(
             "fs.enumerate",
             f"{n} files under {root}",
@@ -1184,6 +1189,19 @@ def run_acquisition(
             f"selected; total cap {caps_report['total_cap_bytes'] / 1e6:.0f} MB, "
             f"per-category cap {caps_report['bucket_cap_bytes'] / 1e6:.0f} MB — "
             f"{caps_report['skipped_files']} files left on the device",
+            tier=Tier.TIER0.value,
+        )
+
+    if caps_report is not None and caps_report.get("media_policy"):
+        mp = caps_report["media_policy"]
+        case.log(
+            "fs.media_policy",
+            f"media policy '{mp['mode']}': kept {mp['media_kept_files']} photo/video file(s) "
+            f"({mp['media_kept_bytes'] / 1e6:.0f} MB); left on the device {mp['left_outside_camera_files']} "
+            f"outside the camera folder ({mp['left_outside_camera_bytes'] / 1e6:.0f} MB) and "
+            f"{mp['left_over_cap_files']} over the cap ({mp['left_over_cap_bytes'] / 1e6:.0f} MB); "
+            f"{mp['left_older_chat_backups_files']} older chat backup(s) "
+            f"({mp['left_older_chat_backups_bytes'] / 1e6:.0f} MB) not pulled — a partial collection",
             tier=Tier.TIER0.value,
         )
 

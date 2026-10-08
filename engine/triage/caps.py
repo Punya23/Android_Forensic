@@ -67,6 +67,73 @@ def bucket_of(device_path: str) -> str:
     return category
 
 
+MEDIA_MODES = ("all", "camera", "none")
+_CAMERA_DIR = "/dcim/camera/"
+
+
+def apply_media_policy(
+    entries: Iterable[Entry], mode: str = "all", cap_bytes: int = 0
+) -> tuple[list[Entry], dict | None]:
+    """Apply the examiner's photo/video choice before the size caps run.
+
+    ``all``     — no policy (returns ``None`` for the report).
+    ``none``    — no photos or videos at all.
+    ``camera``  — only photos/videos from the camera folder (``DCIM/Camera``), newest first,
+                  until ``cap_bytes`` (0 = no limit) is used; a file that does not fit is
+                  skipped, never truncated. Screenshots, downloads, app media and every other
+                  folder's photos/videos are left on the phone.
+
+    Trashed items are not touched: deleted-but-recoverable media stays protected evidence.
+    Non-media files (documents, chat databases, recordings) always pass through. The report says
+    exactly what was left behind and why, because this makes the acquisition a partial one.
+    """
+    if mode == "all":
+        return list(entries), None
+    if mode not in MEDIA_MODES:
+        raise ValueError(f"media mode must be one of {MEDIA_MODES}, got {mode!r}")
+    from .pipeline import _categorise  # late import: pipeline imports this module
+
+    rest: list[Entry] = []
+    media: list[Entry] = []
+    for e in entries:
+        is_media = _categorise(e[0])[0] in ("image", "video") and not _name(e[0]).startswith((".trashed-", ".pending-"))
+        (media if is_media else rest).append(e)
+
+    # A partial run keeps only the newest daily chat backup per folder: each is a near-copy of the
+    # previous day's and ~0.6 GB, and nothing else bounds them here. The older ones are reported.
+    newest_backup: dict[str, str] = {}
+    for e in sorted((e for e in rest if _is_chat_backup(e[0])), key=lambda e: (-e[2], e[0])):
+        newest_backup.setdefault(e[0].rsplit("/", 1)[0], e[0])
+    older = [e for e in rest if _is_chat_backup(e[0]) and newest_backup[e[0].rsplit("/", 1)[0]] != e[0]]
+    older_paths = {e[0] for e in older}
+    rest = [e for e in rest if e[0] not in older_paths]
+
+    in_camera = [e for e in media if _CAMERA_DIR in e[0].lower()] if mode == "camera" else []
+    in_camera.sort(key=lambda e: (-e[2], e[0]))  # newest first, path as the tiebreak
+    kept: list[Entry] = []
+    left = cap_bytes or float("inf")
+    for e in in_camera:
+        if e[1] <= left:
+            kept.append(e)
+            left -= e[1]
+
+    report = {
+        "mode": mode,
+        "cap_bytes": cap_bytes if mode == "camera" else 0,
+        "media_available_files": len(media),
+        "media_available_bytes": sum(e[1] for e in media),
+        "media_kept_files": len(kept),
+        "media_kept_bytes": sum(e[1] for e in kept),
+        "left_outside_camera_files": len(media) - len(in_camera),
+        "left_outside_camera_bytes": sum(e[1] for e in media) - sum(e[1] for e in in_camera),
+        "left_over_cap_files": len(in_camera) - len(kept),
+        "left_over_cap_bytes": sum(e[1] for e in in_camera) - sum(e[1] for e in kept),
+        "left_older_chat_backups_files": len(older),
+        "left_older_chat_backups_bytes": sum(e[1] for e in older),
+    }
+    return rest + kept, report
+
+
 def apply_caps(
     entries: Iterable[Entry],
     bucket_bytes: int = 0,
@@ -200,6 +267,8 @@ def select_files(
     max_files: int,
     bucket_bytes: int = 0,
     total_bytes: int = 0,
+    media_mode: str = "all",
+    media_cap_bytes: int = 0,
     on_root: Callable[[str, int], None] | None = None,
     now: float | None = None,  # unused here; kept so callers/tests can pin a clock if a source needs one
 ) -> tuple[list[str], dict | None]:
@@ -211,7 +280,15 @@ def select_files(
     and returns its report with ``window_days`` — how far back it had to look (``None`` = all) —
     so the case states that "available" means "scanned", not "on the phone".
     """
-    capped = bool(bucket_bytes or total_bytes)
+    capped = bool(bucket_bytes or total_bytes or media_mode != "all")
+
+    def choose(found: list[Entry]) -> tuple[list[str], dict]:
+        kept, policy = apply_media_policy(found, media_mode, media_cap_bytes)
+        picked, rep = apply_caps(kept, bucket_bytes, total_bytes)
+        if policy:
+            rep["media_policy"] = policy
+        return picked, rep
+
     seen: set[str] = set()
     entries: list[Entry] = []
     if not capped:
@@ -237,7 +314,7 @@ def select_files(
         if on_root:
             on_root("media index", len(entries))
         _add_trash(source, entries, seen)
-        chosen, report = apply_caps(entries, bucket_bytes, total_bytes)
+        chosen, report = choose(entries)
         report["window_days"] = None
         report["listing"] = "media index"
         return chosen[:max_files], report
@@ -255,7 +332,7 @@ def select_files(
                     entries.append(e)
         if days is None:
             _add_trash(source, entries, seen)
-        chosen, report = apply_caps(entries, bucket_bytes, total_bytes)
+        chosen, report = choose(entries)
         if days is None or (_full(report, bucket_bytes, total_bytes) and days >= _MIN_STOP_DAYS) or (
             total_bytes and report["selected_bytes"] >= 0.98 * total_bytes
         ):

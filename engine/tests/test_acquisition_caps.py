@@ -261,3 +261,37 @@ def test_protected_files_do_not_use_up_the_ordinary_budget_of_their_category():
     media = [(f"/sdcard/Android/media/com.whatsapp/WhatsApp/Media/{i}.jpg", 30 * MB, i) for i in range(10)]
     chosen, rep = apply_caps([(WA_DB, 593 * MB, 100)] + media, bucket_bytes=100 * MB, total_bytes=0)
     assert WA_DB in chosen and sum(1 for p in chosen if p != WA_DB) == 3  # the usual 100 MB of ordinary files as well
+
+
+def test_media_policy_camera_cap_screenshots_and_old_backups():
+    """camera mode: only DCIM/Camera photos/videos, newest first, within the byte cap; screenshots
+    and other folders are left; only the newest chat backup is taken; documents always pass."""
+    from triage.caps import apply_media_policy
+
+    MB = 1024 * 1024
+    cam = "/sdcard/DCIM/Camera/"
+    entries = [
+        (cam + "new.jpg", 60 * MB, 300),
+        (cam + "mid.mp4", 60 * MB, 200),
+        (cam + "old.jpg", 60 * MB, 100),
+        ("/sdcard/DCIM/Screenshots/s.png", 5 * MB, 400),
+        ("/sdcard/Pictures/other.jpg", 5 * MB, 400),
+        (cam + ".trashed-1-gone.jpg", 3 * MB, 50),
+        ("/sdcard/Download/doc.pdf", 2 * MB, 10),
+        ("/sdcard/Android/media/com.whatsapp/WhatsApp/Databases/msgstore-2026-10-07.1.db.crypt14", 9 * MB, 90),
+        ("/sdcard/Android/media/com.whatsapp/WhatsApp/Databases/msgstore-2026-10-06.1.db.crypt14", 9 * MB, 80),
+    ]
+    kept, rep = apply_media_policy(entries, "camera", 130 * MB)
+    paths = {e[0] for e in kept}
+    assert cam + "new.jpg" in paths and cam + "mid.mp4" in paths
+    assert cam + "old.jpg" not in paths  # 180 MB > 130 MB cap: the oldest does not fit
+    assert "/sdcard/DCIM/Screenshots/s.png" not in paths and "/sdcard/Pictures/other.jpg" not in paths
+    assert cam + ".trashed-1-gone.jpg" in paths and "/sdcard/Download/doc.pdf" in paths  # untouched
+    assert any("2026-10-07" in p for p in paths) and not any("2026-10-06" in p for p in paths)
+    assert rep["media_kept_bytes"] == 120 * MB and rep["left_over_cap_files"] == 1
+    assert rep["left_outside_camera_files"] == 2 and rep["left_older_chat_backups_files"] == 1
+
+    none_kept, none_rep = apply_media_policy(entries, "none")
+    assert not any(p.endswith((".jpg", ".mp4", ".png")) and ".trashed-" not in p for p in (e[0] for e in none_kept))
+    assert none_rep["media_kept_files"] == 0
+    assert apply_media_policy(entries, "all") == (entries, None)

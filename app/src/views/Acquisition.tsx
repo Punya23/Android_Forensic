@@ -43,6 +43,8 @@ const STAGES = [
   "flag", "timeline", "analysis", "persist", "report", "done",
 ];
 
+type MediaMode = "all" | "camera" | "none";
+
 export function AcquisitionView({
   onCaseReady,
   onOpenCase,
@@ -93,26 +95,25 @@ export function AcquisitionView({
   const [tier1Calllog, setTier1Calllog] = useState(true);
   const [tier1Sms, setTier1Sms] = useState(true);
   const [tier1CollectAll, setTier1CollectAll] = useState(true);
-  // Presentation run: stop pulling shared-storage files at a total size and a per-category size,
-  // so a 128 GB phone finishes in a demo. Off by default; the case records that it was capped.
-  // Remembered between runs (this browser only), so the next acquisition starts as the last one did.
-  const savedCap = (() => {
+  // Photos and videos are what make a pull slow, so they get their own choice: everything, only the
+  // camera folder up to a size, or none. The case records that a limited choice is a partial pull.
+  // Remembered between runs (this browser only).
+  const savedMedia = (() => {
     try {
-      return JSON.parse(localStorage.getItem("snagr.acq.cap") ?? "null") as { on?: boolean; gb?: number; mb?: number } | null;
+      return JSON.parse(localStorage.getItem("snagr.acq.media") ?? "null") as { mode?: MediaMode; mb?: number } | null;
     } catch {
       return null;
     }
   })();
-  const [capOn, setCapOn] = useState(savedCap?.on ?? false);
-  const [capTotalGb, setCapTotalGb] = useState(savedCap?.gb ?? 5);
-  const [capBucketMb, setCapBucketMb] = useState(savedCap?.mb ?? 100);
+  const [mediaMode, setMediaMode] = useState<MediaMode>(savedMedia?.mode ?? "camera");
+  const [mediaCapMb, setMediaCapMb] = useState(savedMedia?.mb ?? 200);
   useEffect(() => {
     try {
-      localStorage.setItem("snagr.acq.cap", JSON.stringify({ on: capOn, gb: capTotalGb, mb: capBucketMb }));
+      localStorage.setItem("snagr.acq.media", JSON.stringify({ mode: mediaMode, mb: mediaCapMb }));
     } catch {
       /* storage blocked — a per-viewer convenience only */
     }
-  }, [capOn, capTotalGb, capBucketMb]);
+  }, [mediaMode, mediaCapMb]);
   const [tier2Telegram, setTier2Telegram] = useState(false);
   const [tier2Instagram, setTier2Instagram] = useState(false);
   const [tier2Snapchat, setTier2Snapchat] = useState(false);
@@ -460,8 +461,8 @@ export function AcquisitionView({
         tier1_calllog: target.kind === "real" ? tier1Calllog : false,
         tier1_sms: target.kind === "real" ? tier1Sms : false,
         tier1_collect_all: target.kind === "real" ? tier1CollectAll : false,
-        cap_total_gb: capOn ? capTotalGb : 0,
-        cap_bucket_mb: capOn ? capBucketMb : 0,
+        media_mode: mediaMode,
+        media_cap_mb: mediaMode === "camera" ? mediaCapMb : 0,
         // Tier-2 re-guards on rootConfirmed, not just target.kind: the reset effect
         // above clears these the moment root drops, but that effect fires a render
         // after the device-check response lands, so a submit racing that window would
@@ -1158,55 +1159,47 @@ export function AcquisitionView({
       </div>
 
       <div className="card p-4 mb-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="label mb-1">Presentation run (size-capped)</div>
-            <p className="text-xs text-muted">
-              Pull only part of the phone so a large one finishes in minutes. The newest files of each category are
-              taken first, and the case records that it is a partial collection.
-            </p>
-          </div>
-          <button
-            className="btn-ghost text-xs shrink-0"
-            onClick={() => {
-              setCapOn(true);
-              setCapTotalGb(5);
-              setCapBucketMb(100);
-              setTier1Contacts(true);
-              setTier1Calllog(true);
-              setTier1Sms(true);
-              setTier1CollectAll(true);
-              setRunAiSummary(true);
-            }}
-          >
-            Demo preset
-          </button>
+        <div className="label mb-1">Photos &amp; videos</div>
+        <p className="text-xs text-muted mb-3">
+          Photos and videos are what make a pull slow. Everything else (documents, chat databases, recordings) is
+          always collected, and the contacts, calls, SMS and media <em>list</em> come from the helper app regardless.
+          A limited choice makes this a partial collection, and the case says so.
+        </p>
+        <div className="flex flex-col gap-2">
+          {(
+            [
+              ["camera", "Camera folder only, up to a size", "Newest photos and videos from DCIM/Camera. No screenshots, downloads or app media."],
+              ["none", "No photos or videos", "Skip them entirely."],
+              ["all", "Everything", "Every photo and video on the phone. On a large phone this can take hours."],
+            ] as [MediaMode, string, string][]
+          ).map(([value, title, detail]) => (
+            <label key={value} className="flex items-start gap-2 cursor-pointer text-sm">
+              <input type="radio" name="media-mode" className="mt-1" checked={mediaMode === value} onChange={() => setMediaMode(value)} />
+              <span>
+                <span className="text-ink">{title}</span>
+                <span className="block text-xs text-muted">{detail}</span>
+              </span>
+            </label>
+          ))}
         </div>
-        <label className="flex items-center gap-2 mt-3 text-sm cursor-pointer">
-          <input type="checkbox" checked={capOn} onChange={(e) => setCapOn(e.target.checked)} /> Cap this acquisition
-        </label>
-        {!capOn && (
-          <p className="text-xs text-warn mt-2">
-            Cap is off: every file in the pull folders will be copied. On a large phone that can take hours.
-          </p>
+        {mediaMode === "camera" && (
+          <label className="text-xs text-muted block mt-3 max-w-[10rem]">
+            Limit (MB)
+            <input
+              type="number"
+              min={1}
+              step={50}
+              className="input mt-1"
+              value={mediaCapMb}
+              onChange={(e) => setMediaCapMb(Math.max(1, Number(e.target.value)))}
+            />
+          </label>
         )}
-        {capOn && (
-          <div className="grid grid-cols-2 gap-3 mt-3 max-w-md">
-            <label className="text-xs text-muted">
-              Total (GB)
-              <input type="number" min={0.1} step={0.5} className="input mt-1" value={capTotalGb} onChange={(e) => setCapTotalGb(Math.max(0, Number(e.target.value)))} />
-            </label>
-            <label className="text-xs text-muted">
-              Per category (MB)
-              <input type="number" min={1} step={10} className="input mt-1" value={capBucketMb} onChange={(e) => setCapBucketMb(Math.max(0, Number(e.target.value)))} />
-            </label>
-            <p className="col-span-2 text-[11px] text-muted">
-              Categories: WhatsApp, Telegram, photos, videos, documents, voice recordings, screen recordings, other. Music is
-              skipped. Deleted (trash) items, voice and screen recordings, chat databases and the newest WhatsApp backup are
-              always taken whole, even above the cap; the case records by how much. Contacts, calls and SMS come from the
-              helper app and are small.
-            </p>
-          </div>
+        {mediaMode !== "all" && (
+          <p className="text-[11px] text-muted mt-3">
+            Deleted (trash) items and call recordings are still taken whole. Only the newest WhatsApp chat backup is
+            taken; older daily copies are left on the phone and listed in the case.
+          </p>
         )}
       </div>
 
