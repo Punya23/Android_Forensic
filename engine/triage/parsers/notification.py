@@ -90,6 +90,24 @@ _RE_TEXT_ALT = re.compile(r"android\.text\s*=\s*(.+)", re.IGNORECASE)
 _RE_PRIORITY = re.compile(r"Priority\s*:\s*(\S+)", re.IGNORECASE)
 _RE_PRIORITY_ALT = re.compile(r"importance\s*=\s*(\w+)", re.IGNORECASE)
 
+#: Android 11+ prints the most recent archived notifications as one-line
+#: ``StatusBarNotification(pkg=… id=… tag=… key=…: Notification(channel=… shortcut=…``
+#: records. Titles and text are never included, but the app, channel and (for chat apps)
+#: the conversation shortcut id are — enough to show which apps and chats notified.
+_RE_ARCHIVE = re.compile(
+    r"StatusBarNotification\(pkg=(\S+) user=\S+ id=(-?\d+) tag=.*?"
+    r": Notification\(channel=(\S*) shortcut=(\S*)",
+    re.DOTALL,
+)
+
+#: Android 14 prints redacted text as e.g. ``String [length=21]``; that is a placeholder
+#: for content the OS withheld, not content, and must not be stored as a title.
+_RE_REDACTED = re.compile(r"^\w+ \[length=\d+\]$")
+
+
+def _unredact(value: str) -> str:
+    return "" if _RE_REDACTED.match(value.strip()) else value
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -278,11 +296,11 @@ def parse_notification_history(adb_output: str) -> List[Dict[str, Any]]:
 
         # --- title ---
         title_match = _RE_TITLE.search(block) or _RE_TITLE_ALT.search(block)
-        title = title_match.group(1).strip() if title_match else ""
+        title = _unredact(title_match.group(1).strip()) if title_match else ""
 
         # --- text ---
         text_match = _RE_TEXT.search(block) or _RE_TEXT_ALT.search(block)
-        text = text_match.group(1).strip() if text_match else ""
+        text = _unredact(text_match.group(1).strip()) if text_match else ""
 
         # --- priority ---
         pri_match = _RE_PRIORITY.search(block) or _RE_PRIORITY_ALT.search(block)
@@ -298,6 +316,28 @@ def parse_notification_history(adb_output: str) -> List[Dict[str, Any]]:
                 "text": text,
                 "priority": priority,
                 "is_comm": _is_comm_app(package),
+            }
+        )
+
+    for pkg, nid, channel, shortcut in _RE_ARCHIVE.findall(adb_output):
+        key = f"{pkg}|{nid}|{channel}|{shortcut}"
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        notifications.append(
+            {
+                "package": pkg,
+                "app_name": _friendly_name(pkg),
+                "key": key,
+                "timestamp": "",
+                "title": "",
+                "text": "",
+                "priority": "default",
+                "is_comm": _is_comm_app(pkg),
+                "channel": channel,
+                "conversation": "" if shortcut == "null" else shortcut,
+                "source": "dumpsys_archive",
+                "content_redacted": True,
             }
         )
 

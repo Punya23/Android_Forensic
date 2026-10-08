@@ -915,3 +915,27 @@ class TestCrossParserIntegration:
         assert callable(parse_notification_history)
         assert callable(parse_bluetooth_history)
         assert callable(parse_celltower_history)
+
+
+def test_notification_archive_entries_and_redacted_text():
+    """Android 11+ lists archived notifications as one-line StatusBarNotification records
+    (content redacted). They must be parsed, and redacted placeholders never stored as text."""
+    dump = (
+        "  mArchive=Archive (100 notifications)\n"
+        "    StatusBarNotification(pkg=com.whatsapp user=UserHandle{0} id=1 tag=null "
+        "key=0|com.whatsapp|1|null|10304: Notification(channel=group_chat_defaults_5 "
+        "shortcut=120363426246184953@g.us contentView=null flags=0x201))\n"
+        "    StatusBarNotification(pkg=com.google.android.gm user=UserHandle{0} id=7 tag=gig:1\n"
+        " key=0|com.google.android.gm|7|gig:1|10160: Notification(channel=mail shortcut=null "
+        "contentView=null flags=0x18))\n"
+    )
+    rows = parse_notification_history(dump)
+    by_pkg = {r["package"]: r for r in rows}
+    assert by_pkg["com.whatsapp"]["conversation"] == "120363426246184953@g.us"
+    assert by_pkg["com.whatsapp"]["content_redacted"] is True
+    assert by_pkg["com.google.android.gm"]["conversation"] == ""
+    assert all(not r["title"].startswith("String [") for r in rows)
+
+    redacted = "pkg=com.x\n  android.title=String [length=21]\n  android.text=hello\n"
+    row = parse_notification_history(redacted)[0]
+    assert row["title"] == "" and row["text"] == "hello"

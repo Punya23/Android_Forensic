@@ -114,7 +114,8 @@ class MainActivity : Activity() {
         // Collectors report their own `denied` status, so proceeding loses nothing.
         val prefs = getSharedPreferences("collector", MODE_PRIVATE)
         if (missing.isNotEmpty() && !prefs.getBoolean("permissions_requested", false)) {
-            prefs.edit().putBoolean("permissions_requested", true).apply()
+            // The flag is saved when the examiner has answered (onRequestPermissionsResult), not
+            // here: a relaunch while dialogs are still open must not skip them and collect early.
             showPermissionScreen(missing)
             ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQ_CODE)
         } else {
@@ -127,6 +128,11 @@ class MainActivity : Activity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQ_CODE) return
+        // An empty result means this request was cancelled by a newer one (the Activity was
+        // relaunched) — the examiner has not answered yet, so neither record it nor collect.
+        if (permissions.isEmpty()) return
+        getSharedPreferences("collector", MODE_PRIVATE).edit()
+            .putBoolean("permissions_requested", true).apply()
         // Collect regardless of what was denied. Refusing to run because one permission was
         // withheld would throw away every artifact the granted permissions still reach — a
         // denied READ_SMS is no reason to skip location, media or the app inventory. Each
