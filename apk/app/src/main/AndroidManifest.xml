@@ -81,7 +81,7 @@
         android:label="SNAGR Collector"
         android:icon="@drawable/ic_launcher"
         android:requestLegacyExternalStorage="true"
-        android:theme="@android:style/Theme.Material.Light">
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
             android:name=".MainActivity"
             android:exported="true">

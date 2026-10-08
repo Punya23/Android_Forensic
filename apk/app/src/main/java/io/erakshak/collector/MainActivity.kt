@@ -108,6 +108,18 @@ class MainActivity : Activity() {
         pendingAction = intent.getStringExtra("action")
         screen = buildScreen(pendingAction)
         setContentView(screen.root)
+        // No system title bar: the status and navigation bars take the panel colour so the page
+        // reads as one surface, with icons dark on light and light on dark.
+        val palette = Palette.of(this)
+        window.statusBarColor = palette.panel
+        window.navigationBarColor = palette.panel
+        val night = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+        if (!night) {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
+                (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0)
+        }
 
         val missing = ALL_PERMISSIONS.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
