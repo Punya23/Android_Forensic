@@ -65,7 +65,8 @@ PIDS=()
 cleanup() {
   trap - EXIT INT TERM
   echo; echo "==> Shutting down"
-  for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
+  # The serve loop is a subshell whose child is the engine: stop the child too, or it keeps the port.
+  for p in "${PIDS[@]:-}"; do [ -n "$p" ] && { pkill -P "$p" 2>/dev/null; kill "$p" 2>/dev/null; } || true; done
 }
 trap cleanup EXIT INT TERM
 
