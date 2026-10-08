@@ -57,6 +57,8 @@ Messages, Recovered/Deleted, Media, Locations, Timeline, Chain-of-Custody, and R
 
 ```bash
 ./run.sh          # sets up venv, installs deps, builds corpus, starts engine + dashboard (Vite only, not Electron)
+./run.sh serve    # builds the dashboard if stale and serves it from the engine on :5057 (restarts on crash)
+./run.sh build    # dashboard build only
 ```
 
 ## 4 — Using a real device (Tier 0 / Tier 1)

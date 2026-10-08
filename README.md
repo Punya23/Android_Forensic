@@ -63,8 +63,13 @@ flowchart LR
 ## Quick start (no phone required)
 
 ```bash
-./run.sh          # venv + deps + mock corpus + engine :5057 + dashboard :5173
+./run.sh          # dev: venv + deps + mock corpus + engine :5057 + hot-reload dashboard :5173
+./run.sh serve    # present/demo: builds the dashboard, one process on :5057, restarts on crash
+./run.sh build    # rebuild the dashboard only (app/dist is not in git)
 ```
+
+Every mode waits for the engine's health check before saying *Ready*, reuses an engine
+that is already running, and stops what it started on Ctrl-C.
 
 Sign in (`examiner` / `snagr` by default — override in `engine/.env`), pick the mock
 device, click **Begin Acquisition**. Or step by step:
