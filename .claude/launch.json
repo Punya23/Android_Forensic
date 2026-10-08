@@ -3,8 +3,9 @@
   "configurations": [
     {
       "name": "engine",
-      "runtimeExecutable": "bash",
-      "runtimeArgs": ["run.sh", "serve"],
+      "runtimeExecutable": ".venv/bin/python3",
+      "runtimeArgs": ["-m", "triage.server", "--port", "5057"],
+      "cwd": "engine",
       "port": 5057
     }
   ]
