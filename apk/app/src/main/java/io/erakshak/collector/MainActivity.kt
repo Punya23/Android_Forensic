@@ -108,7 +108,13 @@ class MainActivity : Activity() {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
 
-        if (missing.isNotEmpty()) {
+        // Ask once per install. Every dump_<name> action is a fresh launch of this Activity, so
+        // re-asking for whatever is still missing would re-prompt the examiner on each one — and
+        // a permission the OS refuses to grant (restricted, or denied) would never stop asking.
+        // Collectors report their own `denied` status, so proceeding loses nothing.
+        val prefs = getSharedPreferences("collector", MODE_PRIVATE)
+        if (missing.isNotEmpty() && !prefs.getBoolean("permissions_requested", false)) {
+            prefs.edit().putBoolean("permissions_requested", true).apply()
             showPermissionScreen(missing)
             ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQ_CODE)
         } else {
@@ -135,7 +141,7 @@ class MainActivity : Activity() {
      * Every collector, keyed by the suffix of its `dump_<name>` action and listed in the order
      * `dump_all` runs them. Cheap content-provider reads come first so a device that dies or is
      * unplugged mid-run still yields the high-value comms artifacts; MediaStore enumeration —
-     * the slowest stage by far — sits in the middle, and the location/radio artifacts follow.
+     * the slowest stage by far — runs last, so stopping early still leaves every small artifact.
      */
     private val registry: LinkedHashMap<String, (Context) -> CollectionResult> = linkedMapOf(
         "contacts" to { c: Context -> ContactsCollector.collect(c) },
@@ -145,13 +151,13 @@ class MainActivity : Activity() {
         "accounts" to { c: Context -> AccountsCollector.collect(c) },
         "apps" to { c: Context -> AppsCollector.collect(c) },
         "usage" to { c: Context -> UsageCollector.collect(c) },
-        "media" to { c: Context -> MediaCollector.collect(c) },
         "recordings" to { c: Context -> CallRecordingsCollector.collect(c) },
         "notifications" to { c: Context -> NotificationCollector.collect(c) },
         "location" to { c: Context -> LocationCollector.collect(c) },
         "wifi" to { c: Context -> WifiCollector.collect(c) },
         "bluetooth" to { c: Context -> BluetoothCollector.collect(c) },
         "device" to { c: Context -> DeviceCollector.collect(c) },
+        "media" to { c: Context -> MediaCollector.collect(c) },
     )
 
     /** Human-readable label per registry key, for the live progress checklist. */

@@ -1005,6 +1005,156 @@ def run_acquisition(
                                   "Collector helper on", status="skipped",
                            skip_reason="mock/synthetic source — no physical device attached")
 
+    # Quick read-only dumpsys reads run BEFORE the bulk shared-storage pull: the pull (media,
+    # documents) is by far the slowest stage, and an examiner who stops mid-way should already
+    # have location, notifications, Bluetooth, cell-tower and Wi-Fi state. None of these read
+    # pulled files, so the order costs nothing.
+    # -- dumpsys location (read-only) ---------------------------------------
+    progress("location", 0.040, "Reading last known location")
+    dumpsys = source.shell_readonly("dumpsys location")
+    for pt in _parse_dumpsys_location(dumpsys):
+        locations.append(pt)
+    if dumpsys:
+        case.log(
+            "shell.dumpsys",
+            "dumpsys location captured",
+            command="dumpsys location",
+            tier=Tier.TIER0.value,
+        )
+
+    # -- dumpsys notifications (read-only) ----------------------------------
+    progress("notification", 0.043, "Reading notification history")
+    emit_acq_event(case, socketio, source="notifications", tier="tier0",
+                   action="Reading notification history (dumpsys)", status="accessing")
+    dumpsys_notif = source.shell_readonly("dumpsys notification --history")
+    if not dumpsys_notif.strip():
+        dumpsys_notif = source.shell_readonly("dumpsys notification")
+
+    if dumpsys_notif:
+        notifications = parse_notification_history(dumpsys_notif)
+        # Written even when empty: dumpsys_notif being truthy means the read itself
+        # ran, so a genuinely-empty ring buffer is a finding ("empty"), not the absence
+        # of an attempt ("inaccessible"). Gating this on `if notifications:` made the
+        # two indistinguishable — capabilities.py had no way to tell "checked, nothing
+        # there" from "never checked" for this Tier-0, always-attempted stage.
+        case.write_derived("notifications", notifications)
+        if notifications:
+            case.log(
+                "shell.dumpsys",
+                f"dumpsys notification captured ({len(notifications)} items)",
+                command="dumpsys notification --history",
+                tier=Tier.TIER0.value,
+            )
+        emit_acq_event(case, socketio, source="notifications", tier="tier0",
+                       action="Notification history parsed", status="completed",
+                       item_count=len(notifications))
+    else:
+        emit_acq_event(case, socketio, source="notifications", tier="tier0",
+                       action="Notification history checked", status="completed",
+                       skip_reason="No output from dumpsys notification")
+
+    # -- dumpsys bluetooth (read-only) --------------------------------------
+    progress("bluetooth", 0.046, "Reading bluetooth history")
+    emit_acq_event(case, socketio, source="bluetooth", tier="tier0",
+                   action="Reading Bluetooth history (dumpsys)", status="accessing")
+    dumpsys_bt = source.shell_readonly("dumpsys bluetooth_manager")
+
+    if dumpsys_bt:
+        bluetooth_devices = parse_bluetooth_history(dumpsys_bt)
+        if bluetooth_devices:
+            case.write_derived("bluetooth", bluetooth_devices)
+            case.log(
+                "shell.dumpsys",
+                f"dumpsys bluetooth captured ({len(bluetooth_devices)} items)",
+                command="dumpsys bluetooth_manager",
+                tier=Tier.TIER0.value,
+            )
+            emit_acq_event(case, socketio, source="bluetooth", tier="tier0",
+                           action="Bluetooth history parsed", status="completed",
+                           item_count=len(bluetooth_devices))
+    else:
+        emit_acq_event(case, socketio, source="bluetooth", tier="tier0",
+                       action="Bluetooth history checked", status="completed",
+                       skip_reason="No output from dumpsys bluetooth_manager")
+
+    # -- dumpsys celltower (read-only) --------------------------------------
+    progress("celltower", 0.049, "Reading cell tower history")
+    emit_acq_event(case, socketio, source="celltower", tier="tier0",
+                   action="Reading cell tower history (dumpsys)", status="accessing")
+    dumpsys_cell = source.shell_readonly("dumpsys telephony.registry")
+
+    if dumpsys_cell:
+        cell_towers = parse_celltower_history(dumpsys_cell)
+        if cell_towers:
+            case.write_derived("celltower", cell_towers)
+            case.log(
+                "shell.dumpsys",
+                f"dumpsys telephony.registry captured ({len(cell_towers)} items)",
+                command="dumpsys telephony.registry",
+                tier=Tier.TIER0.value,
+            )
+            emit_acq_event(case, socketio, source="celltower", tier="tier0",
+                           action="Cell tower history parsed", status="completed",
+                           item_count=len(cell_towers))
+    else:
+        emit_acq_event(case, socketio, source="celltower", tier="tier0",
+                       action="Cell tower history checked", status="completed",
+                       skip_reason="No output from dumpsys telephony.registry")
+
+    # -- P1-2: live Wi-Fi surface via dumpsys (non-root, VOLATILE) ------------
+    # The existing Wi-Fi capture is root-only saved credentials. Everything about the
+    # device's actual network behaviour — current association, scan results, the saved
+    # list, and coarse per-network connected time — is available without root from
+    # dumpsys, and is lost on reboot. It has to be captured live or not at all.
+    wifi_live_result: dict = {}
+    if cfg.wifi_live:
+        progress("wifi_live", 0.052, "Capturing live Wi-Fi state (volatile)")
+        emit_acq_event(case, socketio, source="wifi_live", tier="tier0",
+                       action="Capturing live Wi-Fi state (volatile, lost on reboot)",
+                       status="accessing")
+        try:
+            from .parsers.wifi_live import (
+                build_wifi_timeline,
+                collect_wifi_live,
+                wifi_live_json,
+                wifi_live_summary,
+            )
+
+            wifi_live_result = collect_wifi_live(source.shell_readonly)
+            wifi_live_result["summary"] = wifi_live_summary(wifi_live_result)
+            wifi_live_result["timeline"] = build_wifi_timeline(wifi_live_result)
+            # The collector hands back dataclasses; flatten them before persisting.
+            wifi_live_result = wifi_live_json(wifi_live_result)
+            case.write_derived("wifi_live", wifi_live_result)
+            _cur = wifi_live_result.get("current")
+            _saved_count = len(wifi_live_result.get("saved", []))
+            case.log(
+                "shell.dumpsys",
+                "live Wi-Fi captured: "
+                + (
+                    f"associated to {(_cur or {}).get('ssid', '?')}"
+                    if _cur
+                    else "no current association"
+                )
+                + f"; {_saved_count} saved, "
+                f"{len(wifi_live_result.get('scan_results', []))} scan result(s), "
+                f"{len(wifi_live_result.get('usage', []))} usage bucket(s) "
+                f"(hour-bucketed and approximate — dumpsys carries no reliable "
+                f"per-join timestamp)",
+                command="dumpsys wifi | netstats | connectivity",
+                tier=Tier.TIER0.value,
+            )
+            emit_acq_event(case, socketio, source="wifi_live", tier="tier0",
+                           action="Live Wi-Fi state captured", status="completed",
+                           item_count=_saved_count)
+        except Exception as exc:
+            case.log(
+                "shell.dumpsys",
+                f"live Wi-Fi capture error: {exc}",
+                result="error",
+                tier=Tier.TIER0.value,
+            )
+
     # -- Tier 0: shared-storage pull ----------------------------------------
     progress("enumerate", 0.06, "Enumerating shared storage")
     emit_acq_event(case, socketio, source="filesystem", tier="tier0",
@@ -1285,152 +1435,6 @@ def run_acquisition(
         },
         socketio,
     )
-
-    # -- dumpsys location (read-only) ---------------------------------------
-    progress("location", 0.57, "Reading last known location")
-    dumpsys = source.shell_readonly("dumpsys location")
-    for pt in _parse_dumpsys_location(dumpsys):
-        locations.append(pt)
-    if dumpsys:
-        case.log(
-            "shell.dumpsys",
-            "dumpsys location captured",
-            command="dumpsys location",
-            tier=Tier.TIER0.value,
-        )
-
-    # -- dumpsys notifications (read-only) ----------------------------------
-    progress("notification", 0.575, "Reading notification history")
-    emit_acq_event(case, socketio, source="notifications", tier="tier0",
-                   action="Reading notification history (dumpsys)", status="accessing")
-    dumpsys_notif = source.shell_readonly("dumpsys notification --history")
-    if not dumpsys_notif.strip():
-        dumpsys_notif = source.shell_readonly("dumpsys notification")
-
-    if dumpsys_notif:
-        notifications = parse_notification_history(dumpsys_notif)
-        # Written even when empty: dumpsys_notif being truthy means the read itself
-        # ran, so a genuinely-empty ring buffer is a finding ("empty"), not the absence
-        # of an attempt ("inaccessible"). Gating this on `if notifications:` made the
-        # two indistinguishable — capabilities.py had no way to tell "checked, nothing
-        # there" from "never checked" for this Tier-0, always-attempted stage.
-        case.write_derived("notifications", notifications)
-        if notifications:
-            case.log(
-                "shell.dumpsys",
-                f"dumpsys notification captured ({len(notifications)} items)",
-                command="dumpsys notification --history",
-                tier=Tier.TIER0.value,
-            )
-        emit_acq_event(case, socketio, source="notifications", tier="tier0",
-                       action="Notification history parsed", status="completed",
-                       item_count=len(notifications))
-    else:
-        emit_acq_event(case, socketio, source="notifications", tier="tier0",
-                       action="Notification history checked", status="completed",
-                       skip_reason="No output from dumpsys notification")
-
-    # -- dumpsys bluetooth (read-only) --------------------------------------
-    progress("bluetooth", 0.58, "Reading bluetooth history")
-    emit_acq_event(case, socketio, source="bluetooth", tier="tier0",
-                   action="Reading Bluetooth history (dumpsys)", status="accessing")
-    dumpsys_bt = source.shell_readonly("dumpsys bluetooth_manager")
-
-    if dumpsys_bt:
-        bluetooth_devices = parse_bluetooth_history(dumpsys_bt)
-        if bluetooth_devices:
-            case.write_derived("bluetooth", bluetooth_devices)
-            case.log(
-                "shell.dumpsys",
-                f"dumpsys bluetooth captured ({len(bluetooth_devices)} items)",
-                command="dumpsys bluetooth_manager",
-                tier=Tier.TIER0.value,
-            )
-            emit_acq_event(case, socketio, source="bluetooth", tier="tier0",
-                           action="Bluetooth history parsed", status="completed",
-                           item_count=len(bluetooth_devices))
-    else:
-        emit_acq_event(case, socketio, source="bluetooth", tier="tier0",
-                       action="Bluetooth history checked", status="completed",
-                       skip_reason="No output from dumpsys bluetooth_manager")
-
-    # -- dumpsys celltower (read-only) --------------------------------------
-    progress("celltower", 0.585, "Reading cell tower history")
-    emit_acq_event(case, socketio, source="celltower", tier="tier0",
-                   action="Reading cell tower history (dumpsys)", status="accessing")
-    dumpsys_cell = source.shell_readonly("dumpsys telephony.registry")
-
-    if dumpsys_cell:
-        cell_towers = parse_celltower_history(dumpsys_cell)
-        if cell_towers:
-            case.write_derived("celltower", cell_towers)
-            case.log(
-                "shell.dumpsys",
-                f"dumpsys telephony.registry captured ({len(cell_towers)} items)",
-                command="dumpsys telephony.registry",
-                tier=Tier.TIER0.value,
-            )
-            emit_acq_event(case, socketio, source="celltower", tier="tier0",
-                           action="Cell tower history parsed", status="completed",
-                           item_count=len(cell_towers))
-    else:
-        emit_acq_event(case, socketio, source="celltower", tier="tier0",
-                       action="Cell tower history checked", status="completed",
-                       skip_reason="No output from dumpsys telephony.registry")
-
-    # -- P1-2: live Wi-Fi surface via dumpsys (non-root, VOLATILE) ------------
-    # The existing Wi-Fi capture is root-only saved credentials. Everything about the
-    # device's actual network behaviour — current association, scan results, the saved
-    # list, and coarse per-network connected time — is available without root from
-    # dumpsys, and is lost on reboot. It has to be captured live or not at all.
-    wifi_live_result: dict = {}
-    if cfg.wifi_live:
-        progress("wifi_live", 0.5855, "Capturing live Wi-Fi state (volatile)")
-        emit_acq_event(case, socketio, source="wifi_live", tier="tier0",
-                       action="Capturing live Wi-Fi state (volatile, lost on reboot)",
-                       status="accessing")
-        try:
-            from .parsers.wifi_live import (
-                build_wifi_timeline,
-                collect_wifi_live,
-                wifi_live_json,
-                wifi_live_summary,
-            )
-
-            wifi_live_result = collect_wifi_live(source.shell_readonly)
-            wifi_live_result["summary"] = wifi_live_summary(wifi_live_result)
-            wifi_live_result["timeline"] = build_wifi_timeline(wifi_live_result)
-            # The collector hands back dataclasses; flatten them before persisting.
-            wifi_live_result = wifi_live_json(wifi_live_result)
-            case.write_derived("wifi_live", wifi_live_result)
-            _cur = wifi_live_result.get("current")
-            _saved_count = len(wifi_live_result.get("saved", []))
-            case.log(
-                "shell.dumpsys",
-                "live Wi-Fi captured: "
-                + (
-                    f"associated to {(_cur or {}).get('ssid', '?')}"
-                    if _cur
-                    else "no current association"
-                )
-                + f"; {_saved_count} saved, "
-                f"{len(wifi_live_result.get('scan_results', []))} scan result(s), "
-                f"{len(wifi_live_result.get('usage', []))} usage bucket(s) "
-                f"(hour-bucketed and approximate — dumpsys carries no reliable "
-                f"per-join timestamp)",
-                command="dumpsys wifi | netstats | connectivity",
-                tier=Tier.TIER0.value,
-            )
-            emit_acq_event(case, socketio, source="wifi_live", tier="tier0",
-                           action="Live Wi-Fi state captured", status="completed",
-                           item_count=_saved_count)
-        except Exception as exc:
-            case.log(
-                "shell.dumpsys",
-                f"live Wi-Fi capture error: {exc}",
-                result="error",
-                tier=Tier.TIER0.value,
-            )
 
     # -- P1-7: screen/power events, Google accounts + search, Maps locations ---
     # These four parsers were written, exported and unit-tested but never invoked, so
@@ -7040,6 +7044,11 @@ def _run_tier1_collect_all(
 
     grants = [
         "android.permission.READ_CONTACTS",
+        # The helper's launch check covers every permission it can use, SMS and call log
+        # included. Leaving them ungranted here made the app raise its own permission dialog
+        # on every launch, and left calllog/sms to a second helper session.
+        "android.permission.READ_CALL_LOG",
+        "android.permission.READ_SMS",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.READ_MEDIA_IMAGES",
         "android.permission.READ_MEDIA_VIDEO",
