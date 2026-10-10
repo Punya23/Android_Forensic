@@ -61,3 +61,22 @@ def test_evidence_set_hash_is_order_independent_and_content_sensitive():
     a, b = R("aa", "/x"), R("bb", "/y")
     assert evidence_set_hash([a, b]) == evidence_set_hash([b, a])
     assert evidence_set_hash([a, b]) != evidence_set_hash([a, R("bc", "/y")])
+
+
+def test_dashboard_assets_are_gzipped_and_cached(tmp_path):
+    """Built dashboard files: compressed when the client accepts it, hashed assets cached long."""
+    from pathlib import Path
+
+    assets = Path(__file__).resolve().parents[2] / "app" / "dist" / "assets"
+    bundles = sorted(assets.glob("index-*.js")) if assets.is_dir() else []
+    if not bundles:
+        pytest.skip("dashboard not built (run ./run.sh build)")
+    from triage.server import create_app
+
+    client = create_app(tmp_path)[0].test_client()
+    url = f"/assets/{bundles[0].name}"
+    gz = client.get(url, headers={"Accept-Encoding": "gzip"})
+    assert gz.headers["Content-Encoding"] == "gzip"
+    assert "immutable" in gz.headers["Cache-Control"]
+    assert len(gz.data) < bundles[0].stat().st_size / 2
+    assert "Content-Encoding" not in client.get(url).headers  # a client that did not ask gets it plain

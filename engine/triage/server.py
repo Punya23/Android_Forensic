@@ -8,6 +8,7 @@ can render a live countdown, while REST endpoints serve finished case data.
 
 from __future__ import annotations
 
+import gzip
 import hmac
 import json
 import os
@@ -306,6 +307,35 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         ):
             return True
         return False
+
+    # --- response compression -----------------------------------------------------------
+    # The dashboard script (~1 MB) and the case datasets are text; over Wi-Fi/LAN sending them
+    # uncompressed is the difference between a second and several. gzip is in the stdlib, so no
+    # new dependency. Skipped for anything already compressed (images, video, downloads), for
+    # streamed responses, and for tiny bodies where the header costs more than it saves.
+    _COMPRESSIBLE = ("text/", "application/json", "application/javascript", "image/svg+xml")
+
+    @app.after_request
+    def _compress(resp):
+        try:
+            if (
+                resp.status_code != 200
+                or resp.is_streamed and not resp.direct_passthrough
+                or "Content-Encoding" in resp.headers
+                or "gzip" not in request.headers.get("Accept-Encoding", "")
+                or not resp.mimetype.startswith(_COMPRESSIBLE)
+            ):
+                return resp
+            resp.direct_passthrough = False
+            body = resp.get_data()
+            if len(body) < 1024:
+                return resp
+            resp.set_data(gzip.compress(body, compresslevel=5))
+            resp.headers["Content-Encoding"] = "gzip"
+            resp.headers.add("Vary", "Accept-Encoding")
+        except Exception:  # never let an optimisation break a response
+            pass
+        return resp
 
     @app.before_request
     def _require_auth():
@@ -2426,7 +2456,12 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
                 abort(404)
             candidate = (_dist_dir / filename).resolve()
             if candidate.is_file() and _dist_dir in candidate.parents:
-                return send_from_directory(_dist_dir, filename)
+                resp = send_from_directory(_dist_dir, filename)
+                # Vite names built files by content hash, so a given URL never changes: let the
+                # browser keep it for a year instead of re-checking it on every visit.
+                if filename.startswith("assets/"):
+                    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+                return resp
             # Unknown path: fall back to index.html for the SPA's client-side router
             # instead of 404ing every deep link (e.g. a refresh on /case/CASE-0001).
             return send_from_directory(_dist_dir, "index.html")
