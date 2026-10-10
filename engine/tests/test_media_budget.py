@@ -252,3 +252,48 @@ def test_huge_carved_bodies_are_clipped_before_they_reach_the_dashboard():
     assert _clip_bodies(rows) == 1 and _clip_bodies(dicts) == 1
     assert len(rows[0].body) < MAX_BODY_CHARS + 60 and "5000000 characters in total" in rows[0].body
     assert rows[1].body == "short" and dicts[1]["body"] == "ok"
+
+
+def test_a_run_whose_phone_has_gone_fails_instead_of_completing_empty():
+    import pytest
+
+    from triage.acquire.real import RealDeviceSource
+    from triage.pipeline import DeviceDisconnectedError, _require_device
+
+    class _Adb:
+        serial = "ABC"
+
+        @staticmethod
+        def list_devices(path=None):
+            return []  # nothing on the bus
+
+        adb_path = "adb"
+
+    class _Case:
+        def __init__(self):
+            self.lines = []
+
+        def log(self, action, msg, **kw):
+            self.lines.append((action, kw.get("result")))
+
+    case = _Case()
+    with pytest.raises(DeviceDisconnectedError):
+        _require_device(RealDeviceSource(_Adb()), case, "after the file pull")
+    assert case.lines == [("adb.disconnect", "error")]
+    _require_device(object(), case, "mock sources are never disconnected")  # no raise
+
+
+def test_a_time_target_below_the_reserve_still_gives_media_a_minute(tmp_path):
+    import json
+
+    from tests.test_phase2_pipeline import build
+    from triage.acquire import MockDeviceSource
+    from triage.pipeline import PipelineConfig, run_acquisition
+
+    corpus = tmp_path / "device"
+    corpus.mkdir()
+    build(corpus)
+    cfg = PipelineConfig(case_id="T3", examiner="T", cases_root=tmp_path / "cases", media_mode="budget",
+                         media_cap_bytes=0, time_budget_s=180)  # 3 min target, 4 min reserve
+    case_dir = Path(run_acquisition(MockDeviceSource(corpus), cfg)["case_dir"])
+    assert json.loads((case_dir / "derived" / "media_budget.json").read_text())["time_limit_s"] == 60

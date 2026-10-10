@@ -134,6 +134,9 @@ class _Adb:
         self.calls = []
         self.cancel_token = None
 
+    def shell(self, cmd, timeout=10):  # `pm path`: not installed, so the installer proceeds to install
+        return AdbResult(cmd, 1, "", "")
+
     def run(self, *args, **kw):
         self.calls.append(args)
         if args[0] == "install":
@@ -197,3 +200,35 @@ def test_samsung_one_ui_version_is_readable():
 def test_samsung_checklist_covers_the_a_series_demo():
     steps = " ".join(steps_for_brand("samsung"))
     assert "Auto Blocker" in steps and "Play Protect" in steps and "Stay awake" in steps
+
+
+def test_an_identical_build_already_on_the_phone_is_not_reinstalled(monkeypatch, tmp_path):
+    import hashlib
+
+    apk = tmp_path / "app-debug.apk"
+    apk.write_bytes(b"apk bytes")
+    digest = hashlib.sha256(b"apk bytes").hexdigest()
+
+    class Adb2(_Adb):
+        def shell(self, cmd, timeout=10):
+            if cmd.startswith("pm path"):
+                return AdbResult(cmd, 0, "package:/data/app/x/base.apk\n", "")
+            return AdbResult(cmd, 0, f"{digest}  /data/app/x/base.apk\n", "")
+
+    monkeypatch.setattr(pipeline, "_tier1_ledger", lambda: SimpleNamespace(record_install=lambda ok: None))
+    adb = Adb2([])
+    case = _Case()
+    assert pipeline._install_collector(SimpleNamespace(adb=adb), case, apk) is True
+    assert adb.calls == []  # no `adb install`, so no Play Protect prompt
+    assert any(r == "skipped" for _, _, r in case.lines)
+
+    class Adb3(Adb2):  # a different build is installed: replace it
+        def shell(self, cmd, timeout=10):
+            if cmd.startswith("pm path"):
+                return AdbResult(cmd, 0, "package:/data/app/x/base.apk\n", "")
+            return AdbResult(cmd, 0, "0" * 64 + "  /data/app/x/base.apk\n", "")
+
+    monkeypatch.setattr(pipeline.time, "sleep", lambda s: None)
+    adb3 = Adb3([(True, "Success")])
+    assert pipeline._install_collector(SimpleNamespace(adb=adb3), _Case(), apk) is True
+    assert [c[0] for c in adb3.calls] == ["install"]

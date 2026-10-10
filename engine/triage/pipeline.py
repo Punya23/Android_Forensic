@@ -12,6 +12,7 @@ a failure in one artifact is logged and the run continues.
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import json
 import logging
 import re
@@ -116,6 +117,7 @@ from .forensics.batch_transfer import DEFAULT_CHUNK_SIZE, chunk_files, pull_chun
 
 from .acquire import AcquisitionSource, PulledFile, RealDeviceSource
 from . import compat
+from .adb import sh_quote
 from .caps import MediaBudget, is_budgeted_media, select_files
 from .analysis import assess_risk, build_communication_graph
 from .config import (
@@ -285,6 +287,22 @@ POST_PULL_RESERVE_S = 240.0
 
 
 MAX_BODY_CHARS = 4000
+
+
+def _require_device(source: AcquisitionSource, case: Any, where: str) -> None:
+    """Stop a real-device run whose phone has gone, instead of "completing" with nothing.
+
+    A cable pulled (or a phone that dropped USB debugging) mid-run used to send every later step
+    to "device not found", log errors, and finish as ``done`` with 0 files — which reads as a
+    successful acquisition of an empty phone. Raises DeviceDisconnectedError so the dashboard
+    shows a failed run and the examiner reconnects and starts again."""
+    if isinstance(source, RealDeviceSource) and not source.is_device_connected():
+        msg = (
+            f"the phone is no longer connected {where}: the cable was pulled, USB debugging was revoked, "
+            "or adb lost it. Reconnect it and start the acquisition again."
+        )
+        case.log("adb.disconnect", msg, result="error", tier=Tier.TIER0.value)
+        raise DeviceDisconnectedError(msg)
 
 
 def _clip_bodies(rows: list) -> int:
@@ -1216,6 +1234,8 @@ def run_acquisition(
                 tier=Tier.TIER0.value,
             )
 
+    _require_device(source, case, "after the Tier-1 helper stage")
+
     # -- Tier 0: shared-storage pull ----------------------------------------
     progress("enumerate", 0.06, "Enumerating shared storage")
     emit_acq_event(case, socketio, source="filesystem", tier="tier0",
@@ -1402,7 +1422,8 @@ def run_acquisition(
     media_time_limit = cfg.media_time_limit_s
     if cfg.time_budget_s:
         left = cfg.time_budget_s - (time.monotonic() - run_t0) - POST_PULL_RESERVE_S
-        media_time_limit = min(media_time_limit or left, max(left, 60.0))  # always allow a minute
+        allowed = max(left, 60.0)  # always allow a minute, even when the reserve already exceeds the target
+        media_time_limit = min(media_time_limit, allowed) if media_time_limit else allowed
         case.log(
             "run.time_budget",
             f"run target {cfg.time_budget_s / 60:.0f} min: {(time.monotonic() - run_t0):.0f}s used so far, "
@@ -1563,6 +1584,7 @@ def run_acquisition(
     # bulk pull phase is done so downstream readers of the on-disk file aren't stale.
     case.flush_manifest()
 
+    _require_device(source, case, "after the file pull")
     pull_elapsed = max(time.monotonic() - pull_start, 0.001)
     # ── Stage 2 progressive emit: communication data ready ─────────────────
     _emit_stage_data(
@@ -6924,6 +6946,20 @@ def _wait_for_tier1_manifest(
     return False
 
 
+def _same_build_installed(source: RealDeviceSource, apk: Path, package: str) -> bool:
+    """True when the phone already has this exact APK (compared by SHA-256 of ``base.apk``)."""
+    try:
+        res = source.adb.shell(f"pm path {package}", timeout=15)
+        paths = [ln[8:].strip() for ln in res.stdout.splitlines() if ln.startswith("package:")]
+        if not res.ok or len(paths) != 1:  # not installed, or a split install: reinstall to be sure
+            return False
+        out = source.adb.shell(f"sha256sum {sh_quote(paths[0])}", timeout=30)
+        device_hash = out.stdout.split()[0].lower() if out.ok and out.stdout.split() else ""
+        return device_hash == hashlib.sha256(apk.read_bytes()).hexdigest()
+    except Exception:
+        return False
+
+
 def _install_collector(
     source: RealDeviceSource,
     case: Case,
@@ -6943,6 +6979,18 @@ def _install_collector(
     reported with its fix. Returns whether the Collector is now installed.
     """
     package = "io.erakshak.collector"
+    # An identical build left from an earlier run (the dashboard keeps the helper installed) needs no
+    # reinstall. Skipping it spares the phone's Play Protect "scan this app" prompt, which held a
+    # Samsung A14 for 46 s on every run and needs a finger on the screen.
+    if _same_build_installed(source, apk, package):
+        case.log(
+            "tier1.helper.install",
+            "collector helper: identical build already installed (same SHA-256), not reinstalled",
+            result="skipped",
+            tier=Tier.TIER1.value,
+        )
+        _tier1_ledger().record_install(True)
+        return True
     for attempt in (1, 2, 3):
         install = source.adb.run("install", "-r", "-d", str(apk.resolve()))
         _log_tier1_step(
