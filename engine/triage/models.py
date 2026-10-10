@@ -6,6 +6,8 @@ and everything serialises to plain JSON for the case folder and the dashboard AP
 
 from __future__ import annotations
 
+import re
+
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
@@ -380,3 +382,23 @@ def clip_bodies(rows: list) -> int:
                 r.body = clipped
             n += 1
     return n
+
+
+_NOT_EVIDENCE = re.compile(
+    r"CREATE\s|INTEGER|PRIMARY KEY|\bBLOB\b|sqlite_|WITHOUT ROWID|_idx_|\bidx_|\bINDEX\b|\bTABLE\b", re.I
+)
+
+
+def is_readable_fragment(text: str) -> bool:
+    """True when a carved fragment is something a person can read: a line of text or a URL, not the
+    database's own schema (``CREATE TABLE ...``), binary residue or a few stray bytes.
+
+    Carving a SQLite file turns up its own DDL, thumbnails and structural bytes far more often than
+    a deleted message; listing those as "recovered data" is noise that hides the real finds."""
+    t = (text or "").strip()
+    if len(t) < 8 or _NOT_EVIDENCE.search(t):
+        return False
+    if sum(1 for c in t if ord(c) < 9 or c == "\ufffd") > 0.02 * len(t):
+        return False
+    letters = sum(1 for c in t if c.isalpha())
+    return letters >= 0.5 * len(t) or t.lower().startswith(("http://", "https://"))

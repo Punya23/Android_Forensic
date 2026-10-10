@@ -151,7 +151,7 @@ from .flagging import (
     scan_known_hashes,
     scan_messages,
 )
-from .models import MAX_BODY_CHARS, LocationPoint, MediaItem, clip_bodies as _clip_bodies, now_iso
+from .models import MAX_BODY_CHARS, LocationPoint, MediaItem, clip_bodies as _clip_bodies, is_readable_fragment, now_iso
 from .cancellation import CancellationToken, AcquisitionCancelled
 from .cache import get_artifact_cached, set_artifact_cached, invalidate_for_source
 
@@ -284,6 +284,37 @@ ProgressFn = Callable[[str, float, str], None]
 #: on the mock corpus the stages after the pull take seconds; this leaves room for a phone with
 #: tens of thousands of files (carving, EXIF, hashing) without making the demo overrun.
 POST_PULL_RESERVE_S = 240.0
+
+
+def _row_is_readable(row: Any) -> bool:
+    """A recovered-data row worth listing: a deletion gap (a finding in itself), or carved content
+    with at least one readable string. See models.is_readable_fragment."""
+    if not isinstance(row, dict):
+        return True
+    if row.get("confidence") == "deletion":
+        return True
+    strings = [v for v in (row.get("values") or []) if isinstance(v, str)]
+    if isinstance(row.get("body"), str):
+        strings.append(row["body"])
+    return any(is_readable_fragment(v) for v in strings)
+
+
+def _telegram_live_names(conversations: Any) -> set[str]:
+    names: set[str] = set()
+    for c in (conversations.values() if isinstance(conversations, dict) else []):
+        if isinstance(c, dict):
+            names.add(str(c.get("title", "")).strip().lower())
+            names.update(str(p.get("name", "")).strip().lower() for p in c.get("participants", []) if isinstance(p, dict))
+    names.discard("")
+    return names
+
+
+def _row_is_live_name(row: Any, live_names: set[str]) -> bool:
+    if not isinstance(row, dict) or row.get("confidence") == "deletion":
+        return False
+    strings = [v for v in (row.get("values") or []) if isinstance(v, str)] + [row.get("body") or ""]
+    # ";;;" is how Telegram stores "first last;;;username" in its users table: a directory entry
+    return any(";;;" in s or s.strip().lower() in live_names for s in strings if s.strip())
 
 
 def _require_device(source: AcquisitionSource, case: Any, where: str) -> None:
@@ -2564,6 +2595,22 @@ def run_acquisition(
     # A carved row can span a whole BLOB: a Telegram cache4.db on a real phone produced 660 MB of
     # "message" text (messages.json and recovered.json), which froze the dashboard on "Loading this
     # case" for 100 s per page and made the AI pass crawl. A message is text a person reads; clip it.
+    _before = len(recovered_rows)
+    # Old WAL versions of the chats/users tables re-surface every group and contact name as "recovered":
+    # they are the live names again, not deleted content.
+    _live_names = _telegram_live_names(case.read_derived("telegram_conversations")) | {
+        str(n).strip().lower() for n in (case.read_derived("telegram_directory") or []) if isinstance(n, str)
+    }
+    _live_names.discard("")
+    recovered_rows[:] = [r for r in recovered_rows if _row_is_readable(r) and not _row_is_live_name(r, _live_names)]
+    if _before != len(recovered_rows):
+        case.log(
+            "analysis.recovered_readable",
+            f"{_before - len(recovered_rows)} carved fragment(s) with no readable text (database schema, "
+            "thumbnail and binary residue) are not listed under Recovered data; the bytes remain in the "
+            "acquired database files, and deletion gaps are always listed",
+            tier=Tier.TIER0.value,
+        )
     _clipped = _clip_bodies(all_messages) + _clip_bodies(recovered_rows)
     if _clipped:
         case.log(
@@ -5045,6 +5092,12 @@ def _run_tier2_telegram(
     # -----------------------------------------------------------------------
     # Phase 6: Conversation threading
     # -----------------------------------------------------------------------
+    # Every contact/group name in the database. Old WAL versions of those tables re-surface them as
+    # "recovered rows"; this lets the Recovered list tell a live name from deleted content.
+    _write_case_derived(
+        case, "telegram_directory",
+        sorted({str(r.get("_name", "")).strip() for r in result.get("android_users", []) + result.get("android_chats", []) if r.get("_name")}),
+    )
     case.log(
         "tier2.telegram.conversations",
         "Building conversation threads",

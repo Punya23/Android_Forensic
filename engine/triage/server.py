@@ -1953,6 +1953,8 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             "device_compat",
             # Per-stage wall-clock of the run and whether it met its time target.
             "run_timing",
+            # Every contact/group name in Telegram's database (used to tell live names from recovered rows).
+            "telegram_directory",
         }
 
         if dataset not in (list_sets | obj_sets):

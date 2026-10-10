@@ -618,3 +618,35 @@ def test_telegram_android_messages_are_decoded_to_plain_text(tmp_path):
     assert [m["body"] for m in live] == ["Panel chiye bhai", "Ye le demo check kar"]
     assert live[0]["sender"] == "6986541613" and live[1]["sender"] == "__self__"  # outgoing is marked, not guessed
     assert {u["_id"]: u["_name"] for u in result["android_users"]}["6986541613"] == "Jiya How (@jiyah)"
+
+
+def test_deleted_telegram_messages_are_carved_as_readable_text_and_schema_noise_is_dropped():
+    import struct
+
+    from triage.models import is_readable_fragment
+    from triage.parsers.telegram import carve_tl_messages
+    from triage.pipeline import _row_is_live_name, _row_is_readable
+
+    date = 1_790_000_000
+    blob = (
+        struct.pack("<IIII", 0x7600B9D3, 0, 0, 7)
+        + struct.pack("<Iq", 0x59511722, 123456)
+        + struct.pack("<i", date)
+        + _tl_string("meet me at the parking, bring the cash")
+    )
+    junk = b"\x00" * 64
+    import tempfile
+    from pathlib import Path
+
+    p = Path(tempfile.mkdtemp()) / "cache4.db-wal"
+    p.write_bytes(junk + blob + junk)
+    [m] = carve_tl_messages([p], known=set())
+    assert m["body"] == "meet me at the parking, bring the cash" and m["chat_id"] == "123456" and m["confidence"] == "carved"
+    assert carve_tl_messages([p], known={("meet me at the parking, bring the cash", date)}) == []  # already live
+
+    # what the generic carver listed before: schema text and binary residue
+    assert not is_readable_fragment("TE TABLE media_holes_v2(uid ER, end INTEGER, PRIMARY KEY (uid, type, start));")
+    assert not is_readable_fragment("\x05\t\t\x00\x01�x\x00\x00")
+    assert is_readable_fragment("https://armypanel.duckdns.org/F4H33M") and is_readable_fragment("Ye le demo check kar")
+    assert _row_is_readable({"confidence": "deletion", "values": [""]})  # a gap is a finding, always listed
+    assert _row_is_live_name({"confidence": "carved", "values": ["jiya how;;;"]}, set())

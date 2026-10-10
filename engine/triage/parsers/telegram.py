@@ -69,7 +69,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..config import Confidence
-from ..models import Message, clip_bodies
+from ..models import Message, clip_bodies, is_readable_fragment
 from ..recovery.sqlite_recovery import (
     recover_deleted_rows,
     detect_rowid_gaps,
@@ -1231,6 +1231,86 @@ def read_android_telegram(db_path: Path) -> dict[str, Any]:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _parse_tl_message_at(buf: bytes, pos: int) -> Optional[dict[str, Any]]:
+    """A TL ``message`` at ``buf[pos]`` (its 4-byte constructor): id, sender, chat, date, text.
+
+    Used on raw bytes, so there is no ``date`` column to anchor on: after the peers, the first
+    plausible Unix date (2014-2033) that is followed by a valid, readable TL string is taken."""
+    if pos + 40 > len(buf):
+        return None
+    flags, _flags2, mid = struct.unpack_from("<IIi", buf, pos + 4)
+    i = pos + 16
+    sender = None
+    if flags & 0x100:
+        sender, i = _tl_peer(buf, i)
+        if sender is None:
+            return None
+    chat, i = _tl_peer(buf, i)
+    if chat is None:
+        return None
+    now = int(datetime.now(timezone.utc).timestamp()) + 86400
+    for j in range(i, min(i + 240, len(buf) - 8), 4):
+        date = struct.unpack_from("<I", buf, j)[0]
+        if not 1_400_000_000 <= date <= now:
+            continue
+        text = _read_tl_string(buf, j + 4)
+        if text is not None and not text.strip():
+            return None  # a media-only message: the next string would be a mime type, not what was said
+        if text and is_readable_fragment(text):
+            return {
+                "id": mid, "chat": chat, "sender": sender or (chat if int(chat) > 0 else None),
+                "date": date, "text": text.strip(), "out": bool(flags & 2),
+            }
+    return None
+
+
+def carve_tl_messages(paths: list[Path], known: set[tuple[str, int]]) -> list[dict[str, Any]]:
+    """Messages found by scanning raw bytes (database, WAL) for Telegram's message constructor.
+
+    SQLite does not wipe a deleted row, so an earlier version of an edited or deleted message can
+    still be sitting in a free block or an old WAL frame as a complete TL message. Each is decoded
+    to readable text; ones already in the live table (same text and date, in ``known``) are skipped.
+    Confidence is CARVED_PARTIAL: the structure parsed and the date is plausible, but nothing proves
+    the row was ever committed."""
+    ctor = struct.pack("<I", 0x7600B9D3)
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, str]] = set()
+    for path in paths:
+        if not path.exists():
+            continue
+        data = path.read_bytes()
+        pos = data.find(ctor)
+        while pos != -1:
+            m = _parse_tl_message_at(data, pos)
+            if m and (m["text"], m["date"]) not in known and (m["chat"], m["id"], m["text"]) not in seen:
+                seen.add((m["chat"], m["id"], m["text"]))
+                out.append(
+                    {
+                        "body": m["text"],
+                        "sender": "__self__" if m["out"] else (m["sender"] or "<unknown>"),
+                        "timestamp": _epoch_to_iso(m["date"]),
+                        "chat_id": m["chat"],
+                        "confidence": Confidence.CARVED_PARTIAL.value,
+                        "source_file": path.name,
+                        "page": None,
+                        "offset": pos,
+                        "carve_method": "tl_message",
+                        "provenance": f"message #{m['id']} decoded from {path.name} at byte {pos} (not in the live table)",
+                        "warnings": ["Decoded from bytes outside the live table: an earlier or deleted version of a message."],
+                        "media_artifact_id": None,
+                    }
+                )
+            pos = data.find(ctor, pos + 4)
+    return out
+
+
+def _iso_to_epoch(ts: Optional[str]) -> Optional[int]:
+    try:
+        return int(datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp())
+    except (TypeError, ValueError):
+        return None
+
+
 def _is_clean_fragment(body: str, live_bodies: list[str]) -> bool:
     """A carved fragment worth showing next to the real messages: readable text, not schema or a copy
     of a message that is already there."""
@@ -1391,13 +1471,13 @@ def recover_telegram_messages(
         elif conf == Confidence.DELETION_DETECTED.value:
             counts["deletion_detected"] += 1
     if android["messages"]:
-        live_bodies = [m["body"] for m in android["messages"]]
+        # The generic carvers see Telegram's own schema text and binary residue. Replace their
+        # fragments with real deleted/earlier messages decoded from the same bytes.
+        known = {(m["body"], _iso_to_epoch(m["timestamp"])) for m in android["messages"]}
         messages = [
             m for m in messages
-            if m.get("confidence") == Confidence.LIVE.value
-            or m.get("confidence") == Confidence.DELETION_DETECTED.value
-            or _is_clean_fragment(m.get("body", ""), live_bodies)
-        ]
+            if m.get("confidence") in (Confidence.LIVE.value, Confidence.DELETION_DETECTED.value)
+        ] + carve_tl_messages([db_path, Path(str(db_path) + "-wal")], known)
         counts = {k: 0 for k in counts}
         for msg in messages:
             conf = msg.get("confidence", "")
