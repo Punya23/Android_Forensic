@@ -4955,10 +4955,17 @@ def _run_tier2_telegram(
                 )
             )
 
-        # All rows (including DELETION_DETECTED) go into recovered_rows for the report.
+        # Recovered rows (carved fragments and DELETION_DETECTED gaps) go into recovered_rows for the
+        # report. A live message is not "recovered" - it is already in the Messages list - and the
+        # Recovered view lists each row's `values`, which a raw message dict did not have (the view
+        # crashed on it with "Cannot read properties of undefined (reading 'filter')").
+        if conf == _Conf.LIVE:
+            continue
         d = dict(msg_dict)
         d["database_artifact"] = rec.artifact_id
         d["_source_app"] = "telegram"
+        d.setdefault("values", [body])
+        d.setdefault("rowid", None)
         recovered_rows.append(d)
 
     # 6. Write JSON export to case folder.

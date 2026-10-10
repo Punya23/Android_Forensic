@@ -282,7 +282,7 @@ export function RecoveredView({ caseId }: { caseId: string }) {
     return data.filter((r) => {
       if (conf !== "all" && r.confidence !== conf) return false;
       if (!q) return true;
-      return r.values.some((v) => typeof v === "string" && v.toLowerCase().includes(q));
+      return (r.values ?? []).some((v) => typeof v === "string" && v.toLowerCase().includes(q));
     });
   }, [data, query, conf]);
 
@@ -362,11 +362,11 @@ export function RecoveredView({ caseId }: { caseId: string }) {
           <tbody>
             {visible.map((r, i) => (
               <tr key={i} className="align-top">
-                <td className="td"><TagButton refId={`recovered:${i}`} kind="recovered" label={r.values.filter((v) => typeof v === "string").join(" ").slice(0, 40)} /></td>
+                <td className="td"><TagButton refId={`recovered:${i}`} kind="recovered" label={(r.values ?? []).filter((v) => typeof v === "string").join(" ").slice(0, 40)} /></td>
                 <td className="td"><ConfidenceBadge c={r.confidence} title={r.warnings[0]} /></td>
                 <td className="td">
                   <div className="flex flex-wrap gap-1.5">
-                    {r.values
+                    {(r.values ?? [])
                       .filter((v) => v !== null && v !== "")
                       .map((v, j) => (
                         <span key={j} className="bg-panel px-1.5 py-0.5 rounded text-xs">
