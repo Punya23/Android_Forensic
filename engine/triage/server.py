@@ -1580,6 +1580,12 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         case = _open(cases_root, case_id)
         name = Path(report_file).name  # strip any directory component — no traversal
         path = (case.root / "reports" / name).resolve()
+        if name == "detailed_hash_integrity.html" and not path.exists():
+            # Written at the very end of a run; a run that was interrupted never wrote it. Build it
+            # now (it re-verifies every artifact against its recorded hash) rather than 404.
+            from .pipeline import _generate_hash_integrity_report
+
+            _generate_hash_integrity_report(case.root)
         if case.root.resolve() not in path.parents or not path.exists():
             if name == "report.html" and (case.root / "report.html").exists():
                 return send_file((case.root / "report.html").resolve(), mimetype="text/html")
