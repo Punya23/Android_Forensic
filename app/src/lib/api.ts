@@ -17,7 +17,10 @@ import type {
 } from "./types";
 
 
-export const BASE = import.meta.env.DEV ? "" : "http://127.0.0.1:5057";
+// Served by the engine over http(s) (including from another machine on the LAN): the API is the
+// same origin, so use it. Only a page opened straight off disk (Electron, file://) has no origin
+// and must be told where the local engine is.
+export const BASE = import.meta.env.DEV || location.protocol !== "file:" ? "" : "http://127.0.0.1:5057";
 
 // --- auth ---------------------------------------------------------------
 // One examiner session at a time, held as a bearer token. Token lives in
