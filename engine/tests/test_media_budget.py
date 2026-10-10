@@ -241,3 +241,14 @@ def test_a_time_target_gives_media_what_is_left_and_the_run_reports_its_timing(t
     timing = json.loads((case_dir / "derived" / "run_timing.json").read_text())
     assert timing["budget_s"] == 900 and timing["within_budget"] is True
     assert [s["stage"] for s in timing["stages"]][:2] == ["init", "device"] and timing["stages"][-1]["stage"] == "report"  # written just before "done"
+
+
+def test_huge_carved_bodies_are_clipped_before_they_reach_the_dashboard():
+    from triage.models import Message
+    from triage.pipeline import MAX_BODY_CHARS, _clip_bodies
+
+    rows = [Message(app="telegram", sender="x", body="a" * 5_000_000), Message(app="sms", sender="y", body="short")]
+    dicts = [{"body": "b" * 100_000}, {"body": "ok"}]
+    assert _clip_bodies(rows) == 1 and _clip_bodies(dicts) == 1
+    assert len(rows[0].body) < MAX_BODY_CHARS + 60 and "5000000 characters in total" in rows[0].body
+    assert rows[1].body == "short" and dicts[1]["body"] == "ok"

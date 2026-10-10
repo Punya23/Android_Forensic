@@ -284,6 +284,24 @@ ProgressFn = Callable[[str, float, str], None]
 POST_PULL_RESERVE_S = 240.0
 
 
+MAX_BODY_CHARS = 4000
+
+
+def _clip_bodies(rows: list) -> int:
+    """Shorten any message/recovered-row ``body`` over MAX_BODY_CHARS in place; returns how many."""
+    n = 0
+    for r in rows:
+        body = r.get("body") if isinstance(r, dict) else getattr(r, "body", None)
+        if isinstance(body, str) and len(body) > MAX_BODY_CHARS:
+            clipped = body[:MAX_BODY_CHARS] + f" … [clipped, {len(body)} characters in total]"
+            if isinstance(r, dict):
+                r["body"] = clipped
+            else:
+                r.body = clipped
+            n += 1
+    return n
+
+
 def _noop(stage: str, pct: float, detail: str) -> None:  # default progress sink
     pass
 
@@ -2536,6 +2554,19 @@ def run_acquisition(
             "analysis.location_trace",
             f"location trace build error: {exc}",
             result="error",
+            tier=Tier.TIER0.value,
+        )
+
+    # A carved row can span a whole BLOB: a Telegram cache4.db on a real phone produced 660 MB of
+    # "message" text (messages.json and recovered.json), which froze the dashboard on "Loading this
+    # case" for 100 s per page and made the AI pass crawl. A message is text a person reads; clip it.
+    _clipped = _clip_bodies(all_messages) + _clip_bodies(recovered_rows)
+    if _clipped:
+        case.log(
+            "analysis.clip_bodies",
+            f"{_clipped} recovered fragment(s) longer than {MAX_BODY_CHARS} characters were shortened in the "
+            "case datasets (the carved bytes remain in the acquired database file, unchanged)",
+            result="partial",
             tier=Tier.TIER0.value,
         )
 

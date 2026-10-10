@@ -182,7 +182,7 @@ def _try_parse_record_at(
 #: Python, so an 11 MB Telegram cache took more than four minutes (and a 100 MB WhatsApp database
 #: would take hours) with the whole acquisition waiting behind it. The scan is a supplement to the
 #: structural recovery, so it is cut off and says how much it covered instead.
-SQBRITE_MAX_SECONDS = 20.0
+SQBRITE_MAX_SECONDS = 10.0
 
 
 class ScanResult(list):
