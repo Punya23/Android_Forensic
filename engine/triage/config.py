@@ -115,6 +115,7 @@ OEM_QUIRKS: dict[str, list[str]] = {
         "knox_container",          # Knox Secure Folder; app-private DBs inside are encrypted
         "secure_folder_opaque",    # Secure Folder mount not reachable via ADB shell
         "logsprovider_db",         # Samsung-specific call-log DB at com.sec.android.provider.logsprovider
+        "auto_blocker_usb",        # One UI 6.0+ Auto Blocker (on by default) blocks commands over USB; adb may not see the phone
     ],
     # Xiaomi / Redmi / POCO — HyperOS/MIUI has strict USB install controls.
     "xiaomi": [
@@ -148,6 +149,14 @@ OEM_QUIRKS: dict[str, list[str]] = {
     "oneplus": [
         "pm_grant_blocked",        # `pm grant` raises SecurityException; must use runtime dialog
     ],
+    # ASUS ZenUI / ROG UI — near-stock. UNVERIFIED on hardware: the 2026-10 audit found no ASUS-specific
+    # install or grant restriction in vendor or AOSP sources; empty means "none known", not "none exist".
+    "asus": [],
+    # Transsion (Infinix / Tecno / itel — HiOS, XOS). UNVERIFIED: only third-party guides, which describe the
+    # same two toggles as Xiaomi ("USB debugging (Security settings)", "Install via USB") on Android 11+.
+    "infinix": ["usb_debug_security_settings", "install_via_usb_toggle"],
+    "tecno": ["usb_debug_security_settings", "install_via_usb_toggle"],
+    "itel": ["usb_debug_security_settings", "install_via_usb_toggle"],
     # Google Pixel UI — closest to stock; no known forensic friction.
     "google": [],
     # Motorola Hello UI — very close to stock; no known forensic friction.
@@ -219,6 +228,10 @@ OEM_SPECIFIC_PATHS: dict[str, list[str]] = {
     "google": [],
     "motorola": [],
     "nothing": [],
+    "asus": [],
+    "infinix": [],
+    "tecno": [],
+    "itel": [],
     "honor": [],
     "huawei": [],
     "vivo": [],

@@ -57,6 +57,9 @@ _GENERIC_STEPS: list[str] = [
     "Settings → About phone → tap 'Build number' 7 times, until 'You are now a "
     "developer!' appears",
     "Settings → System → Developer options → turn on 'USB debugging'",
+    "Settings → System → Developer options → if shown, turn on 'Disable adb authorization "
+    "timeout' — otherwise Android revokes the computer's authorization after a week unused and "
+    "the first connection at the scene is 'unauthorized'",
     "Connect the USB cable to this workstation",
     "On the device screen, tap 'Allow' on the 'Allow USB debugging?' prompt — tick "
     "'Always allow from this computer' so the authorization survives a reboot",
@@ -72,6 +75,10 @@ _XIAOMI_EXTRA = [
     "aggressively, which can end the collection mid-run",
 ]
 _OPPO_EXTRA = [
+    "Settings → Developer options → turn ON 'Disable permission monitoring' (some ColorOS builds "
+    "label it 'Disable system optimization'; on a Chinese-language UI it can be hidden until the "
+    "language is switched to English). Without it ColorOS refuses `pm grant` from adb, so every "
+    "Tier-1 permission needs an on-screen Allow",
     "Have the device owner enter the lock-screen PIN if ColorOS prompts for it during "
     "`adb install`",
     "Keep the collector app in the foreground during collection — ColorOS may kill "
@@ -107,11 +114,38 @@ _BRAND_STEPS: dict[str, list[str]] = {
         "cannot be reached over standard ADB at all, regardless of Developer Options "
         "state — this is a platform difference, not a setting to find",
     ],
+    "infinix": _XIAOMI_EXTRA[:2],
+    "tecno": _XIAOMI_EXTRA[:2],
+    "itel": _XIAOMI_EXTRA[:2],
     "samsung": [
+        "One UI 6.0 (Android 14) and later: Settings → Security and privacy → Auto Blocker → turn "
+        "it OFF (or at least 'Block commands from USB cables') BEFORE connecting. It is on by "
+        "default and blocks adb, so the phone may never appear in `adb devices`",
         "Data inside Secure Folder stays unreachable even after USB debugging is on "
         "— that's Knox container encryption, not a Developer Options setting",
     ],
 }
+
+
+def host_adb_status(adb: Adb) -> dict:
+    """Version of the workstation's adb and whether it is recent enough for a long USB pull.
+
+    Older platform-tools stall or drop the cable on macOS (fixed in 34.0.0 and 36.0.0), truncate
+    the last byte of a pulled file on Windows and fall off the USB backend on Linux (fixed in
+    36.0.2); 36.0.2 is the single version that clears all three. Never raises."""
+    import re
+
+    res = adb.run("version", timeout=10)
+    m = re.search(r"Version (\d+)\.(\d+)\.(\d+)", res.stdout or "")
+    if not m:
+        return {"version": "", "ok": None, "note": "could not read the workstation's adb version"}
+    version = ".".join(m.groups())
+    ok = tuple(int(g) for g in m.groups()) >= (36, 0, 2)
+    return {
+        "version": version,
+        "ok": ok,
+        "note": "" if ok else f"adb {version} is older than 36.0.2: update platform-tools (long pulls can stall or lose data on older builds)",
+    }
 
 
 def steps_for_brand(brand: str) -> list[str]:

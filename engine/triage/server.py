@@ -545,7 +545,8 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         Developer-Options/USB-debugging enable can never be automated, on any brand,
         by this tool or any other.
         """
-        from .preflight import ConnectionState, detect_connection_state, steps_for_brand
+        from . import compat
+        from .preflight import ConnectionState, detect_connection_state, host_adb_status, steps_for_brand
 
         serial = request.args.get("serial") or None
         brand = request.args.get("brand", "")
@@ -575,6 +576,8 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
                 # explaining an empty Tier-2 dataset after the fact (capabilities.py).
                 "rooted": info.rooted,
             }
+            result["compat"] = compat.describe(compat.sdk_int(info.sdk), info.android_version, info.oem_quirks)
+            result["host_adb"] = host_adb_status(adb)
             # A ready device tells us its own brand — no need to ask the caller for it.
             brand = brand or info.brand
 
@@ -1940,6 +1943,8 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             "acquisition_caps",
             # Live media budget outcome: bytes/files actually pulled, why media stopped, what was left.
             "media_budget",
+            # Android-version / OEM compatibility facts recorded for this device at intake.
+            "device_compat",
         }
 
         if dataset not in (list_sets | obj_sets):

@@ -726,6 +726,29 @@ export function AcquisitionView({
                       already accounts for these (see apk/README.md).
                     </p>
                   )}
+                  {deviceCheck.compat && (
+                    <div className="mb-2">
+                      <span
+                        className={`rounded border px-1.5 py-0.5 text-[10px] font-mono font-semibold ${
+                          deviceCheck.compat.audited
+                            ? "text-live border-live/40 bg-live/10"
+                            : "text-warn border-warn/40 bg-warn/10"
+                        }`}
+                      >
+                        {deviceCheck.compat.audited
+                          ? "ANDROID 10–15 · AUDITED"
+                          : deviceCheck.compat.collector_supported
+                            ? "OUTSIDE ANDROID 10–15"
+                            : "TIER-0 ONLY"}
+                      </span>
+                      {deviceCheck.compat.notes.map((n) => (
+                        <p key={n} className="text-[11px] text-muted mt-1">{n}</p>
+                      ))}
+                    </div>
+                  )}
+                  {deviceCheck.host_adb?.note && (
+                    <p className="text-[11px] text-warn mb-2">{deviceCheck.host_adb.note}</p>
+                  )}
                   <div className="flex items-center gap-2 flex-wrap">
                     <button className="btn-ghost text-xs" disabled={reasserting} onClick={() => fixDeveloperOptions()}>
                       {reasserting ? "Re-asserting…" : "Re-assert Developer Options"}

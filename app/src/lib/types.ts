@@ -54,6 +54,17 @@ export interface DeviceCheckResponse {
      * Tier-2 is withheld rather than offered-and-silently-skipped. */
     rooted: boolean;
   };
+  /** Android-version facts that change how the engine behaves on this handset
+   * (triage/compat.py). `audited` is true for Android 10-15, the researched range. */
+  compat?: {
+    sdk: number;
+    android: string;
+    collector_supported: boolean;
+    audited: boolean;
+    notes: string[];
+  };
+  /** The workstation's own adb; older platform-tools can stall or lose data on long pulls. */
+  host_adb?: { version: string; ok: boolean | null; note: string };
 }
 
 export interface ReassertDevOptionsResponse {

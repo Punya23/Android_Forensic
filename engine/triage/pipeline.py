@@ -114,6 +114,7 @@ from .forensics.battery_priority import should_pull_category
 from .forensics.batch_transfer import DEFAULT_CHUNK_SIZE, chunk_files, pull_chunk
 
 from .acquire import AcquisitionSource, PulledFile, RealDeviceSource
+from . import compat
 from .caps import MediaBudget, is_budgeted_media, select_files
 from .analysis import assess_risk, build_communication_graph
 from .config import (
@@ -135,6 +136,7 @@ from .forensics.encryption_state import (
 )
 from .device_state import (
     TeardownLedger,
+    _parse_granted_permissions,
     device_state_summary,
     diff_device_state,
     verify_teardown,
@@ -559,6 +561,16 @@ def run_acquisition(
     emit_acq_event(case, socketio, source="device", tier="tier0",
                    action=f"Device intake: {device.manufacturer} {device.model} / Android {device.android_version}",
                    status="completed")
+    compat_info = compat.describe(compat.sdk_int(device.sdk), device.android_version, device.oem_quirks)
+    case.write_derived("device_compat", compat_info)
+    case.log(
+        "device.compat",
+        f"Android API {compat_info['sdk'] or '?'}: "
+        + ("inside the audited range (Android 10–15)" if compat_info["audited"] else "outside the audited range (Android 10–15)")
+        + ("; " + " ".join(compat_info["notes"]) if compat_info["notes"] else ""),
+        result="ok" if compat_info["collector_supported"] else "warning",
+        tier=Tier.TIER0.value,
+    )
     pre = source.pre_state()
     case.set_pre_state(pre)
     case.log(
@@ -940,6 +952,7 @@ def run_acquisition(
                 skip_paths=tier1_skip_paths,
                 oem_quirks=device.oem_quirks,
                 socketio=socketio,
+                sdk=compat.sdk_int(device.sdk),
             )
         else:
             case.log(
@@ -6770,6 +6783,66 @@ def _wait_for_tier1_manifest(
     return False
 
 
+def _install_collector(
+    source: RealDeviceSource,
+    case: Case,
+    apk: Path,
+    *,
+    quirks: Optional[list[str]] = None,
+    socketio: Any = None,
+) -> bool:
+    """``adb install`` the Collector, recovering from the failures phones actually produce.
+
+    ``-r -d``: replace, and allow the debug build to overwrite a copy with a higher version code
+    (``-r`` alone is a no-op on current Android; reinstalling is the default). Failures are
+    classified (see ``compat.classify_install_failure``): a copy signed with another key
+    (another laptop's build) is uninstalled and installed again; a refusal that needs a finger on
+    the phone's screen (Xiaomi "Install via USB", ColorOS/Funtouch prompts, Play Protect) is
+    explained to the examiner on the dashboard and retried (twice at most); anything else is
+    reported with its fix. Returns whether the Collector is now installed.
+    """
+    package = "io.erakshak.collector"
+    for attempt in (1, 2, 3):
+        install = source.adb.run("install", "-r", "-d", str(apk.resolve()))
+        _log_tier1_step(
+            case,
+            "tier1.helper.install",
+            "install collector helper APK",
+            install,
+            alters_device=True,
+        )
+        out = f"{install.stdout}\n{install.stderr}"
+        if install.ok and "Failure" not in out:
+            _tier1_ledger().record_install(True)
+            return True
+        failure = compat.classify_install_failure(out, quirks) or compat.InstallFailure(
+            "INSTALL_FAILED", f"adb install exited {install.returncode}: {out.strip()[-160:]}", "none"
+        )
+        case.log(
+            "tier1.helper.install_hint",
+            f"{failure.code}: {failure.hint}",
+            result="warning",
+            tier=Tier.TIER1.value,
+        )
+        retry = attempt < 3 and (failure.action == "ask_examiner" or (failure.action == "reinstall" and attempt == 1))
+        emit_acq_event(
+            case, socketio, source="device", tier="tier1",
+            action=f"Collector install blocked — {failure.hint}",
+            status="accessing" if retry else "failed", skip_reason="" if retry else failure.code,
+        )
+        if not retry:
+            break
+        if failure.action == "reinstall":
+            gone = source.adb.run("uninstall", package)
+            _log_tier1_step(case, "tier1.helper.uninstall_stale", "remove Collector signed with another key", gone, alters_device=True)
+        else:  # ask_examiner: give the person time to act on the phone, honouring Stop
+            for _ in range(20):
+                _stop_if_cancelled(source, case)
+                time.sleep(1.0)
+    _tier1_ledger().record_install(False)
+    return False
+
+
 def _run_tier1_calllog_helper(
     source: RealDeviceSource, case: Case, staging: Path, *,
     oem_quirks: Optional[list[str]] = None, socketio: Any = None,
@@ -6788,16 +6861,7 @@ def _run_tier1_calllog_helper(
         )
         return [], set()
 
-    install = source.adb.run("install", "-r", str(apk.resolve()))
-    _log_tier1_step(
-        case,
-        "tier1.helper.install",
-        "install collector helper APK",
-        install,
-        alters_device=True,
-    )
-    _tier1_ledger().record_install(install.ok)
-    if not install.ok:
+    if not _install_collector(source, case, apk, quirks=oem_quirks, socketio=socketio):
         return [], set()
 
     grant = source.adb.shell(f"pm grant {package} android.permission.READ_CALL_LOG")
@@ -6896,16 +6960,7 @@ def _run_tier1_sms_helper(
         )
         return [], set()
 
-    install = source.adb.run("install", "-r", str(apk.resolve()))
-    _log_tier1_step(
-        case,
-        "tier1.helper.install",
-        "install collector helper APK",
-        install,
-        alters_device=True,
-    )
-    _tier1_ledger().record_install(install.ok)
-    if not install.ok:
+    if not _install_collector(source, case, apk, quirks=oem_quirks, socketio=socketio):
         return [], set()
 
     grant = source.adb.shell(f"pm grant {package} android.permission.READ_SMS")
@@ -7001,16 +7056,7 @@ def _run_tier1_contacts_helper(
         )
         return [], set()
 
-    install = source.adb.run("install", "-r", str(apk.resolve()))
-    _log_tier1_step(
-        case,
-        "tier1.helper.install",
-        "install collector helper APK",
-        install,
-        alters_device=True,
-    )
-    _tier1_ledger().record_install(install.ok)
-    if not install.ok:
+    if not _install_collector(source, case, apk, quirks=oem_quirks, socketio=socketio):
         return [], set()
 
     grant = source.adb.shell(f"pm grant {package} android.permission.READ_CONTACTS")
@@ -7107,6 +7153,7 @@ def _run_tier1_collect_all(
     app_messages: Optional[list] = None,
     oem_quirks: Optional[list[str]] = None,
     socketio: Any = None,
+    sdk: int = 0,
 ) -> set[str]:
     """Drive the Collector helper's ``dump_all`` action and ingest every output.
 
@@ -7143,40 +7190,15 @@ def _run_tier1_collect_all(
                 result="warning",
                 tier=Tier.TIER1.value,
             )
-    install = source.adb.run("install", "-r", str(apk.resolve()))
-    _log_tier1_step(
-        case,
-        "tier1.helper.install",
-        "install collector helper APK",
-        install,
-        alters_device=True,
-    )
-    _tier1_ledger().record_install(install.ok)
-    if not install.ok:
+    if not _install_collector(source, case, apk, quirks=oem_quirks, socketio=socketio):
         return got
 
-    grants = [
-        "android.permission.READ_CONTACTS",
-        # The helper's launch check covers every permission it can use, SMS and call log
-        # included. Leaving them ungranted here made the app raise its own permission dialog
-        # on every launch, and left calllog/sms to a second helper session.
-        "android.permission.READ_CALL_LOG",
-        "android.permission.READ_SMS",
-        "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.READ_MEDIA_VIDEO",
-        "android.permission.READ_MEDIA_AUDIO",
-        "android.permission.ACCESS_MEDIA_LOCATION",
-        "android.permission.READ_CALENDAR",
-        "android.permission.GET_ACCOUNTS",
-        # Location + radio. ACCESS_FINE_LOCATION is what unlocks the last-known GPS fix, and
-        # is also the gate Android 8.1+ puts in front of WiFi SSIDs and scan results — without
-        # it wifi.json comes back with blank SSIDs, which reads like an empty network history.
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.BLUETOOTH_CONNECT",
-        "android.permission.BLUETOOTH_SCAN",
-    ]
+    # Only the permissions that exist on this Android release (READ_MEDIA_* is 13+, Bluetooth
+    # CONNECT/SCAN 12+, ...): granting one that does not exist failed and was logged as an error
+    # on every run. The list covers every permission the helper's launch check asks for, call log
+    # and SMS included; leaving them ungranted made the app raise its own dialog on every launch
+    # and left calllog/sms to a second helper session.
+    grants = compat.collector_grants(sdk)
     for perm in grants:
         res = source.adb.shell(f"pm grant {package} {perm}")
         _log_tier1_step(
@@ -7187,6 +7209,26 @@ def _run_tier1_collect_all(
             alters_device=True,
         )
         _tier1_ledger().record_grant(perm, res.ok)
+    # `pm grant` exits 0 for a hard-restricted permission (SMS, call log) the package is not
+    # allow-listed for, and does nothing. Read the grants back so the audit says what the phone
+    # actually holds, and the examiner is told early which approvals are still theirs to give.
+    readback = source.adb.shell(f"dumpsys package {package} | grep -E 'granted=true'")
+    if readback.ok and readback.stdout.strip():
+        held = set(_parse_granted_permissions(readback.stdout))
+        missing = [g.rsplit(".", 1)[-1] for g in grants if g not in held]
+        case.log(
+            "tier1.helper.grant_verify",
+            f"{len(grants) - len(missing)} of {len(grants)} permissions confirmed granted"
+            + (f"; NOT granted: {', '.join(missing)} (the phone must approve these on screen)" if missing else ""),
+            command=readback.command,
+            result="ok" if not missing else "partial",
+            tier=Tier.TIER1.value,
+        )
+        if missing:
+            emit_acq_event(case, socketio, source="device", tier="tier1",
+                           action=f"{len(missing)} permission(s) still need approval on the phone: {', '.join(missing[:4])}"
+                                  + ("…" if len(missing) > 4 else ""),
+                           status="accessing")
     # Notification access is another special access: without it the notification collector
     # reports `denied`. `cmd notification allow_listener` enables it from adb (reversed in
     # teardown); it is not needed for the dumpsys history Tier 0 already reads.
