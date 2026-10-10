@@ -23,11 +23,19 @@ class UnsupportedDeviceError(RuntimeError):
 # ---------------------------------------------------------------------------
 # Helper: derive human-readable OS skin name from getprop values
 # ---------------------------------------------------------------------------
+def _oneui_label(code: str) -> str:
+    """``ro.build.version.oneui`` is a 5-digit code (``50100`` = One UI 5.1, ``60100`` = 6.1, ``70000`` = 7.0);
+    shown raw it read "One UI 50100". Anything else is returned unchanged."""
+    if code.isdigit() and len(code) == 5:
+        return f"{int(code) // 10000}.{int(code) % 10000 // 100}"
+    return code
+
+
 def _derive_os_skin(props: dict[str, str]) -> str:
     """Return a human-readable OS skin string, e.g. 'One UI 6.1' or 'OxygenOS 14'."""
     # Samsung One UI
     if props.get("oneui_version"):
-        return f"One UI {props['oneui_version']}"
+        return f"One UI {_oneui_label(props['oneui_version'])}"
     # Xiaomi HyperOS (newer builds use a different key than MIUI)
     if props.get("hyperos_version"):
         return f"HyperOS {props['hyperos_version']}"

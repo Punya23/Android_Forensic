@@ -103,7 +103,10 @@ def _screen_hint(quirks: set[str]) -> str:
     if quirks & _VIVO:
         return "Vivo/iQOO: turn off 'Verify apps over USB' if shown, and tap Install on the phone's prompt"
     if "auto_blocker_usb" in quirks:
-        return "Samsung: turn off Auto Blocker (Settings > Security and privacy); it blocks commands over USB"
+        return (
+            "Samsung: turn off Auto Blocker (Settings > Security and privacy), and tap 'Install anyway' / "
+            "'Install without scanning' if Google Play Protect asks to scan the app"
+        )
     return "unlock the phone and tap Install / Allow on any prompt it shows; keep the screen on"
 
 

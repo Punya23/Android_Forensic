@@ -60,6 +60,9 @@ _GENERIC_STEPS: list[str] = [
     "Settings → System → Developer options → if shown, turn on 'Disable adb authorization "
     "timeout' — otherwise Android revokes the computer's authorization after a week unused and "
     "the first connection at the scene is 'unauthorized'",
+    "Settings → System → Developer options → turn on 'Stay awake' (screen stays on while "
+    "charging) and keep the phone unlocked: the Tier-1 helper app is launched on the screen, "
+    "and a locked or sleeping phone stalls it",
     "Connect the USB cable to this workstation",
     "On the device screen, tap 'Allow' on the 'Allow USB debugging?' prompt — tick "
     "'Always allow from this computer' so the authorization survives a reboot",
@@ -121,6 +124,8 @@ _BRAND_STEPS: dict[str, list[str]] = {
         "One UI 6.0 (Android 14) and later: Settings → Security and privacy → Auto Blocker → turn "
         "it OFF (or at least 'Block commands from USB cables') BEFORE connecting. It is on by "
         "default and blocks adb, so the phone may never appear in `adb devices`",
+        "If Google Play Protect asks to scan the helper app when it is installed, tap 'Install "
+        "anyway' / 'Install without scanning' — the install waits for that tap",
         "Data inside Secure Folder stays unreachable even after USB debugging is on "
         "— that's Knox container encryption, not a Developer Options setting",
     ],

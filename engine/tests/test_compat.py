@@ -184,3 +184,16 @@ def test_installer_stops_retrying_a_refusal_that_keeps_coming(monkeypatch):
     refusal = "Failure [INSTALL_FAILED_ABORTED: User rejected permissions]"
     ok, adb, _ = _install(monkeypatch, [(False, refusal)] * 3)
     assert not ok and len(adb.calls) == 3  # attempt cap, not an endless loop
+
+
+def test_samsung_one_ui_version_is_readable():
+    from triage.acquire.real import _derive_os_skin, _oneui_label
+
+    assert _oneui_label("50100") == "5.1" and _oneui_label("60100") == "6.1" and _oneui_label("70000") == "7.0"
+    assert _oneui_label("weird") == "weird"
+    assert _derive_os_skin({"oneui_version": "60100", "brand": "samsung"}) == "One UI 6.1"
+
+
+def test_samsung_checklist_covers_the_a_series_demo():
+    steps = " ".join(steps_for_brand("samsung"))
+    assert "Auto Blocker" in steps and "Play Protect" in steps and "Stay awake" in steps
