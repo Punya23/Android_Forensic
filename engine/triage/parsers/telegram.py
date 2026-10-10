@@ -68,7 +68,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..config import Confidence
-from ..models import Message
+from ..models import Message, clip_bodies
 from ..recovery.sqlite_recovery import (
     recover_deleted_rows,
     detect_rowid_gaps,
@@ -1209,6 +1209,7 @@ def recover_telegram_messages(
         elif conf == Confidence.DELETION_DETECTED.value:
             counts["deletion_detected"] += 1
     counts["total"] = len(messages)
+    clip_bodies(messages)  # before conversations/derived datasets are built from these rows
 
     return {
         "available": True,
@@ -1427,6 +1428,7 @@ def parse_telegram_export(path: str | Path) -> dict[str, Any]:
     counts = dict(_EXPORT_ZERO_COUNTS)
     counts["live"] = len(messages)
     counts["total"] = len(messages)
+    clip_bodies(messages)  # before conversations/derived datasets are built from these rows
 
     return {
         "available": True,

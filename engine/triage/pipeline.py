@@ -151,7 +151,7 @@ from .flagging import (
     scan_known_hashes,
     scan_messages,
 )
-from .models import LocationPoint, MediaItem, now_iso
+from .models import MAX_BODY_CHARS, LocationPoint, MediaItem, clip_bodies as _clip_bodies, now_iso
 from .cancellation import CancellationToken, AcquisitionCancelled
 from .cache import get_artifact_cached, set_artifact_cached, invalidate_for_source
 
@@ -286,9 +286,6 @@ ProgressFn = Callable[[str, float, str], None]
 POST_PULL_RESERVE_S = 240.0
 
 
-MAX_BODY_CHARS = 4000
-
-
 def _require_device(source: AcquisitionSource, case: Any, where: str) -> None:
     """Stop a real-device run whose phone has gone, instead of "completing" with nothing.
 
@@ -303,21 +300,6 @@ def _require_device(source: AcquisitionSource, case: Any, where: str) -> None:
         )
         case.log("adb.disconnect", msg, result="error", tier=Tier.TIER0.value)
         raise DeviceDisconnectedError(msg)
-
-
-def _clip_bodies(rows: list) -> int:
-    """Shorten any message/recovered-row ``body`` over MAX_BODY_CHARS in place; returns how many."""
-    n = 0
-    for r in rows:
-        body = r.get("body") if isinstance(r, dict) else getattr(r, "body", None)
-        if isinstance(body, str) and len(body) > MAX_BODY_CHARS:
-            clipped = body[:MAX_BODY_CHARS] + f" … [clipped, {len(body)} characters in total]"
-            if isinstance(r, dict):
-                r["body"] = clipped
-            else:
-                r.body = clipped
-            n += 1
-    return n
 
 
 def _noop(stage: str, pct: float, detail: str) -> None:  # default progress sink

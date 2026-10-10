@@ -358,3 +358,25 @@ class WhatsAppBackupMedia(Serialisable):
     size_bytes: int = 0
     sha256: str = ""
     recovered: bool = False  # True if pulled from a .trashed-* location
+
+
+MAX_BODY_CHARS = 4000
+
+
+def clip_bodies(rows: list) -> int:
+    """Shorten any message/recovered-row ``body`` over MAX_BODY_CHARS in place; returns how many.
+
+    A carved row can span a whole BLOB (one Telegram cache4.db produced 660 MB of "message" text),
+    which freezes the dashboard and the AI pass. A message is text a person reads; the carved bytes
+    stay in the acquired database file unchanged."""
+    n = 0
+    for r in rows:
+        body = r.get("body") if isinstance(r, dict) else getattr(r, "body", None)
+        if isinstance(body, str) and len(body) > MAX_BODY_CHARS:
+            clipped = body[:MAX_BODY_CHARS] + f" … [clipped, {len(body)} characters in total]"
+            if isinstance(r, dict):
+                r["body"] = clipped
+            else:
+                r.body = clipped
+            n += 1
+    return n
