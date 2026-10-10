@@ -11,6 +11,8 @@ acquisition is a partial one and the case must say so.
 from __future__ import annotations
 
 import re
+import threading
+import time
 from typing import Callable, Iterable
 
 Entry = tuple[str, int, int]  # (device path, size in bytes — 0 if unknown, mtime — 0 if unknown)
@@ -67,7 +69,7 @@ def bucket_of(device_path: str) -> str:
     return category
 
 
-MEDIA_MODES = ("all", "camera", "none")
+MEDIA_MODES = ("all", "camera", "budget", "none")
 _CAMERA_DIR = "/dcim/camera/"
 
 
@@ -82,6 +84,11 @@ def apply_media_policy(
                   until ``cap_bytes`` (0 = no limit) is used; a file that does not fit is
                   skipped, never truncated. Screenshots, downloads, app media and every other
                   folder's photos/videos are left on the phone.
+    ``budget``  — photos/videos from every folder (camera, screenshots, downloads, WhatsApp,
+                  Telegram...) share ``cap_bytes`` (0 = no limit): newest first within a
+                  category, round-robin between categories so one cannot starve the others. A
+                  file that does not fit is skipped, never truncated. Nothing here is exempt:
+                  a screen recording counts against the budget like any other video.
 
     Trashed items are not touched: deleted-but-recoverable media stays protected evidence.
     Non-media files (documents, chat databases, recordings) always pass through. The report says
@@ -108,30 +115,109 @@ def apply_media_policy(
     older_paths = {e[0] for e in older}
     rest = [e for e in rest if e[0] not in older_paths]
 
-    in_camera = [e for e in media if _CAMERA_DIR in e[0].lower()] if mode == "camera" else []
-    in_camera.sort(key=lambda e: (-e[2], e[0]))  # newest first, path as the tiebreak
-    kept: list[Entry] = []
-    left = cap_bytes or float("inf")
-    for e in in_camera:
-        if e[1] <= left:
-            kept.append(e)
-            left -= e[1]
+    if mode == "budget":
+        eligible = media
+        picked, _ = apply_caps(media, 0, cap_bytes, protect=False)
+        chosen = set(picked)
+        kept = [e for e in media if e[0] in chosen]
+    else:
+        eligible = [e for e in media if _CAMERA_DIR in e[0].lower()] if mode == "camera" else []
+        eligible.sort(key=lambda e: (-e[2], e[0]))  # newest first, path as the tiebreak
+        kept = []
+        left = cap_bytes or float("inf")
+        for e in eligible:
+            if e[1] <= left:
+                kept.append(e)
+                left -= e[1]
 
     report = {
         "mode": mode,
-        "cap_bytes": cap_bytes if mode == "camera" else 0,
+        "cap_bytes": cap_bytes if mode in ("camera", "budget") else 0,
         "media_available_files": len(media),
         "media_available_bytes": sum(e[1] for e in media),
         "media_kept_files": len(kept),
         "media_kept_bytes": sum(e[1] for e in kept),
-        "left_outside_camera_files": len(media) - len(in_camera),
-        "left_outside_camera_bytes": sum(e[1] for e in media) - sum(e[1] for e in in_camera),
-        "left_over_cap_files": len(in_camera) - len(kept),
-        "left_over_cap_bytes": sum(e[1] for e in in_camera) - sum(e[1] for e in kept),
+        "left_outside_camera_files": len(media) - len(eligible),
+        "left_outside_camera_bytes": sum(e[1] for e in media) - sum(e[1] for e in eligible),
+        "left_over_cap_files": len(eligible) - len(kept),
+        "left_over_cap_bytes": sum(e[1] for e in eligible) - sum(e[1] for e in kept),
         "left_older_chat_backups_files": len(older),
         "left_older_chat_backups_bytes": sum(e[1] for e in older),
     }
     return rest + kept, report
+
+
+def is_budgeted_media(device_path: str) -> bool:
+    """A photo or video the media budget counts. Trashed/pending items are deleted-but-recoverable
+    evidence, never budgeted (see :func:`apply_media_policy`)."""
+    from .pipeline import _categorise  # late import: pipeline imports this module
+
+    return _categorise(device_path)[0] in ("image", "video") and not _name(device_path).startswith(
+        (".trashed-", ".pending-")
+    )
+
+
+class MediaBudget:
+    """The live guard behind the media cap.
+
+    Selection (:func:`apply_media_policy`) sizes the pull from the phone's own index. This counts
+    what actually landed on the laptop, and says when to stop pulling more photos and videos:
+    once ``cap_bytes`` of them are in (0 = no size limit), or ``time_limit_s`` seconds after
+    :meth:`start` (0 = no time limit). Only media is ever stopped — documents, chat databases and
+    everything else carry on — and what was left behind is reported, never hidden.
+    """
+
+    def __init__(self, cap_bytes: int = 0, time_limit_s: float = 0.0, clock: Callable[[], float] = time.monotonic):
+        self.cap_bytes = cap_bytes
+        self.time_limit_s = time_limit_s
+        self._clock = clock
+        self._started: float | None = None
+        self._lock = threading.Lock()
+        self.bytes = 0
+        self.files = 0
+        self.skipped: list[str] = []
+        self.stopped_by: str | None = None  # "size" | "time", sticky once set
+
+    def start(self) -> None:
+        self._started = self._clock()
+
+    def add(self, device_path: str, nbytes: int) -> None:
+        if not is_budgeted_media(device_path):
+            return
+        with self._lock:
+            self.bytes += nbytes
+            self.files += 1
+
+    def stop_reason(self) -> str | None:
+        """Why media should stop now (``"size"``/``"time"``), or ``None`` to keep going."""
+        with self._lock:
+            if self.stopped_by is None:
+                if self.cap_bytes and self.bytes >= self.cap_bytes:
+                    self.stopped_by = "size"
+                elif self.time_limit_s and self._started is not None and self._clock() - self._started >= self.time_limit_s:
+                    self.stopped_by = "time"
+            return self.stopped_by
+
+    def should_skip(self, device_path: str) -> bool:
+        """True (and the file is recorded as left behind) when media has stopped and this file is media."""
+        if not is_budgeted_media(device_path) or self.stop_reason() is None:
+            return False
+        with self._lock:
+            self.skipped.append(device_path)
+        return True
+
+    def report(self) -> dict:
+        with self._lock:
+            return {
+                "cap_bytes": self.cap_bytes,
+                "time_limit_s": self.time_limit_s,
+                "elapsed_s": round(self._clock() - self._started, 1) if self._started is not None else 0.0,
+                "media_files_pulled": self.files,
+                "media_bytes_pulled": self.bytes,
+                "stopped_by": self.stopped_by,
+                "media_files_left": len(self.skipped),
+                "left_sample": self.skipped[:50],
+            }
 
 
 def apply_caps(
@@ -139,12 +225,14 @@ def apply_caps(
     bucket_bytes: int = 0,
     total_bytes: int = 0,
     key: Callable[[str], str] = bucket_of,
+    protect: bool = True,
 ) -> tuple[list[str], dict]:
     """Return (selected paths, report). ``0`` for a cap means no cap.
 
     Protected files (:func:`is_protected`) are taken first and whole, above the caps if need be
     (``overcap_bytes`` says by how much); ordinary files then fill their usual budgets. Excluded
-    buckets (music) are never taken."""
+    buckets (music) are never taken. ``protect=False`` makes every file an ordinary one, for a
+    hard budget with no exceptions."""
     queues: dict[str, list[Entry]] = {}
     for e in entries:
         queues.setdefault(key(e[0]), []).append(e)
@@ -179,7 +267,7 @@ def apply_caps(
         keep: list[Entry] = []
         for e in queues[b]:
             older_backup = _is_chat_backup(e[0]) and newest_backup.get(e[0].rsplit("/", 1)[0]) != e[0]
-            if is_protected(e[0]) and not older_backup and e[1] <= PROTECTED_MAX_BYTES:
+            if protect and is_protected(e[0]) and not older_backup and e[1] <= PROTECTED_MAX_BYTES:
                 chosen.append(e[0])
                 stats[b]["selected_files"] += 1
                 stats[b]["selected_bytes"] += e[1]
@@ -317,6 +405,7 @@ def select_files(
         chosen, report = choose(entries)
         report["window_days"] = None
         report["listing"] = "media index"
+        report["truncated_files"] = max(0, len(chosen) - max_files)
         return chosen[:max_files], report
 
     chosen: list[str] = []
@@ -338,4 +427,5 @@ def select_files(
         ):
             report["window_days"] = days
             break
+    report["truncated_files"] = max(0, len(chosen) - max_files)
     return chosen[:max_files], report

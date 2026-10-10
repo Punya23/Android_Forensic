@@ -43,7 +43,7 @@ const STAGES = [
   "flag", "timeline", "analysis", "persist", "report", "done",
 ];
 
-type MediaMode = "all" | "camera" | "none";
+type MediaMode = "all" | "camera" | "budget" | "none";
 
 export function AcquisitionView({
   onCaseReady,
@@ -95,25 +95,32 @@ export function AcquisitionView({
   const [tier1Calllog, setTier1Calllog] = useState(true);
   const [tier1Sms, setTier1Sms] = useState(true);
   const [tier1CollectAll, setTier1CollectAll] = useState(true);
-  // Photos and videos are what make a pull slow, so they get their own choice: everything, only the
-  // camera folder up to a size, or none. The case records that a limited choice is a partial pull.
-  // Remembered between runs (this browser only).
+  // Photos and videos are what make a pull slow, so they get their own choice: a size budget shared
+  // by every folder (the default), only the camera folder up to a size, everything, or none. The
+  // case records that a limited choice is a partial pull. Remembered between runs (this browser only).
   const savedMedia = (() => {
     try {
-      return JSON.parse(localStorage.getItem("snagr.acq.media") ?? "null") as { mode?: MediaMode; mb?: number } | null;
+      return JSON.parse(localStorage.getItem("snagr.acq.media") ?? "null") as
+        | { mode?: MediaMode; mb?: number; gb?: number; min?: number }
+        | null;
     } catch {
       return null;
     }
   })();
-  const [mediaMode, setMediaMode] = useState<MediaMode>(savedMedia?.mode ?? "camera");
+  const [mediaMode, setMediaMode] = useState<MediaMode>(savedMedia?.mode ?? "budget");
   const [mediaCapMb, setMediaCapMb] = useState(savedMedia?.mb ?? 200);
+  const [mediaCapGb, setMediaCapGb] = useState(savedMedia?.gb ?? 7);
+  const [mediaTimeMin, setMediaTimeMin] = useState(savedMedia?.min ?? 8);
   useEffect(() => {
     try {
-      localStorage.setItem("snagr.acq.media", JSON.stringify({ mode: mediaMode, mb: mediaCapMb }));
+      localStorage.setItem(
+        "snagr.acq.media",
+        JSON.stringify({ mode: mediaMode, mb: mediaCapMb, gb: mediaCapGb, min: mediaTimeMin }),
+      );
     } catch {
       /* storage blocked — a per-viewer convenience only */
     }
-  }, [mediaMode, mediaCapMb]);
+  }, [mediaMode, mediaCapMb, mediaCapGb, mediaTimeMin]);
   const [tier2Telegram, setTier2Telegram] = useState(false);
   const [tier2Instagram, setTier2Instagram] = useState(false);
   const [tier2Snapchat, setTier2Snapchat] = useState(false);
@@ -462,7 +469,8 @@ export function AcquisitionView({
         tier1_sms: target.kind === "real" ? tier1Sms : false,
         tier1_collect_all: target.kind === "real" ? tier1CollectAll : false,
         media_mode: mediaMode,
-        media_cap_mb: mediaMode === "camera" ? mediaCapMb : 0,
+        media_cap_mb: mediaMode === "camera" ? mediaCapMb : mediaMode === "budget" ? Math.round(mediaCapGb * 1024) : 0,
+        media_time_limit_min: mediaMode === "budget" ? mediaTimeMin : 0,
         // Tier-2 re-guards on rootConfirmed, not just target.kind: the reset effect
         // above clears these the moment root drops, but that effect fires a render
         // after the device-check response lands, so a submit racing that window would
@@ -1168,6 +1176,7 @@ export function AcquisitionView({
         <div className="flex flex-col gap-2">
           {(
             [
+              ["budget", "Up to a size, from everywhere", "Newest photos and videos from every folder (camera, screenshots, WhatsApp, Telegram, downloads) share one size budget. Media goes last; when the budget or time box is used up it stops and the run moves on."],
               ["camera", "Camera folder only, up to a size", "Newest photos and videos from DCIM/Camera. No screenshots, downloads or app media."],
               ["none", "No photos or videos", "Skip them entirely."],
               ["all", "Everything", "Every photo and video on the phone. On a large phone this can take hours."],
@@ -1182,6 +1191,32 @@ export function AcquisitionView({
             </label>
           ))}
         </div>
+        {mediaMode === "budget" && (
+          <div className="flex gap-4 mt-3">
+            <label className="text-xs text-muted block max-w-[10rem]">
+              Budget (GB)
+              <input
+                type="number"
+                min={0.1}
+                step={1}
+                className="input mt-1"
+                value={mediaCapGb}
+                onChange={(e) => setMediaCapGb(Math.max(0.1, Number(e.target.value)))}
+              />
+            </label>
+            <label className="text-xs text-muted block max-w-[10rem]">
+              Time box (minutes, 0 = none)
+              <input
+                type="number"
+                min={0}
+                step={1}
+                className="input mt-1"
+                value={mediaTimeMin}
+                onChange={(e) => setMediaTimeMin(Math.max(0, Number(e.target.value)))}
+              />
+            </label>
+          </div>
+        )}
         {mediaMode === "camera" && (
           <label className="text-xs text-muted block mt-3 max-w-[10rem]">
             Limit (MB)

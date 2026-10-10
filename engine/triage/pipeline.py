@@ -114,7 +114,7 @@ from .forensics.battery_priority import should_pull_category
 from .forensics.batch_transfer import DEFAULT_CHUNK_SIZE, chunk_files, pull_chunk
 
 from .acquire import AcquisitionSource, PulledFile, RealDeviceSource
-from .caps import select_files
+from .caps import MediaBudget, is_budgeted_media, select_files
 from .analysis import assess_risk, build_communication_graph
 from .config import (
     APP_MEDIA_ROOTS,
@@ -300,9 +300,13 @@ class PipelineConfig:
     # partial acquisition and is recorded and reported as one (derived/acquisition_caps.json).
     cap_total_bytes: int = 0
     cap_bucket_bytes: int = 0
-    # Photos/videos: "all", "camera" (DCIM/Camera only, newest first up to media_cap_bytes) or "none".
+    # Photos/videos: "all", "camera" (DCIM/Camera only, newest first up to media_cap_bytes),
+    # "budget" (every folder, newest first, sharing media_cap_bytes) or "none".
     media_mode: str = "all"
     media_cap_bytes: int = 0
+    # Wall-clock box for the photo/video part of the pull (0 = none). Whatever media is not in by
+    # then stays on the phone, is listed in derived/media_budget.json, and the pull moves on.
+    media_time_limit_s: float = 0.0
     capture_screenshot: bool = True  # manual-capture the current screen (read-only)
     tier1_contacts: bool = False  # run helper APK flow to collect contacts.json
     # NOTE (P2-5): these two flags used to be labelled "role-swap". That was wrong and
@@ -1192,13 +1196,28 @@ def run_acquisition(
             tier=Tier.TIER0.value,
         )
 
+    if caps_report is not None and caps_report.get("truncated_files"):
+        # max_files is a safety valve, not a selection rule: say so when it silently shortens a plan.
+        case.log(
+            "fs.cap",
+            f"max_files={cfg.max_files} cut the plan short: {caps_report['truncated_files']} selected "
+            "file(s) will NOT be pulled (raise max_files to include them)",
+            result="warning",
+            tier=Tier.TIER0.value,
+        )
+
     if caps_report is not None and caps_report.get("media_policy"):
         mp = caps_report["media_policy"]
+        outside = (
+            ""
+            if mp["mode"] == "budget"
+            else f"{mp['left_outside_camera_files']} outside the camera folder "
+            f"({mp['left_outside_camera_bytes'] / 1e6:.0f} MB) and "
+        )
         case.log(
             "fs.media_policy",
             f"media policy '{mp['mode']}': kept {mp['media_kept_files']} photo/video file(s) "
-            f"({mp['media_kept_bytes'] / 1e6:.0f} MB); left on the device {mp['left_outside_camera_files']} "
-            f"outside the camera folder ({mp['left_outside_camera_bytes'] / 1e6:.0f} MB) and "
+            f"({mp['media_kept_bytes'] / 1e6:.0f} MB); left on the device {outside}"
             f"{mp['left_over_cap_files']} over the cap ({mp['left_over_cap_bytes'] / 1e6:.0f} MB); "
             f"{mp['left_older_chat_backups_files']} older chat backup(s) "
             f"({mp['left_older_chat_backups_bytes'] / 1e6:.0f} MB) not pulled — a partial collection",
@@ -1321,6 +1340,20 @@ def run_acquisition(
     if completed_files:
         ordered_files = [f for f in ordered_files if f not in completed_files]
 
+    # Media last. Documents, chat databases and recordings are small and fast; photos and videos are
+    # what take the time, so they go after everything else (newest first, as selected) and the
+    # media budget can stop them without ever cutting the small evidence short.
+    media_budget: Optional[MediaBudget] = None
+    if cfg.media_mode == "budget" or cfg.media_time_limit_s:
+        media_budget = MediaBudget(
+            cap_bytes=cfg.media_cap_bytes if cfg.media_mode == "budget" else 0,
+            time_limit_s=cfg.media_time_limit_s,
+        )
+        ordered_files = [f for f in ordered_files if not is_budgeted_media(f)] + [
+            f for f in ordered_files if is_budgeted_media(f)
+        ]
+        media_budget.start()
+
     # Battery-aware gating (opt-in via cfg.battery_aware): drop low-priority files
     # when the live battery reading is below the existing battery_priority.py bands.
     # Databases (messages/contacts/calls) are never gated -- only bulk media/docs are.
@@ -1367,6 +1400,7 @@ def run_acquisition(
             chunk_size=cfg.batch_pull_chunk_size,
             max_workers=cfg.parallel_workers,
             cancel_token=cancel_token,
+            media_budget=media_budget,
         )
         if _leftover:
             case.log(
@@ -1389,6 +1423,7 @@ def run_acquisition(
             max_workers=min(cfg.parallel_workers, max(len(_leftover), 1)),
             cancel_token=cancel_token,
             done_offset=len(_to_pull) - len(_leftover),
+            media_budget=media_budget,
         )
         pull_results: List[Dict] = batch_results + fallback_results
     else:
@@ -1405,6 +1440,24 @@ def run_acquisition(
             use_priority_filter=cfg.use_priority_filter,
             max_workers=min(cfg.parallel_workers, max(len(ordered_files), 1)),
             cancel_token=cancel_token,
+            media_budget=media_budget,
+        )
+
+    if media_budget is not None:
+        mb = media_budget.report()
+        case.write_derived("media_budget", mb)
+        case.log(
+            "fs.media_budget",
+            f"media pulled: {mb['media_files_pulled']} file(s), {mb['media_bytes_pulled'] / 1e9:.2f} GB"
+            + (f" of a {mb['cap_bytes'] / 1e9:.1f} GB budget" if mb["cap_bytes"] else "")
+            + f" in {mb['elapsed_s']:.0f}s"
+            + (
+                f"; stopped by {mb['stopped_by']} — {mb['media_files_left']} more photo/video file(s) left on "
+                "the phone (a partial media collection)"
+                if mb["media_files_left"]
+                else "; nothing left behind"
+            ),
+            tier=Tier.TIER0.value,
         )
 
     # Fold parallel results into accumulators ──────────────────────────────
@@ -3801,6 +3854,7 @@ def _pull_and_process_file(
     pull_start: float,
     use_priority_filter: bool,
     cancel_token: Optional[CancellationToken] = None,
+    media_budget: Optional[MediaBudget] = None,
 ) -> Optional[Dict]:
     """Pull a single file and process it immediately.
 
@@ -3833,6 +3887,10 @@ def _pull_and_process_file(
         Processed result dict, or None if the file was skipped/failed.
     """
     if cancel_token: cancel_token.raise_if_cancelled()
+
+    # Media budget spent (size or time): leave this photo/video on the phone; recorded in the report.
+    if media_budget is not None and media_budget.should_skip(device_path):
+        return None
 
     elapsed = time.monotonic() - pull_start
     if use_priority_filter and not should_pull_file(device_path, elapsed):
@@ -3871,7 +3929,8 @@ def _pull_and_process_file(
         return None
 
     return _hash_ingest_and_process(
-        device_path, pulled.local_path, pulled.flags, source, case, ingest_lock
+        device_path, pulled.local_path, pulled.flags, source, case, ingest_lock,
+        media_budget=media_budget,
     )
 
 
@@ -3883,6 +3942,7 @@ def _hash_ingest_and_process(
     case: Any,
     ingest_lock: threading.Lock,
     method_suffix: str = "",
+    media_budget: Optional[MediaBudget] = None,
 ) -> Optional[Dict]:
     """Shared tail for both pull paths: hash → ingest (serialised) → per-file parse.
 
@@ -3927,6 +3987,8 @@ def _hash_ingest_and_process(
             flush=False,
         )
     add_bytes(rec.size_bytes)
+    if media_budget is not None:
+        media_budget.add(device_path, rec.size_bytes)  # counts what really landed, not the index's size
     stored = case.root / rec.stored_path
 
     # ── Per-file processing (parse / EXIF / DB — can run in parallel) ───
@@ -3941,6 +4003,7 @@ def _ingest_extracted_batch_file(
     case: Any,
     ingest_lock: threading.Lock,
     cancel_token: Optional[CancellationToken] = None,
+    media_budget: Optional[MediaBudget] = None,
 ) -> Optional[Dict]:
     """Ingest+process a file already staged locally by a batch tar pull.
 
@@ -3958,6 +4021,7 @@ def _ingest_extracted_batch_file(
     return _hash_ingest_and_process(
         device_path, local_path, flags, source, case, ingest_lock,
         method_suffix=" (batch tar)",
+        media_budget=media_budget,
     )
 
 
@@ -3973,6 +4037,7 @@ def _batch_pull_files(
     chunk_size: int,
     max_workers: int = 8,
     cancel_token: Optional[CancellationToken] = None,
+    media_budget: Optional[MediaBudget] = None,
 ) -> tuple[List[Dict], List[str]]:
     """Pull *files* by tarring them into chunks on the device (see batch_transfer.py).
 
@@ -4000,6 +4065,12 @@ def _batch_pull_files(
 
     for chunk in chunks:
         if cancel_token: cancel_token.raise_if_cancelled()
+        if media_budget is not None:
+            # Once the media budget is spent the rest of the media is left on the phone (recorded,
+            # not retried); non-media files in the chunk are still pulled.
+            chunk = [f for f in chunk if not media_budget.should_skip(f)]
+            if not chunk:
+                continue
         pulled = pull_chunk(chunk, source.adb, staging)
         recovered_paths = {p.device_path for p in pulled}
         leftover.extend(f for f in chunk if f not in recovered_paths)
@@ -4022,6 +4093,7 @@ def _batch_pull_files(
                     case,
                     ingest_lock,
                     cancel_token,
+                    media_budget,
                 ): item
                 for item in pulled
             }
@@ -4078,6 +4150,7 @@ def _parallel_pull_files(
     max_workers: int = 8,
     cancel_token: Optional[CancellationToken] = None,
     done_offset: int = 0,
+    media_budget: Optional[MediaBudget] = None,
 ) -> List[Dict]:
     """Pull multiple files in parallel using ThreadPoolExecutor.
 
@@ -4155,6 +4228,7 @@ def _parallel_pull_files(
                 pull_start,
                 use_priority_filter,
                 cancel_token,
+                media_budget,
             ): dev_path
             for dev_path in to_pull
         }

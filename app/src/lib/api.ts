@@ -481,9 +481,12 @@ export const api = {
     wifi_live?: boolean;
     scan_encrypted_apps?: boolean;
     run_self_validation?: boolean;
-    /** Photos/videos: everything (default), only DCIM/Camera up to media_cap_mb, or none. */
-    media_mode?: "all" | "camera" | "none";
+    /** Photos/videos: everything (default), DCIM/Camera up to media_cap_mb, every folder sharing a
+     * media_cap_mb budget ("budget"), or none. */
+    media_mode?: "all" | "camera" | "budget" | "none";
     media_cap_mb?: number;
+    /** Stop pulling photos/videos after this many minutes (budget mode; 0 = no time box). */
+    media_time_limit_min?: number;
   }) =>
     request<{ case_id: string; started: boolean }>("/api/acquire", {
       method: "POST",

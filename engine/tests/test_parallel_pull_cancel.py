@@ -40,7 +40,8 @@ class TestParallelPullCancellation(unittest.TestCase):
         calls_lock = threading.Lock()
 
         def fake_pull_and_process(
-            dev_path, source, staging, case, ingest_lock, pull_start, use_priority_filter, cancel_token
+            dev_path, source, staging, case, ingest_lock, pull_start, use_priority_filter, cancel_token,
+            media_budget=None,
         ):
             # Simulates the uninterruptible portion of a real transfer that was
             # already dispatched to a worker before cancellation was requested.

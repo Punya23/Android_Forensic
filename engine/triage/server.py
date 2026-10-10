@@ -1217,20 +1217,32 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             return jsonify({"error": "size caps must be between 0 (no cap) and 4 TB"}), 400
 
         media_mode = str(body.get("media_mode") or "all")
-        if media_mode not in ("all", "camera", "none"):
-            return jsonify({"error": "media_mode must be all, camera or none"}), 400
+        if media_mode not in ("all", "camera", "budget", "none"):
+            return jsonify({"error": "media_mode must be all, camera, budget or none"}), 400
         try:
             media_cap_mb = float(body.get("media_cap_mb") or 0)
         except (TypeError, ValueError):
             return jsonify({"error": "media_cap_mb must be a number"}), 400
         if not 0 <= media_cap_mb <= 4_194_304:
             return jsonify({"error": "media_cap_mb must be between 0 (no limit) and 4 TB"}), 400
+        if media_mode == "budget" and media_cap_mb <= 0:
+            return jsonify({"error": "media_mode budget needs media_cap_mb above 0"}), 400
+        try:
+            media_time_limit_min = float(body.get("media_time_limit_min") or 0)
+        except (TypeError, ValueError):
+            return jsonify({"error": "media_time_limit_min must be a number"}), 400
+        if not 0 <= media_time_limit_min <= 1440:
+            return jsonify({"error": "media_time_limit_min must be between 0 (no limit) and 1440"}), 400
 
         cfg = PipelineConfig(
             case_id=case_id,
             examiner=examiner,
             media_mode=media_mode,
             media_cap_bytes=int(media_cap_mb * 1024**2),
+            media_time_limit_s=media_time_limit_min * 60,
+            # A budgeted run is bounded by bytes, not by file count: thousands of small chat photos
+            # fit in a few GB, and the 5 000-file safety valve would silently cut them.
+            **({"max_files": 100_000} if media_mode == "budget" else {}),
             cap_total_bytes=int(cap_total_gb * 1024**3),
             cap_bucket_bytes=int(cap_bucket_mb * 1024**2),
             legal_authority=authority,
@@ -1926,6 +1938,8 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             "hotspot_leases",
             # Demo-sized run: what the size caps left on the device ({} when the run was not capped).
             "acquisition_caps",
+            # Live media budget outcome: bytes/files actually pulled, why media stopped, what was left.
+            "media_budget",
         }
 
         if dataset not in (list_sets | obj_sets):
