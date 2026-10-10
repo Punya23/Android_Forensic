@@ -576,3 +576,45 @@ def test_sqbrite_scan_is_time_boxed_and_says_how_far_it_got(tmp_path):
     rows = sqbrite_scan(db, max_seconds=0.3)
     assert time.monotonic() - t0 < 5
     assert rows.timed_out and 0 < rows.scanned_fraction < 1
+
+
+def _tl_string(text: str) -> bytes:
+    raw = text.encode()
+    head = bytes([len(raw)]) if len(raw) < 254 else b"\xfe" + len(raw).to_bytes(3, "little")
+    body = head + raw
+    return body + b"\0" * (-len(body) % 4)
+
+
+def test_telegram_android_messages_are_decoded_to_plain_text(tmp_path):
+    """Telegram's cache is not encrypted: messages_v2.data is a TL object with the text after `date`."""
+    import sqlite3
+    import struct
+
+    from triage.parsers.telegram import recover_telegram_messages
+
+    date = 1_791_439_686
+    peer_user = struct.pack("<Iq", 0x59511722, 6986541613)
+
+    def blob(text, from_id=None, date=date):
+        flags = 0x100 if from_id else 0
+        body = struct.pack("<IIII", 0x7600B9D3, flags, 0, 30)
+        if from_id:
+            body += struct.pack("<Iq", 0x59511722, from_id)
+        return body + peer_user + struct.pack("<i", date) + _tl_string(text) + b"\x01\x20\x00\x00"
+
+    db = tmp_path / "cache4.db"
+    con = sqlite3.connect(db)
+    con.execute("create table messages_v2 (mid integer, uid integer, read_state int, send_state int, date int, data blob, out int)")
+    con.execute("create table users (uid integer, name text, status int, data blob)")
+    con.execute("create table chats (uid integer, name text, data blob)")
+    con.execute("insert into users values (6986541613, 'jiya how;;;jiyah', 0, x'00')")
+    con.execute("insert into messages_v2 values (30, 6986541613, 0, 0, ?, ?, 0)", (date, blob("Panel chiye bhai")))
+    con.execute("insert into messages_v2 values (31, 6986541613, 0, 0, ?, ?, 1)", (date + 5, blob("Ye le demo check kar", date=date + 5)))
+    con.commit()
+    con.close()
+
+    result = recover_telegram_messages(db)
+    live = [m for m in result["messages"] if m["confidence"] == "live"]
+    assert [m["body"] for m in live] == ["Panel chiye bhai", "Ye le demo check kar"]
+    assert live[0]["sender"] == "6986541613" and live[1]["sender"] == "__self__"  # outgoing is marked, not guessed
+    assert {u["_id"]: u["_name"] for u in result["android_users"]}["6986541613"] == "Jiya How (@jiyah)"

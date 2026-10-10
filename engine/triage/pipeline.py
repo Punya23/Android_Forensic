@@ -5044,9 +5044,10 @@ def _run_tier2_telegram(
         tier=Tier.TIER2.value,
     )
     conversations = build_conversations(
-        messages=result.get("messages", []),
-        users=uc_result.get("users", []),
-        chats=uc_result.get("chats", []),
+        # deletion gaps have no text; they stay in telegram_recovery and the counts, not as blank bubbles
+        messages=[m for m in result.get("messages", []) if m.get("body")],
+        users=uc_result.get("users") or result.get("android_users", []),
+        chats=uc_result.get("chats") or result.get("android_chats", []),
     )
     _write_case_derived(case, "telegram_conversations", conversations)
     case.log(

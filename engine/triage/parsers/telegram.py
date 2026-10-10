@@ -61,6 +61,7 @@ import logging
 import os
 import re
 import sqlite3
+import struct
 import zipfile
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
@@ -1063,6 +1064,185 @@ def _carved_row_to_dict(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Telegram for Android ``messages_v2``: decode the message text out of the TL blob
+# ---------------------------------------------------------------------------
+# Telegram's local cache is NOT encrypted: each message is a serialised TL object (a 4-byte
+# constructor, flags, id, peer(s), date, then the text as a TL string) in the ``data`` BLOB.
+# The generic schema detector cannot name those columns, so a real phone gave zero live
+# messages and only carved fragments. This reader knows the fixed ``messages_v2`` layout.
+_TL_PEER_USER = 0x59511722
+_TL_PEER_CHAT = 0x36C6019A
+_TL_PEER_CHANNEL = 0xA2A5371E
+_ANDROID_MSG_COLS = {"mid", "uid", "date", "data", "out"}
+_DDL_NOISE = re.compile(r"CREATE (INDEX|TABLE|UNIQUE)|PRAGMA|sqlite_|\bWITHOUT ROWID\b", re.I)
+
+
+def _read_tl_string(buf: bytes, i: int) -> Optional[str]:
+    """A TL string at ``buf[i]``: one length byte (or 0xFE + 3 length bytes), the UTF-8 bytes, padding."""
+    if i >= len(buf):
+        return None
+    n = buf[i]
+    start = i + 1
+    if n == 254:
+        if i + 4 > len(buf):
+            return None
+        n = int.from_bytes(buf[i + 1 : i + 4], "little")
+        start = i + 4
+    elif n > 254:
+        return None
+    if start + n > len(buf):
+        return None
+    try:
+        return buf[start : start + n].decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _tl_text_after_date(blob: bytes, date: int) -> Optional[str]:
+    """The message text: the TL string that follows the message's own ``date`` field."""
+    anchor = struct.pack("<i", int(date))
+    pos = blob.find(anchor, 12)
+    while pos != -1:
+        text = _read_tl_string(blob, pos + 4)
+        if text is not None:
+            return text
+        pos = blob.find(anchor, pos + 1)
+    return None
+
+
+def _tl_peer(blob: bytes, i: int) -> tuple[Optional[str], int]:
+    """A TL Peer at ``blob[i]`` as (signed id string, next offset)."""
+    if i + 12 > len(blob):
+        return None, i
+    ctor = struct.unpack_from("<I", blob, i)[0]
+    ident = struct.unpack_from("<q", blob, i + 4)[0]
+    if ctor == _TL_PEER_USER:
+        return str(ident), i + 12
+    if ctor in (_TL_PEER_CHAT, _TL_PEER_CHANNEL):
+        return str(-ident), i + 12
+    return None, i
+
+
+def _tl_media_label(blob: bytes) -> str:
+    for needle, label in (
+        (b"audio/ogg", "[voice message]"),
+        (b"audio/", "[audio]"),
+        (b"video/", "[video]"),
+        (b"image/", "[image]"),
+        (b"application/", "[file]"),
+    ):
+        if needle in blob:
+            return label
+    return ""
+
+
+def _display_name(raw: Any) -> str:
+    """``users.name`` is ``"first last;;;username"`` (lower-cased for search): show it readably."""
+    first, _, rest = str(raw or "").partition(";;;")
+    username = rest.split(";;;")[0].strip()
+    name = first.strip().title() if first.strip() else ""
+    if name and username:
+        return f"{name} (@{username})"
+    return name or (f"@{username}" if username else "")
+
+
+def read_android_telegram(db_path: Path) -> dict[str, Any]:
+    """Messages (as plain text), users and chats from a Telegram for Android ``cache4.db``.
+
+    Opens a private copy together with its ``-wal``/``-shm`` so messages still in the write-ahead
+    log are included. Returns ``{"messages": [], "users": [], "chats": []}`` when the file is not
+    that schema, so the caller falls back to the generic path."""
+    import shutil
+    import tempfile
+
+    empty: dict[str, Any] = {"messages": [], "users": [], "chats": []}
+    tmp = Path(tempfile.mkdtemp(prefix="tg_read_"))
+    try:
+        for suffix in ("", "-wal", "-shm"):
+            src = Path(str(db_path) + suffix)
+            if src.exists():
+                shutil.copy2(src, tmp / ("cache4.db" + suffix))
+        con = sqlite3.connect(tmp / "cache4.db")
+        try:
+            cols = {r[1] for r in con.execute("PRAGMA table_info(messages_v2)")}
+            if not _ANDROID_MSG_COLS <= cols:
+                return empty
+            users = {int(u): _display_name(n) for u, n in con.execute("SELECT uid, name FROM users")}
+            chats = {int(u): str(n or "").strip() for u, n in con.execute("SELECT uid, name FROM chats")}
+            messages: list[dict[str, Any]] = []
+            for mid, uid, date, out, data in con.execute(
+                "SELECT mid, uid, date, out, data FROM messages_v2 ORDER BY date"
+            ):
+                blob = bytes(data or b"")
+                if len(blob) < 20:
+                    continue
+                text = _tl_text_after_date(blob, date)
+                if text is None:
+                    text = _extract_strings_from_blob(blob)
+                text = (text or "").strip()
+                if not text:
+                    text = _tl_media_label(blob)
+                if not text:
+                    continue  # service message or media with no text and no recognisable type
+                flags = struct.unpack_from("<I", blob, 4)[0]
+                sender, _ = (_tl_peer(blob, 16) if flags & 0x100 else (None, 16))
+                if int(out or 0):
+                    sender = "__self__"
+                elif sender is None:
+                    sender = str(uid)
+                messages.append(
+                    {
+                        "body": text,
+                        "sender": sender,
+                        "timestamp": _epoch_to_iso(date),
+                        "chat_id": str(uid),
+                        "confidence": Confidence.LIVE.value,
+                        "source_file": db_path.name,
+                        "page": None,
+                        "offset": None,
+                        "carve_method": "live_query",
+                        "provenance": f"live table 'messages_v2' (message #{mid}, decoded from Telegram's TL format)",
+                        "warnings": [],
+                        "media_artifact_id": None,
+                    }
+                )
+            user_rows = [
+                {"_id": str(u), "_name": n or str(u), "confidence": Confidence.LIVE.value} for u, n in users.items()
+            ]
+            # channel/group posts are "sent" by the channel itself (negative id): name that sender too
+            user_rows += [
+                {"_id": f"-{u}", "_name": n or f"Chat {u}", "confidence": Confidence.LIVE.value} for u, n in chats.items()
+            ]
+            chat_rows = [
+                {"_id": f"-{u}", "_name": n or f"Chat {u}", "confidence": Confidence.LIVE.value} for u, n in chats.items()
+            ] + [
+                {"_id": "__ungrouped__", "_name": "Recovered fragments (chat unknown)", "confidence": Confidence.CARVED_PARTIAL.value}
+            ] + [  # a private chat is titled with the other person's name
+                {"_id": str(u), "_name": n or str(u), "confidence": Confidence.LIVE.value} for u, n in users.items()
+            ]
+            return {"messages": messages, "users": user_rows, "chats": chat_rows}
+        finally:
+            con.close()
+    except Exception as exc:
+        log.warning("read_android_telegram: %s", exc)
+        return empty
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _is_clean_fragment(body: str, live_bodies: list[str]) -> bool:
+    """A carved fragment worth showing next to the real messages: readable text, not schema or a copy
+    of a message that is already there."""
+    b = body.strip()
+    if len(b) < 6 or _DDL_NOISE.search(b):
+        return False
+    readable = sum(1 for c in b if c.isalnum() or c.isspace() or c in ".,:;!?@#/-_()'\"&%+=$€₹")
+    if readable < 0.75 * len(b):
+        return False
+    return not any(b in lb or lb in b for lb in live_bodies)
+
+
 def recover_telegram_messages(
     db_path: str | Path,
     max_live_rows: int = 10_000,
@@ -1108,8 +1288,10 @@ def recover_telegram_messages(
 
     messages: list[dict[str, Any]] = []
 
-    # Live rows.
-    live_rows = _read_live_telegram_rows(db_path, schema, max_live_rows)
+    # Live rows. Telegram for Android's messages_v2 is decoded properly (plain text out of the TL
+    # blobs); any other layout goes through the generic column-guessing reader.
+    android = read_android_telegram(db_path)
+    live_rows = android["messages"] or _read_live_telegram_rows(db_path, schema, max_live_rows)
     messages.extend(live_rows)
 
     # Recovery engine.
@@ -1208,12 +1390,28 @@ def recover_telegram_messages(
             counts["carved_partial"] += 1
         elif conf == Confidence.DELETION_DETECTED.value:
             counts["deletion_detected"] += 1
+    if android["messages"]:
+        live_bodies = [m["body"] for m in android["messages"]]
+        messages = [
+            m for m in messages
+            if m.get("confidence") == Confidence.LIVE.value
+            or m.get("confidence") == Confidence.DELETION_DETECTED.value
+            or _is_clean_fragment(m.get("body", ""), live_bodies)
+        ]
+        counts = {k: 0 for k in counts}
+        for msg in messages:
+            conf = msg.get("confidence", "")
+            key = {"live": "live", "recovered": "recovered_verified", "carved": "carved_partial", "deletion": "deletion_detected"}.get(conf)
+            if key:
+                counts[key] += 1
     counts["total"] = len(messages)
     clip_bodies(messages)  # before conversations/derived datasets are built from these rows
 
     return {
         "available": True,
         "error": None,
+        "android_users": android["users"],
+        "android_chats": android["chats"],
         "schema": {
             "raw_columns": schema.raw_columns,
             "mapping": schema.mapping,
