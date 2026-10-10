@@ -2407,9 +2407,19 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         path = cases_root / _safe(case_id) / "report.html"
 
         if not path.exists():
-            # Return a minimal 404 JSON so the UI can show a helpful message
-            # rather than the default Flask HTML error page.
-            return jsonify({"error": "report not yet generated", "hint": "POST to /report/regenerate"}), 404
+            # Never answer an <iframe> with JSON: the browser shows it as raw text with a
+            # "Pretty-print" box (a run interrupted before its report was written, or a case
+            # imported without one). Build the report now instead.
+            from .report import generate_report
+
+            case = _open(cases_root, case_id)
+            try:
+                generate_report(case.root)
+                _finalize_report(case, trigger="on_demand")
+            except Exception as exc:
+                return jsonify({"error": f"report could not be generated: {exc}"}), 500
+            if not path.exists():
+                return jsonify({"error": "report not yet generated", "hint": "POST to /report/regenerate"}), 404
 
         return send_file(path.resolve(), mimetype="text/html")
 
