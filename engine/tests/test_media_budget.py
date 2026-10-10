@@ -186,3 +186,58 @@ def test_a_budget_run_pulls_documents_before_media_and_records_the_budget(tmp_pa
     assert caps["media_policy"]["mode"] == "budget" and caps["truncated_files"] == 0
     mb = json.loads((case_dir / "derived" / "media_budget.json").read_text())
     assert mb["cap_bytes"] == 50 * GB and mb["media_files_left"] == 0 and mb["stopped_by"] is None
+
+
+def test_caps_report_counts_what_the_media_policy_left_on_the_phone():
+    """'selected 120 of 120' used to hide 251 photos/videos the policy had already dropped."""
+    from triage.caps import select_files
+
+    lib = _library()
+
+    class _Src:
+        def list_files(self, root):  # pragma: no cover - the index path is used
+            return []
+
+        def list_indexed_files(self):
+            return lib
+
+    _, rep = select_files(_Src(), ["/sdcard"], max_files=10_000, media_mode="budget", media_cap_bytes=300 * MB)
+    mp = rep["media_policy"]
+    assert rep["available_files"] == rep["selected_files"] + rep["skipped_files"]
+    assert rep["skipped_files"] >= mp["left_over_cap_files"] > 0
+    assert rep["skipped_bytes"] >= mp["left_over_cap_bytes"]
+
+
+def test_a_directory_listed_as_a_file_is_not_ingested(tmp_path):
+    from triage.acquire.real import RealDeviceSource
+
+    class _Adb:
+        def pull(self, remote, local, timeout=300):
+            local.mkdir(parents=True)  # `adb pull <dir>` recurses and creates a directory
+            (local / "inner.jpg").write_bytes(b"x")
+            return type("R", (), {"ok": True})()
+
+    assert RealDeviceSource(_Adb()).pull_file("/sdcard/Pictures/Screenshots", tmp_path) is None
+    assert list(tmp_path.iterdir()) == []  # and the half-pulled tree is removed
+
+
+def test_a_time_target_gives_media_what_is_left_and_the_run_reports_its_timing(tmp_path):
+    import json
+
+    from tests.test_phase2_pipeline import build
+    from triage.acquire import MockDeviceSource
+    from triage.pipeline import POST_PULL_RESERVE_S, PipelineConfig, run_acquisition
+
+    corpus = tmp_path / "device"
+    corpus.mkdir()
+    build(corpus)
+    cfg = PipelineConfig(
+        case_id="TIME-1", examiner="T", cases_root=tmp_path / "cases", media_mode="budget",
+        media_cap_bytes=50 * GB, time_budget_s=900,
+    )
+    case_dir = Path(run_acquisition(MockDeviceSource(corpus), cfg)["case_dir"])
+    mb = json.loads((case_dir / "derived" / "media_budget.json").read_text())
+    assert 60 <= mb["time_limit_s"] <= 900 - POST_PULL_RESERVE_S  # what is left after the reserve
+    timing = json.loads((case_dir / "derived" / "run_timing.json").read_text())
+    assert timing["budget_s"] == 900 and timing["within_budget"] is True
+    assert [s["stage"] for s in timing["stages"]][:2] == ["init", "device"] and timing["stages"][-1]["stage"] == "report"  # written just before "done"

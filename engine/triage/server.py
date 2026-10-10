@@ -1237,9 +1237,17 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
         if not 0 <= media_time_limit_min <= 1440:
             return jsonify({"error": "media_time_limit_min must be between 0 (no limit) and 1440"}), 400
 
+        try:
+            time_budget_min = float(body.get("time_budget_min") or 0)
+        except (TypeError, ValueError):
+            return jsonify({"error": "time_budget_min must be a number"}), 400
+        if not 0 <= time_budget_min <= 1440:
+            return jsonify({"error": "time_budget_min must be between 0 (no target) and 1440"}), 400
+
         cfg = PipelineConfig(
             case_id=case_id,
             examiner=examiner,
+            time_budget_s=time_budget_min * 60,
             media_mode=media_mode,
             media_cap_bytes=int(media_cap_mb * 1024**2),
             media_time_limit_s=media_time_limit_min * 60,
@@ -1945,6 +1953,8 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             "media_budget",
             # Android-version / OEM compatibility facts recorded for this device at intake.
             "device_compat",
+            # Per-stage wall-clock of the run and whether it met its time target.
+            "run_timing",
         }
 
         if dataset not in (list_sets | obj_sets):

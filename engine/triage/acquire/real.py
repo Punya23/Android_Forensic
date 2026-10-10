@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import re
+import shutil
 import uuid
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
@@ -181,6 +182,11 @@ class RealDeviceSource(AcquisitionSource):
         local = staging_dir / uuid.uuid4().hex
         # 5 minutes plus time for the file at a pessimistic 2 MB/s (several streams share one cable).
         res = self.adb.pull(device_path, local, timeout=300 + self.size_hints.get(device_path, 0) // (2 * 1024**2))
+        if res.ok and local.is_dir():
+            # A directory the media index listed as a file: pulling it recursed. It is not a file
+            # to ingest (its contents are listed in their own right).
+            shutil.rmtree(local, ignore_errors=True)
+            return None
         if not res.ok or not local.exists():
             # A cancelled or timed-out pull (adb.py kills the process mid-transfer)
             # can still leave a partial file on disk even though the transfer as a
@@ -268,7 +274,8 @@ class RealDeviceSource(AcquisitionSource):
     ) -> Tuple[List[str], int]:
         """Pre-scan *paths* and return ``(valid_paths, phantom_count)``.
 
-        Checks hundreds of paths per ``adb shell`` call (one shell loop printing the missing ones)
+        Checks hundreds of paths per ``adb shell`` call (one shell loop printing the ones that are not
+        regular files: gone, or a directory the media index listed)
         instead of one adb process per file, which cost ~0.15 s each even in parallel: 5 000 files
         took about a minute, the same list now takes a second or two. A batch whose shell call
         fails falls back to the per-file check for just that batch, and any error counts as
@@ -287,7 +294,7 @@ class RealDeviceSource(AcquisitionSource):
             nonlocal done, batch, size
             if not batch:
                 return
-            cmd = "for f in " + " ".join(sh_quote(p) for p in batch) + '; do [ -e "$f" ] || echo "$f"; done'
+            cmd = "for f in " + " ".join(sh_quote(p) for p in batch) + '; do [ -f "$f" ] || echo "$f"; done'
             res = self.adb.shell(cmd, timeout=60)
             if res.ok:
                 asked = set(batch)

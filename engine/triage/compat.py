@@ -39,7 +39,8 @@ def sdk_int(value: str | int | None) -> int:
 # not exist at this level — or that the manifest does not request there — fails, and the failure
 # used to be logged as an error on every run. Boundaries from the platform documentation:
 # READ_EXTERNAL_STORAGE is replaced by READ_MEDIA_* in 33, ACCESS_MEDIA_LOCATION arrives in 29,
-# BLUETOOTH_CONNECT/SCAN in 31, POST_NOTIFICATIONS in 33.
+# BLUETOOTH_CONNECT/SCAN in 31. POST_NOTIFICATIONS (33) is deliberately absent: the Collector
+# posts no notifications and its manifest does not request it, so granting it can never take.
 _COLLECTOR_GRANTS: tuple[tuple[str, int, int | None], ...] = (
     ("android.permission.READ_CONTACTS", 1, None),
     ("android.permission.READ_CALL_LOG", 16, None),
@@ -55,7 +56,6 @@ _COLLECTOR_GRANTS: tuple[tuple[str, int, int | None], ...] = (
     ("android.permission.ACCESS_COARSE_LOCATION", 1, None),
     ("android.permission.BLUETOOTH_CONNECT", 31, None),
     ("android.permission.BLUETOOTH_SCAN", 31, None),
-    ("android.permission.POST_NOTIFICATIONS", 33, None),
 )
 
 
@@ -181,7 +181,7 @@ def describe(sdk: int, release: str = "", quirks: list[str] | None = None) -> di
     if sdk >= 30:
         notes.append("Android 11+: storage goes through FUSE, so many small files are slow one by one; the engine streams them as tar.")
     if sdk >= 33:
-        notes.append("Android 13+: media access uses READ_MEDIA_* and notifications need POST_NOTIFICATIONS; both are granted.")
+        notes.append("Android 13+: media access uses READ_MEDIA_* instead of READ_EXTERNAL_STORAGE; those are granted.")
     if "auto_blocker_usb" in (quirks or []):
         notes.append(
             "Samsung Auto Blocker (One UI 6.0+) is on by default and blocks USB commands; if the phone never appears "

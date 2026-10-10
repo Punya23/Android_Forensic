@@ -27,13 +27,13 @@ def test_grants_follow_the_api_level():
     a10, a12, a13, a15 = (set(compat.collector_grants(n)) for n in (29, 31, 33, 35))
     # Android 10: legacy storage permission, no READ_MEDIA_*, no Bluetooth runtime permissions
     assert "android.permission.READ_EXTERNAL_STORAGE" in a10 and "android.permission.ACCESS_MEDIA_LOCATION" in a10
-    assert not {p for p in a10 if "READ_MEDIA" in p or "BLUETOOTH" in p or "POST_NOTIFICATIONS" in p}
+    assert not {p for p in a10 if "READ_MEDIA" in p or "BLUETOOTH" in p}
     # Android 12: Bluetooth CONNECT/SCAN appear, media permissions do not yet
     assert {"android.permission.BLUETOOTH_CONNECT", "android.permission.BLUETOOTH_SCAN"} <= a12
     assert "android.permission.READ_MEDIA_IMAGES" not in a12
-    # Android 13+: READ_MEDIA_* replace READ_EXTERNAL_STORAGE, notifications become a runtime permission
+    # Android 13+: READ_MEDIA_* replace READ_EXTERNAL_STORAGE
     for a in (a13, a15):
-        assert {"android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO", "android.permission.POST_NOTIFICATIONS"} <= a
+        assert {"android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO"} <= a
         assert "android.permission.READ_EXTERNAL_STORAGE" not in a
     # the permissions that carry the evidence are asked for on every release
     for a in (a10, a12, a13, a15):

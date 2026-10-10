@@ -485,8 +485,11 @@ export const api = {
      * media_cap_mb budget ("budget"), or none. */
     media_mode?: "all" | "camera" | "budget" | "none";
     media_cap_mb?: number;
-    /** Stop pulling photos/videos after this many minutes (budget mode; 0 = no time box). */
+    /** Stop pulling photos/videos after this many minutes (0 = no time box). */
     media_time_limit_min?: number;
+    /** Whole-run target in minutes (e.g. 15): the photo/video pull gets what is left after
+     * reserving time for analysis and the report. 0 = no target. */
+    time_budget_min?: number;
   }) =>
     request<{ case_id: string; started: boolean }>("/api/acquire", {
       method: "POST",

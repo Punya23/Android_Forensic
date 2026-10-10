@@ -380,6 +380,12 @@ def select_files(
         picked, rep = apply_caps(kept, bucket_bytes, total_bytes)
         if policy:
             rep["media_policy"] = policy
+            # The policy ran before the caps, so the report's totals only saw what it let through.
+            # Add back what it left on the phone, or "selected 120 of 120" hides 251 photos/videos.
+            for unit in ("files", "bytes"):
+                left = sum(policy[f"left_{k}_{unit}"] for k in ("outside_camera", "over_cap", "older_chat_backups"))
+                rep[f"available_{unit}"] += left
+                rep[f"skipped_{unit}"] += left
         return picked, rep
 
     seen: set[str] = set()

@@ -14,6 +14,7 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import logging
+import re
 import shlex
 import shutil
 import tempfile
@@ -277,6 +278,11 @@ from .forensics.location_aggregate import (
 
 ProgressFn = Callable[[str, float, str], None]
 
+#: Seconds kept after the media pull for recovery, analysis, the AI pass and the report. Measured
+#: on the mock corpus the stages after the pull take seconds; this leaves room for a phone with
+#: tens of thousands of files (carving, EXIF, hashing) without making the demo overrun.
+POST_PULL_RESERVE_S = 240.0
+
 
 def _noop(stage: str, pct: float, detail: str) -> None:  # default progress sink
     pass
@@ -309,6 +315,11 @@ class PipelineConfig:
     # Wall-clock box for the photo/video part of the pull (0 = none). Whatever media is not in by
     # then stays on the phone, is listed in derived/media_budget.json, and the pull moves on.
     media_time_limit_s: float = 0.0
+    # Whole-run target in seconds (0 = none), e.g. 900 for a 15-minute demonstration. Everything
+    # but the photo/video pull is bounded by what the phone and the analysis need, so the pull is
+    # what gives way: its time box becomes whatever is left after reserving POST_PULL_RESERVE_S
+    # for analysis and the report. What media that leaves behind is reported, never hidden.
+    time_budget_s: float = 0.0
     capture_screenshot: bool = True  # manual-capture the current screen (read-only)
     tier1_contacts: bool = False  # run helper APK flow to collect contacts.json
     # NOTE (P2-5): these two flags used to be labelled "role-swap". That was wrong and
@@ -466,6 +477,15 @@ def run_acquisition(
         immediately (progressive display).
     """
     _metrics_reset()  # reset per-run metrics
+    run_t0 = time.monotonic()
+    stage_marks: list[tuple[str, float]] = []  # (stage, seconds since start) at each stage's first progress
+    _emit_progress = progress
+
+    def progress(stage: str, pct: float, detail: str) -> None:  # noqa: F811 - wraps the caller's sink
+        if not stage_marks or stage_marks[-1][0] != stage:
+            stage_marks.append((stage, round(time.monotonic() - run_t0, 1)))
+        _emit_progress(stage, pct, detail)
+
     global _TIER1_LEDGER
     _TIER1_LEDGER = TeardownLedger()  # fresh teardown ledger for this run (P2-3)
     _TIER1_LEDGER.keep_helper = cfg.keep_helper
@@ -1361,10 +1381,20 @@ def run_acquisition(
     # what take the time, so they go after everything else (newest first, as selected) and the
     # media budget can stop them without ever cutting the small evidence short.
     media_budget: Optional[MediaBudget] = None
-    if cfg.media_mode == "budget" or cfg.media_time_limit_s:
+    media_time_limit = cfg.media_time_limit_s
+    if cfg.time_budget_s:
+        left = cfg.time_budget_s - (time.monotonic() - run_t0) - POST_PULL_RESERVE_S
+        media_time_limit = min(media_time_limit or left, max(left, 60.0))  # always allow a minute
+        case.log(
+            "run.time_budget",
+            f"run target {cfg.time_budget_s / 60:.0f} min: {(time.monotonic() - run_t0):.0f}s used so far, "
+            f"photos/videos get {media_time_limit:.0f}s, {POST_PULL_RESERVE_S:.0f}s kept for analysis and the report",
+            tier=Tier.TIER0.value,
+        )
+    if cfg.media_mode == "budget" or media_time_limit:
         media_budget = MediaBudget(
             cap_bytes=cfg.media_cap_bytes if cfg.media_mode == "budget" else 0,
-            time_limit_s=cfg.media_time_limit_s,
+            time_limit_s=media_time_limit,
         )
         ordered_files = [f for f in ordered_files if not is_budgeted_media(f)] + [
             f for f in ordered_files if is_budgeted_media(f)
@@ -3211,6 +3241,23 @@ def run_acquisition(
     # point where that re-hash is actually meaningful. Never fatal to the acquisition.
     _generate_hash_integrity_report(case.root)
 
+    total_s = round(time.monotonic() - run_t0, 1)
+    ends = [m[1] for m in stage_marks[1:]] + [total_s]
+    case.write_derived(
+        "run_timing",
+        {
+            "total_s": total_s,
+            "budget_s": cfg.time_budget_s,
+            "within_budget": (total_s <= cfg.time_budget_s) if cfg.time_budget_s else None,
+            "stages": [{"stage": m[0], "start_s": m[1], "seconds": round(e - m[1], 1)} for m, e in zip(stage_marks, ends)],
+        },
+    )
+    case.log(
+        "run.timing",
+        f"acquisition took {total_s / 60:.1f} min"
+        + (f" against a {cfg.time_budget_s / 60:.0f} min target" if cfg.time_budget_s else ""),
+        tier=Tier.TIER0.value,
+    )
     progress("done", 1.0, "Acquisition complete")
 
     # -- Completion notification (opt-in) ---------------------------------------
@@ -6702,6 +6749,51 @@ def _stop_if_cancelled(source: RealDeviceSource, case: Case) -> None:
     token.raise_if_cancelled()
 
 
+def _device_epoch(source: RealDeviceSource) -> Optional[int]:
+    """The phone's own clock in epoch seconds, or None. Compared only against file times the phone
+    itself reports, so the laptop's clock and any skew between the two never enter into it."""
+    res = source.adb.shell("date +%s", timeout=10)
+    text = res.stdout.strip() if res.ok else ""
+    return int(text) if text.isdigit() else None
+
+
+def _download_json_times(source: RealDeviceSource) -> dict[str, int]:
+    """``/sdcard/Download/*.json`` on the phone as ``{path: last-written epoch}``."""
+    res = source.adb.shell("stat -c '%Y %n' /sdcard/Download/*.json 2>/dev/null", timeout=15)
+    out: dict[str, int] = {}
+    for ln in res.stdout.splitlines():
+        parts = ln.strip().split(" ", 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            out[parts[1]] = int(parts[0])
+    return out
+
+
+def _fresh_outputs(times: dict[str, int], since: Optional[int]) -> tuple[dict[str, str], dict[str, int]]:
+    """Split the Download JSON files into this run's and leftovers, by the phone's own clock.
+
+    Returns ``(fresh, stale)``. ``fresh`` maps an output's plain name (``contacts.json``) to the
+    newest copy written at or after *since* — Android 11+ stores a second copy as ``contacts
+    (1).json`` when an earlier file of that name belongs to another owner, so the variant is the
+    fresh one. ``stale`` maps path to time for files that pre-date this run.
+
+    The Collector writes every output on a run, even an empty one, so a file older than the launch
+    is left over from an EARLIER run (or is someone else's file with the same generic name);
+    ingesting it would put old data into this case as if it were new. With *since* unknown (no
+    clock reading) nothing is judged and ``fresh`` is empty."""
+    if since is None:
+        return {}, {}
+    fresh: dict[str, tuple[int, str]] = {}
+    stale: dict[str, int] = {}
+    for path, t in times.items():
+        name = path.rsplit("/", 1)[-1]
+        base = re.sub(r" \(\d+\)(?=\.json$)", "", name)
+        if t < since:
+            stale[path] = t
+        elif base not in fresh or t > fresh[base][0]:
+            fresh[base] = (t, path)
+    return {b: p for b, (t, p) in fresh.items()}, stale
+
+
 def _wait_for_tier1_manifest(
     source: RealDeviceSource,
     case: Case,
@@ -6710,6 +6802,7 @@ def _wait_for_tier1_manifest(
     poll_interval: float = 2.0,
     hard_cap: Optional[float] = None,
     stall: Optional[float] = None,
+    since: Optional[int] = None,
 ) -> bool:
     """Wait for ``collector_manifest.json`` by following the helper's progress, not a fixed clock.
 
@@ -6736,8 +6829,16 @@ def _wait_for_tier1_manifest(
             tier=Tier.TIER1.value,
         )
     start = time.monotonic()
+    # `since` (device epoch seconds taken just before the helper was launched): a manifest older
+    # than that is a leftover from an earlier run and must not end the wait at 0 s.
+    ready_test = (
+        'for f in /sdcard/Download/collector_manifest*.json; do t=$(stat -c %Y "$f" 2>/dev/null) '
+        '&& [ "$t" -ge ' + str(int(since)) + ' ] && echo READY; done | grep -q READY'
+        if since is not None
+        else "[ -f /sdcard/Download/collector_manifest.json ]"
+    )
     probe = (
-        "[ -f /sdcard/Download/collector_manifest.json ] && echo READY; "
+        f"{ready_test} && echo READY; "
         "pidof io.erakshak.collector >/dev/null 2>&1 && echo ALIVE; "
         "echo STATE; stat -c '%s %Y %n' /sdcard/Download/*.json 2>/dev/null"
     )
@@ -6877,6 +6978,7 @@ def _run_tier1_calllog_helper(
         _best_effort_uninstall(source, case, package)
         return [], set()
 
+    launch_epoch = _device_epoch(source)
     dump = source.adb.shell(f"am start -n {activity} --es action dump_calllog")
     _log_tier1_step(
         case,
@@ -6900,9 +7002,22 @@ def _run_tier1_calllog_helper(
     emit_acq_event(case, socketio, source="calls", tier="tier1",
                    action="Collector helper running on device — call log", status="accessing")
 
-    _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks)
+    _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks, since=launch_epoch)
+    fresh, stale = _fresh_outputs(_download_json_times(source), launch_epoch)
+    for _path in fresh.values():
+        _tier1_ledger().record_device_file(_path)  # so teardown removes a "name (1).json" copy too
+    if stale:
+        case.log("tier1.helper.stale", f"{len(stale)} file(s) in /sdcard/Download pre-date this run and will not be ingested: " + ", ".join(sorted(stale)), result="warning", tier=Tier.TIER1.value)
 
     local_calllog = staging / "tier1_calllog.json"
+    if launch_epoch is not None:
+        remote_calllog = fresh.get("calllog.json", remote_calllog)
+    if remote_calllog in stale:  # an earlier run's file; this run did not rewrite it
+        emit_acq_event(case, socketio, source="device", tier="tier1",
+                       action="calllog output on the phone pre-dates this run — not ingested", status="skipped",
+                       skip_reason="stale calllog.json from an earlier run")
+        _best_effort_uninstall(source, case, package)
+        return [], set()
     pull = source.adb.pull(remote_calllog, local_calllog)
     _log_tier1_step(
         case,
@@ -6976,6 +7091,7 @@ def _run_tier1_sms_helper(
         _best_effort_uninstall(source, case, package)
         return [], set()
 
+    launch_epoch = _device_epoch(source)
     dump = source.adb.shell(f"am start -n {activity} --es action dump_sms")
     _log_tier1_step(
         case,
@@ -6996,9 +7112,22 @@ def _run_tier1_sms_helper(
     emit_acq_event(case, socketio, source="sms", tier="tier1",
                    action="Collector helper running on device — SMS", status="accessing")
 
-    _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks)
+    _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks, since=launch_epoch)
+    fresh, stale = _fresh_outputs(_download_json_times(source), launch_epoch)
+    for _path in fresh.values():
+        _tier1_ledger().record_device_file(_path)  # so teardown removes a "name (1).json" copy too
+    if stale:
+        case.log("tier1.helper.stale", f"{len(stale)} file(s) in /sdcard/Download pre-date this run and will not be ingested: " + ", ".join(sorted(stale)), result="warning", tier=Tier.TIER1.value)
 
     local_sms = staging / "tier1_sms.json"
+    if launch_epoch is not None:
+        remote_sms = fresh.get("sms.json", remote_sms)
+    if remote_sms in stale:  # an earlier run's file; this run did not rewrite it
+        emit_acq_event(case, socketio, source="device", tier="tier1",
+                       action="sms output on the phone pre-dates this run — not ingested", status="skipped",
+                       skip_reason="stale sms.json from an earlier run")
+        _best_effort_uninstall(source, case, package)
+        return [], set()
     pull = source.adb.pull(remote_sms, local_sms)
     _log_tier1_step(
         case,
@@ -7072,6 +7201,7 @@ def _run_tier1_contacts_helper(
         _best_effort_uninstall(source, case, package)
         return [], set()
 
+    launch_epoch = _device_epoch(source)
     dump = source.adb.shell(f"am start -n {activity} --es action dump_contacts")
     _log_tier1_step(
         case,
@@ -7092,9 +7222,22 @@ def _run_tier1_contacts_helper(
     emit_acq_event(case, socketio, source="contacts", tier="tier1",
                    action="Collector helper running on device — contacts", status="accessing")
 
-    _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks)
+    _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks, since=launch_epoch)
+    fresh, stale = _fresh_outputs(_download_json_times(source), launch_epoch)
+    for _path in fresh.values():
+        _tier1_ledger().record_device_file(_path)  # so teardown removes a "name (1).json" copy too
+    if stale:
+        case.log("tier1.helper.stale", f"{len(stale)} file(s) in /sdcard/Download pre-date this run and will not be ingested: " + ", ".join(sorted(stale)), result="warning", tier=Tier.TIER1.value)
 
     local_contacts = staging / "tier1_contacts.json"
+    if launch_epoch is not None:
+        remote_contacts = fresh.get("contacts.json", remote_contacts)
+    if remote_contacts in stale:  # an earlier run's file; this run did not rewrite it
+        emit_acq_event(case, socketio, source="device", tier="tier1",
+                       action="contacts output on the phone pre-dates this run — not ingested", status="skipped",
+                       skip_reason="stale contacts.json from an earlier run")
+        _best_effort_uninstall(source, case, package)
+        return [], set()
     pull = source.adb.pull(remote_contacts, local_contacts)
     _log_tier1_step(
         case,
@@ -7254,6 +7397,7 @@ def _run_tier1_collect_all(
     _tier1_ledger().record_appop("GET_USAGE_STATS", appop.ok)
 
     # Case and examiner are shown on the phone's screen; they are display-only extras.
+    launch_epoch = _device_epoch(source)
     dump = source.adb.shell(
         f"am start -n {activity} --es action dump_all "
         f"--es case_id {shlex.quote(str(case.meta.case_id))} "
@@ -7296,7 +7440,12 @@ def _run_tier1_collect_all(
     # MediaStore enumeration + app inventory take a few seconds even on a clean stock
     # build; on an OEM with an interactive quirk (a permission dialog, a lock-screen PIN)
     # the examiner needs real time to clear it. Poll for the manifest rather than guess.
-    _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks)
+    _wait_for_tier1_manifest(source, case, oem_quirks=oem_quirks, since=launch_epoch)
+    fresh, stale = _fresh_outputs(_download_json_times(source), launch_epoch)
+    for _path in fresh.values():
+        _tier1_ledger().record_device_file(_path)  # so teardown removes a "name (1).json" copy too
+    if stale:
+        case.log("tier1.helper.stale", f"{len(stale)} file(s) in /sdcard/Download pre-date this run and will not be ingested: " + ", ".join(sorted(stale)), result="warning", tier=Tier.TIER1.value)
 
     outputs = [
         (
@@ -7326,8 +7475,17 @@ def _run_tier1_collect_all(
         ("bluetooth.json", parse_bluetooth_json, bluetooth_devices, "bluetooth"),
     ]
     for fname, parser, target, label in outputs:
-        remote = f"/sdcard/Download/{fname}"
+        remote = fresh.get(fname, f"/sdcard/Download/{fname}") if launch_epoch is not None else f"/sdcard/Download/{fname}"
         local = staging / f"tier1_{fname}"
+        if remote in stale:
+            case.log(
+                f"tier1.helper.pull.{label}",
+                f"{fname} pre-dates this run (written {stale[remote]} < launch {launch_epoch} on the phone's clock): "
+                "left over from an earlier run, not ingested",
+                result="skipped",
+                tier=Tier.TIER1.value,
+            )
+            continue
         pull = source.adb.pull(remote, local)
         if not pull.ok or not local.exists():
             case.log(
@@ -7364,9 +7522,9 @@ def _run_tier1_collect_all(
     # same in the report, which the honesty model forbids.
     manifest_events_emitted = False
     for meta_file in ("collector_manifest.json", "device_extra.json"):
-        remote = f"/sdcard/Download/{meta_file}"
+        remote = fresh.get(meta_file, f"/sdcard/Download/{meta_file}") if launch_epoch is not None else f"/sdcard/Download/{meta_file}"
         local = staging / f"tier1_{meta_file}"
-        if source.adb.pull(remote, local).ok and local.exists():
+        if remote not in stale and source.adb.pull(remote, local).ok and local.exists():
             rec = case.ingest_file(
                 local,
                 source_path=remote,

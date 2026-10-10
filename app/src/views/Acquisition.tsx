@@ -110,17 +110,19 @@ export function AcquisitionView({
   const [mediaMode, setMediaMode] = useState<MediaMode>(savedMedia?.mode ?? "budget");
   const [mediaCapMb, setMediaCapMb] = useState(savedMedia?.mb ?? 200);
   const [mediaCapGb, setMediaCapGb] = useState(savedMedia?.gb ?? 7);
-  const [mediaTimeMin, setMediaTimeMin] = useState(savedMedia?.min ?? 8);
+  // Whole-run target. The photo/video pull is what gives way to it (it gets what is left after
+  // reserving time for analysis and the report); 0 = no target.
+  const [runBudgetMin, setRunBudgetMin] = useState(savedMedia?.min ?? 15);
   useEffect(() => {
     try {
       localStorage.setItem(
         "snagr.acq.media",
-        JSON.stringify({ mode: mediaMode, mb: mediaCapMb, gb: mediaCapGb, min: mediaTimeMin }),
+        JSON.stringify({ mode: mediaMode, mb: mediaCapMb, gb: mediaCapGb, min: runBudgetMin }),
       );
     } catch {
       /* storage blocked — a per-viewer convenience only */
     }
-  }, [mediaMode, mediaCapMb, mediaCapGb, mediaTimeMin]);
+  }, [mediaMode, mediaCapMb, mediaCapGb, runBudgetMin]);
   const [tier2Telegram, setTier2Telegram] = useState(false);
   const [tier2Instagram, setTier2Instagram] = useState(false);
   const [tier2Snapchat, setTier2Snapchat] = useState(false);
@@ -470,7 +472,7 @@ export function AcquisitionView({
         tier1_collect_all: target.kind === "real" ? tier1CollectAll : false,
         media_mode: mediaMode,
         media_cap_mb: mediaMode === "camera" ? mediaCapMb : mediaMode === "budget" ? Math.round(mediaCapGb * 1024) : 0,
-        media_time_limit_min: mediaMode === "budget" ? mediaTimeMin : 0,
+        time_budget_min: runBudgetMin,
         // Tier-2 re-guards on rootConfirmed, not just target.kind: the reset effect
         // above clears these the moment root drops, but that effect fires a render
         // after the device-check response lands, so a submit racing that window would
@@ -1199,7 +1201,7 @@ export function AcquisitionView({
         <div className="flex flex-col gap-2">
           {(
             [
-              ["budget", "Up to a size, from everywhere", "Newest photos and videos from every folder (camera, screenshots, WhatsApp, Telegram, downloads) share one size budget. Media goes last; when the budget or time box is used up it stops and the run moves on."],
+              ["budget", "Up to a size, from everywhere", "Newest photos and videos from every folder (camera, screenshots, WhatsApp, Telegram, downloads) share one size budget. Media goes last; when the size budget or the time target is used up it stops and the run moves on to analysis and the report."],
               ["camera", "Camera folder only, up to a size", "Newest photos and videos from DCIM/Camera. No screenshots, downloads or app media."],
               ["none", "No photos or videos", "Skip them entirely."],
               ["all", "Everything", "Every photo and video on the phone. On a large phone this can take hours."],
@@ -1228,14 +1230,14 @@ export function AcquisitionView({
               />
             </label>
             <label className="text-xs text-muted block max-w-[10rem]">
-              Time box (minutes, 0 = none)
+              Finish within (minutes, 0 = no target)
               <input
                 type="number"
                 min={0}
                 step={1}
                 className="input mt-1"
-                value={mediaTimeMin}
-                onChange={(e) => setMediaTimeMin(Math.max(0, Number(e.target.value)))}
+                value={runBudgetMin}
+                onChange={(e) => setRunBudgetMin(Math.max(0, Number(e.target.value)))}
               />
             </label>
           </div>
