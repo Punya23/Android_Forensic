@@ -21,13 +21,17 @@ are marked CARVED_PARTIAL; we never up-grade confidence here.
 
 from __future__ import annotations
 
+import logging
 import re
 import struct
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
 from ..config import Confidence
+
+logger = logging.getLogger(__name__)
 
 _HEADER_MAGIC = b"SQLite format 3\x00"
 _MIN_TEXT_LEN = 3  # shorter strings are almost certainly noise
@@ -174,10 +178,25 @@ def _try_parse_record_at(
         return None
 
 
+#: Longest one raw-byte scan may run. The scan tries a record parse at nearly every byte in pure
+#: Python, so an 11 MB Telegram cache took more than four minutes (and a 100 MB WhatsApp database
+#: would take hours) with the whole acquisition waiting behind it. The scan is a supplement to the
+#: structural recovery, so it is cut off and says how much it covered instead.
+SQBRITE_MAX_SECONDS = 20.0
+
+
+class ScanResult(list):
+    """The rows found, plus how far the scan got: ``scanned_fraction`` (0-1) and ``timed_out``."""
+
+    scanned_fraction: float = 1.0
+    timed_out: bool = False
+
+
 def sqbrite_scan(
     db_path: str | Path,
     primary_fingerprints: Optional[set[tuple]] = None,
     step: int = 1,
+    max_seconds: float = SQBRITE_MAX_SECONDS,
 ) -> list[SqbriteRow]:
     """Scan a SQLite file's raw bytes for residual record signatures.
 
@@ -187,6 +206,9 @@ def sqbrite_scan(
                               by the primary engine — used to deduplicate results.
         step:                 Scan granularity in bytes. 1 = exhaustive (slow on large
                               files); increase to 4–8 for speed at cost of coverage.
+        max_seconds:          Stop after this long (0 = no limit). The result then has
+                              ``timed_out`` set and ``scanned_fraction`` below 1: the rest of
+                              the file was NOT scanned, which is not a finding that it is clean.
 
     Returns:
         List of SqbriteRow objects not already in primary_fingerprints.
@@ -203,12 +225,21 @@ def sqbrite_scan(
     if len(data) < 100 or data[:16] != _HEADER_MAGIC:
         return []
 
-    rows: list[SqbriteRow] = []
+    rows = ScanResult()
     seen_offsets: set[int] = set()
     end = len(data)
     off = 100  # skip the 100-byte SQLite file header
+    deadline = time.monotonic() + max_seconds if max_seconds else None
 
     while off < end:
+        if deadline is not None and not off & 0x3FF and time.monotonic() > deadline:
+            rows.timed_out = True
+            rows.scanned_fraction = round(off / end, 3)
+            logger.warning(
+                "sqbrite: %s stopped after %.0fs at %.0f%% of the file; the rest was not scanned",
+                db_path.name, max_seconds, 100 * rows.scanned_fraction,
+            )
+            break
         # Quick pre-filter: first varint byte of a valid header is typically 2–128.
         byte = data[off]
         if 2 <= byte <= 200:

@@ -105,7 +105,7 @@ def build_summary_report(case: Case) -> str:
     out.append("<h2>Evidence integrity and collection</h2>")
     out.append(f"<p>{_e(audit['artifact_count'])} files collected. {_e(_integrity(case))}</p>")
     caps = case.read_derived("acquisition_caps")
-    if isinstance(caps, dict) and caps.get("available_files"):
+    if isinstance(caps, dict) and caps.get("skipped_files"):  # a cap that left nothing behind is not partial
         limits = []
         if caps.get("total_cap_bytes"):
             limits.append(f"{round(caps['total_cap_bytes'] / 1e9, 1)} GB total")

@@ -4868,6 +4868,15 @@ def _run_tier2_telegram(
         _presence(False, reason, sidecars_present=sidecars_present)
         return
 
+    if result.get("sqbrite_scanned_fraction", 1.0) < 1.0:
+        case.log(
+            "tier2.telegram.sqbrite",
+            f"raw-byte carving covered {result['sqbrite_scanned_fraction'] * 100:.0f}% of cache4.db before its "
+            "time limit; the structural recovery below is complete, carved fragments past that point were not "
+            "searched for (not a finding that there are none)",
+            result="partial",
+            tier=Tier.TIER2.value,
+        )
     counts = result.get("counts", {})
     case.log(
         "tier2.telegram.done",

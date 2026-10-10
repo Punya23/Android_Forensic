@@ -556,3 +556,23 @@ def test_whatsapp_msgstore_recovery_no_crash_without_hint(tmp_path):
         assert isinstance(rows, list)
     finally:
         con.close()
+
+
+def test_sqbrite_scan_is_time_boxed_and_says_how_far_it_got(tmp_path):
+    """An 11 MB Telegram cache held the whole acquisition for 4+ minutes in this pure-Python scan."""
+    import sqlite3
+    import time
+
+    from triage.recovery.sqbrite import sqbrite_scan
+
+    db = tmp_path / "big.db"
+    con = sqlite3.connect(db)
+    con.execute("create table m (id integer primary key, body text)")
+    con.executemany("insert into m (body) values (?)", [(("hello world message %d " % i) * 20,) for i in range(4000)])
+    con.commit()
+    con.close()
+
+    t0 = time.monotonic()
+    rows = sqbrite_scan(db, max_seconds=0.3)
+    assert time.monotonic() - t0 < 5
+    assert rows.timed_out and 0 < rows.scanned_fraction < 1

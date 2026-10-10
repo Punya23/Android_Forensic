@@ -1228,8 +1228,6 @@ def create_app(cases_root: Path = CASES_ROOT, network_mode: str | None = None):
             return jsonify({"error": "media_cap_mb must be a number"}), 400
         if not 0 <= media_cap_mb <= 4_194_304:
             return jsonify({"error": "media_cap_mb must be between 0 (no limit) and 4 TB"}), 400
-        if media_mode == "budget" and media_cap_mb <= 0:
-            return jsonify({"error": "media_mode budget needs media_cap_mb above 0"}), 400
         try:
             media_time_limit_min = float(body.get("media_time_limit_min") or 0)
         except (TypeError, ValueError):

@@ -1137,6 +1137,7 @@ def recover_telegram_messages(
     except Exception as exc:
         log.warning("sqbrite: %s", exc)
         extra = []
+    sqbrite_fraction = getattr(extra, "scanned_fraction", 1.0)
 
     for sq_row in extra:
         body = " ".join(
@@ -1221,6 +1222,9 @@ def recover_telegram_messages(
         },
         "messages": messages,
         "counts": counts,
+        # < 1.0: the raw-byte supplement was cut off by its time limit, so carved rows beyond that
+        # point were not looked for (not a finding that there are none).
+        "sqbrite_scanned_fraction": sqbrite_fraction,
     }
 
 

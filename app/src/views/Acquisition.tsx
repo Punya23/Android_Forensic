@@ -470,7 +470,9 @@ export function AcquisitionView({
         tier1_calllog: target.kind === "real" ? tier1Calllog : false,
         tier1_sms: target.kind === "real" ? tier1Sms : false,
         tier1_collect_all: target.kind === "real" ? tier1CollectAll : false,
-        media_mode: mediaMode,
+        // "Everything" is sent as a budget with no size limit: same fast index listing, media last,
+        // and the run's time target still applies, but nothing is capped by size.
+        media_mode: mediaMode === "all" ? "budget" : mediaMode,
         media_cap_mb: mediaMode === "camera" ? mediaCapMb : mediaMode === "budget" ? Math.round(mediaCapGb * 1024) : 0,
         time_budget_min: runBudgetMin,
         // Tier-2 re-guards on rootConfirmed, not just target.kind: the reset effect
@@ -1204,7 +1206,7 @@ export function AcquisitionView({
               ["budget", "Up to a size, from everywhere", "Newest photos and videos from every folder (camera, screenshots, WhatsApp, Telegram, downloads) share one size budget. Media goes last; when the size budget or the time target is used up it stops and the run moves on to analysis and the report."],
               ["camera", "Camera folder only, up to a size", "Newest photos and videos from DCIM/Camera. No screenshots, downloads or app media."],
               ["none", "No photos or videos", "Skip them entirely."],
-              ["all", "Everything", "Every photo and video on the phone. On a large phone this can take hours."],
+              ["all", "Everything (no size limit)", "Every photo and video on the phone, newest first, after everything else. Only the time target below can stop it early; on a large phone that is what keeps the run short."],
             ] as [MediaMode, string, string][]
           ).map(([value, title, detail]) => (
             <label key={value} className="flex items-start gap-2 cursor-pointer text-sm">
@@ -1216,8 +1218,9 @@ export function AcquisitionView({
             </label>
           ))}
         </div>
-        {mediaMode === "budget" && (
+        {(mediaMode === "budget" || mediaMode === "all") && (
           <div className="flex gap-4 mt-3">
+            {mediaMode === "budget" && (
             <label className="text-xs text-muted block max-w-[10rem]">
               Budget (GB)
               <input
@@ -1229,6 +1232,7 @@ export function AcquisitionView({
                 onChange={(e) => setMediaCapGb(Math.max(0.1, Number(e.target.value)))}
               />
             </label>
+            )}
             <label className="text-xs text-muted block max-w-[10rem]">
               Finish within (minutes, 0 = no target)
               <input
