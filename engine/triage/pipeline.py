@@ -299,6 +299,25 @@ def _row_is_readable(row: Any) -> bool:
     return any(is_readable_fragment(v) for v in strings)
 
 
+def _drop_unreadable_recovered(case: Any, recovered_rows: list) -> None:
+    """Remove carved rows with no readable text, and old-WAL copies of live contact/group names
+    (Telegram's "first last;;;username" directory entries), from *recovered_rows* in place."""
+    before = len(recovered_rows)
+    live_names = _telegram_live_names(case.read_derived("telegram_conversations")) | {
+        str(n).strip().lower() for n in (case.read_derived("telegram_directory") or []) if isinstance(n, str)
+    }
+    live_names.discard("")
+    recovered_rows[:] = [r for r in recovered_rows if _row_is_readable(r) and not _row_is_live_name(r, live_names)]
+    if before != len(recovered_rows):
+        case.log(
+            "analysis.recovered_readable",
+            f"{before - len(recovered_rows)} carved fragment(s) with no readable text (database schema, "
+            "thumbnail and binary residue) are not listed under Recovered data, scanned for keywords or counted "
+            "in the verdict; the bytes remain in the acquired database files, and deletion gaps are always listed",
+            tier=Tier.TIER0.value,
+        )
+
+
 def _telegram_live_names(conversations: Any) -> set[str]:
     names: set[str] = set()
     for c in (conversations.values() if isinstance(conversations, dict) else []):
@@ -2304,6 +2323,11 @@ def run_acquisition(
                 tier=Tier.TIER0.value,
             )
 
+    # Drop carved fragments nobody can read BEFORE anything is derived from them: they used to be
+    # keyword-scanned ("attack", "bomb" matched inside Telegram's emoji-keyword dictionary), turned
+    # into message rows and counted in the risk verdict.
+    _drop_unreadable_recovered(case, recovered_rows)
+
     # Recovered WhatsApp/Telegram-style messages become message rows too, so the
     # dashboard Messages view shows deleted content inline with its confidence badge.
     recovered_messages = _recovered_as_messages(recovered_rows)
@@ -2595,22 +2619,6 @@ def run_acquisition(
     # A carved row can span a whole BLOB: a Telegram cache4.db on a real phone produced 660 MB of
     # "message" text (messages.json and recovered.json), which froze the dashboard on "Loading this
     # case" for 100 s per page and made the AI pass crawl. A message is text a person reads; clip it.
-    _before = len(recovered_rows)
-    # Old WAL versions of the chats/users tables re-surface every group and contact name as "recovered":
-    # they are the live names again, not deleted content.
-    _live_names = _telegram_live_names(case.read_derived("telegram_conversations")) | {
-        str(n).strip().lower() for n in (case.read_derived("telegram_directory") or []) if isinstance(n, str)
-    }
-    _live_names.discard("")
-    recovered_rows[:] = [r for r in recovered_rows if _row_is_readable(r) and not _row_is_live_name(r, _live_names)]
-    if _before != len(recovered_rows):
-        case.log(
-            "analysis.recovered_readable",
-            f"{_before - len(recovered_rows)} carved fragment(s) with no readable text (database schema, "
-            "thumbnail and binary residue) are not listed under Recovered data; the bytes remain in the "
-            "acquired database files, and deletion gaps are always listed",
-            tier=Tier.TIER0.value,
-        )
     _clipped = _clip_bodies(all_messages) + _clip_bodies(recovered_rows)
     if _clipped:
         case.log(
