@@ -60,6 +60,53 @@ class AdbResult:
         return self.returncode == 0
 
 
+def sh_quote(text: str) -> str:
+    """POSIX single-quote *text* for the phone's ``sh``: spaces, unicode, ``$`` and ``"`` need no escaping."""
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+class ShellStream:
+    """A running ``adb shell`` whose stdout the caller reads; see :meth:`Adb.stream_shell`."""
+
+    def __init__(self, proc: subprocess.Popen, stderr_file, token: Optional[CancellationToken]):
+        self._proc, self._err, self._token = proc, stderr_file, token
+        self.stdout = proc.stdout
+
+    @property
+    def returncode(self) -> Optional[int]:
+        return self._proc.returncode
+
+    def kill(self) -> None:
+        _kill_process(self._proc, grace=1.0)
+
+    def stderr_tail(self, n: int = 400) -> str:
+        try:
+            self._err.seek(0)
+            return self._err.read().decode("utf-8", "replace")[-n:]
+        except (OSError, ValueError):
+            return ""
+
+    def close(self) -> None:
+        """Reap the process and release the stderr file. Safe to call twice."""
+        try:
+            if self._proc.poll() is None:
+                self.kill()
+            self._proc.wait(timeout=5)
+        except Exception:
+            pass
+        if self.stdout is not None:
+            self.stdout.close()
+        if self._token is not None:
+            self._token.unregister_process(self._proc)
+        self._err.close()
+
+    def __enter__(self) -> "ShellStream":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
 def find_adb() -> Optional[str]:
     """Locate an adb binary: bundled vendor copy first, then PATH, then the Android SDK."""
     here = Path(__file__).resolve().parent.parent
@@ -335,6 +382,33 @@ class Adb:
 
     def shell(self, cmd: str, timeout: int = 120) -> AdbResult:
         return self.run("shell", cmd, timeout=timeout)
+
+    def stream_shell(self, cmd: str) -> "Optional[ShellStream]":
+        """Start ``adb shell -T -n <cmd>`` and hand back its binary stdout as a pipe, for one big
+        output (a tar of many files) that must not be staged on the phone first.
+
+        ``-T`` (no tty) uses shell protocol v2 (Android 7+), which keeps the command's stderr out
+        of stdout and reports its exit code. ``exec-out`` would merge stderr into the stream and
+        corrupt the archive; the phone's own ``tar`` writes a notice to stderr for every file.
+        stderr goes to a temp file, not a pipe nobody reads, which would stall the child.
+        Returns None when adb is missing or the run was already cancelled. The process is
+        registered with the cancel token, so Stop kills it mid-transfer."""
+        token = self.cancel_token
+        if not self.available or (token is not None and token.is_cancelled):
+            return None
+        err = tempfile.TemporaryFile()
+        try:
+            proc = subprocess.Popen(
+                self._base() + ["shell", "-T", "-n", cmd],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err,
+            )
+        except Exception:
+            err.close()
+            return None
+        self._cmd_count += 1
+        if token is not None:
+            token.register_process(proc)
+        return ShellStream(proc, err, token)
 
     # -- device discovery ----------------------------------------------------
     @staticmethod

@@ -358,6 +358,7 @@ def select_files(
     media_mode: str = "all",
     media_cap_bytes: int = 0,
     on_root: Callable[[str, int], None] | None = None,
+    sizes_out: dict[str, int] | None = None,
     now: float | None = None,  # unused here; kept so callers/tests can pin a clock if a source needs one
 ) -> tuple[list[str], dict | None]:
     """Enumerate ``roots`` on ``source`` and choose what to pull.
@@ -367,6 +368,10 @@ def select_files(
     (7, 30, 90, 365 days, then everything) until the caps are filled, applies :func:`apply_caps`,
     and returns its report with ``window_days`` — how far back it had to look (``None`` = all) —
     so the case states that "available" means "scanned", not "on the phone".
+
+    ``sizes_out``, when given, is filled with the listed size in bytes of every file seen (capped
+    runs only; sizes are not listed otherwise), so the pull can cut its streams and set its
+    timeouts by bytes instead of by file count.
     """
     capped = bool(bucket_bytes or total_bytes or media_mode != "all")
 
@@ -403,6 +408,8 @@ def select_files(
             on_root("media index", len(entries))
         _add_trash(source, entries, seen)
         chosen, report = choose(entries)
+        if sizes_out is not None:
+            sizes_out.update({e[0]: e[1] for e in entries})
         report["window_days"] = None
         report["listing"] = "media index"
         report["truncated_files"] = max(0, len(chosen) - max_files)
@@ -427,5 +434,7 @@ def select_files(
         ):
             report["window_days"] = days
             break
+    if sizes_out is not None:
+        sizes_out.update({e[0]: e[1] for e in entries})
     report["truncated_files"] = max(0, len(chosen) - max_files)
     return chosen[:max_files], report

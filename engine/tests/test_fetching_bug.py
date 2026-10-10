@@ -252,3 +252,51 @@ class TestPipelineValidationIntegration:
         from triage.pipeline import PipelineConfig
         cfg = PipelineConfig(case_id="SMOKE-2", examiner="Test", validate_files_before_pull=False)
         assert cfg.validate_files_before_pull is False
+
+
+# ---------------------------------------------------------------------------
+# RealDeviceSource.validate_file_list — batched: one shell call per ~50 KB of paths
+# ---------------------------------------------------------------------------
+
+
+class TestRealValidateFileListBatched:
+    def _src(self, shell):
+        adb = MagicMock(spec=Adb)
+        adb.adb_path = "/usr/bin/adb"
+        adb.serial = None
+        adb.shell = shell
+        return RealDeviceSource(adb)
+
+    def test_thousands_of_paths_take_a_handful_of_shell_calls(self):
+        calls = []
+        ghosts = {"/sdcard/DCIM/g1.jpg", "/sdcard/DCIM/it's g2.jpg"}
+
+        def shell(cmd, timeout=120):
+            calls.append(cmd)
+            # the phone's sh prints only the paths that are missing
+            out = "\n".join(g for g in ghosts if g in cmd.replace("'\\''", "'"))
+            return AdbResult(command=cmd, returncode=0, stdout=out, stderr="")
+
+        paths = [f"/sdcard/DCIM/IMG_{i:05d}.jpg" for i in range(5000)] + sorted(ghosts)
+        valid, phantom = self._src(shell).validate_file_list(paths)
+
+        assert phantom == 2 and len(valid) == 5000 and not (set(valid) & ghosts)
+        assert len(calls) <= 5  # 5 000 paths used to be 5 000 adb processes
+        assert all(len(c) < 60_000 for c in calls)  # each fits one argv element of the phone's sh
+
+    def test_a_failing_batch_falls_back_to_per_file_and_never_drops_on_error(self):
+        def shell(cmd, timeout=120):
+            if cmd.startswith("for f in"):
+                return AdbResult(command=cmd, returncode=1, stdout="", stderr="device offline")
+            return AdbResult(command=cmd, returncode=0, stdout="0" if "ghost" in cmd else "1", stderr="")
+
+        valid, phantom = self._src(shell).validate_file_list(["/sdcard/a.jpg", "/sdcard/ghost.jpg"])
+
+        assert valid == ["/sdcard/a.jpg"] and phantom == 1
+
+    def test_progress_reaches_total(self):
+        seen = []
+        self._src(lambda cmd, timeout=120: AdbResult(cmd, 0, "", "")).validate_file_list(
+            ["/sdcard/a", "/sdcard/b"], progress_cb=lambda d, t: seen.append((d, t))
+        )
+        assert seen[-1] == (2, 2)

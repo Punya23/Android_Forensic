@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from ..adb import Adb
+from ..adb import Adb, sh_quote
 from ..config import DEVICE_PROPS, OEM_QUIRKS, OEM_SPECIFIC_PATHS
 from ..custody import DeviceInfo
 from ..device_state import capture_device_state
@@ -75,6 +75,9 @@ class RealDeviceSource(AcquisitionSource):
 
     def __init__(self, adb: Adb):
         self.adb = adb
+        # device path -> bytes, from the media index at planning time. Sizes a pull's timeout so a
+        # multi-GB video is not killed by the flat per-file default; empty when sizes are unknown.
+        self.size_hints: dict[str, int] = {}
 
     def device_info(self) -> DeviceInfo:
         props: dict[str, str] = {}
@@ -176,7 +179,8 @@ class RealDeviceSource(AcquisitionSource):
     def pull_file(self, device_path: str, staging_dir: Path) -> Optional[PulledFile]:
         # Stage under a unique name to avoid collisions before the case ingests it.
         local = staging_dir / uuid.uuid4().hex
-        res = self.adb.pull(device_path, local)
+        # 5 minutes plus time for the file at a pessimistic 2 MB/s (several streams share one cable).
+        res = self.adb.pull(device_path, local, timeout=300 + self.size_hints.get(device_path, 0) // (2 * 1024**2))
         if not res.ok or not local.exists():
             # A cancelled or timed-out pull (adb.py kills the process mid-transfer)
             # can still leave a partial file on disk even though the transfer as a
@@ -264,59 +268,57 @@ class RealDeviceSource(AcquisitionSource):
     ) -> Tuple[List[str], int]:
         """Pre-scan *paths* and return ``(valid_paths, phantom_count)``.
 
-        Runs :meth:`file_exists` for every path in a thread pool so that
-        validating 5 000 files takes ~30 s instead of discovering failures
-        during a 2-hour pull.  Paths that do not exist on the device are
-        silently dropped; the count is returned so the pipeline can log it.
-
-        Parameters
-        ----------
-        paths:
-            Device-side paths to validate (typically from MediaStore).
-        progress_cb:
-            Optional ``(done, total)`` callback for live progress reporting.
-        max_workers:
-            Thread pool size.  Defaults to 16 (I/O-bound, not CPU-bound).
-
-        Returns
-        -------
-        tuple[list[str], int]
-            ``(valid_paths, phantom_count)``
+        Checks hundreds of paths per ``adb shell`` call (one shell loop printing the missing ones)
+        instead of one adb process per file, which cost ~0.15 s each even in parallel: 5 000 files
+        took about a minute, the same list now takes a second or two. A batch whose shell call
+        fails falls back to the per-file check for just that batch, and any error counts as
+        "valid" — better to try a pull than to skip a file on a hiccup.
         """
         total = len(paths)
         if total == 0:
             return [], 0
 
-        valid: List[str] = []
-        phantom = 0
+        missing: set[str] = set()
         done = 0
-        _lock = concurrent.futures.ThreadPoolExecutor.__new__  # just for typing
-        import threading
-        _lock = threading.Lock()
+        batch: List[str] = []
+        size = 0
 
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=min(max_workers, total),
-            thread_name_prefix="validate",
-        ) as executor:
-            future_to_path = {
-                executor.submit(self.file_exists, p): p for p in paths
-            }
-            for future in concurrent.futures.as_completed(future_to_path):
-                p = future_to_path[future]
-                try:
-                    exists = future.result()
-                except Exception:
-                    exists = True  # on error, assume valid — better to try than skip
-                with _lock:
-                    done += 1
-                    if exists:
-                        valid.append(p)
-                    else:
-                        phantom += 1
-                    if progress_cb:
-                        progress_cb(done, total)
+        def flush() -> None:
+            nonlocal done, batch, size
+            if not batch:
+                return
+            cmd = "for f in " + " ".join(sh_quote(p) for p in batch) + '; do [ -e "$f" ] || echo "$f"; done'
+            res = self.adb.shell(cmd, timeout=60)
+            if res.ok:
+                asked = set(batch)
+                missing.update(ln for ln in res.stdout.splitlines() if ln in asked)
+            else:
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=min(max_workers, len(batch)), thread_name_prefix="validate"
+                ) as executor:
+                    for p, exists in zip(batch, executor.map(self._exists_or_true, batch)):
+                        if not exists:
+                            missing.add(p)
+            done += len(batch)
+            if progress_cb:
+                progress_cb(done, total)
+            batch, size = [], 0
 
-        return valid, phantom
+        for p in paths:
+            # one command line is one argv element for the phone's sh; stay far below its 128 KiB limit
+            if batch and size + len(p) + 3 > 50_000:
+                flush()
+            batch.append(p)
+            size += len(p) + 3
+        flush()
+
+        return [p for p in paths if p not in missing], len(missing)
+
+    def _exists_or_true(self, path: str) -> bool:
+        try:
+            return self.file_exists(path)
+        except Exception:
+            return True
 
 
 # ---------------------------------------------------------------------------

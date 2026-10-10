@@ -415,7 +415,7 @@ class PipelineConfig:
     # Off automatically whenever use_priority_filter is on (the two are incompatible
     # -- see _batch_pull_files docstring).
     batch_pull: bool = True
-    batch_pull_chunk_size: int = DEFAULT_CHUNK_SIZE  # files per on-device tar archive
+    batch_pull_chunk_size: int = DEFAULT_CHUNK_SIZE  # most files per tar stream (streams are also cut by bytes)
     # -- Battery-aware acquisition (Phase 2) ----------------------------------
     battery_aware: bool = (
         False  # gate Tier-0/Tier-2 pulls by live battery level (battery_priority.py bands)
@@ -1169,10 +1169,12 @@ def run_acquisition(
     progress("enumerate", 0.06, "Enumerating shared storage")
     emit_acq_event(case, socketio, source="filesystem", tier="tier0",
                    action="Enumerating shared storage", status="accessing")
+    plan_sizes: Dict[str, int] = {}
     files, caps_report = select_files(
         source,
         TIER0_PULL_ROOTS,
         max_files=cfg.max_files,
+        sizes_out=plan_sizes,
         bucket_bytes=cfg.cap_bucket_bytes,
         total_bytes=cfg.cap_total_bytes,
         media_mode=cfg.media_mode,
@@ -1231,6 +1233,8 @@ def run_acquisition(
     # deleted below rather than kept as a second reset.
     pull_start = time.monotonic()
     pulled_bytes = 0
+    if isinstance(source, RealDeviceSource):
+        source.size_hints = plan_sizes
 
     # ── Pre-scan validation: filter phantom files before any pull ───────────
     # MediaStore can report files that no longer exist (e.g. deleted between
@@ -1401,6 +1405,7 @@ def run_acquisition(
             max_workers=cfg.parallel_workers,
             cancel_token=cancel_token,
             media_budget=media_budget,
+            sizes=plan_sizes,
         )
         if _leftover:
             case.log(
@@ -4038,8 +4043,9 @@ def _batch_pull_files(
     max_workers: int = 8,
     cancel_token: Optional[CancellationToken] = None,
     media_budget: Optional[MediaBudget] = None,
+    sizes: Optional[Dict[str, int]] = None,
 ) -> tuple[List[Dict], List[str]]:
-    """Pull *files* by tarring them into chunks on the device (see batch_transfer.py).
+    """Pull *files* by streaming them off the device as tar chunks (see batch_transfer.py).
 
     Real-device only: needs raw shell/push/pull access, so this must never be
     called with a non-:class:`RealDeviceSource` (a :class:`MockDeviceSource` has no
@@ -4060,7 +4066,7 @@ def _batch_pull_files(
     """
     results: List[Dict] = []
     leftover: List[str] = []
-    chunks = chunk_files(files, chunk_size)
+    chunks = chunk_files(files, chunk_size, sizes)
     done_count = 0
 
     for chunk in chunks:
@@ -4131,7 +4137,8 @@ def _batch_pull_files(
         # retry -- so the whole chunk's extraction folder is safe to discard now,
         # rather than leaking staged copies for the rest of a large multi-chunk pull.
         if pulled:
-            shutil.rmtree(pulled[0].local_path.parent, ignore_errors=True)
+            batch_root = next(p for p in pulled[0].local_path.parents if p.name.startswith(".batch_"))
+            shutil.rmtree(batch_root, ignore_errors=True)
 
     return results, leftover
 
